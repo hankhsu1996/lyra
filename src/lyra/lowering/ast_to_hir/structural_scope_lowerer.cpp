@@ -1479,9 +1479,34 @@ auto StructuralScopeLowerer::PopulateNetAliasMember(
     const slang::ast::NetAliasSymbol& alias, WalkFrame frame)
     -> diag::Result<void> {
   const diag::SourceSpan span = frontend::PointSpanOf(alias.location);
+  // LRM 10.11 overlays the bits of an alias's members as a packed union's,
+  // which no unpacked aggregate can be a member of, so where a member is one
+  // the standard gives its bits no order against a net of another type. Nets
+  // of equivalent types (LRM 6.22.2) overlay part by part, whatever order the
+  // type gives them.
+  const std::span<const slang::ast::Expression* const> members =
+      alias.getNetReferences();
+  const auto aggregate = [](const slang::ast::Expression* member) {
+    return !member->type->isIntegral();
+  };
+  if (std::ranges::any_of(members, aggregate) &&
+      !std::ranges::all_of(members, [&](const slang::ast::Expression* member) {
+        return member->type->isEquivalent(*members.front()->type);
+      })) {
+    return std::unexpected(
+        diag::Make(
+            span, diag::DiagCode::kErrorAliasAcrossTypes,
+            base::DiagMessage(
+                "an alias names a net of an unpacked aggregate type beside a "
+                "net of another type, whose bits the standard gives no order "
+                "against each other"))
+            .WithNote(
+                "alias nets of one type, or members of them that are "
+                "vectors"));
+  }
   std::vector<hir::NetSide> sides;
-  for (const slang::ast::Expression* member : alias.getNetReferences()) {
-    auto side = NetPositionsOfLvalue(
+  for (const slang::ast::Expression* member : members) {
+    auto side = NetSideOfLvalue(
         *this, slang_scope_->asSymbol(), *member, span,
         diag::DiagCode::kUnsupportedStructuralMember, frame);
     if (!side) return std::unexpected(std::move(side.error()));

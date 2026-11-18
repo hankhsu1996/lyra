@@ -482,14 +482,12 @@ struct CompositeExpr {
   std::vector<ExprId> parts;
 };
 
-// A union's value holding the member at `member` as `value`, which an
-// assignment pattern or a tagged union expression names (LRM 7.3, 11.9), as
-// clang's initializer list names the field of a union it initializes and
-// rustc's aggregate the field a union expression gives. Every other byte of the
-// union's storage is zero, since a read through another member may read it
-// (LRM 7.3.2), and a tagged union's tag names the member. `Expr::type` is the
-// union.
-struct UnionExpr {
+// A tagged union's value holding the member at `member` as `value`, which a
+// tagged union expression names (LRM 7.3.2, 11.9), as rustc's aggregate names
+// the variant an enum expression gives, with the tag naming the member.
+// `Expr::type` is the tagged union. An untagged union is built as its one
+// storage, the member's positions over zero (LRM 7.3).
+struct TaggedUnionExpr {
   base::ComponentIndex member;
   ExprId value;
 };
@@ -671,8 +669,8 @@ using ExprData = std::variant<
     FloatingLiteral, ReferenceExpr, UnaryExpr, BinaryExpr, CastExpr,
     ConditionalExpr, BlockExpr, AssignExpr, CallExpr, NewExpr, DerefExpr,
     AddressOfExpr, BorrowExpr, MoveExpr, CopyExpr, DiscriminantExpr,
-    FieldAccessExpr, ClosureExpr, CompositeExpr, UnionExpr, AwaitExpr, WaitExpr,
-    VectorGetExpr>;
+    FieldAccessExpr, ClosureExpr, CompositeExpr, TaggedUnionExpr, AwaitExpr,
+    WaitExpr, VectorGetExpr>;
 
 // `span` is the piece of source the node was lowered from, or no place where
 // it was lowered from none, as the front end gave it; only the front end opens
@@ -847,11 +845,11 @@ struct Expr {
   return Expr{.data = DiscriminantExpr{.tagged = tagged}, .type = machine_int};
 }
 
-// A union's value holding `value` as its member `member`.
-[[nodiscard]] inline auto MakeUnionExpr(
+// A tagged union's value holding `value` as its member `member`.
+[[nodiscard]] inline auto MakeTaggedUnionExpr(
     ExprId value, base::ComponentIndex member, TypeId built) -> Expr {
   return Expr{
-      .data = UnionExpr{.member = member, .value = value}, .type = built};
+      .data = TaggedUnionExpr{.member = member, .value = value}, .type = built};
 }
 
 // Asking a capability wrapper for what its storage holds, answering
@@ -971,11 +969,10 @@ struct Expr {
 }
 
 // Installs what a net's declaration gives it, once at construction. `entry`
-// names which resolution the net performs (LRM 6.6), and `arguments` are what
-// the net's data type gives it -- a value of an unpacked aggregate type, and
-// nothing for an integral type -- followed by the contribution the net type
-// makes to the net's own resolution: the scalar the net shows where nothing
-// drives it, and the strength it holds that scalar at (LRM 6.7.1, 28.11). A
+// names which resolution the net performs (LRM 6.6), and `arguments` are the
+// contribution the net type makes to the net's own resolution: the scalar the
+// net shows where nothing drives it, and the strength it holds that scalar at
+// (LRM 6.7.1, 28.11). A
 // net with no resolution function (LRM 6.6.7) is handed a value of its type
 // alone, which it shows where nothing drives it.
 [[nodiscard]] inline auto MakeNetInstallCallExpr(
@@ -989,53 +986,88 @@ struct Expr {
       .type = void_type};
 }
 
-// Attaches a driver contributing at `strength` to a net's resolution and yields
-// the driver handle (the result type is the driver type).
+// Attaches a driver of `count` of a net's positions from `first`, contributing
+// at `strength` to their resolution, and yields the driver handle (the result
+// type is the driver type). The driver gives them as one integral value of
+// `part`: the part of the net they are where it is integral, and its positions
+// otherwise; of them it drives those within the `reached_count` from
+// `reached_first`, the run the net has of the part.
 [[nodiscard]] inline auto MakeNetAttachDriverCallExpr(
-    ExprId net, ExprId strength, TypeId driver_type) -> Expr {
+    ExprId net, ExprId strength, ExprId first, ExprId count,
+    ExprId reached_first, ExprId reached_count, TypeId part, TypeId driver_type)
+    -> Expr {
   return Expr{
       .data =
           CallExpr{
               .callee =
                   Direct{
                       .target = support::BuiltinFn::kAttachDriver,
-                      .receiver = net},
-              .arguments = {strength}},
+                      .receiver = net,
+                      .type_arguments = {part}},
+              .arguments =
+                  {strength, first, count, reached_first, reached_count}},
       .type = driver_type};
 }
 
-// `driver.DriveFrom(object)` -- states that what a driver gives is the whole of
-// `object`, a borrowed pointer to a variable's cell or to a net; `entry` says
-// which of the two it is.
+// Attaches the one driver of a net of a nettype with no resolution function,
+// which has no strength levels (LRM 6.6.7, 28.12), and yields the driver
+// handle.
+[[nodiscard]] inline auto MakeNetAttachWholeDriverCallExpr(
+    ExprId net, TypeId driver_type) -> Expr {
+  return Expr{
+      .data =
+          CallExpr{
+              .callee =
+                  Direct{
+                      .target = support::BuiltinFn::kAttachWholeDriver,
+                      .receiver = net},
+              .arguments = {}},
+      .type = driver_type};
+}
+
+// `net.DriveFrom(object)` -- states that what the net's driver of the whole of
+// it gives is the whole of `object`, a borrowed pointer to a variable's cell,
+// to another net or to a reference; `entry` says which it is.
 [[nodiscard]] inline auto MakeDriveFromCallExpr(
-    ExprId driver, ExprId object, support::BuiltinFn entry, TypeId void_type)
+    ExprId net, ExprId object, support::BuiltinFn entry, TypeId void_type)
     -> Expr {
   return Expr{
       .data =
           CallExpr{
-              .callee = Direct{.target = entry, .receiver = driver},
+              .callee = Direct{.target = entry, .receiver = net},
               .arguments = {object}},
       .type = void_type};
 }
 
-// `driver.ShowSource()` -- the driver's turn at time zero, yielding whether its
-// net shows the object the driver carries from here on.
-[[nodiscard]] inline auto MakeShowSourceCallExpr(
-    ExprId driver, TypeId bool_type) -> Expr {
+// `net.ShowSource()` -- the turn of the driver of the whole of `net` at time
+// zero, yielding whether the net shows the object that driver carries from
+// here on.
+[[nodiscard]] inline auto MakeShowSourceCallExpr(ExprId net, TypeId bool_type)
+    -> Expr {
   return Expr{
       .data =
           CallExpr{
               .callee =
                   Direct{
                       .target = support::BuiltinFn::kShowSource,
-                      .receiver = driver},
+                      .receiver = net},
               .arguments = {}},
       .type = bool_type};
 }
 
+// One side of a join: where its positions start in its net, and the run of
+// the part it names that the net has, outside which it joins nothing (LRM
+// 7.4.5, 11.5.1).
+struct NetJoinSide {
+  ExprId position;
+  ExprId reached_first;
+  ExprId reached_count;
+};
+
 // `net.Join(other, here, there, width)` -- states that `width` positions of
-// `net` starting at `here`, and the same many of `other` starting at `there`,
-// are one physical net whose contributions resolve together (LRM 23.3.3.7,
+// `net` starting at `here.position`, and the same many of `other` starting at
+// `there.position`, of which only those both sides' runs reach are joined, are
+// one physical net whose contributions resolve together (LRM 23.3.3.7,
 // 10.11). `other` is a borrowed pointer to the net on the other side, since
 // what crosses is that net itself and not its value; the positions are counted
 // from each value's least significant one. A connection naming a whole net on
@@ -1043,15 +1075,18 @@ struct Expr {
 // shape for one. The two sides are interchangeable, with their positions:
 // a connection that states this states no direction.
 [[nodiscard]] inline auto MakeNetJoinCallExpr(
-    ExprId net, ExprId other, ExprId here, ExprId there, ExprId width,
-    TypeId void_type) -> Expr {
+    ExprId net, ExprId other, const NetJoinSide& here, const NetJoinSide& there,
+    ExprId width, TypeId void_type) -> Expr {
   return Expr{
       .data =
           CallExpr{
               .callee =
                   Direct{
                       .target = support::BuiltinFn::kNetJoin, .receiver = net},
-              .arguments = {other, here, there, width}},
+              .arguments =
+                  {other, here.position, there.position, width,
+                   here.reached_first, here.reached_count, there.reached_first,
+                   there.reached_count}},
       .type = void_type};
 }
 

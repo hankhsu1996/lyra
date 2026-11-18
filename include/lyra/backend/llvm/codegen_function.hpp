@@ -290,11 +290,11 @@ class CodeGenFunction {
   auto LowerProduct(
       const lir::ProductInstr& product, lir::TypeId result_type,
       llvm::Value* out) -> diag::Result<llvm::Value*>;
-  // A union laid out in place: its storage zeroed, the member it holds built
-  // at its start, and a tagged union's tag stored after its members.
-  auto LowerUnion(
-      const lir::UnionInstr& built, lir::TypeId result_type, llvm::Value* out)
-      -> diag::Result<llvm::Value*>;
+  // A tagged union laid out in place: its storage zeroed, the member it holds
+  // built at its start, and its tag stored after its members.
+  auto LowerTaggedUnion(
+      const lir::TaggedUnionInstr& built, lir::TypeId result_type,
+      llvm::Value* out) -> diag::Result<llvm::Value*>;
   auto LowerVectorGet(const lir::VectorGetInstr& get)
       -> diag::Result<llvm::Value*>;
   auto LowerDiscriminant(
@@ -304,12 +304,6 @@ class CodeGenFunction {
   // itself, or the address of one laid out by its type.
   auto LoadPlace(const lir::Place& place, lir::TypeId result_type)
       -> diag::Result<llvm::Value*>;
-  // A load through a member of an untagged union, whose bits may be another
-  // member's (LRM 7.3.2): the value copied into `out` and every position its
-  // type keeps clear cleared there.
-  auto LowerOverlaidLoad(
-      const lir::OverlaidLoadInstr& load, lir::TypeId result_type,
-      llvm::Value* out) -> diag::Result<llvm::Value*>;
   auto LowerStore(const lir::StoreInstr& store) -> diag::Result<llvm::Value*>;
   auto LowerUse(const lir::UseInstr& use, const DestinationRef& destination)
       -> diag::Result<llvm::Value*>;

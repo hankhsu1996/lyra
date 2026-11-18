@@ -70,10 +70,11 @@ struct ToldTypeMetadataAhead {};
 // made, as an entry building the empty container of that type is told it, so
 // it holds one from then on (LRM 7.5, 7.8, 7.10).
 struct ToldContainerTypeAhead {};
-// A net of a value laid out by its type is told that type and how a net folds
-// values of it, ahead of whatever it takes where it is made, since the net is
-// the one holder that folds one value into another (LRM 6.6).
-struct ToldTypeAndNetFoldsAhead {};
+// A net of a value laid out by its type is told that type and how its
+// positions are read and written, ahead of whatever it takes where it is made,
+// since the net is the one holder that resolves a value's positions (LRM
+// 6.6.7).
+struct ToldTypeAndNetWitnessesAhead {};
 // A tuple, a union and a fixed-size unpacked array are their bytes laid out by
 // their type and nothing more, so a realization for one is told that type,
 // after its operands, once however many values of it it takes or builds, as a
@@ -99,7 +100,7 @@ struct ToldTakePositions {};
 struct ToldOperations {};
 using Told = std::variant<
     ToldNothing, ToldWidthMetadata, ToldWidthMetadataAhead,
-    ToldTypeMetadataAhead, ToldContainerTypeAhead, ToldTypeAndNetFoldsAhead,
+    ToldTypeMetadataAhead, ToldContainerTypeAhead, ToldTypeAndNetWitnessesAhead,
     ToldLaidOutType, ToldKeyType, ToldEntryType, ToldTakePositions,
     ToldOperations>;
 
@@ -137,8 +138,8 @@ struct NamedByResult {
 
 // The domains one capability wrapper defines an access for that are told the
 // same thing. A wrapper an access states none for does not define it: a net's
-// value is the fold of its drivers, so it takes no store and no write (LRM
-// 6.5), and its install names the fold it resolves under; a driver and a
+// value is what its drivers determine, so it takes no store and no write (LRM
+// 6.5), and its install names how it resolves them; a driver and a
 // reference install nothing, the storage each names having been installed
 // where it was declared; and what a time slot moved away from is retained
 // only where a variable holds it (LRM 16.5.1).
@@ -160,9 +161,10 @@ struct NamedByWrapper {
 
 // The operation likewise acts on storage an argument reaches rather than on a
 // value it is handed, but its own name already says which storage -- attaching
-// a driver, which only a net does; filling, appending to and reading a sampled
-// value history -- so only the domain comes from the storage, and it is the
-// representation of the values that storage holds.
+// the one driver of an unresolved net, which only such a net does; filling,
+// appending to and reading a sampled value history -- so only the domain comes
+// from the storage, and it is the representation of the values that storage
+// holds.
 struct NamedByStorageDomain {
   std::span<const RealizedFor> realized;
 };

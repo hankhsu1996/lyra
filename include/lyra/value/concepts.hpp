@@ -124,63 +124,24 @@ concept WildcardComparable = LyraValue<T> && requires(const T& a, const T& b) {
 
 // LRM 6.7.1: a value a net may hold. The clause admits a 4-state integral type
 // or a fixed-size unpacked array / struct / union whose every element is itself
-// such a type, so a net is composed entirely of 4-state bits and combines per
-// bit. The recursion is what this concept states: an aggregate is
-// net-resolvable exactly when its elements are, and it answers every net
-// question by delegating to them. Each of the three truth tables folds one
-// driver's contribution into another -- tri-state, wired-and, and wired-or
-// (LRM 6.6.1 Table 6-2, LRM 6.6.3 Tables 6-3 and 6-4) -- and each is an
-// operation of its own, since which one a net asks is the net's state rather
-// than the value's; `Dominating` is what a stronger contribution does to a
-// weaker one: it determines every position it drives and leaves the rest (LRM
-// 28.12.1); and a value with every bit holding one scalar states both what a
-// net shows where nothing drives it and what its type contributes to its own
-// resolution (LRM 6.7.1). An integral type fixes how many bits that is, so it
-// answers `Filled` of the scalar alone; an aggregate's shape is a value's, so
-// it answers `FilledLike` a value of that shape. A dynamically sized container
-// is excluded by "fixed-size", and `String` / `Real` by "4-state bits".
-template <typename T>
-concept ShapedByAValue = requires(const T& a, const Logic& fill) {
-  { T::FilledLike(a, fill) } -> std::same_as<T>;
-};
-
+// such a type, so a net is composed entirely of 4-state bits and resolves per
+// bit (LRM 6.6.7), which the net does over positions with no type. An integral
+// value is its bits, a 2-state one taking an x or z it resolves to as 0 (LRM
+// 6.11.2). An aggregate numbers its positions part by part, answers
+// all of them as one integral value and has the ones a net resolved laid into
+// the parts they lie in, which is the recursion this concept states: an
+// aggregate is net-resolvable exactly when its elements are. A dynamically
+// sized container is excluded by "fixed-size", and `String` / `Real` by
+// "4-state bits".
 template <typename T>
 concept NetResolvable =
-    LyraValue<T> && (IntegralValue<T> || ShapedByAValue<T>) &&
-    requires(const T& a, const T& b) {
-      { a.ResolveTriState(b) } -> std::same_as<T>;
-      { a.ResolveWiredAnd(b) } -> std::same_as<T>;
-      { a.ResolveWiredOr(b) } -> std::same_as<T>;
-      { a.Dominating(b) } -> std::same_as<T>;
-    };
-
-// A value of `T` with every bit holding the scalar `fill` holds, shaped like
-// `prototype` where the type alone does not fix the shape.
-template <NetResolvable T, IntegralValue Fill>
-[[nodiscard]] constexpr auto FilledAs(const T& prototype, const Fill& fill)
-    -> T {
-  if constexpr (IntegralValue<T>) {
-    return T::Filled(fill.Lsb());
-  } else {
-    return T::FilledLike(prototype, fill);
-  }
-}
-
-// Two contributions folded under the table a net's type names. Which table
-// that is, is a value the running program holds, so it selects among the three
-// operations here, once, for every type a net may hold.
-template <NetResolvable T>
-[[nodiscard]] auto Resolve(NetResolution fold, const T& a, const T& b) -> T {
-  switch (fold) {
-    case NetResolution::kTriState:
-      return a.ResolveTriState(b);
-    case NetResolution::kWiredAnd:
-      return a.ResolveWiredAnd(b);
-    case NetResolution::kWiredOr:
-      return a.ResolveWiredOr(b);
-  }
-  std::unreachable();
-}
+    LyraValue<T> && (IntegralValue<T> ||
+                     requires(const T& a, T& b, const ConstIntegralView& in) {
+                       a.ToPositions();
+                       {
+                         b.WritePositions(in, std::int64_t{}, std::int64_t{})
+                       } -> std::same_as<bool>;
+                     });
 
 // LRM 11.4.11: where a conditional operator's condition is ambiguous it selects
 // neither arm, evaluates both, and combines them. A type made of parts that can

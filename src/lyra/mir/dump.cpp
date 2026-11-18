@@ -246,7 +246,7 @@ class MirDumper {
         FormatStateKind(integral.state_kind));
   }
 
-  static auto FormatTypeList(const std::vector<TypeId>& types) -> std::string {
+  static auto FormatTypeList(std::span<const TypeId> types) -> std::string {
     std::string out;
     for (const TypeId type : types) {
       if (!out.empty()) out += ", ";
@@ -499,6 +499,9 @@ class MirDumper {
             },
             [](const ResolvedType& r) -> std::string {
               return std::format("Resolved(value=Type[{}])", r.value.value);
+            },
+            [](const UnresolvedType& r) -> std::string {
+              return std::format("Unresolved(value=Type[{}])", r.value.value);
             },
             [](const DriverType& d) -> std::string {
               return std::format("Driver(value=Type[{}])", d.value.value);
@@ -854,9 +857,9 @@ class MirDumper {
               return std::format(
                   "CompositeExpr parts=[{}]", FormatExprList(c.parts));
             },
-            [](const UnionExpr& u) -> std::string {
+            [](const TaggedUnionExpr& u) -> std::string {
               return std::format(
-                  "UnionExpr member={} value=Expr[{}]", u.member.value,
+                  "TaggedUnionExpr member={} value=Expr[{}]", u.member.value,
                   u.value.value);
             },
             [](const AwaitExpr& a) -> std::string {
@@ -1123,12 +1126,14 @@ class MirDumper {
   void DumpRecord(RecordId id, const RecordDecl& decl) {
     Line(
         std::format(
-            R"({} (#{}) "{}"{} elems=[{}])", RecordKindName(decl.kind),
-            id.value, support::DisplayOf(decl.path),
+            R"({} (#{}) "{}"{} elems=[{}] members=[{}])",
+            RecordKindName(KindOf(decl)), id.value,
+            support::DisplayOf(decl.path),
             decl.defining_unit.has_value()
                 ? std::format(" of {}", *decl.defining_unit)
                 : std::string{},
-            FormatTypeList(decl.elements)));
+            FormatTypeList(ComponentsOf(decl)),
+            FormatTypeList(MembersOf(decl))));
     Indent();
     for (const CallableId method : unit_->RecordMethodsOf(id)) {
       const CallableCode& code = unit_->callables.Get(method).code;

@@ -61,10 +61,10 @@ struct UnpackedStructDefinition {
   auto operator==(const UnpackedStructDefinition&) const -> bool = default;
 };
 
-// What an unpacked union declares (LRM 7.3): the members its storage overlays,
-// and whether it is tagged (LRM 7.3.2) -- carrying a tag naming the member it
-// holds, which may then be `void` -- or the untagged form read through any
-// member.
+// What an unpacked union declares (LRM 7.3): the members its one storage is
+// read and written through, and whether it is tagged (LRM 7.3.2) -- carrying a
+// tag naming the member it holds, which may then be `void` -- or the untagged
+// form read through any member.
 struct UnpackedUnionDefinition {
   std::vector<UnpackedAggregateField> fields;
   bool tagged = false;

@@ -12,6 +12,7 @@ base and the projections may denote something different in between; that is why 
 bind may carry a coordinate into a container. `architecture/lir.md` owns the vocabulary -- member
 and dereference steps, element and component steps into a part of storage, with no slice step -- and
 address-of is the one operation that turns a path into something the program can retain, never past
-a step into a union's member, which has no identity of its own. In MIR a place is an expression
-whose node kind names storage -- a variable, a dereference, a field step -- and it states the kind
-of storage it names (`architecture/mir.md` invariant 16); MIR-to-LIR turns it into the path.
+a step into a tagged union's member, which has no identity of its own; an untagged union's member is
+no step at all, but a view of the union's one storage. In MIR a place is an expression whose node
+kind names storage -- a variable, a dereference, a field step -- and it states the kind of storage
+it names (`architecture/mir.md` invariant 16); MIR-to-LIR turns it into the path.

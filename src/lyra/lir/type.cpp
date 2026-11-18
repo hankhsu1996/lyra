@@ -149,6 +149,7 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
           [&](const TupleType& t) { Combine(seed, t.elements); },
           [&](const RecordType& t) { Combine(seed, t.declaration.value); },
           [&](const ResolvedType& t) { Combine(seed, t.value); },
+          [&](const UnresolvedType& t) { Combine(seed, t.value); },
           [&](const DriverType& t) { Combine(seed, t.value); },
           [&](const ObservableType& t) { Combine(seed, t.value); },
           [&](const OpenWriteType& t) { Combine(seed, t.value); },
@@ -197,7 +198,8 @@ auto Type::KindName() const -> std::string_view {
           [](const UnmanagedRefType&) -> Name { return "unmanaged reference"; },
           [](const VectorType&) -> Name { return "vector"; },
           [](const TupleType&) -> Name { return "tuple"; },
-          [](const ResolvedType&) -> Name { return "net resolution node"; },
+          [](const ResolvedType&) -> Name { return "resolved net"; },
+          [](const UnresolvedType&) -> Name { return "unresolved net"; },
           [](const DriverType&) -> Name { return "net driver"; },
           [](const ObservableType&) -> Name { return "observable cell"; },
           [](const OpenWriteType&) -> Name { return "open write"; },
@@ -246,6 +248,7 @@ auto Type::Declaration() const -> std::optional<TypeDeclaration> {
           // declaration is behind is whatever it stands for.
           [&](const ObservableType&) { return names_none(); },
           [&](const ResolvedType&) { return names_none(); },
+          [&](const UnresolvedType&) { return names_none(); },
           [&](const DriverType&) { return names_none(); },
           [&](const OpenWriteType&) { return names_none(); },
           [&](const DesignationType&) { return names_none(); },
@@ -299,6 +302,7 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           // the sequence, where there is one, belongs to the value kept.
           [](const ObservableType&) -> Element { return std::nullopt; },
           [](const ResolvedType&) -> Element { return std::nullopt; },
+          [](const UnresolvedType&) -> Element { return std::nullopt; },
           [](const DriverType&) -> Element { return std::nullopt; },
           [](const OpenWriteType&) -> Element { return std::nullopt; },
           [](const DesignationType&) -> Element { return std::nullopt; },
@@ -357,6 +361,9 @@ auto Type::DerefTarget() const -> std::optional<TypeId> {
   if (const auto* resolved = As<ResolvedType>()) {
     return resolved->value;
   }
+  if (const auto* unresolved = As<UnresolvedType>()) {
+    return unresolved->value;
+  }
   if (const auto* driver = As<DriverType>()) {
     return driver->value;
   }
@@ -367,7 +374,7 @@ auto Type::IsAddressOnly() const -> bool {
   if (const auto* library = As<LibraryType>()) {
     return support::IsAddressOnly(library->decl);
   }
-  return Is<ObservableType>() || Is<ResolvedType>() || Is<ObjectType>();
+  return Is<ObservableType>() || IsNet() || Is<ObjectType>();
 }
 
 auto Type::HeldAs() const -> std::optional<Holding> {
@@ -451,6 +458,7 @@ auto Type::HeldAs() const -> std::optional<Holding> {
           [](const ObjectType&) -> Held { return std::nullopt; },
           [](const ObservableType&) -> Held { return std::nullopt; },
           [](const ResolvedType&) -> Held { return std::nullopt; },
+          [](const UnresolvedType&) -> Held { return std::nullopt; },
           [](const DriverType&) -> Held { return std::nullopt; },
           [](const VectorType&) -> Held { return std::nullopt; },
           // A body in flight is taken by whoever drives it, the moment it is

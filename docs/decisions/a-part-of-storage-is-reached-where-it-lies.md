@@ -36,8 +36,10 @@ there.**
 - **Which parts are storage is the language's fact, stated once per value domain.** An element of an
   unpacked array, a dynamic array, a queue or an associative array, and a member of an unpacked
   structure, are storage (LRM 7.2, 7.4, 7.8, 7.10). A bit or slice of a packed value and a character
-  of a string are parts of their whole's value, reached by its own operations. A member of a union
-  has no identity of its own and is still reached in place, at the union's own start
+  of a string are parts of their whole's value, reached by its own operations. A member of a tagged
+  union has no identity of its own and is still reached in place, at the union's own start, and a
+  member of an untagged union is a view of the union's storage, read as the bits it takes and
+  written by a store of them
   ([a-union-is-one-storage-its-members-overlay](a-union-is-one-storage-its-members-overlay.md)).
   None of them is written by rebuilding its whole. Bits of a packed value that lies at a place are
   written where they lie ([a-packed-value-is-its-words](a-packed-value-is-its-words.md) D3), on the
@@ -65,9 +67,9 @@ there.**
   the end of one object and the start of another, so storage that names the part goes on naming it
   (LRM 7.6).
 - **A method that changes its receiver changes it where it lies.** Push, pop, insert, delete, sort,
-  `putc` and a shift-assign each act on the storage the receiver names. A receiver another member of
-  a union overlays is read out, changed and written back, so what lands holds what its type
-  requires.
+  `putc` and a shift-assign each act on the storage the receiver names. A receiver that is a member
+  of an untagged union, a view of its storage, is read out, changed and written back as the bits it
+  takes.
 - **A value no place holds is given one.** A part of a call's result is reached in a frame slot the
   value is bound to for the rest of the full-expression, which is how a C++ temporary gets an
   address.

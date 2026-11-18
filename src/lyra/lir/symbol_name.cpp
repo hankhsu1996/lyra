@@ -425,6 +425,10 @@ void SpellType(const CompilationUnit& unit, TypeId type, std::string& out) {
             kind('n');
             of(t.value);
           },
+          [&](const UnresolvedType& t) {
+            kind('g');
+            of(t.value);
+          },
           [&](const DriverType& t) {
             kind('j');
             of(t.value);

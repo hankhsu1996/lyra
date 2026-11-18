@@ -35,7 +35,10 @@ namespace lyra::mir {
 [[nodiscard]] auto BuildMachineCount(
     const CompilationUnit& unit, Builder block, std::uint64_t count) -> ExprId;
 
-// A machine integer `op` makes of two machine integers.
+// A machine integer `op` makes of two machine integers. Where both are
+// literals and `op` is arithmetic the machine does without failing -- a sum, a
+// difference, a product, each wrapping as the machine's does -- the answer is
+// the literal the operation makes.
 [[nodiscard]] auto BuildMachineIntBinary(
     const CompilationUnit& unit, Builder block, BinaryOp op, ExprId lhs,
     ExprId rhs) -> ExprId;
@@ -47,16 +50,27 @@ void AppendRunTimeCheck(
     std::string message);
 
 // Whether the comparison `op` holds of two machine integers, as a machine
-// boolean.
+// boolean: a literal where both are.
 [[nodiscard]] auto BuildMachineIntComparison(
     const CompilationUnit& unit, Builder block, BinaryOp op, ExprId lhs,
     ExprId rhs) -> ExprId;
 
 // `then_value` where the machine boolean `condition` holds and `else_value`
-// otherwise, both machine integers.
+// otherwise, both machine integers; where `condition` is a literal, the arm it
+// picks.
 [[nodiscard]] auto BuildMachineIntConditional(
     const CompilationUnit& unit, Builder block, ExprId condition,
     ExprId then_value, ExprId else_value) -> ExprId;
+
+// The greater of two machine integers, and the lesser. Each is read where it
+// is compared and where it is the answer, so each is one that evaluates
+// nothing -- a literal, or a value held in a local and read.
+[[nodiscard]] auto BuildMachineIntMax(
+    const CompilationUnit& unit, Builder block, ExprId lhs, ExprId rhs)
+    -> ExprId;
+[[nodiscard]] auto BuildMachineIntMin(
+    const CompilationUnit& unit, Builder block, ExprId lhs, ExprId rhs)
+    -> ExprId;
 
 // A declared range as whichever layer states one: its left bound and its
 // right.

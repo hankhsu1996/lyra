@@ -1,6 +1,5 @@
 #include "lyra/backend/llvm/codegen_types.hpp"
 
-#include <algorithm>
 #include <cstddef>
 #include <optional>
 #include <ranges>
@@ -125,6 +124,7 @@ auto CodeGenTypes::Map(lir::TypeId id) -> llvm::Type* {
           [&](const lir::ErasedCallableType& t) { return address(t); },
           [&](const lir::ObservableType& t) { return address(t); },
           [&](const lir::ResolvedType& t) { return address(t); },
+          [&](const lir::UnresolvedType& t) { return address(t); },
           [&](const lir::OpenWriteType& t) { return address(t); },
           [&](const lir::DesignationType& t) { return address(t); },
           [&](const lir::ObjectWriteType& t) { return address(t); },
@@ -166,7 +166,7 @@ auto CodeGenTypes::GetFunctionType(const LlvmFnAbi& abi)
     -> llvm::FunctionType* {
   // What an entry is told of a type crosses as machine values of its own: a
   // width as a count, a signedness and a state domain as a flag each, and the
-  // constant of a type, of its operations or of how a net folds values of it,
+  // constant of a type, of its operations or of what a net asks of it,
   // and the function taking some of a value's positions, as its address.
   llvm::Type* const count = llvm::Type::getInt64Ty(*ctx_);
   llvm::Type* const flag = llvm::Type::getInt1Ty(*ctx_);
@@ -190,7 +190,7 @@ auto CodeGenTypes::GetFunctionType(const LlvmFnAbi& abi)
       Overloaded{
           [](const NoImplicitArg&) {},
           [&](const WidthMetadataArg&) { params.push_back(count); },
-          [&](const TypeAndNetFoldsArg&) {
+          [&](const TypeAndNetWitnessesArg&) {
             params.push_back(ptr_ty_);
             params.push_back(ptr_ty_);
           },
@@ -319,7 +319,7 @@ auto CodeGenTypes::LayoutOf(lir::TypeId type) -> support::ObjectLayout {
                       return product->storage;
                     },
                     [](const ArrayLayout* array) { return array->storage; },
-                    [](const UnionLayout* overlay) {
+                    [](const TaggedUnionFields* overlay) {
                       return overlay->storage;
                     }},
                 FieldsOf(type));
@@ -348,9 +348,8 @@ auto CodeGenTypes::FieldsOf(lir::TypeId laid_out) -> FieldsShape {
   switch (lir::RecordKindOf(*unit_, *record)) {
     case lir::RecordKind::kStruct:
       return &LayoutOfProduct(laid_out);
-    case lir::RecordKind::kUnion:
     case lir::RecordKind::kTaggedUnion:
-      return &LayoutOfUnion(laid_out);
+      return &LayoutOfTaggedUnion(laid_out);
   }
   throw InternalError("llvm codegen: unknown record kind");
 }
@@ -408,45 +407,36 @@ auto CodeGenTypes::LayoutOfArray(lir::TypeId array) -> const ArrayLayout& {
       .first->second;
 }
 
-auto CodeGenTypes::LayoutOfUnion(lir::TypeId union_type) -> const UnionLayout& {
-  if (const auto found = unions_.find(union_type); found != unions_.end()) {
+auto CodeGenTypes::LayoutOfTaggedUnion(lir::TypeId tagged_union)
+    -> const TaggedUnionFields& {
+  if (const auto found = tagged_unions_.find(tagged_union);
+      found != tagged_unions_.end()) {
     return found->second;
   }
   const std::optional<std::span<const lir::TypeId>> members =
-      lir::OverlaidMembers(*unit_, union_type);
+      lir::OverlaidMembers(*unit_, tagged_union);
   if (!members.has_value()) {
     throw InternalError(
-        "llvm codegen: a union layout asked of a type that is no union");
+        "llvm codegen: a tagged union's layout asked of a type that is no "
+        "tagged "
+        "union");
   }
-  const support::Layout overlay = OverlayOf(*members);
-  std::optional<value::TagPlacement> tag;
-  support::Layout whole = overlay;
-  if (lir::IsTaggedUnion(*unit_, union_type)) {
-    const value::TaggedUnionLayout tagged =
-        value::TaggedUnionLayoutOf(overlay, members->size());
-    tag = tagged.tag;
-    whole = tagged.whole;
-  }
-  return unions_
+  const value::TaggedUnionLayout tagged =
+      value::TaggedUnionLayoutOf(OverlayOf(*members), members->size());
+  return tagged_unions_
       .emplace(
-          union_type,
-          UnionLayout{
+          tagged_union,
+          TaggedUnionFields{
               .members = {members->begin(), members->end()},
-              .tag = tag,
+              .tag = tagged.tag,
               .storage =
-                  {.layout = whole,
-                   .needs_end = lir::NeedsEnd(*unit_, union_type)}})
+                  {.layout = tagged.whole,
+                   .needs_end = lir::NeedsEnd(*unit_, tagged_union)}})
       .first->second;
 }
 
 auto CodeGenTypes::TagOf(lir::TypeId tagged) -> value::TagPlacement {
-  const std::optional<value::TagPlacement> tag = LayoutOfUnion(tagged).tag;
-  if (!tag.has_value()) {
-    throw InternalError(
-        "llvm codegen: a tag's placement asked of a type that is no tagged "
-        "union");
-  }
-  return *tag;
+  return LayoutOfTaggedUnion(tagged).tag;
 }
 
 auto CodeGenTypes::OverlayOf(std::span<const lir::TypeId> members)
@@ -455,32 +445,6 @@ auto CodeGenTypes::OverlayOf(std::span<const lir::TypeId> members)
       members | std::views::transform([&](lir::TypeId member) {
         return LayoutOf(member).layout;
       }));
-}
-
-auto CodeGenTypes::KeepsAboveWidthsClear(lir::TypeId type) const -> bool {
-  if (const std::optional<value::IntegralShape> shape = IntegralShapeOf(type)) {
-    return shape->width != value::PlaneBytesFor(shape->width) * 8;
-  }
-  const lir::Type& stated = unit_->types.Get(type);
-  if (const auto* array = stated.As<lir::UnpackedArrayType>()) {
-    return KeepsAboveWidthsClear(array->element_type);
-  }
-  const std::optional<lir::RecordKind> kind = lir::RecordKindOf(*unit_, type);
-  if (kind.has_value()) {
-    switch (*kind) {
-      case lir::RecordKind::kStruct:
-      case lir::RecordKind::kTaggedUnion:
-        break;
-      case lir::RecordKind::kUnion:
-        return false;
-    }
-  }
-  const std::optional<std::span<const lir::TypeId>> parts =
-      lir::ComponentTypes(*unit_, type);
-  return parts.has_value() &&
-         std::ranges::any_of(*parts, [&](lir::TypeId part) {
-           return KeepsAboveWidthsClear(part);
-         });
 }
 
 auto CodeGenTypes::LayoutOfProduct(lir::TypeId product)

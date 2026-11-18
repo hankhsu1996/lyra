@@ -196,6 +196,12 @@ enum class LibraryDecl : std::uint8_t {
   kValueSerializer,
   kSubscriber,
 
+  // Some positions of a net's value, borrowed for the one call they are handed
+  // to: four-state bits read where they lie. A net resolves positions with no
+  // type, and a value of an unpacked type takes some of them into its own
+  // parts through this (LRM 6.7.1, 6.6.7).
+  kPositionsRead,
+
   // The classes of the runtime's whose objects generated code reaches but
   // never lays out: the scope an instance of the design hierarchy is (LRM
   // 23.3), the root every object the program makes starts with, the part an
@@ -1062,6 +1068,11 @@ constexpr auto FindDeclaration(LibraryDecl decl) -> const LibraryDeclData* {
       static constexpr LibraryDeclData kSubscriber =
           kFacility("subscriber", "lyra::runtime::Subscriber&");
       return &kSubscriber;
+    }
+    case LibraryDecl::kPositionsRead: {
+      static constexpr LibraryDeclData kPositionsRead =
+          kFacility("positions read", "const lyra::value::ConstIntegralView&");
+      return &kPositionsRead;
     }
 
     case LibraryDecl::kScope: {

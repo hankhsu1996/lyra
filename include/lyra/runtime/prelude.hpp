@@ -98,6 +98,5 @@
 #include "lyra/value/string.hpp"                    // IWYU pragma: keep
 #include "lyra/value/tagged_union.hpp"              // IWYU pragma: keep
 #include "lyra/value/tuple.hpp"                     // IWYU pragma: keep
-#include "lyra/value/union.hpp"                     // IWYU pragma: keep
 #include "lyra/value/unmanaged_ref.hpp"             // IWYU pragma: keep
 #include "lyra/value/unpacked_array.hpp"            // IWYU pragma: keep

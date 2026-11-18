@@ -56,7 +56,6 @@
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/sampled_history.hpp"
-#include "lyra/lowering/hir_to_mir/select_position.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
@@ -67,6 +66,7 @@
 #include "lyra/lowering/hir_to_mir/unit_object_access.hpp"
 #include "lyra/lowering/hir_to_mir/value_operations.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
+#include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/builder.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_ref.hpp"
@@ -1357,59 +1357,72 @@ auto InstallInterfacePortConnection(
   return {};
 }
 
-// The positions one operand of a join's side names: the part of a net the
-// source wrote, as a path that evaluates nothing, and where among that part's
-// positions they start and how many there are. Positions that meet several of
-// the side beside them, or that stand between two sides, are named at each
-// place they meet one, which a path that evaluates nothing may be.
-struct JoinedPositions {
+// What one operand of a join's side names: the part of a net the source wrote,
+// as a path that evaluates nothing, and how many positions it has. Positions
+// that meet several of the side beside them, or that stand between two sides,
+// are named at each place they meet one, which a path that evaluates nothing
+// may be.
+struct JoinedPart {
   AccessPath part;
-  std::uint32_t offset = 0;
   std::uint32_t width = 0;
 };
 
-// The positions one side of a join names, operand by operand, each with what
-// reaching its part computes evaluated in the frame's block, once.
+// The parts one side of a join names, operand by operand, each counted and
+// with what reaching it computes evaluated in the frame's block, once.
 auto JoinedSideOf(
     const StructuralScopeLowerer& lowerer, WalkFrame resolve_frame,
-    const hir::NetSide& side) -> diag::Result<std::vector<JoinedPositions>> {
-  std::vector<JoinedPositions> operands;
+    const hir::NetSide& side) -> diag::Result<std::vector<JoinedPart>> {
+  std::vector<JoinedPart> operands;
   operands.reserve(side.size());
-  for (const hir::NetPositions& operand : side) {
+  const mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  for (const hir::ExprId operand : side) {
     auto named = lowerer.LowerAccessPath(
-        lowerer.HirScope().exprs.Get(operand.part), resolve_frame);
+        lowerer.HirScope().exprs.Get(operand), resolve_frame);
     if (!named) return std::unexpected(std::move(named.error()));
-    operands.push_back(
-        JoinedPositions{
-            .part = Settled(
-                lowerer.Owner().Unit(), resolve_frame, *std::move(named)),
-            .offset = operand.offset,
-            .width = operand.width});
+    AccessPath part = Settled(unit, resolve_frame, *std::move(named));
+    // A net no net type resolves holds its value whole rather than as positions
+    // a resolution folds, so a connection or an alias reaching one is not yet
+    // carried out (LRM 6.6.7).
+    if (unit.types.Get(resolve_frame.Builder().Get(OwnerPlace(part)).type)
+            .Is<mir::UnresolvedType>()) {
+      return diag::Fail(
+          resolve_frame.Builder().Span(),
+          diag::DiagCode::kUnsupportedPortConnectionForm,
+          "a connection or an alias reaching a net whose data type no net "
+          "type resolves is not yet supported");
+    }
+    // Every position of the part takes part, as many as its type numbers
+    // (LRM 6.7.1).
+    const auto width = static_cast<std::uint32_t>(PositionCountOf(
+        unit, PathValueType(unit, resolve_frame.Builder().Body(), part)));
+    operands.push_back(JoinedPart{.part = std::move(part), .width = width});
   }
   return operands;
 }
 
-// The position within its net that lies `offset` positions into the part
-// `operand` names.
-auto PositionWithinNet(
-    mir::CompilationUnit& unit, mir::Builder block,
-    const JoinedPositions& operand, std::uint32_t offset) -> mir::ExprId {
-  const PathPositions within = BitsWithinOwner(unit, block, operand.part);
-  return BuildToInt64Call(
-      unit, block,
-      BuildPositionSum(
-          unit, block, within.first,
-          BuildConstantPosition(
-              unit, block, static_cast<std::int64_t>(offset))));
+// One side of a coupling: the position within its net that lies `offset`
+// positions into the part `operand` names, and the run of the part the net
+// has.
+auto JoinSideAt(
+    mir::CompilationUnit& unit, const WalkFrame& frame,
+    const JoinedPart& operand, std::uint32_t offset) -> mir::NetJoinSide {
+  mir::Builder block = frame.Builder();
+  const PositionsOfPart within = PositionsWithinNet(unit, frame, operand.part);
+  return mir::NetJoinSide{
+      .position = mir::BuildMachineIntBinary(
+          unit, block, mir::BinaryOp::kAdd, within.first,
+          mir::BuildMachineIntLiteral(unit, block, std::int64_t{offset})),
+      .reached_first = within.reached_first,
+      .reached_count = within.reached_count};
 }
 
 // Equally many positions of two operands that one construct places in the same
 // resolution: where the shared positions start in the part each operand names,
 // and how many there are.
 struct Coupling {
-  const JoinedPositions* here = nullptr;
+  const JoinedPart* here = nullptr;
   std::uint32_t here_offset = 0;
-  const JoinedPositions* there = nullptr;
+  const JoinedPart* there = nullptr;
   std::uint32_t there_offset = 0;
   std::uint32_t width = 0;
 };
@@ -1419,26 +1432,26 @@ struct Coupling {
 // so correspondence goes position-wise from the most significant end. The two
 // sides' operands need not fall at the same boundaries, so each coupling is as
 // wide as the shorter of the two operands it stands between, and whichever side
-// it exhausts advances.
+// it exhausts advances. The two sides cover equally many positions.
 auto CoupleSides(
-    std::span<const JoinedPositions> left,
-    std::span<const JoinedPositions> right) -> std::vector<Coupling> {
+    std::span<const JoinedPart> left, std::span<const JoinedPart> right)
+    -> std::vector<Coupling> {
   std::vector<Coupling> couplings;
   std::size_t at_left = 0;
   std::size_t at_right = 0;
   std::uint32_t taken_left = 0;
   std::uint32_t taken_right = 0;
   while (at_left < left.size() && at_right < right.size()) {
-    const JoinedPositions& here = left[at_left];
-    const JoinedPositions& there = right[at_right];
+    const JoinedPart& here = left[at_left];
+    const JoinedPart& there = right[at_right];
     const std::uint32_t width =
         std::min(here.width - taken_left, there.width - taken_right);
     couplings.push_back(
         Coupling{
             .here = &here,
-            .here_offset = here.offset + here.width - taken_left - width,
+            .here_offset = here.width - taken_left - width,
             .there = &there,
-            .there_offset = there.offset + there.width - taken_right - width,
+            .there_offset = there.width - taken_right - width,
             .width = width});
     taken_left += width;
     taken_right += width;
@@ -1451,12 +1464,6 @@ auto CoupleSides(
       taken_right = 0;
     }
   }
-  if (at_left != left.size() || at_right != right.size()) {
-    throw InternalError(
-        "CoupleSides: the sides of one join cover the same number of "
-        "positions, which the front end requires of every construct that "
-        "forms an overlay");
-  }
   return couplings;
 }
 
@@ -1464,8 +1471,9 @@ auto CoupleSides(
 // say which of them the coupling reached, so what a backend meets is one call
 // with every operand stated.
 auto BuildNetJoinStmt(
-    mir::CompilationUnit& unit, mir::Builder block, const Coupling& coupling)
-    -> mir::Stmt {
+    mir::CompilationUnit& unit, const WalkFrame& frame,
+    const Coupling& coupling) -> mir::Stmt {
+  mir::Builder block = frame.Builder();
   const mir::ExprId other = OwnerPlace(coupling.there->part);
   const mir::TypeId net_ptr_type = unit.types.Intern(
       mir::Type{mir::PointerType{
@@ -1474,10 +1482,10 @@ auto BuildNetJoinStmt(
   const mir::ExprId here = OwnerPlace(coupling.here->part);
   const mir::ExprId there =
       block.Add(mir::MakeAddressOfExpr(other, net_ptr_type));
-  const mir::ExprId here_position =
-      PositionWithinNet(unit, block, *coupling.here, coupling.here_offset);
-  const mir::ExprId there_position =
-      PositionWithinNet(unit, block, *coupling.there, coupling.there_offset);
+  const mir::NetJoinSide here_side =
+      JoinSideAt(unit, frame, *coupling.here, coupling.here_offset);
+  const mir::NetJoinSide there_side =
+      JoinSideAt(unit, frame, *coupling.there, coupling.there_offset);
   const mir::ExprId width =
       mir::BuildMachineIntLiteral(unit, block, coupling.width);
   return mir::Stmt{
@@ -1485,7 +1493,7 @@ auto BuildNetJoinStmt(
       .data = mir::ExprStmt{
           .expr = block.Add(
               mir::MakeNetJoinCallExpr(
-                  here, there, here_position, there_position, width,
+                  here, there, here_side, there_side, width,
                   unit.builtins.void_type))}};
 }
 
@@ -1583,17 +1591,34 @@ auto InstallNetJoins(StructuralScopeLowerer& lowerer, WalkFrame resolve_frame)
   for (const hir::NetJoin& join : lowerer.HirScope().net_joins) {
     const WalkFrame joined = resolve_frame.WithSpan(join.span);
     mir::Builder block = joined.Builder();
-    std::vector<std::vector<JoinedPositions>> sides;
+    std::vector<std::vector<JoinedPart>> sides;
     sides.reserve(join.sides.size());
     for (const hir::NetSide& side : join.sides) {
       auto operands = JoinedSideOf(lowerer, joined, side);
       if (!operands) return std::unexpected(std::move(operands.error()));
       sides.push_back(*std::move(operands));
     }
+    // Every member of an alias is the same size (LRM 10.11), which the front
+    // end checks; an inout port may be connected to a net of another width
+    // (LRM 23.3.3.3), and the positions past the shorter side are not yet
+    // carried out.
+    const auto position_count = [](std::span<const JoinedPart> side) {
+      std::uint64_t count = 0;
+      for (const JoinedPart& operand : side) count += operand.width;
+      return count;
+    };
+    for (const std::vector<JoinedPart>& side : sides) {
+      if (position_count(side) != position_count(sides.front())) {
+        return diag::Fail(
+            block.Span(), diag::DiagCode::kUnsupportedPortConnectionForm,
+            "an inout port connected to a net of a different width is not "
+            "yet supported");
+      }
+    }
     for (std::size_t next = 1; next < sides.size(); ++next) {
       for (const Coupling& coupling :
            CoupleSides(sides[next - 1], sides[next])) {
-        block.AppendStmt(BuildNetJoinStmt(unit, block, coupling));
+        block.AppendStmt(BuildNetJoinStmt(unit, joined, coupling));
       }
     }
   }
@@ -3667,15 +3692,14 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
       const mir::ExprId net_target = ctor_block.Add(
           mir::MakeFieldAccessExpr(self_object(), cell, mir_field_type));
       const NetData data = [&] -> NetData {
-        if (value_ty.IsIntegral()) {
-          return IntegralNetData{};
+        if (!unit_lowerer.Unit()
+                 .types.Get(mir_field_type)
+                 .Is<mir::UnresolvedType>()) {
+          return ResolvedNetData{};
         }
-        const mir::ExprId prototype = ctor_block.Add(
-            BuildDefaultValueFromHir(unit_lowerer, ctor_block, d.type));
-        if (HasNetFolds(unit_lowerer.Unit(), mir_value_type)) {
-          return AggregateNetData{.prototype = prototype};
-        }
-        return UnresolvedNetData{.prototype = prototype};
+        return UnresolvedNetData{
+            .prototype = ctor_block.Add(
+                BuildDefaultValueFromHir(unit_lowerer, ctor_block, d.type))};
       }();
       ctor_block.AppendStmt(
           mir::Stmt{

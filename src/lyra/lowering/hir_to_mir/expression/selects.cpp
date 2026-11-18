@@ -984,7 +984,10 @@ auto LowerSelectStep(
 
 // The part `sel` names, on the path its base names. A queue's index may be
 // counted from the queue's own last index (LRM 7.10.1), so the queue is settled
-// before the select's own operands are lowered.
+// before the select's own operands are lowered. A select below a member of an
+// untagged union names positions of the union's storage, which a write reaches
+// by arithmetic on its index (LRM 7.3), so the path is settled where it is
+// named.
 template <ExprLowerer Lowerer, typename Select>
 auto LowerSelectExprPath(
     Lowerer& lowerer, WalkFrame frame, const Select& sel,
@@ -998,7 +1001,11 @@ auto LowerSelectExprPath(
       lowerer, queue.has_value() ? frame.WithSelectedQueue(&*queue) : frame,
       sel, result_type);
   if (!step) return std::unexpected(std::move(step.error()));
-  return DescendInto(*std::move(base), *std::move(step));
+  AccessPath path = DescendInto(*std::move(base), *std::move(step));
+  if (ReachesUnionMember(path)) {
+    return Settled(lowerer.Owner().Unit(), frame, std::move(path));
+  }
+  return path;
 }
 
 template <ExprLowerer Lowerer>

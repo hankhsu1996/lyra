@@ -7,7 +7,6 @@
 #include <type_traits>
 #include <utility>
 
-#include "lyra/value/clear_above_widths.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_words.hpp"
@@ -174,21 +173,6 @@ class Tuple {
       };
     });
     return std::ranges::any_of(kAsks, [&](Ask ask) { return ask(*this); });
-  }
-
-  // Each component's positions above its widths made clear, through a table
-  // of one entry per component rather than one expression over all of them.
-  void ClearAboveWidths() {
-    using Clear = void (*)(Tuple&);
-    static constexpr auto kClears =
-        []<std::size_t... I>(std::index_sequence<I...>) {
-          return std::array<Clear, sizeof...(I)>{+[](Tuple& product) {
-            lyra::value::ClearAboveWidths(product.template Component<I>());
-          }...};
-        }(std::index_sequence_for<Ts...>{});
-    for (const Clear clear : kClears) {
-      clear(*this);
-    }
   }
 
  private:

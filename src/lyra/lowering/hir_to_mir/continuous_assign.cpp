@@ -58,6 +58,20 @@ struct ClassField {
   mir::TypeId type;
 };
 
+// The driver a place of a net is written through. A driver of a net that
+// resolves its positions drives the positions its place names, and is given
+// the whole of that part each time as a value of `given`: the part itself
+// where it is integral, and its positions otherwise. The one driver of an
+// unresolved net is written where its place lies within the net's value.
+struct PositionsDrive {
+  ClassField driver;
+  mir::TypeId given;
+};
+struct WholeDrive {
+  ClassField driver;
+};
+using NetDrive = std::variant<PositionsDrive, WholeDrive>;
+
 auto AddField(mir::Class& mir_class, mir::TypeId type) -> ClassField {
   return ClassField{
       .field = mir_class.fields.Add(mir::FieldDecl{.type = type}),
@@ -83,14 +97,6 @@ void AppendAssign(
       mir::ExprStmt{
           .expr =
               block.Add(mir::MakeAssignExpr(unit.builtins, target, value))});
-}
-
-// Each place `lvalue` is made of, in the order the source wrote them.
-auto PlacesOf(const Lvalue& lvalue) -> std::vector<AccessPath> {
-  std::vector<AccessPath> places;
-  ForEachPlace(
-      lvalue, [&](const AccessPath& place) { places.push_back(place); });
-  return places;
 }
 
 // States to the variable `place` lies in that a continuous assignment drives
@@ -282,11 +288,10 @@ auto AppendArm(
 // 6.5): the assignment acquires a driver for it at Resolve and every store
 // re-roots onto that driver's contribution, so several assignments to one net
 // install independent drivers the net resolves. A place that names only part
-// of a net drives only that part, because the rest of its driver's
-// contribution stays at the resolution identity and keeps deferring to whoever
-// drives it. Every other place is written where it is named. A drive of a whole
-// net from the whole of an object of its type may find at its turn that the
-// net shows that object, and then ends there.
+// of a net drives only the positions that part is (LRM 6.6.7), which are all
+// its driver contributes to. Every other place is written where it is named. A
+// drive of a whole net from the whole of an object of its type may find at its
+// turn that the net shows that object, and then ends there.
 auto LowerContinuousAssign(
     const StructuralScopeLowerer& lowerer, const WalkFrame& ctor_frame,
     const WalkFrame& resolve_frame, const WalkFrame& init_frame,
@@ -338,40 +343,70 @@ auto LowerContinuousDrive(
   // in a field of the enclosing class, and a variable has none. The place's
   // root decides it: the source may have named a whole net or a part of one,
   // and a part of a net is still a net.
-  std::vector<std::optional<ClassField>> drivers;
-  // The driver of a whole net this drive gives the whole of an object to,
-  // which is told so as the design is built and asked at its turn whether its
-  // net shows that object.
-  std::optional<ClassField> carrying;
+  std::vector<std::optional<NetDrive>> drivers;
+  // Whether this drive gives the whole of a net the whole of an object, which
+  // the net is told as the design is built and asked at the drive's turn
+  // whether it shows that object.
+  bool carrying = false;
   {
     mir::Builder resolve_block = resolve_frame.Builder();
     auto named = destination(resolve_frame);
     if (!named) return std::unexpected(std::move(named.error()));
-    ForEachPlace(*named, [&](const AccessPath& place_path) {
+    for (const AccessPath& place_path :
+         PlacesWritten(unit, resolve_block, *named)) {
       // A property of an object is a variable's storage, never a net's, so
       // only a place can be a net.
       const auto* place = std::get_if<mir::ExprId>(&place_path.owner);
-      const auto* net = place == nullptr
-                            ? nullptr
-                            : unit.types.Get(resolve_block.Get(*place).type)
-                                  .As<mir::ResolvedType>();
-      if (net == nullptr) {
+      const mir::Type* holder =
+          place == nullptr ? nullptr
+                           : &unit.types.Get(resolve_block.Get(*place).type);
+      if (holder == nullptr || !holder->IsNet()) {
         drivers.emplace_back(std::nullopt);
-        return;
+        continue;
       }
-      const mir::ExprId cell = *place;
-      const ClassField driver = AddField(
-          *resolve_frame.current_class.cls,
-          unit.types.Intern(mir::Type{mir::DriverType{.value = net->value}}));
+      // The one driver of a net no net type resolves drives the whole of it,
+      // and may write part of it; such a net has no strength levels (LRM
+      // 6.6.7, 28.12).
+      if (const auto* unresolved = holder->As<mir::UnresolvedType>()) {
+        const ClassField driver = AddField(
+            *resolve_frame.current_class.cls,
+            unit.types.Intern(
+                mir::Type{mir::DriverType{.value = unresolved->value}}));
+        const mir::ExprId attach = resolve_block.Add(
+            mir::MakeNetAttachWholeDriverCallExpr(*place, driver.type));
+        AppendAssign(
+            unit, resolve_block,
+            FieldOfSelf(unit, resolve_frame, resolve_block, driver), attach);
+        drivers.emplace_back(WholeDrive{.driver = driver});
+        continue;
+      }
+      // The positions a place of a net names are fixed where the design is
+      // built, since a target selects only by constant expressions (LRM
+      // A.8.5), so they are stated once, as the driver attaches.
+      const AccessPath settled = Settled(unit, resolve_frame, place_path);
       const mir::ExprId strength =
           BuildStrengthOperand(unit, resolve_block, drive_strength);
+      const PositionsOfPart at =
+          PositionsWithinNet(unit, resolve_frame, settled);
+      const mir::TypeId part =
+          PathValueType(unit, resolve_block.Body(), settled);
+      const mir::TypeId given = unit.types.Get(part).IsIntegral()
+                                    ? part
+                                    : PositionsTypeOf(unit, part);
+      const ClassField driver = AddField(
+          *resolve_frame.current_class.cls,
+          unit.types.Intern(mir::Type{mir::DriverType{.value = given}}));
       const mir::ExprId attach = resolve_block.Add(
-          mir::MakeNetAttachDriverCallExpr(cell, strength, driver.type));
+          mir::MakeNetAttachDriverCallExpr(
+              OwnerPlace(settled), strength, at.first,
+              mir::BuildMachineIntLiteral(
+                  unit, resolve_block, static_cast<std::int64_t>(at.count)),
+              at.reached_first, at.reached_count, given, driver.type));
       AppendAssign(
           unit, resolve_block,
           FieldOfSelf(unit, resolve_frame, resolve_block, driver), attach);
-      drivers.emplace_back(driver);
-    });
+      drivers.emplace_back(PositionsDrive{.driver = driver, .given = given});
+    }
 
     // A drive carrying a delay gives what its source held a while ago, and so
     // does a program's own, which runs once the design has settled while what
@@ -394,17 +429,19 @@ auto LowerContinuousDrive(
           mir::Type{mir::PointerType{
               .pointee = resolve_block.Get(place).type,
               .ownership = mir::PointerOwnership::kBorrowed}});
-      carrying = drivers.front();
-      const mir::ExprId driver =
-          FieldOfSelf(unit, resolve_frame, resolve_block, *carrying);
+      carrying = true;
       const mir::ExprId object_address =
           resolve_block.Add(mir::MakeAddressOfExpr(place, pointer_type));
+      // The net named again, since its driver's attach took the place named
+      // first.
+      auto net = destination(resolve_frame);
+      if (!net) return std::unexpected(std::move(net.error()));
       resolve_block.AppendStmt(
           mir::ExprStmt{
               .expr = resolve_block.Add(
                   mir::MakeDriveFromCallExpr(
-                      driver, object_address, *carried,
-                      unit.builtins.void_type))});
+                      OwnerPlace(std::get<AccessPath>(net->form)),
+                      object_address, *carried, unit.builtins.void_type))});
     }
   }
 
@@ -419,9 +456,22 @@ auto LowerContinuousDrive(
     if (!shares) return std::unexpected(std::move(shares.error()));
     for (std::size_t i = 0; i < shares->size(); ++i) {
       Share& share = (*shares)[i];
-      const std::optional<ClassField>& driver = drivers[i];
-      if (driver.has_value()) {
-        share.place.owner = FieldOfSelf(unit, frame, block, *driver);
+      const std::optional<NetDrive>& drive = drivers[i];
+      if (drive.has_value()) {
+        std::visit(
+            Overloaded{
+                [&](const PositionsDrive& to) {
+                  share.place = AccessPath{
+                      .owner = FieldOfSelf(unit, frame, block, to.driver),
+                      .descent = {}};
+                  share.value =
+                      BuildToPositions(unit, block, share.value, to.given);
+                },
+                [&](const WholeDrive& to) {
+                  share.place.owner =
+                      FieldOfSelf(unit, frame, block, to.driver);
+                }},
+            *drive);
       }
       block.AppendStmt(
           mir::ExprStmt{
@@ -448,7 +498,8 @@ auto LowerContinuousDrive(
     mir::Builder init_block = init_frame.Builder();
     auto named = destination(init_frame);
     if (!named) return std::unexpected(std::move(named.error()));
-    const std::vector<AccessPath> places = PlacesOf(*named);
+    const std::vector<AccessPath> places =
+        PlacesWritten(unit, init_block, *named);
     for (std::size_t i = 0; i < places.size(); ++i) {
       if (drivers[i].has_value()) continue;
       init_block.AppendStmt(StateContinuousDriver(unit, init_block, places[i]));
@@ -573,14 +624,16 @@ auto LowerContinuousDrive(
 
   // A drive carrying the whole of an object first asks, at its turn, whether
   // its net now shows that object, which leaves it nothing to do.
-  if (carrying.has_value()) {
+  if (carrying) {
     mir::Builder entry = entry_frame.Builder();
+    auto named = destination(entry_frame);
+    if (!named) return std::unexpected(std::move(named.error()));
     mir::Block leave;
     mir::Builder leave_builder = entry.Into(leave);
     leave_builder.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
     const mir::ExprId shows = entry.Add(
         mir::MakeShowSourceCallExpr(
-            FieldOfSelf(unit, entry_frame, entry, *carrying),
+            OwnerPlace(std::get<AccessPath>(named->form)),
             unit.builtins.machine_bool));
     entry.AppendStmt(
         mir::IfStmt{

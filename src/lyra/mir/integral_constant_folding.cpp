@@ -101,10 +101,12 @@ auto AppliedOperand(
                                 : std::optional<value::IntegralOperand>(
                                       std::string_view(literal->value));
     }
-    // What a foreign call leaves behind exists only once the call has run.
+    // What a foreign call leaves behind exists only once the call has run, and
+    // what a net resolved only once it has.
     case IntegralOperandKind::kSvLogic:
     case IntegralOperandKind::kCanonicalBits:
     case IntegralOperandKind::kCanonicalLogic:
+    case IntegralOperandKind::kPositions:
       return std::nullopt;
   }
   throw InternalError("AppliedOperand: unknown integral operand kind");

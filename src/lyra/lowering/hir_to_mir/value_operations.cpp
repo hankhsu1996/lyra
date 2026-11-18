@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -78,15 +79,14 @@ auto EveryPart(
 }
 
 auto HasBitStream(const mir::CompilationUnit& unit, mir::TypeId type) -> bool;
-auto FoldsAsAPart(const mir::CompilationUnit& unit, mir::TypeId type) -> bool;
 
 // What a record of `kind` over `members` answers, which a record answers of
 // its members alone, so a declaration still being made answers it too. A
 // stream takes an untagged union as its first member and a tagged one not at
-// all (LRM 11.4.14.1); a net folds a structure or a union of what it folds,
-// where a net of a tagged union is refused before any method is stated, so no
-// tagged union states a net's folds; and comparing two untagged unions
-// compares their first members (LRM 7.3.2).
+// all (LRM 11.4.14.1); a net resolves a structure or an untagged union of
+// what it resolves, and no tagged union, which no net type's tables read; and
+// comparing two untagged unions compares their first members, as every
+// whole-value use of one reads it.
 auto HasBitStreamOver(
     const mir::CompilationUnit& unit, mir::RecordKind kind,
     std::span<const mir::TypeId> members) -> bool {
@@ -101,17 +101,40 @@ auto HasBitStreamOver(
   throw InternalError("HasBitStreamOver: unknown record kind");
 }
 
-auto HasNetFoldsOver(
+auto NetResolvesOver(
     const mir::CompilationUnit& unit, mir::RecordKind kind,
     std::span<const mir::TypeId> members) -> bool {
   switch (kind) {
     case mir::RecordKind::kStruct:
     case mir::RecordKind::kUnion:
-      return EveryPart(unit, members, FoldsAsAPart);
+      return EveryPart(unit, members, NetResolves);
     case mir::RecordKind::kTaggedUnion:
       return false;
   }
-  throw InternalError("HasNetFoldsOver: unknown record kind");
+  throw InternalError("NetResolvesOver: unknown record kind");
+}
+
+// How many positions the tag of a tagged union of `members` members takes:
+// the bits that count them (LRM 7.3.2).
+auto TagPositionsFor(std::size_t members) -> std::uint64_t {
+  return members <= 1 ? 0 : std::bit_width(members - 1);
+}
+
+// Whether every bit of a value of `type` is a fixed one: an integral value's,
+// a real's IEEE 754 bits (LRM 6.12), and a structure's, a union's or a
+// fixed-size array's made of such. A member of an untagged union is a view of
+// positions of these (LRM 7.3); a string, a handle and a container that grows
+// have none.
+auto HasPositions(const mir::CompilationUnit& unit, mir::TypeId type) -> bool {
+  const mir::Type& t = unit.types.Get(type);
+  if (t.IsIntegral() || t.Is<mir::RealType>()) {
+    return true;
+  }
+  if (mir::RecordKindOf(unit, type).has_value() ||
+      t.Is<mir::UnpackedArrayType>() || t.Is<mir::TupleType>()) {
+    return EveryPart(unit, PartTypes(unit, type), HasPositions);
+  }
+  return false;
 }
 
 auto EqualityAnswerOver(
@@ -164,12 +187,6 @@ auto EqualityAnswerType(const mir::CompilationUnit& unit, mir::TypeId type)
   return OneBitAnswerType(unit, PartTypes(unit, type));
 }
 
-// A net's own contribution is a value of its type every bit of which is one
-// fill (LRM 6.7.1).
-auto FillType(const mir::CompilationUnit& unit) -> mir::TypeId {
-  return mir::PackedVectorOf(unit.types, 1, mir::IntegralStateKind::kFourState);
-}
-
 auto CallOf(
     mir::Builder block, mir::Direct callee, std::vector<mir::ExprId> arguments,
     mir::TypeId result) -> mir::ExprId {
@@ -210,10 +227,9 @@ constexpr std::array kWholeValueEntries{
     support::BuiltinFn::kBitstreamWidth,  support::BuiltinFn::kCountBits,
     support::BuiltinFn::kToBitstream,     support::BuiltinFn::kFromBitstream,
     support::BuiltinFn::kToBitVec,        support::BuiltinFn::kFromBitVec,
-    support::BuiltinFn::kResolveTriState, support::BuiltinFn::kResolveWiredAnd,
-    support::BuiltinFn::kResolveWiredOr,  support::BuiltinFn::kDominating,
-    support::BuiltinFn::kFilledLike,      support::BuiltinFn::kPositionCount,
-    support::BuiltinFn::kTakePositions,
+    support::BuiltinFn::kPositionCount,   support::BuiltinFn::kTakePositions,
+    support::BuiltinFn::kToPositions,     support::BuiltinFn::kWritePositions,
+    support::BuiltinFn::kFromPositions,
 };
 
 // The method of the record `record` answering `answers`, as a call names it.
@@ -252,37 +268,6 @@ auto BuildHasUnknown(
       unit.builtins.machine_bool);
 }
 
-// `value`, of `type`, with every bit the fill `fill` holds: a packed value is
-// the fill repeated across its width (LRM 11.4.12.1), at the signedness it
-// declares, and any other value answers for itself.
-auto BuildFilled(
-    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId value,
-    mir::TypeId type, mir::ExprId fill) -> mir::ExprId {
-  const mir::Type& t = unit.types.Get(type);
-  if (!t.IsIntegral()) {
-    return BuildValueOperation(
-        unit, block, support::BuiltinFn::kFilledLike, std::nullopt,
-        {value, fill}, type);
-  }
-  const mir::TypeId copies = mir::PackedVectorOf(
-      unit.types, t.Integral().bit_width,
-      unit.types.Get(block.Get(fill).type).Integral().state_kind);
-  const mir::ExprId filled = block.Add(
-      mir::MakeBuiltinCall(
-          unit, block.Body(), support::BuiltinFn::kReplicateBits, fill, {},
-          copies));
-  return ConvertToType(unit, block, filled, type);
-}
-
-// A net's two-contribution folds: each truth table, and what a stronger
-// contribution leaves a weaker one.
-constexpr std::array<support::BuiltinFn, 4> kNetFolds{
-    support::BuiltinFn::kResolveTriState,
-    support::BuiltinFn::kResolveWiredAnd,
-    support::BuiltinFn::kResolveWiredOr,
-    support::BuiltinFn::kDominating,
-};
-
 // `then_value` where `condition` holds and `else_value` where it does not,
 // both of `type`.
 auto Chosen(
@@ -298,16 +283,40 @@ auto Chosen(
           .type = type});
 }
 
+// Whether a run of positions reaching any of a value of `type` takes all of
+// it: a value no select names part of -- a real (LRM 11.5.1), a tagged union,
+// whose tag decides which member lies there (LRM 7.3.2), and a value held
+// whole as one position.
+auto TakenWhole(const mir::CompilationUnit& unit, mir::TypeId type) -> bool {
+  const mir::Type& t = unit.types.Get(type);
+  if (t.IsIntegral() || t.Is<mir::UnpackedArrayType>() ||
+      t.Is<mir::TupleType>()) {
+    return false;
+  }
+  if (const std::optional<mir::RecordKind> kind =
+          mir::RecordKindOf(unit, type)) {
+    switch (*kind) {
+      case mir::RecordKind::kStruct:
+      case mir::RecordKind::kUnion:
+        return false;
+      case mir::RecordKind::kTaggedUnion:
+        return true;
+    }
+    throw InternalError("TakenWhole: unknown record kind");
+  }
+  return true;
+}
+
 // A value of `type` with the `count` positions from `start` of `into` taken
 // from `from`, both of that type, where the run names at least one position.
 // `start` and `count` are where the two machine numbers lie, which a type's own
-// body borrows and the library's entry reads. A value of one position is held
-// whole, so the run is all of it.
+// body borrows and the library's entry reads. A value taken whole is all of
+// the run.
 auto PositionsTaken(
     const mir::CompilationUnit& unit, mir::Builder block, mir::TypeId type,
     mir::ExprId into, mir::ExprId from, mir::ExprId start, mir::ExprId count)
     -> mir::ExprId {
-  if (PositionCountOf(unit, type) == 1) {
+  if (TakenWhole(unit, type)) {
     return block.AsValue(unit.types, from);
   }
   return BuildValueOperation(
@@ -389,9 +398,20 @@ class OperationBodies {
   auto BodyOf(
       support::ValueOperation answers, std::vector<mir::TypeId> params,
       mir::TypeId result, Answer answer) -> mir::CallableCode {
+    for (mir::TypeId& param : params) {
+      param = ReferenceTo(Unit(), param);
+    }
+    return BodyTaking(answers, std::move(params), result, answer);
+  }
+
+  // The same, taking parameters of exactly `params`.
+  template <typename Answer>
+  auto BodyTaking(
+      support::ValueOperation answers, std::vector<mir::TypeId> params,
+      mir::TypeId result, Answer answer) -> mir::CallableCode {
     mir::CallableCode code = mir::CallableCode::Defined(diag::SourceSpan{});
     for (const mir::TypeId param : params) {
-      code.params.push_back(code.AddLocal(ReferenceTo(Unit(), param)));
+      code.params.push_back(code.AddLocal(param));
     }
     if (support::ReachesAReceiver(answers)) {
       code.receiver = code.params.front();
@@ -559,33 +579,6 @@ class OperationBodies {
         });
   }
 
-  // A union holding its first member at that member's default (LRM Table
-  // 7-1); LRM 11.9 leaves an uninitialized tagged union undefined, and its
-  // first member is Lyra's answer for one too.
-  auto FirstMemberDefault() -> mir::CallableCode {
-    return Body(
-        support::BuiltinFn::kDeclaredDefault, {}, whole_,
-        [&](mir::Builder block, const std::vector<mir::LocalId>&) {
-          constexpr base::ComponentIndex kFirstMember{0};
-          return block.Add(
-              mir::MakeUnionExpr(
-                  block.Add(
-                      BuildDefaultValueExpr(Unit(), block, members_.front())),
-                  kFirstMember, whole_));
-        });
-  }
-
-  // A value held whole is one position, so a run naming any of it names all of
-  // it, and taking it is taking the value it is taken from.
-  auto PositionsTakenWhole() -> mir::CallableCode {
-    const mir::TypeId number = Unit().builtins.machine_int64;
-    return Body(
-        support::BuiltinFn::kTakePositions, {whole_, whole_, number, number},
-        whole_, [&](mir::Builder block, const std::vector<mir::LocalId>& p) {
-          return block.AsValue(Unit().types, Whole(block, p[1]));
-        });
-  }
-
   // The run of positions a body answering which positions it takes is
   // handed, kept in locals so that each place reaching it reads them: its
   // first position, and the one past its last.
@@ -647,26 +640,13 @@ class OperationBodies {
     const mir::ExprId run_ends_after_start = mir::BuildMachineIntComparison(
         Unit(), block, mir::BinaryOp::kGreaterThan, run_end, part_start);
     const std::array reaches{run_starts_before_end, run_ends_after_start};
-    const mir::ExprId run_first_tested = read(run.first);
-    const mir::ExprId lo_tested = read(lo);
-    const mir::ExprId run_starts_inside = mir::BuildMachineIntComparison(
-        Unit(), block, mir::BinaryOp::kGreaterThan, run_first_tested,
-        lo_tested);
-    const mir::ExprId run_first_inside = read(run.first);
-    const mir::ExprId lo_outside = read(lo);
     const mir::ExprId first_reached =
-        Chosen(block, run_starts_inside, run_first_inside, lo_outside, number);
+        mir::BuildMachineIntMax(Unit(), block, read(run.first), read(lo));
     const mir::ExprId start_base = read(lo);
     const mir::ExprId start = mir::BuildMachineIntBinary(
         Unit(), block, mir::BinaryOp::kSub, first_reached, start_base);
-    const mir::ExprId run_end_tested = read(run.end);
-    const mir::ExprId hi_tested = read(hi);
-    const mir::ExprId run_ends_inside = mir::BuildMachineIntComparison(
-        Unit(), block, mir::BinaryOp::kLessThan, run_end_tested, hi_tested);
-    const mir::ExprId run_end_inside = read(run.end);
-    const mir::ExprId hi_outside = read(hi);
     const mir::ExprId end_reached =
-        Chosen(block, run_ends_inside, run_end_inside, hi_outside, number);
+        mir::BuildMachineIntMin(Unit(), block, read(run.end), read(hi));
     const mir::ExprId stop_base = read(lo);
     const mir::ExprId stop = mir::BuildMachineIntBinary(
         Unit(), block, mir::BinaryOp::kSub, end_reached, stop_base);
@@ -681,6 +661,176 @@ class OperationBodies {
         Unit(), block, part, into, from, first_place, count_place);
     const mir::ExprId untouched = block.AsValue(Unit().types, into);
     return Chosen(block, reached, taken, untouched, part);
+  }
+
+  // How many positions a value of this type has, which the library asks of a
+  // value laid out by its type where it holds an array of such values or a net
+  // resolves one.
+  auto PositionCount() -> mir::CallableCode {
+    return Body(
+        support::BuiltinFn::kPositionCount, {}, Unit().builtins.machine_int64,
+        [&](mir::Builder block, const std::vector<mir::LocalId>&) {
+          return CountLiteral(block, PositionCountOf(Unit(), whole_));
+        });
+  }
+
+  // The positions of the part of `type` lying at `place`, as one integral
+  // value.
+  auto PartPositions(mir::Builder block, mir::TypeId type, mir::ExprId place)
+      -> mir::ExprId {
+    return BuildToPositions(
+        Unit(), block, place, PositionsTypeOf(Unit(), type));
+  }
+
+  // `positions`, a local of `positions_type`, with the positions of a part
+  // laid in from `at`, a position.
+  void LayPositions(
+      mir::Builder block, mir::LocalId positions, mir::TypeId positions_type,
+      mir::ExprId at, mir::ExprId part, mir::TypeId part_positions_type) {
+    block.AppendStmt(
+        mir::ExprStmt{
+            .expr = block.Add(BuildStoreExpr(
+                Unit(), block,
+                AccessPath{
+                    .owner = block.LocalPlace(positions, positions_type),
+                    .descent = {DescentStep{
+                        .to = StepToBits{.start = at},
+                        .part_type = part_positions_type}}},
+                part))});
+  }
+
+  // What a body writing positions a net resolved in place is handed: the
+  // view of them, where in the value its first position stands, and how many
+  // it holds; and the local folding in whether any part changed.
+  struct PositionsWrite {
+    mir::LocalId view;
+    mir::LocalId start;
+    mir::LocalId count;
+    mir::LocalId changed;
+  };
+  // The value is written where it lies, so it is taken by a reference that
+  // writes; the view and the two numbers are taken as they are.
+  auto TypesOfPositionsWrite() -> std::vector<mir::TypeId> {
+    const mir::TypeId number = Unit().builtins.machine_int64;
+    return {
+        Unit().types.Intern(
+            mir::Type{mir::ReferenceType{
+                .referent = WholeType(),
+                .mutability = mir::Mutability::kMutable}}),
+        PositionsReadType(), number, number};
+  }
+  auto PositionsReadType() -> mir::TypeId {
+    return mir::LibraryTypeOf(
+        Unit().types, support::LibraryDecl::kPositionsRead);
+  }
+  // The value a body writing positions writes, where it lies.
+  auto Written(mir::Builder block, mir::LocalId local) -> mir::ExprId {
+    return block.Deref(
+        Unit().types, block.LocalPlace(local, TypesOfPositionsWrite().front()),
+        whole_);
+  }
+  auto HoldPositionsWrite(
+      mir::CallableCode& code, mir::Builder block,
+      const std::vector<mir::LocalId>& p) -> PositionsWrite {
+    const mir::ExprId unchanged = BuildMachineBool(Unit(), block, false);
+    return {
+        .view = p[1],
+        .start = p[2],
+        .count = p[3],
+        .changed =
+            Declared(code, block, Unit().builtins.machine_bool, unchanged)};
+  }
+  auto ViewOf(mir::Builder block, const PositionsWrite& write) -> mir::ExprId {
+    return block.ReadLocal(write.view, PositionsReadType());
+  }
+
+  // Where `write`'s view reaches positions `lo` to `lo + count` of the value,
+  // `reached(body)` stated in a scope running only then.
+  template <typename Reached>
+  void WhereReached(
+      mir::Builder block, const PositionsWrite& write, mir::ExprId lo,
+      std::uint64_t count, Reached reached) {
+    const mir::ExprId hi = mir::BuildMachineIntBinary(
+        Unit(), block, mir::BinaryOp::kAdd, lo, CountLiteral(block, count));
+    const mir::ExprId starts_before_end = mir::BuildMachineIntComparison(
+        Unit(), block, mir::BinaryOp::kLessThan, CountNow(block, write.start),
+        hi);
+    const mir::ExprId view_end = mir::BuildMachineIntBinary(
+        Unit(), block, mir::BinaryOp::kAdd, CountNow(block, write.start),
+        CountNow(block, write.count));
+    const mir::ExprId ends_after_start = mir::BuildMachineIntComparison(
+        Unit(), block, mir::BinaryOp::kGreaterThan, view_end, lo);
+    mir::Block taken;
+    mir::Builder taken_builder = block.Into(taken);
+    reached(taken_builder);
+    block.AppendStmt(
+        mir::IfStmt{
+            .condition = AllHold(
+                Unit(), block, std::array{starts_before_end, ends_after_start}),
+            .then_scope = block.AddScope(std::move(taken)),
+            .else_scope = std::nullopt});
+  }
+
+  // The positions `write`'s view reaches of the part of `type` that `path`
+  // names, whose first position stands at position `lo` of the value,
+  // replaced in place, and whether any changed folded into `write.changed`.
+  // An integral part is rebuilt with them and stored back; any other part
+  // writes its own.
+  void PartWritten(
+      mir::CallableCode& code, mir::Builder block, mir::TypeId type,
+      const AccessPath& path, mir::ExprId lo, const PositionsWrite& write) {
+    const mir::TypeId boolean = Unit().builtins.machine_bool;
+    const mir::ExprId start = mir::BuildMachineIntBinary(
+        Unit(), block, mir::BinaryOp::kSub, CountNow(block, write.start), lo);
+    mir::ExprId part_changed{};
+    if (Unit().types.Get(type).IsIntegral()) {
+      const mir::ExprId before = Held(
+          code, block, type,
+          block.AsValue(Unit().types, PathPlace(Unit(), block, path)));
+      const mir::ExprId after = Held(
+          code, block, type,
+          block.Add(
+              mir::MakeBuiltinCall(
+                  Unit(), block.Body(),
+                  support::BuiltinFn::kIntegralWithPositions, before,
+                  {ViewOf(block, write), start}, type)));
+      block.AppendStmt(
+          mir::ExprStmt{
+              .expr = block.Add(BuildStoreExpr(Unit(), block, path, after))});
+      part_changed = BuildConditionNot(
+          Unit(), block,
+          BuildValueOperation(
+              Unit(), block, support::BuiltinFn::kBitIdentical, before, {after},
+              boolean));
+    } else {
+      const mir::ExprId written = block.Add(
+          mir::Expr{
+              .data =
+                  mir::BorrowExpr{.operand = PathPlace(Unit(), block, path)},
+              .type = Unit().types.Intern(
+                  mir::Type{mir::ReferenceType{
+                      .referent = type,
+                      .mutability = mir::Mutability::kMutable}})});
+      part_changed = Held(
+          code, block, boolean,
+          block.Add(
+              mir::MakeCallExpr(
+                  mir::Direct{
+                      .target = *OwnOperationTarget(
+                          Unit(), type, support::BuiltinFn::kWritePositions),
+                      .receiver = written},
+                  {ViewOf(block, write), start, CountNow(block, write.count)},
+                  boolean)));
+    }
+    const mir::ExprId was = block.ReadLocal(write.changed, boolean);
+    const mir::ExprId changed =
+        AnyHolds(Unit(), block, std::array{part_changed, was});
+    block.AppendStmt(
+        mir::ExprStmt{
+            .expr = block.Add(
+                mir::MakeAssignExpr(
+                    Unit().builtins, block.LocalPlace(write.changed, boolean),
+                    changed))});
   }
 
  private:
@@ -728,12 +878,13 @@ class ProductBodies : public OperationBodies {
   auto FromBitstream() -> mir::CallableCode;
   auto ToBitVec() -> mir::CallableCode;
   auto FromBitVec() -> mir::CallableCode;
-  auto Fold(support::BuiltinFn fold) -> mir::CallableCode;
-  auto FilledLike() -> mir::CallableCode;
-  auto PositionCount() -> mir::CallableCode;
   auto TakePositions() -> mir::CallableCode;
+  auto ToPositions() -> mir::CallableCode;
+  auto WritePositions() -> mir::CallableCode;
+  auto FromPositions() -> mir::CallableCode;
   using OperationBodies::DeclaredDefault;
   using OperationBodies::Inequality;
+  using OperationBodies::PositionCount;
 
  private:
   // The stream this product makes, which every body over one has.
@@ -1038,39 +1189,6 @@ auto ProductBodies::FromBitVec() -> mir::CallableCode {
       });
 }
 
-// Two contributions folded member by member (LRM 6.7.1 composes a net of a
-// structure out of its members' bits, and any product likewise).
-auto ProductBodies::Fold(support::BuiltinFn fold) -> mir::CallableCode {
-  return Body(
-      fold, {WholeType(), WholeType()}, WholeType(),
-      [&](mir::Builder block, const std::vector<mir::LocalId>& p) {
-        std::vector<mir::ExprId> members;
-        for (std::size_t i = 0; i < Members().size(); ++i) {
-          const mir::ExprId lhs = Member(block, p[0], i);
-          const mir::ExprId rhs = Member(block, p[1], i);
-          members.push_back(BuildValueOperation(
-              Unit(), block, fold, lhs, {rhs}, Members()[i]));
-        }
-        return Built(block, std::move(members));
-      });
-}
-
-auto ProductBodies::FilledLike() -> mir::CallableCode {
-  const mir::TypeId fill = FillType(Unit());
-  return Body(
-      support::BuiltinFn::kFilledLike, {WholeType(), fill}, WholeType(),
-      [&](mir::Builder block, const std::vector<mir::LocalId>& p) {
-        std::vector<mir::ExprId> members;
-        for (std::size_t i = 0; i < Members().size(); ++i) {
-          const mir::ExprId member = Member(block, p[0], i);
-          const mir::ExprId fill_value = Referent(block, p[1], fill);
-          members.push_back(
-              BuildFilled(Unit(), block, member, Members()[i], fill_value));
-        }
-        return Built(block, std::move(members));
-      });
-}
-
 // What a variable of the struct starts as: each member at what the struct's
 // declaration gives it (LRM 7.2.2), the rest at their type's default.
 auto StructBodies::DeclaredDefault() -> mir::CallableCode {
@@ -1083,14 +1201,6 @@ auto StructBodies::DeclaredDefault() -> mir::CallableCode {
 }
 
 // A product's positions are its members', the first member's first.
-auto ProductBodies::PositionCount() -> mir::CallableCode {
-  return Body(
-      support::BuiltinFn::kPositionCount, {}, Unit().builtins.machine_int64,
-      [&](mir::Builder block, const std::vector<mir::LocalId>&) {
-        return CountLiteral(block, PositionCountOf(Unit(), WholeType()));
-      });
-}
-
 auto ProductBodies::TakePositions() -> mir::CallableCode {
   const mir::TypeId number = Unit().builtins.machine_int64;
   return BodyOf(
@@ -1113,19 +1223,100 @@ auto ProductBodies::TakePositions() -> mir::CallableCode {
       });
 }
 
-// Builds the operations of one untagged union (LRM 7.3). Its members overlay
-// one storage, so every operation on the whole value is its first member's,
-// read as that member's type holds a value (LRM 7.3.2), as LRM 21.2.1.6 and
-// 11.4.14.1 have printing and streaming read that member; one answering a
-// union answers one holding the first member. Whether a union changed is
-// whether a read through any of its members would see a change.
+// The product whose components' positions an integral value of its positions
+// holds, each read from where the components before it end.
+auto ProductBodies::FromPositions() -> mir::CallableCode {
+  const mir::TypeId positions_type = PositionsTypeOf(Unit(), WholeType());
+  return Body(
+      support::BuiltinFn::kFromPositions, {positions_type}, WholeType(),
+      [&](mir::Builder block, const std::vector<mir::LocalId>& p) {
+        std::vector<mir::ExprId> members;
+        std::uint64_t at = 0;
+        for (const mir::TypeId member : Members()) {
+          const mir::ExprId bits = block.Add(BuildPackedBitsRead(
+              Unit(), block, Referent(block, p[0], positions_type), at,
+              PositionsTypeOf(Unit(), member)));
+          members.push_back(
+              block.Add(BuildFromPositions(Unit(), block, bits, member)));
+          at += PositionCountOf(Unit(), member);
+        }
+        return Built(block, std::move(members));
+      });
+}
+
+// A product's positions are its components', the first at position 0, each
+// laid in where the components before it end.
+auto ProductBodies::ToPositions() -> mir::CallableCode {
+  const mir::TypeId positions_type = PositionsTypeOf(Unit(), WholeType());
+  return BodyOf(
+      support::BuiltinFn::kToPositions, {WholeType()}, positions_type,
+      [&](mir::CallableCode& code, mir::Builder block,
+          const std::vector<mir::LocalId>& p) {
+        const mir::LocalId positions = Declared(
+            code, block, positions_type,
+            block.Add(BuildDefaultValueExpr(Unit(), block, positions_type)));
+        std::uint64_t at = 0;
+        for (std::size_t i = 0; i < Members().size(); ++i) {
+          LayPositions(
+              block, positions, positions_type,
+              BuildConstantPosition(
+                  Unit(), block, static_cast<std::int64_t>(at)),
+              PartPositions(block, Members()[i], Member(block, p[0], i)),
+              PositionsTypeOf(Unit(), Members()[i]));
+          at += PositionCountOf(Unit(), Members()[i]);
+        }
+        return block.ReadLocal(positions, positions_type);
+      });
+}
+
+// Each component the view reaches is written, and no other.
+auto ProductBodies::WritePositions() -> mir::CallableCode {
+  return BodyTaking(
+      support::BuiltinFn::kWritePositions, TypesOfPositionsWrite(),
+      Unit().builtins.machine_bool,
+      [&](mir::CallableCode& code, mir::Builder block,
+          const std::vector<mir::LocalId>& p) {
+        const PositionsWrite write = HoldPositionsWrite(code, block, p);
+        std::uint64_t at = 0;
+        for (std::size_t i = 0; i < Members().size(); ++i) {
+          const std::uint64_t count = PositionCountOf(Unit(), Members()[i]);
+          WhereReached(
+              block, write, CountLiteral(block, at), count,
+              [&](mir::Builder reached) {
+                PartWritten(
+                    code, reached, Members()[i],
+                    AccessPath{
+                        .owner = Written(reached, p[0]),
+                        .descent = {DescentStep{
+                            .to =
+                                StepToComponent{
+                                    .position =
+                                        base::ComponentIndex{
+                                            static_cast<std::uint32_t>(i)}},
+                            .part_type = Members()[i]}}},
+                    CountLiteral(reached, at), write);
+              });
+          at += count;
+        }
+        return block.ReadLocal(write.changed, Unit().builtins.machine_bool);
+      });
+}
+
+// Builds the operations of one untagged union (LRM 7.3). Its one component is
+// its storage, an integral value every member is a view of from its first
+// position, so what holds of the whole value holds of the storage: whether it
+// changed, the positions a net resolves or a procedural continuous assignment
+// takes. Every operation the language defines on the whole value is its first
+// member's, read through the storage, as LRM 21.2.1.6 and 11.4.14.1 have
+// printing and streaming read that member; one answering a union answers one
+// whose storage holds that member's positions and nothing above them.
 class UnionBodies : public OperationBodies {
  public:
   UnionBodies(
       const mir::CompilationUnit& unit, mir::RecordId record,
-      mir::TypeId overlay, std::vector<mir::TypeId> members)
+      mir::TypeId untagged, std::vector<mir::TypeId> members)
       : OperationBodies(
-            unit, overlay, members,
+            unit, untagged, members,
             EqualityAnswerOver(unit, mir::RecordKind::kUnion, members),
             MethodsOf(unit, record)) {
   }
@@ -1138,24 +1329,37 @@ class UnionBodies : public OperationBodies {
   auto CountBits() -> mir::CallableCode;
   auto ToBitstream() -> mir::CallableCode;
   auto FromBitstream() -> mir::CallableCode;
-  auto Fold(support::BuiltinFn fold) -> mir::CallableCode;
-  auto FilledLike() -> mir::CallableCode;
-  auto DeclaredDefault() -> mir::CallableCode {
-    return FirstMemberDefault();
-  }
-  // A union is one storage its members read differently (LRM 7.3), so it is
-  // held whole.
-  auto TakePositions() -> mir::CallableCode {
-    return PositionsTakenWhole();
-  }
+  auto DeclaredDefault() -> mir::CallableCode;
+  auto TakePositions() -> mir::CallableCode;
+  auto ToPositions() -> mir::CallableCode;
+  auto WritePositions() -> mir::CallableCode;
+  auto FromPositions() -> mir::CallableCode;
   using OperationBodies::Inequality;
+  using OperationBodies::PositionCount;
 
  private:
-  // Member `i` of the union the parameter `local` refers to, read as its type
-  // holds a value.
+  [[nodiscard]] auto StorageType() const -> mir::TypeId {
+    return *mir::UnionStorageOf(Unit(), WholeType());
+  }
+  // The storage of the union the parameter `local` refers to, as a value.
+  auto Storage(mir::Builder block, mir::LocalId local) -> mir::ExprId {
+    return block.AsValue(
+        Unit().types,
+        UnionStorage(Unit(), block, Referent(block, local, WholeType())));
+  }
+  // Member `i` of the union the parameter `local` refers to, read through the
+  // union's storage.
   auto Read(mir::Builder block, mir::LocalId local, std::size_t i)
       -> mir::ExprId {
-    return mir::ReadIfOverlaid(Unit(), block, Member(block, local, i));
+    return block.Add(StepRead(
+        Unit(), block,
+        DescentStep{
+            .to =
+                StepToUnionMember{
+                    .position =
+                        base::ComponentIndex{static_cast<std::uint32_t>(i)}},
+            .part_type = Members()[i]},
+        Referent(block, local, WholeType())));
   }
   auto First(mir::Builder block, mir::LocalId local) -> mir::ExprId {
     return Read(block, local, 0);
@@ -1163,14 +1367,23 @@ class UnionBodies : public OperationBodies {
   [[nodiscard]] auto FirstType() const -> mir::TypeId {
     return Members().front();
   }
-  // The union holding `value` as its first member.
-  auto Holding(mir::Builder block, mir::ExprId value) -> mir::ExprId {
+  // The union whose storage is `storage`.
+  auto Of(mir::Builder block, mir::ExprId storage) -> mir::ExprId {
     return block.Add(
         mir::Expr{
-            .data =
-                mir::UnionExpr{
-                    .member = base::ComponentIndex{0}, .value = value},
+            .data = mir::CompositeExpr{.parts = {storage}},
             .type = WholeType()});
+  }
+  // The union holding `value` as its first member: the storage holding the
+  // member's positions and zero above them, as a literal naming a member
+  // leaves everything else zero (LRM 7.3).
+  auto Holding(mir::Builder block, mir::ExprId value) -> mir::ExprId {
+    const mir::TypeId storage = StorageType();
+    const mir::TypeId bits = StorageBitsFor(Unit(), storage, FirstType());
+    return Of(
+        block, ConvertToType(
+                   Unit(), block, BuildToPositions(Unit(), block, value, bits),
+                   storage));
   }
   // The stream the first member makes, which every body over one has.
   auto Stream() -> mir::TypeId {
@@ -1202,23 +1415,15 @@ auto UnionBodies::CaseEqual() -> mir::CallableCode {
       });
 }
 
+// Every member is a view of the storage, so a read through any of them sees a
+// change exactly where the storage's bits changed.
 auto UnionBodies::BitIdentical() -> mir::CallableCode {
   return Body(
       support::BuiltinFn::kBitIdentical, {WholeType(), WholeType()},
       Unit().builtins.machine_bool,
       [&](mir::Builder block, const std::vector<mir::LocalId>& p) {
-        for (std::size_t i = 0; i < Members().size(); ++i) {
-          const mir::ExprId lhs = Read(block, p[0], i);
-          const mir::ExprId rhs = Read(block, p[1], i);
-          const mir::ExprId identical =
-              BuildBitIdentity(Unit(), block, lhs, rhs);
-          ReturnWhere(
-              block, BuildConditionNot(Unit(), block, identical),
-              [&](mir::Builder taken) {
-                return BuildMachineBool(Unit(), taken, false);
-              });
-        }
-        return BuildMachineBool(Unit(), block, true);
+        return BuildBitIdentity(
+            Unit(), block, Storage(block, p[0]), Storage(block, p[1]));
       });
 }
 
@@ -1278,27 +1483,80 @@ auto UnionBodies::FromBitstream() -> mir::CallableCode {
       });
 }
 
-auto UnionBodies::Fold(support::BuiltinFn fold) -> mir::CallableCode {
+// A union nothing wrote holds its first member at that member's default (LRM
+// Table 7-1).
+auto UnionBodies::DeclaredDefault() -> mir::CallableCode {
   return Body(
-      fold, {WholeType(), WholeType()}, WholeType(),
-      [&](mir::Builder block, const std::vector<mir::LocalId>& p) {
-        const mir::ExprId lhs = First(block, p[0]);
-        const mir::ExprId rhs = First(block, p[1]);
+      support::BuiltinFn::kDeclaredDefault, {}, WholeType(),
+      [&](mir::Builder block, const std::vector<mir::LocalId>&) {
         return Holding(
             block,
-            BuildValueOperation(Unit(), block, fold, lhs, {rhs}, FirstType()));
+            block.Add(BuildDefaultValueExpr(Unit(), block, FirstType())));
       });
 }
 
-auto UnionBodies::FilledLike() -> mir::CallableCode {
-  const mir::TypeId fill = FillType(Unit());
+// A union's positions are its storage's, so a run of them is taken there.
+auto UnionBodies::TakePositions() -> mir::CallableCode {
+  const mir::TypeId number = Unit().builtins.machine_int64;
+  return BodyOf(
+      support::BuiltinFn::kTakePositions,
+      {WholeType(), WholeType(), number, number}, WholeType(),
+      [&](mir::CallableCode& code, mir::Builder block,
+          const std::vector<mir::LocalId>& p) {
+        const HeldRun run = HoldRun(code, block, p[2], p[3]);
+        return Of(
+            block, PartTaken(
+                       code, block, StorageType(), Storage(block, p[0]),
+                       Storage(block, p[1]), CountLiteral(block, 0), run));
+      });
+}
+
+auto UnionBodies::ToPositions() -> mir::CallableCode {
+  const mir::TypeId positions_type = PositionsTypeOf(Unit(), WholeType());
   return Body(
-      support::BuiltinFn::kFilledLike, {WholeType(), fill}, WholeType(),
+      support::BuiltinFn::kToPositions, {WholeType()}, positions_type,
       [&](mir::Builder block, const std::vector<mir::LocalId>& p) {
-        const mir::ExprId member = First(block, p[0]);
-        const mir::ExprId fill_value = Referent(block, p[1], fill);
-        return Holding(
-            block, BuildFilled(Unit(), block, member, FirstType(), fill_value));
+        return ConvertToType(
+            Unit(), block, Storage(block, p[0]), positions_type);
+      });
+}
+
+auto UnionBodies::WritePositions() -> mir::CallableCode {
+  return BodyTaking(
+      support::BuiltinFn::kWritePositions, TypesOfPositionsWrite(),
+      Unit().builtins.machine_bool,
+      [&](mir::CallableCode& code, mir::Builder block,
+          const std::vector<mir::LocalId>& p) {
+        const PositionsWrite write = HoldPositionsWrite(code, block, p);
+        WhereReached(
+            block, write, CountLiteral(block, 0),
+            PositionCountOf(Unit(), StorageType()), [&](mir::Builder reached) {
+              PartWritten(
+                  code, reached, StorageType(),
+                  AccessPath{
+                      .owner = Written(reached, p[0]),
+                      .descent = {DescentStep{
+                          .to =
+                              StepToComponent{
+                                  .position = base::ComponentIndex{0}},
+                          .part_type = StorageType()}}},
+                  CountLiteral(reached, 0), write);
+            });
+        return block.ReadLocal(write.changed, Unit().builtins.machine_bool);
+      });
+}
+
+auto UnionBodies::FromPositions() -> mir::CallableCode {
+  const mir::TypeId positions_type = PositionsTypeOf(Unit(), WholeType());
+  return Body(
+      support::BuiltinFn::kFromPositions, {positions_type}, WholeType(),
+      [&](mir::Builder block, const std::vector<mir::LocalId>& p) {
+        return Of(
+            block, ConvertToType(
+                       Unit(), block,
+                       block.AsValue(
+                           Unit().types, Referent(block, p[0], positions_type)),
+                       StorageType()));
       });
 }
 
@@ -1320,16 +1578,43 @@ class TaggedUnionBodies : public OperationBodies {
   auto CaseEqual() -> mir::CallableCode;
   auto BitIdentical() -> mir::CallableCode;
   auto HasUnknown() -> mir::CallableCode;
+  // A tagged union holding its first member at that member's default: LRM
+  // 11.9 leaves an uninitialized tagged union undefined, and its first member
+  // is Lyra's answer, as Table 7-1's is for an untagged one.
   auto DeclaredDefault() -> mir::CallableCode {
-    return FirstMemberDefault();
+    return Body(
+        support::BuiltinFn::kDeclaredDefault, {}, WholeType(),
+        [&](mir::Builder block, const std::vector<mir::LocalId>&) {
+          constexpr base::ComponentIndex kFirstMember{0};
+          return block.Add(
+              mir::MakeTaggedUnionExpr(
+                  block.Add(
+                      BuildDefaultValueExpr(Unit(), block, Members().front())),
+                  kFirstMember, WholeType()));
+        });
   }
-  // Held whole, as an untagged union is.
+  // Taken whole, since its tag decides which member lies there (LRM 7.3.2):
+  // a run naming any of its positions takes all of it.
   auto TakePositions() -> mir::CallableCode {
-    return PositionsTakenWhole();
+    const mir::TypeId number = Unit().builtins.machine_int64;
+    return Body(
+        support::BuiltinFn::kTakePositions,
+        {WholeType(), WholeType(), number, number}, WholeType(),
+        [&](mir::Builder block, const std::vector<mir::LocalId>& p) {
+          return block.AsValue(Unit().types, Whole(block, p[1]));
+        });
   }
+  auto ToPositions() -> mir::CallableCode;
+  auto FromPositions() -> mir::CallableCode;
   using OperationBodies::Inequality;
+  using OperationBodies::PositionCount;
 
  private:
+  // Where its tag lies among its positions: above its widest member's.
+  [[nodiscard]] auto TagAt() const -> std::uint64_t {
+    return WidestPositionCountOf(Unit(), Members());
+  }
+
   // What `held(taken, i)` answers where every one of the values `locals`
   // refers to holds member `i`, returned by the member they hold, and what
   // `neither(taken)` builds where they hold no one member alike. Each value's
@@ -1381,6 +1666,127 @@ class TaggedUnionBodies : public OperationBodies {
     return neither(block);
   }
 };
+
+// A tagged union's positions are the member it holds from the first and its
+// tag above its widest member's, as a packed tagged union lays them out (LRM
+// 7.3.2), which an untagged union holding one is a view of (LRM 7.3). A tag
+// naming no member is bits another member of such a union wrote, and holds no
+// positions of a member.
+auto TaggedUnionBodies::ToPositions() -> mir::CallableCode {
+  const mir::TypeId positions_type = PositionsTypeOf(Unit(), WholeType());
+  const std::uint64_t tag_positions = TagPositionsFor(Members().size());
+  return BodyOf(
+      support::BuiltinFn::kToPositions, {WholeType()}, positions_type,
+      [&](mir::CallableCode& code, mir::Builder block,
+          const std::vector<mir::LocalId>& p) {
+        const auto none = [&](mir::Builder at) {
+          return at.Add(BuildDefaultValueExpr(Unit(), at, positions_type));
+        };
+        return ByHeldMember(
+            code, block, std::span{p}.first(1),
+            [&](mir::Builder taken, std::size_t i) {
+              const mir::LocalId positions =
+                  Declared(code, taken, positions_type, none(taken));
+              const mir::TypeId member = Members()[i];
+              if (PositionCountOf(Unit(), member) != 0) {
+                LayPositions(
+                    taken, positions, positions_type,
+                    BuildConstantPosition(Unit(), taken, 0),
+                    PartPositions(taken, member, Member(taken, p[0], i)),
+                    PositionsTypeOf(Unit(), member));
+              }
+              if (tag_positions != 0) {
+                const mir::TypeId tag = mir::PackedVectorOf(
+                    Unit().types, tag_positions,
+                    mir::IntegralStateKind::kFourState);
+                LayPositions(
+                    taken, positions, positions_type,
+                    BuildConstantPosition(
+                        Unit(), taken, static_cast<std::int64_t>(TagAt())),
+                    taken.Add(
+                        mir::MakeBuiltinCall(
+                            Unit(), taken.Body(),
+                            support::BuiltinFn::kIntegralFromInt, std::nullopt,
+                            {mir::BuildMachineIntLiteral(
+                                Unit(), taken, static_cast<std::int64_t>(i))},
+                            tag)),
+                    tag);
+              }
+              return taken.ReadLocal(positions, positions_type);
+            },
+            none);
+      });
+}
+
+// The tagged union an integral value of its positions holds: the member its
+// tag names, made from the positions below the tag; one naming no member, by
+// its value or by an unknown bit, holds the first member at its default, which
+// is Lyra's answer for bits another member of an untagged union holding it
+// wrote (LRM 7.3.2).
+auto TaggedUnionBodies::FromPositions() -> mir::CallableCode {
+  const mir::TypeId positions_type = PositionsTypeOf(Unit(), WholeType());
+  const std::uint64_t tag_positions = TagPositionsFor(Members().size());
+  return BodyOf(
+      support::BuiltinFn::kFromPositions, {positions_type}, WholeType(),
+      [&](mir::CallableCode& code, mir::Builder block,
+          const std::vector<mir::LocalId>& p) {
+        const mir::TypeId number = Unit().builtins.machine_int64;
+        // One member has no tag bits, and names that member.
+        mir::ExprId tag_read = mir::BuildMachineIntLiteral(Unit(), block, 0);
+        if (tag_positions != 0) {
+          const mir::TypeId tag_bits = mir::PackedVectorOf(
+              Unit().types, tag_positions, mir::IntegralStateKind::kFourState);
+          const auto tag_bits_read = [&] {
+            return block.Add(BuildPackedBitsRead(
+                Unit(), block, Referent(block, p[0], positions_type), TagAt(),
+                tag_bits));
+          };
+          // A tag with an unknown bit names no member either.
+          ReturnWhere(
+              block,
+              BuildValueOperation(
+                  Unit(), block, support::BuiltinFn::kHasUnknown,
+                  tag_bits_read(), {}, Unit().builtins.machine_bool),
+              [&](mir::Builder taken) {
+                return taken.Add(
+                    BuildDefaultValueExpr(Unit(), taken, WholeType()));
+              });
+          tag_read = BuildToInt64Call(Unit(), block, tag_bits_read());
+        }
+        const mir::LocalId tag = Declared(code, block, number, tag_read);
+        for (std::size_t i = 0; i < Members().size(); ++i) {
+          ReturnWhere(
+              block,
+              block.Add(
+                  mir::MakeBinary(
+                      Unit(), block.Body(), mir::BinaryOp::kEquality,
+                      block.ReadLocal(tag, number),
+                      mir::BuildMachineIntLiteral(
+                          Unit(), block, static_cast<std::int64_t>(i)),
+                      Unit().builtins.machine_bool)),
+              [&](mir::Builder taken) {
+                const mir::TypeId member = Members()[i];
+                const mir::ExprId value =
+                    PositionCountOf(Unit(), member) == 0
+                        ? taken.Add(
+                              BuildDefaultValueExpr(Unit(), taken, member))
+                        : taken.Add(BuildFromPositions(
+                              Unit(), taken,
+                              taken.Add(BuildPackedBitsRead(
+                                  Unit(), taken,
+                                  Referent(taken, p[0], positions_type), 0,
+                                  PositionsTypeOf(Unit(), member))),
+                              member));
+                return taken.Add(
+                    mir::MakeTaggedUnionExpr(
+                        value,
+                        base::ComponentIndex{static_cast<std::uint32_t>(i)},
+                        WholeType()));
+              });
+        }
+        return block.Add(BuildDefaultValueExpr(Unit(), block, WholeType()));
+      });
+}
 
 // LRM 11.4.5: equal where both hold one member and that member's values are,
 // unequal where they hold different members.
@@ -1488,11 +1894,13 @@ class ArrayBodies : public OperationBodies {
   auto FromBitstream() -> mir::CallableCode;
   auto ToBitVec() -> mir::CallableCode;
   auto FromBitVec() -> mir::CallableCode;
-  auto Fold(support::BuiltinFn fold) -> mir::CallableCode;
-  auto FilledLike() -> mir::CallableCode;
   auto TakePositions() -> mir::CallableCode;
+  auto ToPositions() -> mir::CallableCode;
+  auto WritePositions() -> mir::CallableCode;
+  auto FromPositions() -> mir::CallableCode;
   using OperationBodies::DeclaredDefault;
   using OperationBodies::Inequality;
+  using OperationBodies::PositionCount;
 
  private:
   [[nodiscard]] auto ElementType() const -> mir::TypeId {
@@ -1929,35 +2337,6 @@ auto ArrayBodies::FromBitVec() -> mir::CallableCode {
       });
 }
 
-// Two contributions folded element by element (LRM 6.7.1).
-auto ArrayBodies::Fold(support::BuiltinFn fold) -> mir::CallableCode {
-  return BodyOf(
-      fold, {WholeType(), WholeType()}, WholeType(),
-      [&](mir::CallableCode& code, mir::Builder block,
-          const std::vector<mir::LocalId>& p) {
-        return Built(code, block, [&](mir::Builder body, mir::ExprId position) {
-          const mir::ExprId lhs = Element(body, p[0], position);
-          const mir::ExprId rhs = Element(body, p[1], position);
-          return BuildValueOperation(
-              Unit(), body, fold, lhs, {rhs}, ElementType());
-        });
-      });
-}
-
-auto ArrayBodies::FilledLike() -> mir::CallableCode {
-  const mir::TypeId fill = FillType(Unit());
-  return BodyOf(
-      support::BuiltinFn::kFilledLike, {WholeType(), fill}, WholeType(),
-      [&](mir::CallableCode& code, mir::Builder block,
-          const std::vector<mir::LocalId>& p) {
-        return Built(code, block, [&](mir::Builder body, mir::ExprId position) {
-          const mir::ExprId element = Element(body, p[0], position);
-          const mir::ExprId fill_value = Referent(body, p[1], fill);
-          return BuildFilled(Unit(), body, element, ElementType(), fill_value);
-        });
-      });
-}
-
 // An array's positions are its elements', the one at position 0 first.
 auto ArrayBodies::TakePositions() -> mir::CallableCode {
   const mir::TypeId number = Unit().builtins.machine_int64;
@@ -1981,17 +2360,168 @@ auto ArrayBodies::TakePositions() -> mir::CallableCode {
       });
 }
 
+// An array's positions are its elements', the one at position 0 first.
+auto ArrayBodies::ToPositions() -> mir::CallableCode {
+  const mir::TypeId positions_type = PositionsTypeOf(Unit(), WholeType());
+  const mir::TypeId position_type = mir::PositionType(Unit().types);
+  return BodyOf(
+      support::BuiltinFn::kToPositions, {WholeType()}, positions_type,
+      [&](mir::CallableCode& code, mir::Builder block,
+          const std::vector<mir::LocalId>& p) {
+        const mir::LocalId positions = Declared(
+            code, block, positions_type,
+            block.Add(BuildDefaultValueExpr(Unit(), block, positions_type)));
+        const auto per_element =
+            static_cast<std::int64_t>(PositionCountOf(Unit(), ElementType()));
+        ForEachPosition(
+            code, block, [&](mir::Builder body, mir::ExprId position) {
+              const mir::ExprId at = body.Add(
+                  mir::MakeBinary(
+                      Unit(), body.Body(), mir::BinaryOp::kMul, position,
+                      BuildConstantPosition(Unit(), body, per_element),
+                      position_type));
+              LayPositions(
+                  body, positions, positions_type, at,
+                  PartPositions(
+                      body, ElementType(), Element(body, p[0], position)),
+                  PositionsTypeOf(Unit(), ElementType()));
+            });
+        return block.ReadLocal(positions, positions_type);
+      });
+}
+
+// The array whose elements' positions an integral value of its positions
+// holds, the one at position 0 first.
+auto ArrayBodies::FromPositions() -> mir::CallableCode {
+  const mir::TypeId positions_type = PositionsTypeOf(Unit(), WholeType());
+  const mir::TypeId position_type = mir::PositionType(Unit().types);
+  return BodyOf(
+      support::BuiltinFn::kFromPositions, {positions_type}, WholeType(),
+      [&](mir::CallableCode& code, mir::Builder block,
+          const std::vector<mir::LocalId>& p) {
+        const auto per_element =
+            static_cast<std::int64_t>(PositionCountOf(Unit(), ElementType()));
+        return Built(code, block, [&](mir::Builder body, mir::ExprId position) {
+          const mir::ExprId start = body.Add(
+              mir::MakeBinary(
+                  Unit(), body.Body(), mir::BinaryOp::kMul, position,
+                  BuildConstantPosition(Unit(), body, per_element),
+                  position_type));
+          const mir::ExprId bits = body.Add(StepRead(
+              Unit(), body,
+              DescentStep{
+                  .to = StepToBits{.start = start},
+                  .part_type = PositionsTypeOf(Unit(), ElementType())},
+              Referent(body, p[0], positions_type)));
+          return body.Add(
+              BuildFromPositions(Unit(), body, bits, ElementType()));
+        });
+      });
+}
+
+// Only the elements the view reaches are written: the loop starts at the
+// element holding the first position the view reaches, found by dividing,
+// and ends after the one holding its last, so a view over one element costs
+// that element whatever the array's size.
+auto ArrayBodies::WritePositions() -> mir::CallableCode {
+  return BodyTaking(
+      support::BuiltinFn::kWritePositions, TypesOfPositionsWrite(),
+      Unit().builtins.machine_bool,
+      [&](mir::CallableCode& code, mir::Builder block,
+          const std::vector<mir::LocalId>& p) {
+        const PositionsWrite write = HoldPositionsWrite(code, block, p);
+        const mir::TypeId number = Unit().builtins.machine_int64;
+        const mir::TypeId position_type = mir::PositionType(Unit().types);
+        const std::uint64_t per_element =
+            PositionCountOf(Unit(), ElementType());
+        const mir::ExprId reached_from = mir::BuildMachineIntMax(
+            Unit(), block, CountNow(block, write.start),
+            CountLiteral(block, 0));
+        const mir::LocalId first_element = DeclaredCount(
+            code, block,
+            mir::BuildMachineIntBinary(
+                Unit(), block, mir::BinaryOp::kDiv, reached_from,
+                CountLiteral(block, per_element)));
+        const mir::ExprId view_end = mir::BuildMachineIntBinary(
+            Unit(), block, mir::BinaryOp::kAdd, CountNow(block, write.start),
+            CountNow(block, write.count));
+        const mir::LocalId reached_to = DeclaredCount(code, block, view_end);
+        const mir::LocalId element = code.AddLocal(number);
+
+        mir::Block body;
+        mir::Builder body_builder = block.Into(body);
+        const mir::ExprId lo = mir::BuildMachineIntBinary(
+            Unit(), body_builder, mir::BinaryOp::kMul,
+            body_builder.ReadLocal(element, number),
+            CountLiteral(body_builder, per_element));
+        // The element's position, held so that the read of the element and
+        // the write back both reach it without computing it twice.
+        const mir::LocalId position = Declared(
+            code, body_builder, position_type,
+            body_builder.Add(
+                mir::MakeBuiltinCall(
+                    Unit(), body_builder.Body(),
+                    support::BuiltinFn::kIntegralFromInt, std::nullopt,
+                    {body_builder.ReadLocal(element, number)}, position_type)));
+        PartWritten(
+            code, body_builder, ElementType(),
+            AccessPath{
+                .owner = Written(body_builder, p[0]),
+                .descent = {DescentStep{
+                    .to =
+                        StepToElement{
+                            .position = body_builder.ReadLocal(
+                                position, position_type)},
+                    .part_type = ElementType()}}},
+            lo, write);
+        const mir::BlockId scope = block.AddScope(std::move(body));
+
+        const mir::ExprId element_lo = mir::BuildMachineIntBinary(
+            Unit(), block, mir::BinaryOp::kMul,
+            block.ReadLocal(element, number), CountLiteral(block, per_element));
+        const mir::ExprId before_view_end = mir::BuildMachineIntComparison(
+            Unit(), block, mir::BinaryOp::kLessThan, element_lo,
+            CountNow(block, reached_to));
+        const mir::ExprId before_array_end = mir::BuildMachineIntComparison(
+            Unit(), block, mir::BinaryOp::kLessThan,
+            block.ReadLocal(element, number), CountLiteral(block, count_));
+        const mir::ExprId next = mir::BuildMachineIntBinary(
+            Unit(), block, mir::BinaryOp::kAdd,
+            block.ReadLocal(element, number), CountLiteral(block, 1));
+        std::vector<mir::ForInit> init;
+        init.emplace_back(
+            mir::ForInitDecl{
+                .induction_var = element,
+                .init = CountNow(block, first_element)});
+        block.AppendStmt(
+            mir::ForStmt{
+                .init = std::move(init),
+                .condition = AllHold(
+                    Unit(), block,
+                    std::array{before_view_end, before_array_end}),
+                .step = {block.Add(
+                    mir::MakeAssignExpr(
+                        Unit().builtins, block.LocalPlace(element, number),
+                        next))},
+                .scope = scope});
+        return block.ReadLocal(write.changed, Unit().builtins.machine_bool);
+      });
+}
+
 // Which of the operations a type may lack it has: a stream, one of fixed width,
 // and, where its width is the running program's, a stream written out where
 // the type holds no class handle, whose object's stream is not yet built (LRM
 // 11.4.14.1), and one read back where the type may be a destination (LRM
-// 6.24.3); a net's folds (LRM 6.7.1).
+// 6.24.3); its positions read out and built from, where every bit it has is a
+// fixed one (LRM 7.3); and what a net asks of it, where a net resolves it
+// (LRM 6.7.1).
 struct OperationsHad {
   bool stream;
   bool fixed_stream;
   bool run_written;
   bool run_read;
-  bool net_folds;
+  bool positions;
+  bool net_positions;
 };
 
 // Hands `add` each operation on the whole value every such type has, in one
@@ -2008,13 +2538,17 @@ void StateWholeValue(Bodies& bodies, Add add) {
   add(support::BuiltinFn::kHasUnknown, [&] { return bodies.HasUnknown(); });
   add(support::BuiltinFn::kTakePositions,
       [&] { return bodies.TakePositions(); });
+  add(support::BuiltinFn::kPositionCount,
+      [&] { return bodies.PositionCount(); });
 }
 
-// Hands `add` a stream's operations (LRM 6.24.3) and a net's folds (LRM
-// 6.7.1) where `had` says the type has them. A tagged union has neither, so it
-// is asked for none.
+// Hands `add` a stream's operations (LRM 6.24.3), the positions operations
+// and what a net asks (LRM 6.7.1) where `had` says the type has them. A tagged
+// union has no stream and no net holds one, so it states its positions
+// operations itself.
 template <typename Bodies, typename Add>
-void StateStreamAndFolds(Bodies& bodies, const OperationsHad& had, Add add) {
+void StateStreamAndPositions(
+    Bodies& bodies, const OperationsHad& had, Add add) {
   if (had.stream) {
     add(support::BuiltinFn::kBitstreamWidth, [&] { return bodies.BitWidth(); });
     add(support::BuiltinFn::kCountBits, [&] { return bodies.CountBits(); });
@@ -2025,11 +2559,14 @@ void StateStreamAndFolds(Bodies& bodies, const OperationsHad& had, Add add) {
           [&] { return bodies.FromBitstream(); });
     }
   }
-  if (had.net_folds) {
-    for (const support::BuiltinFn fold : kNetFolds) {
-      add(fold, [&] { return bodies.Fold(fold); });
-    }
-    add(support::BuiltinFn::kFilledLike, [&] { return bodies.FilledLike(); });
+  if (had.positions) {
+    add(support::BuiltinFn::kToPositions, [&] { return bodies.ToPositions(); });
+    add(support::BuiltinFn::kFromPositions,
+        [&] { return bodies.FromPositions(); });
+  }
+  if (had.net_positions) {
+    add(support::BuiltinFn::kWritePositions,
+        [&] { return bodies.WritePositions(); });
   }
 }
 
@@ -2063,13 +2600,14 @@ auto OperationsHadByUnion(
       .fixed_stream = IsFixedStream(FixedStreamShapeOf(unit, members.front())),
       .run_written = false,
       .run_read = false,
-      .net_folds = HasNetFoldsOver(unit, mir::RecordKind::kUnion, members)};
+      .positions = EveryPart(unit, members, HasPositions),
+      .net_positions = NetResolvesOver(unit, mir::RecordKind::kUnion, members)};
 }
 
 // What a product has of the operations a type may lack, read off its
 // components: a stream where every component has one, written out as a run of
 // bits where none holds a class handle and read back where every one may be a
-// destination, and a net's folds where a net admits every component.
+// destination, and a net's positions where a net resolves every component.
 auto OperationsHadByProduct(
     const mir::CompilationUnit& unit, std::span<const mir::TypeId> components)
     -> OperationsHad {
@@ -2091,7 +2629,8 @@ auto OperationsHadByProduct(
                       [&](mir::TypeId component) {
                         return IsStreamDestination(unit, component);
                       }),
-      .net_folds = EveryPart(unit, components, FoldsAsAPart)};
+      .positions = EveryPart(unit, components, HasPositions),
+      .net_positions = EveryPart(unit, components, NetResolves)};
 }
 
 // Hands `add` every operation a product has, which a structure and a tuple
@@ -2099,11 +2638,7 @@ auto OperationsHadByProduct(
 template <typename Bodies, typename Add>
 void StateProductOperations(Bodies& bodies, const OperationsHad& had, Add add) {
   StateWholeValue(bodies, add);
-  // What the library holding an array of the product asks of it, where it
-  // takes positions element by element; a union, held whole, needs none.
-  add(support::BuiltinFn::kPositionCount,
-      [&] { return bodies.PositionCount(); });
-  StateStreamAndFolds(bodies, had, add);
+  StateStreamAndPositions(bodies, had, add);
   StateRunBodies(bodies, had, add);
 }
 
@@ -2111,7 +2646,7 @@ void StateProductOperations(Bodies& bodies, const OperationsHad& had, Add add) {
 // read off the array itself, which is interned whole before any body is
 // built: a stream where its element has one, written out as a run of bits
 // where it holds no class handle and read back where it may be a destination,
-// and a net's folds where a net admits it.
+// and a net's positions where a net resolves it.
 auto OperationsHadByArray(const mir::CompilationUnit& unit, mir::TypeId array)
     -> OperationsHad {
   const bool stream = HasBitStream(unit, array);
@@ -2121,7 +2656,8 @@ auto OperationsHadByArray(const mir::CompilationUnit& unit, mir::TypeId array)
       .fixed_stream = fixed_stream,
       .run_written = stream && !fixed_stream && !HoldsClassHandle(unit, array),
       .run_read = stream && !fixed_stream && IsStreamDestination(unit, array),
-      .net_folds = HasNetFolds(unit, array)};
+      .positions = HasPositions(unit, array),
+      .net_positions = NetResolves(unit, array)};
 }
 
 // Hands `add` every operation on a whole value `type`, a type no declaration
@@ -2146,7 +2682,7 @@ void ForEachStructuralOperation(
       const OperationsHad had = OperationsHadByArray(unit, type);
       ArrayBodies bodies(unit, type, array.element_type, array.count);
       StateWholeValue(bodies, add);
-      StateStreamAndFolds(bodies, had, add);
+      StateStreamAndPositions(bodies, had, add);
       StateRunBodies(bodies, had, add);
       return;
     }
@@ -2169,30 +2705,21 @@ void ForEachStructuralOperation(
   throw InternalError("hir_to_mir: unknown type of structural operations");
 }
 
-// Whether a value of `type` folds as a part of an aggregate net: a net holds
-// each contribution to one as a value of the net's own type, so a part folds
-// only where it can hold the `z` a driver leaves it at where it drives nothing,
-// which is a 4-state integral value and an aggregate of such (LRM 6.6.1).
-auto FoldsAsAPart(const mir::CompilationUnit& unit, mir::TypeId type) -> bool {
+}  // namespace
+
+auto NetResolves(const mir::CompilationUnit& unit, mir::TypeId type) -> bool {
   const mir::Type& t = unit.types.Get(type);
   if (t.IsIntegral()) {
-    return IsFourState(t.Integral().state_kind);
+    return true;
   }
   if (const std::optional<mir::RecordKind> kind =
           mir::RecordKindOf(unit, type)) {
-    return HasNetFoldsOver(unit, *kind, PartTypes(unit, type));
+    return NetResolvesOver(unit, *kind, PartTypes(unit, type));
   }
   if (t.Is<mir::UnpackedArrayType>()) {
-    return EveryPart(unit, PartTypes(unit, type), FoldsAsAPart);
+    return EveryPart(unit, PartTypes(unit, type), NetResolves);
   }
   return false;
-}
-
-}  // namespace
-
-auto HasNetFolds(const mir::CompilationUnit& unit, mir::TypeId type) -> bool {
-  const mir::Type& t = unit.types.Get(type);
-  return t.IsIntegral() || FoldsAsAPart(unit, type);
 }
 
 auto ReferenceTo(const mir::CompilationUnit& unit, mir::TypeId type)
@@ -2215,16 +2742,16 @@ namespace {
 // Hands `add` every operation on a whole value the record `record` names has,
 // over values of `type`, with what builds its body: a struct's read off its
 // members, its start value off what its declaration `structure` gives (LRM
-// 7.2), an untagged union's each its first member's (LRM 7.3.2), and a tagged
-// union's each that of the member its tag names, with no stream and no net's
-// folds.
+// 7.2), an untagged union's off its first member read through its storage
+// and off the storage itself (LRM 7.3), and a tagged union's each that of the
+// member its tag names, with no stream and nothing a net asks.
 template <typename Add>
 void ForEachRecordMethod(
     UnitLowerer& lowerer, const hir::UnpackedStructDefinition* structure,
     mir::RecordId record, mir::TypeId type, Add add) {
   const mir::CompilationUnit& unit = lowerer.Unit();
   const std::span<const mir::TypeId> members =
-      mir::RecordElements(unit, record);
+      mir::MembersOf(unit.GetRecord(record));
   switch (mir::RecordKindOf(unit, record)) {
     case mir::RecordKind::kStruct: {
       if (structure == nullptr) {
@@ -2242,13 +2769,20 @@ void ForEachRecordMethod(
       const OperationsHad had = OperationsHadByUnion(unit, members);
       UnionBodies bodies(unit, record, type, {members.begin(), members.end()});
       StateWholeValue(bodies, add);
-      StateStreamAndFolds(bodies, had, add);
+      StateStreamAndPositions(bodies, had, add);
       return;
     }
     case mir::RecordKind::kTaggedUnion: {
       TaggedUnionBodies bodies(
           unit, record, type, {members.begin(), members.end()});
       StateWholeValue(bodies, add);
+      // An untagged union holding it is a view of its positions (LRM 7.3).
+      if (EveryPart(unit, members, HasPositions)) {
+        add(support::BuiltinFn::kToPositions,
+            [&] { return bodies.ToPositions(); });
+        add(support::BuiltinFn::kFromPositions,
+            [&] { return bodies.FromPositions(); });
+      }
       return;
     }
   }
@@ -2324,6 +2858,9 @@ auto PositionCountOf(const mir::CompilationUnit& unit, mir::TypeId type)
   if (t.IsIntegral()) {
     return t.Integral().bit_width;
   }
+  if (const auto* real = t.As<mir::RealType>()) {
+    return support::BitsOf(real->width);
+  }
   if (const auto* array = t.As<mir::UnpackedArrayType>()) {
     return array->count * PositionCountOf(unit, array->element_type);
   }
@@ -2335,7 +2872,100 @@ auto PositionCountOf(const mir::CompilationUnit& unit, mir::TypeId type)
     }
     return count;
   }
+  // An untagged union's are its storage's, which every member is a view of
+  // from its first position (LRM 7.3).
+  if (const std::optional<mir::TypeId> storage =
+          mir::UnionStorageOf(unit, type)) {
+    return PositionCountOf(unit, *storage);
+  }
+  // A tagged union's are its widest member's, every member's from the first,
+  // and then its tag's, as a packed tagged union lays them out (LRM 7.3.2).
+  if (mir::IsTaggedUnion(unit, type)) {
+    const std::span<const mir::TypeId> members =
+        *mir::OverlaidMembers(unit, type);
+    return WidestPositionCountOf(unit, members) +
+           TagPositionsFor(members.size());
+  }
   return 1;
+}
+
+auto WidestPositionCountOf(
+    const mir::CompilationUnit& unit, std::span<const mir::TypeId> members)
+    -> std::uint64_t {
+  std::uint64_t widest = 0;
+  for (const mir::TypeId member : members) {
+    widest = std::max(widest, PositionCountOf(unit, member));
+  }
+  return widest;
+}
+
+auto PositionsTypeOf(const mir::CompilationUnit& unit, mir::TypeId type)
+    -> mir::TypeId {
+  return mir::PackedVectorOf(
+      unit.types, PositionCountOf(unit, type),
+      mir::IntegralStateKind::kFourState);
+}
+
+auto BuildToPositions(
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId value,
+    mir::TypeId positions_type) -> mir::ExprId {
+  const mir::TypeId type = block.Get(value).type;
+  const mir::Type& t = unit.types.Get(type);
+  if (t.IsIntegral()) {
+    return ConvertToType(
+        unit, block, block.AsValue(unit.types, value), positions_type);
+  }
+  if (t.Is<mir::RealType>()) {
+    const mir::ExprId pattern = block.Add(
+        mir::Expr{
+            .data =
+                mir::CallExpr{
+                    .callee =
+                        mir::Direct{
+                            .target = support::BuiltinFn::kToBits,
+                            .receiver = block.AsValue(unit.types, value)},
+                    .arguments = {}},
+            .type = unit.builtins.machine_int64});
+    return block.Add(
+        mir::MakeBuiltinCall(
+            unit, block.Body(), support::BuiltinFn::kIntegralFromInt,
+            std::nullopt, {pattern}, positions_type));
+  }
+  return ConvertToType(
+      unit, block,
+      BuildValueOperation(
+          unit, block, support::BuiltinFn::kToPositions, value, {},
+          PositionsTypeOf(unit, type)),
+      positions_type);
+}
+
+auto BuildFromPositions(
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId positions,
+    mir::TypeId type) -> mir::Expr {
+  const mir::Type& t = unit.types.Get(type);
+  if (t.IsIntegral()) {
+    return BuildValueConversion(unit, block, positions, type);
+  }
+  if (t.Is<mir::RealType>()) {
+    return mir::Expr{
+        .data =
+            mir::CallExpr{
+                .callee =
+                    mir::Direct{
+                        .target = support::BuiltinFn::kFromBits,
+                        .type_arguments = {type}},
+                .arguments = {BuildToInt64Call(unit, block, positions)}},
+        .type = type};
+  }
+  // A type's own operation takes each value it is handed by reference.
+  return mir::MakeCallExpr(
+      mir::Direct{
+          .target = *OwnOperationTarget(
+              unit, type, support::BuiltinFn::kFromPositions)},
+      {mir::Borrow(
+          unit, block,
+          ConvertToType(unit, block, positions, PositionsTypeOf(unit, type)))},
+      type);
 }
 
 auto IsWholeValueOperation(support::ValueOperation operation) -> bool {
@@ -2362,13 +2992,9 @@ auto BuildValueOperation(
   for (mir::ExprId& operand : operands) {
     operand = block.AsValue(unit.types, operand);
   }
-  const std::optional<mir::ExprId> object =
-      receiver.transform([&](mir::ExprId named) {
-        return mir::ReadIfOverlaid(unit, block, named);
-      });
   return block.Add(
       mir::MakeBuiltinCall(
-          unit, block.Body(), entry, object, std::move(operands), result));
+          unit, block.Body(), entry, receiver, std::move(operands), result));
 }
 
 auto BuildEquality(

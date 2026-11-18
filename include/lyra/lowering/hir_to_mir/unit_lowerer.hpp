@@ -771,10 +771,14 @@ class UnitLowerer {
   [[nodiscard]] auto InstanceCovergroupsOf(const support::DefPath& scope) const
       -> std::vector<hir::CovergroupId>;
 
-  // Defines the record `id` the struct or the union `source` names: its kind,
-  // its members, and the unit declaring it where that is another, which a
-  // value of it then depends on.
+  // Defines the record `id` the struct or the union `source` names, once: its
+  // members, an untagged union's storage, and the unit declaring it where that
+  // is another, which a value of it then depends on. A union's storage counts
+  // its members' positions, so every record a member holds is defined first.
   void DefineRecord(const hir::Type& source, mir::RecordId id);
+
+  // Defines every record a value of `type` holds, as `DefineRecord` does.
+  void DefineRecordsWithin(hir::TypeId type);
 
   // Declares the methods of the struct or the union `id` from `source`, over
   // values of `type`, the interned type naming it, before any record's bodies

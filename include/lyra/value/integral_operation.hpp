@@ -34,7 +34,7 @@ struct IntegralExtent {
 // there.
 using IntegralOperand = std::variant<
     ConstIntegralView, std::int64_t, bool, std::uint8_t, std::string_view,
-    const svBitVecVal*, const svLogicVecVal*>;
+    const svBitVecVal*, const svLogicVecVal*, const ConstIntegralView*>;
 
 // An integral answer of the type the call states, and an answer that is a
 // machine predicate or number.
@@ -142,10 +142,6 @@ auto ApplyIntegralOperation(const Operands& to, const IntegralView& answer)
   };
   const auto reduced = [&](ReductionOp reduction) {
     return one_bit(Reduce(to.At(0), reduction));
-  };
-  const auto resolved = [&](NetResolution fold) -> MachineAnswer {
-    Resolve(answer, to.At(0), to.At(1), fold);
-    return {};
   };
   switch (op) {
     case IntegralOp::kAdd:
@@ -255,6 +251,13 @@ auto ApplyIntegralOperation(const Operands& to, const IntegralView& answer)
               .width = static_cast<std::uint64_t>(
                   to.template MachineAt<std::int64_t>(3))});
       return {};
+    case IntegralOp::kWithPositions:
+      detail::Copy(to.At(0).value, answer.value);
+      detail::Copy(to.At(0).unknown, answer.unknown);
+      WithPositionsInto(
+          answer, *to.template MachineAt<const ConstIntegralView*>(1),
+          to.template MachineAt<std::int64_t>(2));
+      return {};
     case IntegralOp::kConvert:
       Convert(answer, to.At(0));
       return {};
@@ -277,15 +280,6 @@ auto ApplyIntegralOperation(const Operands& to, const IntegralView& answer)
       return number(CeilLog2(to.At(0)));
     case IntegralOp::kMergeConditional:
       MergeConditional(answer, to.At(0), to.At(1));
-      return {};
-    case IntegralOp::kResolveTriState:
-      return resolved(NetResolution::kTriState);
-    case IntegralOp::kResolveWiredAnd:
-      return resolved(NetResolution::kWiredAnd);
-    case IntegralOp::kResolveWiredOr:
-      return resolved(NetResolution::kWiredOr);
-    case IntegralOp::kDominate:
-      Dominate(answer, to.At(0), to.At(1));
       return {};
     case IntegralOp::kReverseBlocks: {
       const auto block = to.template MachineAt<std::int64_t>(1);

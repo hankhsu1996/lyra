@@ -22,13 +22,16 @@ scope.
 - The rule that each driver is an independent contribution with its own identity and provenance. A
   driver updates only its own contribution; what the net shows follows from the contributions and is
   never a second thing a driver writes.
+- The rule that a contribution holds only the positions its driver drives. Each position resolves on
+  its own (LRM 6.6.7), so a driver of part of a net takes no part in the resolution of any other
+  position, and a change of it reaches only the resolutions of the positions it drives.
 - The rule that what a net shows follows every change of a contribution, and that a change is
   published only when the value shown itself changes.
 - The rule that resolving is what several contributions need. Every fold leaves a lone contribution
   as it stands, its high-impedance positions included (LRM 6.6.1 Table 6-2, 6.6.3 Tables 6-3 and
-  6-4), and strength decides only between contributions (LRM 28.12.1), so a net whose value one
-  driver decides has no value apart from that driver's contribution: it holds the contribution as
-  the value it shows and nothing resolves. Which kind a net is, is a fact of the elaborated design.
+  6-4), and strength decides only between contributions (LRM 28.12.1), so positions one driver
+  decides have no value apart from that driver's contribution: they show the contribution and
+  nothing resolves them. Which positions one driver decides is a fact of the elaborated design.
 - The rule that a net type states two things and no more: the fold it performs, and the contribution
   it makes to the net's own resolution -- a value and the strength it holds that value at.
 - The distinction between a net and a variable as a property carried by type, not a flag: a variable
@@ -38,12 +41,13 @@ scope.
   resolution consumes both: strength decides between contributions of unequal strength, and the net
   type's fold decides among those of equal strength.
 - What a position is, which the standard settles rather than this model: for a net of a built-in net
-  type, resolution runs per bit. LRM 6.7.1 makes a net "composed entirely of 4-state bits", each
-  carrying its own strength; LRM 6.5 makes every bit of a packed type an independent element; and
-  LRM 6.6.7 names the unit outright -- an _atomic net_ is one "whose value is updated and resolved
-  as a whole", and "a `logic` vector net is not an atomic net as each `logic` element is resolved
-  and updated independently". So a vector net is as many resolutions as it has bits, and what the
-  clause calls a single connection point is the set of them some connectivity relates.
+  type, resolution runs per bit, numbered for a net of an unpacked type as its type numbers them
+  (Notes). LRM 6.7.1 makes a net "composed entirely of 4-state bits", each carrying its own
+  strength; LRM 6.5 makes every bit of a packed type an independent element; and LRM 6.6.7 names the
+  unit outright -- an _atomic net_ is one "whose value is updated and resolved as a whole", and "a
+  `logic` vector net is not an atomic net as each `logic` element is resolved and updated
+  independently". So a vector net is as many resolutions as it has bits, and what the clause calls a
+  single connection point is the set of them some connectivity relates.
 - What resolves: a physical net, the set of positions the elaborated design's connectivity places in
   one resolution (LRM 10.11, 23.3.3.7). It is an object of its own, carrying the fold, the net
   type's own contribution and any procedural continuous assignment over those positions -- the facts
@@ -52,12 +56,13 @@ scope.
   and a copy of what each of those resolutions produced over the positions it covers; a net no
   connection reached is the one name of the single resolution covering it exactly.
 
-  **A physical net is therefore one object per set of adjacent positions the design connects
+  **A physical net is therefore one object per set of adjacent positions the design reaches
   identically, rather than one per position.** That is a compression of the bit-wise model above and
   is what gives it its own rule: a physical net covers exactly a maximal set of adjacent positions
-  that agree on what they are connected to, so a connection reaching part of one leaves it no longer
-  maximal and it is cut. A design that connects whole nets has one physical net per net and never
-  meets the cut.
+  that agree on what reaches them -- the connections that place them in a resolution and the drivers
+  that contribute to it -- so a connection or a driver reaching part of one leaves it no longer
+  maximal and it is cut. A design whose connections and drivers reach whole nets has one physical
+  net per net and never meets the cut.
 
 - The rule that a resolution pools the contributions reaching its positions and never makes one
   resolution's value an input to another's.
@@ -86,15 +91,16 @@ scope.
 1. A net's value is the resolution of its contributions under the net type's resolver. With zero
    drivers the value is what the net type's own contribution resolves to; a single driver and many
    drivers are the N=1 and N>1 readings of the same resolution, so what a net shows and when it
-   changes never depends on which of them it has. How a net one driver decides holds that value is
-   invariant 10. Where a connection has placed positions of other nets in one resolution with
+   changes never depends on which of them it has. How positions one driver decides hold that value
+   is invariant 10. Where a connection has placed positions of other nets in one resolution with
    positions of this one, "its contributions" are the contributions reaching every position that
    resolution covers, each read at the positions it occupies here; a net nothing reached is the case
    with nothing coupled to it and has no representation of its own.
 2. A driver is an independent contribution with identity and provenance. A driver gives only its own
-   contribution and reaches no other driver's. The net owns the contribution storage and says where
-   each contribution lies; the driver names its contribution by a stable identity, never by a
-   borrowed pointer into that storage.
+   contribution and reaches no other driver's, and its contribution holds the positions it drives
+   and no other. The net owns the contribution storage and says where each contribution lies; the
+   driver names its contribution by a stable identity, never by a borrowed pointer into that
+   storage.
 3. What a net shows follows every contribution change, but a change is published only when the value
    shown changes. A contribution that moves without changing the value shown wakes no observer.
 4. A net is never the target of a direct or procedural write; it is only driven. This is carried by
@@ -120,23 +126,24 @@ scope.
    fold and the same contribution of the net type's own; where they differ, the standard names a
    dominating type per pair of nets and that relation does not extend to the set a chain of
    connections joins, so the program is reported rather than answered.
-10. A net one driver decides holds that driver's contribution as the value it shows, and nothing
-    resolves: the driver's update is the net's change, published as invariant 3 requires. One driver
-    decides a net that has exactly one driving it, whose net type contributes at the high-impedance
-    strength and keeps nothing, and whose positions no connection placed in a resolution another
-    name reaches. Which kind a net is, is settled per net over the elaborated design, once every
-    driver has attached and every connection has joined, and never where a unit is compiled. Under a
-    procedural continuous assignment the driver's writes land in its contribution, which the net
-    resolves under the assignment as any net does, so the positions it does not hold show the
-    driver's value and the rest show it once released (LRM 10.6.2). Where that one driver carries
-    the whole of a variable, another net, or a port declared as a variable, of the net's own type,
-    unchanged, the contribution is that object's value, so the net shows the object where it lies, a
-    wait on the net is a wait on the object, and nothing runs to carry it (LRM 23.3.3, 4.8). It
-    shows its own undriven value until the driver's turn at time zero, so the first value is a
-    change as any driver's first value is; a procedural continuous assignment puts it back on its
-    own storage, which never reaches the object; and a net that shows another net shows whatever
-    that one comes to show. A net names what it shows the way a port declared as a variable names
-    its source, so the two follow binding and forcing by one rule.
+10. Positions one driver decides show that driver's contribution, and nothing resolves them: the
+    driver's update is the net's change there, published as invariant 3 requires. One driver decides
+    the positions it drives where it is the only driver reaching them, the net type contributes
+    there at the high-impedance strength and keeps nothing, and no connection placed them in a
+    resolution another name reaches. Which positions a driver decides is settled per driver over the
+    elaborated design, once every driver has attached and every connection has joined, and never
+    where a unit is compiled. Under a procedural continuous assignment the driver's writes land in
+    its contribution, which the net resolves under the assignment as any net does, so the positions
+    it does not hold show the driver's value and the rest show it once released (LRM 10.6.2). Where
+    one driver decides the whole net and carries the whole of a variable, another net, or a port
+    declared as a variable, of the net's own type, unchanged, the contribution is that object's
+    value, so the net shows the object where it lies, a wait on the net is a wait on the object, and
+    nothing runs to carry it (LRM 23.3.3, 4.8). It shows its own undriven value until the driver's
+    turn at time zero, so the first value is a change as any driver's first value is; a procedural
+    continuous assignment puts it back on its own storage, which never reaches the object; and a net
+    that shows another net shows whatever that one comes to show. A net names what it shows the way
+    a port declared as a variable names its source, so the two follow binding and forcing by one
+    rule.
 
 ## Boundary to Adjacent Layers
 
@@ -170,16 +177,20 @@ scope.
 - A driver holding a borrowed pointer into the net's contribution storage. The storage is the net's,
   reorganizable at will; a driver addresses its contribution by stable identity.
 - A net given a single-driver representation where its unit is compiled. A net's drivers are not all
-  knowable there -- a second may attach from another unit -- so which kind a net is, is decided over
-  the elaborated design (invariant 10).
-- A net one driver decides carried by a variable's type, or made the target of a procedural write.
-  It is still only driven, and still the one capability type every net is, so nothing that reads,
-  waits on, drives or forces a net knows which kind it is.
-- A net one driver decides showing, or publishing, anything a resolution of its one contribution
-  would not. Which kind a net is changes what runs and never what a design observes.
+  knowable there -- a second may attach from another unit -- so which positions one driver decides
+  is settled over the elaborated design (invariant 10).
+- A net whose positions one driver decides carried by a variable's type, or made the target of a
+  procedural write. It is still only driven, and still the capability type of a resolved net, so
+  nothing that reads, waits on, drives or forces a net knows which of its positions one driver
+  decides.
+- Positions one driver decides showing, or publishing, anything a resolution of their one
+  contribution would not. Whether one driver decides them changes what runs and never what a design
+  observes.
 - A net type modelled here as refusing a second driver, or any count of drivers kept so that a
   constraint can be checked against it. What a legal program may connect is decided before this
-  layer.
+  layer. A net of a type no net type resolves is the one exception: only a forbidden text declares
+  one, the front end checks none of its drivers, and so it refuses a second where that driver
+  attaches (Notes).
 - A net type realized as a resolver of its own, or as an alternative anything below this layer
   branches on. A net type says which fold and what it contributes; a type that pulls, supplies, or
   stores charge differs from a plain one in that contribution and in nothing else.
@@ -279,20 +290,26 @@ the other end of the scale, so its contribution outranks every driver instead of
 and a `trireg` says it with a contribution resolution itself keeps current (LRM 6.6.4, 6.7.1).
 
 A net's data type may be an unpacked aggregate whose elements are themselves valid for a net (LRM
-6.7.1), and the fold then reaches an aggregate by recursing into its elements: a contribution is a
-whole-net-shaped value, and a driver that covers only part of the net carries the resolution
-identity everywhere it does not drive. An unpacked union is one storage its members overlay, and the
-fold reads each contribution as its first member, the member every whole-value use of an untagged
-union reads (LRM 21.2.1.6, 11.4.14.1 name it for the uses they define). The standard names no
-resolution for a union, so this is the one rule applied where it is silent.
+6.7.1). Its positions are its parts', one part after another and the first part's first, which is
+how a procedural continuous assignment numbers them too (LRM 10.6.2), and it resolves them as a
+vector net resolves its bits; what they resolve to is laid into the parts they lie in, so a driver
+of one element costs that element whatever the aggregate's size. An untagged union is the bits of
+its widest member, every member a view of them from the first position, so its positions are its
+storage's and a driver of a member, or of a part of one, drives the storage's positions that member
+or part takes: drivers through two members resolve where their positions meet, as two drivers of
+overlapping parts of a vector do, and a whole union value drives every position. Nothing about nets
+names a union.
 
-A net of a type no net type folds -- a real, a string, a class handle, or an aggregate holding one
-or a 2-state part, which holds each contribution as a value of its type and so cannot hold the `z` a
-driver of another part leaves it at -- which only an input port written with no port kind declares
-(LRM 23.2.2.3) -- is run as a net of a nettype with no resolution function (LRM 6.6.7). Its one
-driver decides it, where nothing drives it it shows its type's default, the net type it was declared
-with contributes nothing, and a second driver is the design's error, refused where it attaches. It
-is told so by its install, which hands it that default and nothing the net type states.
+A net's positions resolve as 4-state bits under the net types' tables (LRM 6.6.1, 6.6.3), and a
+2-state part shows what they resolve to with x and z taken as 0 (LRM 6.11.2), as a 2-state integral
+net does, so an aggregate resolves where every bit it has is a bit of an integral value. A net of a
+type no net type resolves -- a real, a string, a class handle, or an aggregate holding one, none of
+which has bits a table reads -- which only an input port written with no port kind declares (LRM
+23.2.2.3) -- is run as a net of a nettype with no resolution function (LRM 6.6.7). Its one driver
+decides it, where nothing drives it it shows its type's default, the net type it was declared with
+contributes nothing, and a second driver is the design's error, refused where it attaches. It is a
+net of its own kind from MIR down, since how its value is arrived at shares nothing with a net
+resolving positions but being driven, read and observed.
 
 A bidirectional port connection is "a non-strength-reducing transistor connection" (LRM 23.3.3), and
 the standard settles what that means by merging the nets on both sides into one simulated net (LRM

@@ -474,12 +474,12 @@ struct ArrayInstr {
   std::vector<Operand> elements;
 };
 
-// Builds a union holding member `member` as `value`, every other byte of its
-// storage zero, and, for a tagged union, the tag naming that member (LRM 7.3,
-// 7.3.2): the peer of a product's build for a value whose type overlays its
-// members, as rustc's MIR builds a union or an enum's variant by an aggregate
-// naming the field or the variant. Its result is the union.
-struct UnionInstr {
+// Builds a tagged union holding member `member` as `value`, every other byte
+// of its storage zero, and the tag naming that member (LRM 7.3.2): the peer of
+// a product's build for a value whose type overlays its members, as rustc's
+// MIR builds an enum's variant by an aggregate naming the variant. Its result
+// is the tagged union.
+struct TaggedUnionInstr {
   base::ComponentIndex member;
   Operand value;
 };
@@ -544,11 +544,10 @@ struct ElementProjection {
   std::optional<Operand> written_at = std::nullopt;
 };
 
-// Selects one component of whatever product or union the projection has
-// reached, by its position. A product's component is storage of its own (LRM
-// 7.2); a union's member lies at the start of the union's storage, and where
-// the union is untagged its bits may be another member's, so a load through it
-// reads the value its type holds out of them.
+// Selects one component of whatever product or tagged union the projection
+// has reached, by its position. A product's component is storage of its own
+// (LRM 7.2), an untagged union's one storage among them; a tagged union's
+// member lies at the start of the union's storage (LRM 7.3.2).
 struct ComponentProjection {
   base::ComponentIndex index;
 };
@@ -578,15 +577,6 @@ struct Place {
 // object names the cell; the value the cell holds is the place one dereference
 // further, and reading that is what goes through the cell's own access.
 struct LoadInstr {
-  Place place;
-};
-
-// Reads the value of the place's type that the bits at `place` stand for,
-// where another member of an untagged union may have written them (LRM
-// 7.3.2): a value of its own, with every position its type keeps clear made
-// clear, as a bit-field's load is its bits made a value of the field's type.
-// The result's type is the place's type.
-struct OverlaidLoadInstr {
   Place place;
 };
 
@@ -782,10 +772,10 @@ struct EndHandlingInstr {};
 // assignment: every instruction that yields one, a call to a callee answering
 // nothing included, whose value is the void one.
 using Rvalue = std::variant<
-    CallInstr, ProductInstr, UnionInstr, ClosureInstr, ArrayInstr,
-    VectorGetInstr, DiscriminantInstr, LoadInstr, OverlaidLoadInstr,
-    AddrOfInstr, BinaryInstr, UnaryInstr, CastInstr, LandingInstr,
-    VariableStorageInstr, BeginVariableInstr, UseInstr>;
+    CallInstr, ProductInstr, TaggedUnionInstr, ClosureInstr, ArrayInstr,
+    VectorGetInstr, DiscriminantInstr, LoadInstr, AddrOfInstr, BinaryInstr,
+    UnaryInstr, CastInstr, LandingInstr, VariableStorageInstr,
+    BeginVariableInstr, UseInstr>;
 
 // A value computed once and consumed where it is used, with a pure dataflow
 // origin and no storage of its own to name.

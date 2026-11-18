@@ -143,8 +143,9 @@ struct UnpackedStructType {
   auto operator==(const UnpackedStructType&) const -> bool = default;
 };
 
-// LRM 7.3 unpacked union: one storage its member types overlay. Two
-// declarations with the same members are two types (LRM 6.22.1).
+// LRM 7.3 unpacked union: one storage read and written through any of its
+// member types. Two declarations with the same members are two types (LRM
+// 6.22.1).
 struct UnpackedUnionType {
   TypeDeclarationRef declaration;
 

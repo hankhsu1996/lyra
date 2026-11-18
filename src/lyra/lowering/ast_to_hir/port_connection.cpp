@@ -373,38 +373,24 @@ auto ConnectInterfacePort(
   return {};
 }
 
-// The join a bidirectional port connection states (LRM 23.3.3, 23.3.3.7). Both
-// sides are a sequence of net positions: the actual may name a
-// concatenation of nets, and the child's port may stand for part of one of its
-// own declarations, which that unit answers for on its signature because only
-// its own source says which part. The two are laid over each other from the
-// most significant end, exactly as LRM 10.11's bit overlay rules put the
-// members of an alias over one another.
+// The join a bidirectional port connection states (LRM 23.3.3, 23.3.3.7). The
+// actual may name a concatenation of nets, and the child's port may stand for
+// part of one of its own declarations, reached by the path that unit
+// published. The two are laid over each other from the most significant end,
+// exactly as LRM 10.11's bit overlay rules put the members of an alias over
+// one another.
 auto ConnectBidirectionalPort(
     StructuralScopeLowerer& scope, const slang::ast::Symbol& eval_scope,
-    const slang::ast::Expression& actual, hir::Expr child_net,
-    hir::PublishedPositions child_positions, diag::SourceSpan span,
-    WalkFrame frame) -> diag::Result<hir::NetJoin> {
-  auto outside = NetPositionsOfLvalue(
+    const slang::ast::Expression& actual, hir::Expr child_part,
+    diag::SourceSpan span, WalkFrame frame) -> diag::Result<hir::NetJoin> {
+  auto outside = NetSideOfLvalue(
       scope, eval_scope, actual, span,
       diag::DiagCode::kUnsupportedPortConnectionForm, frame);
   if (!outside) return std::unexpected(std::move(outside.error()));
-  std::uint32_t named = 0;
-  for (const hir::NetPositions& operand : *outside) {
-    named += operand.width;
-  }
-  if (named != child_positions.width) {
-    return PortConnectionUnsupported(
-        span,
-        "an inout port connected to a net of a different width is not yet "
-        "supported");
-  }
-  hir::NetSide inside = {hir::NetPositions{
-      .part = frame.Exprs().Add(std::move(child_net)),
-      .offset = child_positions.position,
-      .width = child_positions.width}};
   return hir::NetJoin{
-      .span = span, .sides = {*std::move(outside), std::move(inside)}};
+      .span = span,
+      .sides = {
+          *std::move(outside), {frame.Exprs().Add(std::move(child_part))}}};
 }
 
 // Whether the instantiation left the input `port` to its declared default
@@ -481,17 +467,19 @@ auto ConnectDataPort(
     return {};
   }
 
-  // An input/output port reads the child cell during simulation, so it holds a
-  // value reference; a `ref` port is bound once, so it keeps only the reach.
+  // The part of the child's member the port stands for. An input or an output
+  // reads it during simulation, so it holds a value reference to it, and an
+  // inout joins it; a `ref` port is bound once, so it keeps only the reach.
   const std::vector<hir::PublishedSelector> port_path =
       ImportPublishedPath(unit_lowerer, *child.signature, projection->path);
+  const auto port_part = [&] {
+    return ProjectPublishedPath(
+        unit_lowerer, frame, port_path,
+        unit_lowerer.MakeRoutedMemberRef(child.home_frame, port_route, span),
+        span);
+  };
   const auto cell_endpoint = [&]() -> hir::PortEndpoint {
-    return hir::PortCellEndpoint{
-        .cell = frame.Exprs().Add(ProjectPublishedPath(
-            unit_lowerer, frame, port_path,
-            unit_lowerer.MakeRoutedMemberRef(
-                child.home_frame, port_route, span),
-            span))};
+    return hir::PortCellEndpoint{.cell = frame.Exprs().Add(port_part())};
   };
 
   const support::PortDirection direction = data.direction;
@@ -575,12 +563,6 @@ auto ConnectDataPort(
       // over the contributions of all of them (LRM 23.3.3, 23.3.3.7), so it
       // reads nothing, drives nothing, and waits on nothing. It is therefore
       // not a data port connection at all, and is recorded as the join it is.
-      if (!projection->positions.has_value()) {
-        return PortConnectionUnsupported(
-            span,
-            "an inout port standing for a part of an internal name that is not "
-            "a range of its bits is not yet supported");
-      }
       if (!std::holds_alternative<hir::NetStorage>(member.storage)) {
         throw InternalError(
             "ConnectDataPort: a variable data type is not permitted on either "
@@ -593,9 +575,7 @@ auto ConnectDataPort(
             "assignment to the parent-side target");
       }
       auto join = ConnectBidirectionalPort(
-          scope, *child.instance, *target,
-          unit_lowerer.MakeRoutedMemberRef(child.home_frame, port_route, span),
-          *projection->positions, span, frame);
+          scope, *child.instance, *target, port_part(), span, frame);
       if (!join) return std::unexpected(std::move(join.error()));
       frame.current_structural_scope->net_joins.push_back(*std::move(join));
       return {};

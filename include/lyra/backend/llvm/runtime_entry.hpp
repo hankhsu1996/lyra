@@ -88,6 +88,9 @@ enum class RuntimeOp : std::uint8_t {
   kStreamBuild,
   kRunWrite,
   kRunBuild,
+  // The positions a type's function answers of a value a net resolves,
+  // written into the view the net hands it.
+  kPositionsWrite,
   // Bits written into an integral value where they lie (LRM 11.5.1): into the
   // words of a value held at a place, and into the value a write in progress
   // designates, which hears which of them moved and is named by the domain
@@ -164,7 +167,13 @@ inline constexpr std::string_view kTypeLacksOperationSymbol =
 // for every caller -- so which of the two it holds travels with the address
 // and the entry resolves it, where every other wrapper here is settled by the
 // type alone.
-enum class WrapperKind : std::uint8_t { kCell, kNet, kDriver, kRef };
+enum class WrapperKind : std::uint8_t {
+  kCell,
+  kResolvedNet,
+  kUnresolvedNet,
+  kDriver,
+  kRef
+};
 
 // The family of entries a capability wrapper defines its accesses in, which is
 // part of each one's symbol.

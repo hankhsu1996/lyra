@@ -1076,17 +1076,18 @@ using NamespaceReach = std::variant<
   return ReachedByPosition{owner->ordinal};
 }
 
-// The members' types of the record `record`, wherever it was declared, in
-// declaration order.
+// The components a field step on a value of the record `record` reaches,
+// wherever it was declared, by position: a structure's members, an untagged
+// union's one storage, a tagged union's members.
 [[nodiscard]] inline auto RecordElements(
     const CompilationUnit& unit, RecordId record) -> std::span<const TypeId> {
-  return unit.GetRecord(record).elements;
+  return ComponentsOf(unit.GetRecord(record));
 }
 
 // Which aggregate the record `record` is, wherever it was declared.
 [[nodiscard]] inline auto RecordKindOf(
     const CompilationUnit& unit, RecordId record) -> RecordKind {
-  return unit.GetRecord(record).kind;
+  return KindOf(unit.GetRecord(record));
 }
 
 // The record declaration `type` is, and nothing for any other type.
@@ -1108,8 +1109,8 @@ using NamespaceReach = std::variant<
   return RecordKindOf(unit, *record);
 }
 
-// The members of the union or the tagged union `type` is, which overlay one
-// storage (LRM 7.3), and nothing for any other type.
+// The members of the union or the tagged union `type` is, which are read and
+// written through one storage (LRM 7.3), and nothing for any other type.
 [[nodiscard]] inline auto OverlaidMembers(
     const CompilationUnit& unit, TypeId type)
     -> std::optional<std::span<const TypeId>> {
@@ -1122,9 +1123,25 @@ using NamespaceReach = std::variant<
       return std::nullopt;
     case RecordKind::kUnion:
     case RecordKind::kTaggedUnion:
-      return RecordElements(unit, *record);
+      return MembersOf(unit.GetRecord(*record));
   }
   throw InternalError("mir: unknown record kind");
+}
+
+// The storage of the untagged union `type` is -- the integral value its
+// members are views of (LRM 7.3) -- and nothing for any other type.
+[[nodiscard]] inline auto UnionStorageOf(
+    const CompilationUnit& unit, TypeId type) -> std::optional<TypeId> {
+  const RecordId* record = RecordOf(unit.types.Get(type));
+  if (record == nullptr) {
+    return std::nullopt;
+  }
+  const auto* untagged =
+      std::get_if<UnionRecord>(&unit.GetRecord(*record).shape);
+  if (untagged == nullptr) {
+    return std::nullopt;
+  }
+  return untagged->storage;
 }
 
 // Whether `type` is a tagged union, whose member is chosen by its tag (LRM

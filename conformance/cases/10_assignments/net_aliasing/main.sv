@@ -3,7 +3,9 @@
 // bits share the same physical nets, under the bit overlay rules of a packed
 // union with the same member types. So a driver reaching any member reaches
 // every position the overlay places it at, the effects of several statements
-// are cumulative, and a position no alias covers goes on resolving alone.
+// are cumulative, and a position no alias covers goes on resolving alone. Two
+// nets of one unpacked structure type are one net whole, each member over the
+// same member, whatever positions the type numbers them at (LRM 6.7.1).
 module Top;
   // Two whole names for one net, with the only driver on one of them.
   wire pair_a;
@@ -59,6 +61,16 @@ module Top;
   assign left[7:4] = parts_en ? 4'b0110 : 4'bzzzz;
   assign left[3:0] = 4'b1001;
   assign right[7:4] = 4'b0011;
+
+  typedef struct {
+    logic [3:0] a;
+    logic [3:0] b;
+  } parts_t;
+  wire parts_t front;
+  wire parts_t back;
+  alias front = back;
+  assign front.a = 4'b0110;
+  assign back.b = 4'b1001;
 
   logic pair_undriven;
   logic pair_driven;
@@ -123,6 +135,11 @@ module Top;
       $fatal(1, "right was %b, expected 00110110", right);
     if (left !== 8'b01101001)
       $fatal(1, "left was %b, expected 01101001", left);
+    // Each member is driven through one name, and both names show both.
+    if (front.a !== 4'b0110 || front.b !== 4'b1001 || back.a !== 4'b0110 ||
+        back.b !== 4'b1001)
+      $fatal(1, "the aliased structures were %b %b and %b %b", front.a,
+             front.b, back.a, back.b);
     $display("All checks passed");
   end
 endmodule

@@ -231,6 +231,10 @@ auto UnitLowerer::TranslateType(const mir::Type& ty) -> lir::Type {
             return lir::Type{
                 lir::ResolvedType{.value = TranslateType(r.value)}};
           },
+          [&](const mir::UnresolvedType& r) -> lir::Type {
+            return lir::Type{
+                lir::UnresolvedType{.value = TranslateType(r.value)}};
+          },
           [&](const mir::DriverType& d) -> lir::Type {
             return lir::Type{lir::DriverType{.value = TranslateType(d.value)}};
           },

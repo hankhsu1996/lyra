@@ -105,7 +105,8 @@ code generator writes one constant per array type per unit: the count and the el
 is itself a constant stating how an element starts (D7), which is what reaching an element, a run of
 them and their order by position need. The array's whole-value operations are code compiled for the
 array type -- copy, move, end, assign and the change test in the constant's table, and the
-equalities, the bit stream and the net folds in the records handed to whatever asks them
+equalities, the bit stream and the positions a net reads and writes in the records handed to
+whatever asks them
 ([a-type-is-told-to-the-library-as-a-record-both-sides-read](a-type-is-told-to-the-library-as-a-record-both-sides-read.md)
 D4)
 ([a-fixed-arrays-operations-are-stated-per-unit](a-fixed-arrays-operations-are-stated-per-unit.md)).

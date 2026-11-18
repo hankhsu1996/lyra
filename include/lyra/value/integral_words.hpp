@@ -667,15 +667,20 @@ struct SourceWord {
 
 // Writes the positions `run` names of `dst` from `src`, whose least
 // significant bit lies at position `start` of `dst`, and leaves every other
-// position as it stands. A two-state source landing in four-state storage
-// settles the positions it lands on, and an x or z landing in two-state
-// storage lands as 0.
+// position as it stands; answers whether any position it wrote changed. A
+// two-state source landing in four-state storage settles the positions it
+// lands on, and an x or z landing in two-state storage lands as 0.
 template <
     PlaneWord WrittenWord, std::size_t kWrittenValueWords,
     std::size_t kWrittenUnknownWords>
-constexpr void WriteRun(
+constexpr auto WriteRun(
     IntegralViewOf<WrittenWord, kWrittenValueWords, kWrittenUnknownWords> dst,
-    AnyConstIntegralView auto src, std::int64_t start, BitPositions run) {
+    AnyConstIntegralView auto src, std::int64_t start, BitPositions run)
+    -> bool {
+  if (run.width == 0) {
+    return false;
+  }
+  bool changed = false;
   const std::uint64_t end = run.lsb + run.width;
   const std::size_t last = std::min(
       static_cast<std::size_t>((end - 1U) / 64U), dst.value.size() - 1U);
@@ -686,18 +691,23 @@ constexpr void WriteRun(
     const std::uint64_t mask = LowBits(to - from) << from;
     const SourceWord word =
         SourceWordAt(src, static_cast<std::int64_t>(low) - start);
+    const std::uint64_t value = WordAt(dst.value, i);
     if (dst.unknown.empty()) {
-      SetWord(
-          dst.value, i,
-          (WordAt(dst.value, i) & ~mask) | (word.value & ~word.unknown & mask));
+      const std::uint64_t next =
+          (value & ~mask) | (word.value & ~word.unknown & mask);
+      changed = changed || next != value;
+      SetWord(dst.value, i, next);
     } else {
-      SetWord(
-          dst.value, i, (WordAt(dst.value, i) & ~mask) | (word.value & mask));
-      SetWord(
-          dst.unknown, i,
-          (WordAt(dst.unknown, i) & ~mask) | (word.unknown & mask));
+      const std::uint64_t unknown = WordAt(dst.unknown, i);
+      const std::uint64_t next_value = (value & ~mask) | (word.value & mask);
+      const std::uint64_t next_unknown =
+          (unknown & ~mask) | (word.unknown & mask);
+      changed = changed || next_value != value || next_unknown != unknown;
+      SetWord(dst.value, i, next_value);
+      SetWord(dst.unknown, i, next_unknown);
     }
   }
+  return changed;
 }
 
 // Whether a value holds exactly `number`, read as a two's-complement number of
@@ -1453,9 +1463,8 @@ constexpr void Extract(
 // LRM 11.5.1: writes `src` into `dst` at `start`, landing only on the
 // positions of `dst` that `within` names and leaving every other position as
 // it stands. Answers the positions written, none where it reaches none. The
-// value written into is left clear above its width even where it was not, as
-// it is where another member of an untagged union wrote the storage it lies
-// in (LRM 7.3.2): a write leaves the value its type holds.
+// value written into is left clear above its width: a write leaves the value
+// its type holds.
 template <
     PlaneWord WrittenWord, std::size_t kWrittenValueWords,
     std::size_t kWrittenUnknownWords>
@@ -1471,6 +1480,21 @@ constexpr auto InsertWithin(
   ClearAboveWidth(dst.value, dst.width);
   ClearAboveWidth(dst.unknown, dst.width);
   return written;
+}
+
+// The positions of `dst` that some positions a net resolved reach replaced by
+// them, `src` holding those positions with its least significant one standing
+// at position `start` of `dst`, which may lie outside it (LRM 6.6.7); every
+// other position stands. Answers whether any position changed.
+template <
+    PlaneWord WrittenWord, std::size_t kWrittenValueWords,
+    std::size_t kWrittenUnknownWords>
+constexpr auto WithPositionsInto(
+    IntegralViewOf<WrittenWord, kWrittenValueWords, kWrittenUnknownWords> dst,
+    AnyConstIntegralView auto src, std::int64_t start) -> bool {
+  const std::optional<BitPositions> run = ClampedBitRange(
+      dst.width, src.width, start, BitPositions{.lsb = 0, .width = dst.width});
+  return run.has_value() && detail::WriteRun(dst, src, start, *run);
 }
 
 // The same write over the whole of `dst`: a position outside the destination

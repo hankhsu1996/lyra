@@ -314,10 +314,6 @@ class Writer {
               }},
           selector);
     });
-    Optional(projection.positions, [&](const PublishedPositions& p) {
-      Number(p.position);
-      Number(p.width);
-    });
   }
 
   void Scope(const ScopeClassSignature& scope) {

@@ -15,7 +15,8 @@ auto MemberStorageName(const DeclaredMemberStorage& storage)
   return std::visit(
       Overloaded{
           [](const ObservableCellMember&) -> Name { return "cell"; },
-          [](const ResolvedNetMember&) -> Name { return "net"; },
+          [](const ResolvedNetMember&) -> Name { return "resolved_net"; },
+          [](const UnresolvedNetMember&) -> Name { return "unresolved_net"; },
           [](const SampledHistoryMember&) -> Name { return "sampled_history"; },
           [](const ValueCellMember&) -> Name { return "value_cell"; },
           [](const InlineValueMember&) -> Name { return "inline_value"; },

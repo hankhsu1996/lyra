@@ -98,6 +98,9 @@ class ValueStorageCore {
   void AssignBytes(const void* bytes) {
     *held_ = Read<T>(bytes);
   }
+  [[nodiscard]] auto ToOwned(const void* bytes) const -> const T& {
+    return Read<T>(bytes);
+  }
 
  private:
   value::SmallBox<T> held_;

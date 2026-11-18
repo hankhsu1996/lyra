@@ -350,7 +350,7 @@ auto CodeGenFunction::ComponentAddress(
           },
           // Every member of a union lies at its start (LRM 7.3), as C reaches
           // one by retyping the union's own address.
-          [&](const UnionLayout*) -> llvm::Value* { return value; },
+          [&](const TaggedUnionFields*) -> llvm::Value* { return value; },
           [&](const ArrayLayout* array) -> llvm::Value* {
             return builder_.CreateConstInBoundsGEP1_64(
                 builder_.getInt8Ty(), value, array->stride * index);

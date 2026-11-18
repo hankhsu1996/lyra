@@ -43,6 +43,10 @@ enum class DiagCode : std::uint32_t {
   // The front end accepted a cross bin selecting `binsof` a coverpoint the
   // cross does not cross, which the standard gives no meaning (LRM 19.6.1).
   kErrorBinsofOutsideItsCross,
+  // The front end accepted an alias between a net of an unpacked aggregate and
+  // a net of another type, whose bits the standard overlays only as a packed
+  // union's members, which no unpacked aggregate can be (LRM 10.11).
+  kErrorAliasAcrossTypes,
   // A name reaches what an assertion declares that the build leaves out of the
   // design, so the design reads something that exists only while it is
   // checked, which leaving assertions out promised it does not.

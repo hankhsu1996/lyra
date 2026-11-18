@@ -25,10 +25,10 @@ there as well, and its resolver clause moved: what resolves is the physical net 
 forms, over the positions it covers, and a net nothing reached is the one-name case of it.
 
 Decision 9 was added on 2026-10-11. Decisions 1, 2 and 6 describe a net that resolves, and decision
-9 says what a net one driver decides does instead. It does not reopen the rejected alternative of a
-single-driver net modelled as a variable: that was a representation chosen where a unit is compiled,
-which F2 rules out, while here a net stays a net with a driver and a contribution, and which kind it
-is, is settled per net once the design is built.
+9 says what positions one driver decides do instead. It does not reopen the rejected alternative of
+a single-driver net modelled as a variable: that was a representation chosen where a unit is
+compiled, which F2 rules out, while here a net stays a net with a driver and a contribution, and
+which positions one driver decides is settled once the design is built.
 
 ## Why this decision matters
 
@@ -88,7 +88,9 @@ the design has attached, which is exactly what a global Seal barrier provides.
 
 1. **A net is a resolution node**: a resolved observable value and a set of driver contributions
    owned by the node. The node is a distinct capability type sibling to the plain observable cell --
-   readable and observable, never directly written.
+   readable and observable, never directly written. A net of a type no net type resolves is a
+   capability type of its own beside it, since it has no contributions to resolve
+   (`net_resolution.md` Notes).
 
    The resolver was here too, and
    [joined-nets-are-one-resolution](joined-nets-are-one-resolution.md) moves it: what resolves is
@@ -144,23 +146,26 @@ the design has attached, which is exactly what a global Seal barrier provides.
    `supply1`) are built-in, never-detached drivers attached at Resolve, preserving one uniform
    driver algebra rather than resolver special cases.
 
-9. **A net one driver decides holds that driver's value as its own.** Every table contributions
+9. **Positions one driver decides show that driver's value as their own.** Every table contributions
    resolve under leaves a lone one as it stands, its high-impedance positions included (LRM 6.6.1
-   Table 6-2, 6.6.3), and strength decides only between drivers (LRM 28.12.1), so such a net has no
-   value apart from what its driver last produced: the driver's write lands in the value the net
-   shows and wakes whoever waits on what it changed, as a write of a variable does, and while a
-   force covers the net the driver's value lands in its contribution, which the net resolves under
-   the force (LRM 10.6.2; revised 2026-10-18). One driver decides a net that has exactly one,
-   driving, whose net type contributes at high impedance and keeps nothing, and whose positions no
-   connection made part of a physical net another name reaches. Which it is, is settled once per
-   net, by when a driver first gives a value: decisions 3 and 5 put every attachment and every join
-   before that. Measured on a design of about 1,500 units whose input ports are nets: resolving each
-   one-driver net on every drive was 24.6% of the instructions of a clock. Where that driver carries
-   the whole of a variable, another net, or a port declared as a variable, of the net's own type,
-   unchanged, the driver's value is that object's, so the net shows the object where it lies and the
-   drive runs nothing after its turn at time zero, by the same binding an input port declared as a
-   variable shares its source's storage with (LRM 23.3.3, 4.8). The drive states the object while
-   the design resolves, so the kind stays a fact of the built design.
+   Table 6-2, 6.6.3), and strength decides only between drivers (LRM 28.12.1), so such positions
+   have no value apart from what their driver last produced: the driver's write lands in the value
+   the net shows and wakes whoever waits on what it changed, as a write of a variable does, and
+   while a force covers the net the driver's value lands in its contribution, which the net resolves
+   under the force (LRM 10.6.2; revised 2026-10-18). One driver decides the positions of a net
+   exactly one contribution drives, where the net type contributes at high impedance and keeps
+   nothing, and which no connection made part of a physical net another name reaches. Which
+   positions those are is settled once, by when a driver first gives a value: decisions 3 and 5 put
+   every attachment and every join before that. Revised 2026-11-17: this was settled once per net,
+   so a second driver of any part of a net made every position resolve; a driver's contribution now
+   holds only the positions it drives, so what one driver decides is a run of positions. Measured on
+   a design of about 1,500 units whose input ports are nets: resolving each one-driver net on every
+   drive was 24.6% of the instructions of a clock. Where that driver carries the whole of a
+   variable, another net, or a port declared as a variable, of the net's own type, unchanged, and
+   decides every position of the net, the driver's value is that object's, so the net shows the
+   object where it lies and the drive runs nothing after its turn at time zero, by the same binding
+   an input port declared as a variable shares its source's storage with (LRM 23.3.3, 4.8). The
+   drive states the object while the design resolves, so the kind stays a fact of the built design.
 
 ## Consequences
 

@@ -393,7 +393,6 @@ void VerifyRvalue(
   std::visit(
       Overloaded{
           [&](const LoadInstr& load) { verify_read(load.place); },
-          [&](const OverlaidLoadInstr& load) { verify_read(load.place); },
           [&](const AddrOfInstr& addr) {
             const TypeId place_type = PlaceType(unit, fn, addr.place);
             const Type& result = unit.types.Get(result_type);
@@ -428,13 +427,13 @@ void VerifyRvalue(
           [&](const VectorGetInstr& get) {
             RequireHandleSequence(unit, fn, get.vector);
           },
-          [&](const UnionInstr& built) {
+          [&](const TaggedUnionInstr& built) {
             const std::optional<std::span<const TypeId>> members =
                 OverlaidMembers(unit, result_type);
             if (!members.has_value() || built.member.value >= members->size()) {
               throw InternalError(
-                  "lir verify: a union is built holding a member its type "
-                  "does not have");
+                  "lir verify: a tagged union is built holding a member its "
+                  "type does not have");
             }
           },
           [&](const DiscriminantInstr& read) {

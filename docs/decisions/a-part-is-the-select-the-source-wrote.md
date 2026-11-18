@@ -52,9 +52,11 @@ query on the expression, since queries read it.
 - A loop of `assign d[e] = v[e];` at 64 iterations emits two scope classes for the whole module.
 - A wait or a join may carry a position that is an expression rather than a literal; both backends
   already took one.
-- A connection or an alias reaching a net whose data type is an unpacked aggregate is refused by
-  name, whether it names the whole net or one element. Such a net keeps no positions another net
-  could join. It used to stop the run with an internal error, or produce C++ that did not compile.
+- A connection or an alias reaching a net whose data type is an unpacked aggregate names the part
+  the source wrote, the whole net or one element, and the lowering counts its positions by the
+  part's type, since only the numbering a net resolves gives them (LRM 6.7.1). Revised 2026-11-17:
+  such a join was refused by name, because a side counted the positions it names in the bits of a
+  vector; it had stopped the run with an internal error, or produced C++ that did not compile.
 
 ## Rejected alternatives
 

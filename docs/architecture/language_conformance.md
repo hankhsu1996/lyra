@@ -344,18 +344,19 @@ forcing a net adds one to the design for the testbench's sake.
 
 The meaning Lyra gives it is the standard's rules for forcing a whole variable, applied to each
 forced position on its own, where a value's type numbers its positions part by part: an integral
-value's bits, a structure's members and an array's elements one after another. A procedural
-assignment does not change a forced position while the force is in effect, and changes the positions
-nobody forced as it would without one. After the release a position keeps the forced value until the
-next procedural assignment, unless a continuous assignment or an `assign` drives the variable, which
-is then reestablished there and reevaluated. A port that stands for what its connection drives goes
-on showing that wherever nothing is forced. This is a choice, not a reading the standard forces: the
+value's bits, a structure's members and an array's elements one after another, and an untagged
+union's the bits of its storage, every member a view of them from the first. A procedural assignment
+does not change a forced position while the force is in effect, and changes the positions nobody
+forced as it would without one. After the release a position keeps the forced value until the next
+procedural assignment, unless a continuous assignment or an `assign` drives the variable, which is
+then reestablished there and reevaluated. A port that stands for what its connection drives goes on
+showing that wherever nothing is forced. This is a choice, not a reading the standard forces: the
 open simulator, which keeps the forced value of a whole variable as 10.6.2 says, takes the value
 `always_comb` last wrote after the release of a part. A force on a whole unpacked variable holds
 every position its type numbers, and a queue, a dynamic array or an associative array is one
 position held whole, as a string is, which 6.4 calls singular although it can be indexed like an
-array. A member of an unpacked union, one storage its members read differently (7.3), and a part of
-a string, a queue, a dynamic array or an associative array, whose parts lie at no fixed place in the
+array. A member of a tagged union, which only the union's tag says is there (7.3.2), and a part of a
+string, a queue, a dynamic array or an associative array, whose parts lie at no fixed place in the
 value (7.10.3), are not yet carried out. An `assign` or `deassign` on a whole unpacked variable
 stays an error, as one on a select does. The front end relaxes a faulty target of `force` and
 `release` only, and gives every faulty target of `assign` and `deassign` an error.
@@ -436,11 +437,10 @@ What that net does the standard does not say, and the choice changes what the pr
 Lyra rules on it from the nearest texts it allows. The net types' truth tables are over bits (6.6.1,
 6.6.3), so a net of a 2-state integral type folds its drivers as a wire does and takes an x or z the
 fold makes as 0 (6.11.2): nothing driving it reads 0, and two drivers disagreeing on a bit give 0
-there. A structure or array folds part by part where every part can hold the z its driver leaves
-where it drives nothing, since a net holds each contribution to one as a value of the type: a
-4-state integral part, or an aggregate of such. A real, a string, a class handle, or a structure or
-array holding one of those or a 2-state part has no fold, which makes it what a net of a
-user-defined nettype with no resolution function is (6.6.7): its one driver decides it, nothing
+there. A structure, union or array folds the same way bit by bit where every bit it has is a bit of
+an integral value, a 2-state part taking an x or z as 0. A real, a string, a class handle, or an
+aggregate holding one of those has no bits a table reads and so no fold, which makes it what a net
+of a user-defined nettype with no resolution function is (6.6.7): its one driver decides it, nothing
 driving it leaves its type's default, the net type it was declared with contributes nothing, as a
 nettype has no contribution of its own, and a second driver is the design's error, reported where
 that driver is written. A queue, a dynamic or associative array, an event, or an aggregate holding
@@ -516,6 +516,26 @@ select, all or none, and no allowed text lends one a meaning. Not settled.
 
 The front end accepts it with no diagnostic. Lyra refuses it where the cross bin is declared: cross
 `pc` as well, or select by a coverpoint the cross crosses.
+
+#### An alias between a net of an unpacked aggregate type and a net of another type
+
+```systemverilog
+typedef struct { logic [3:0] a; logic [7:0] b; } parts_t;
+wire parts_t s;
+wire logic [11:0] v;
+alias s = v;
+```
+
+10.11: "The bit overlay rules are the same as for a packed union with the same member types: each
+member shall be the same size". 7.3.1 admits only packed types as a packed union's members, so no
+packed union has a member of an unpacked structure's type, and the rule gives the structure's bits
+no order against the vector's. 6.24.3 orders the bits a bit-stream cast reads, which is a cast and
+not an overlay. Not settled. Two nets of equivalent unpacked aggregate types (6.22.2) overlay part
+by part, which every order of their bits gives alike, so that alias is settled.
+
+The front end accepts it with no diagnostic, and checks an alias's widths only where every member is
+a vector. Lyra refuses it where it reads the front end's representation, before anything is lowered.
+Alias nets of one type, or members of them that are vectors.
 
 ### Not settled by the standard, so refused
 
@@ -1143,6 +1163,35 @@ Lyra makes the call where the past value is read. It is what "the time of the ex
 says when the expression is evaluated at the read, and it is the reading under which a call is made
 once, where the source wrote it, rather than at every tick of the clock whether or not any read
 follows, which would also be when a function with an effect had that effect.
+
+#### An unpacked union in a net driven through two of its members
+
+```systemverilog
+typedef union { logic [3:0] narrow; logic [15:0] wide; } overlay_t;
+wire overlay_t u;
+assign u.narrow = a;
+assign u.wide[15:8] = c;
+```
+
+6.7.1 b) admits "A fixed-size unpacked array or unpacked structure or union" as a net's data type,
+and 6.6.7 resolves a net bit by bit. 7.3: "A union is a data type that represents a single piece of
+storage that can be accessed using one of the named member data types. Only one of the data types in
+the union can be used at a time. By default, a union is unpacked, meaning there is no required
+representation for how members of the union are stored." 7.3.2 lets a union be "updated using a
+value of one member type and read as a value of another member type" and says nothing of what that
+read answers. Each driver is a legal continuous assignment to part of a net, so the text is allowed,
+and which bits two drivers through two members resolve against each other is the representation 7.3
+leaves to the tool.
+
+Lyra holds an unpacked union as the bits of its widest member, 4-state where any member has a
+4-state bit, with every member a view of them from the first position, numbered as a procedural
+continuous assignment numbers a value's positions (10.6.2): an integral value's bits from its least
+significant, a real's IEEE 754 bits, a structure's and an array's parts in turn. That is how 7.3.1
+lays out a packed union and how 6.7.1 makes a net of 4-state bits, so a net of one resolves those
+bits as any net does: above, `narrow` and `wide` meet at bits 3:0, `wide[15:8]` drives bits 15:8 on
+its own, and bits 7:4 have no driver. A whole union value drives every bit, and a read of any member
+answers what its bits resolved to. A variable of the type is held the same way, so nothing about the
+union changes with where it is declared.
 
 ### Allowed
 

@@ -3,11 +3,14 @@
 Date: 2026-06-27 Status: points 3, 4, 5, 7 and 8 superseded by
 [a-union-is-one-storage-its-members-overlay](a-union-is-one-storage-its-members-overlay.md)
 (2026-10-13): an unpacked union is the overlay its rejected alternative named, a member is a field
-step of the union's place, and a read of another member answers its bits. Points 1, 2 and 6 stand,
-except that the union's type now names its declaration, which states its members: a structure, a
-union and a tagged union are one record type
+step of the union's place, and a read of another member answers its bits. That entry was itself
+revised on 2026-11-17: an untagged union is the bits of its widest member, every member a view of
+them. Points 1, 2 and 6 stand, except that the union's type now names its declaration, which states
+its members: a structure, a union and a tagged union are one record type
 ([a-structures-operations-are-stated-in-mir](a-structures-operations-are-stated-in-mir.md),
-2026-10-16). Before that: the write encoding is superseded by
+2026-10-16). Point 6's `UnionExpr` is gone with the 2026-11-17 revision: an untagged union nothing
+wrote is built as its storage holding the first member's default, and only a tagged union has a node
+that builds it. Before that: the write encoding is superseded by
 [value-descent-as-named-calls](value-descent-as-named-calls.md), under which reading a member and
 reaching one are the same pair of entries a product component uses, differing only in which value
 domain realizes them. The representation this entry settles, an active-member value, is unchanged.

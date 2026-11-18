@@ -7,8 +7,9 @@ LIR, not every operation of every type it names.
 ## Context
 
 A fixed-size unpacked array (LRM 7.4.2) has the whole-value operations a structure has: the
-equalities, `$bits`, `$countbits`, `$isunknown`, the bit stream both ways, the net folds, whether a
-write changed a value. Each is defined element by element (LRM 11.4.5, 6.24.3, 6.7.1).
+equalities, `$bits`, `$countbits`, `$isunknown`, the bit stream both ways, the positions a net reads
+and writes, whether a write changed a value. Each is defined element by element (LRM 11.4.5, 6.24.3,
+6.7.1).
 
 A structure's operations, and a union's, are methods its declaration states in MIR
 ([a-structures-operations-are-stated-in-mir](a-structures-operations-are-stated-in-mir.md)). An
@@ -59,9 +60,9 @@ structure's methods follow.
   member first. The body is built from the unit's types alone and rewritten as rustc runs its passes
   over a shim, one body at a time. A structure's and a union's methods read their declaration and
   stay where the declaration is lowered.
-- A record the library keeps -- a type, an element type, a net's folds -- is made whole by the unit
-  that makes it, so a value travelling to another unit carries what will be asked of it. What a call
-  asks by operation is handed by the calling unit, which no holder keeps
+- A record the library keeps -- a type, an element type, what a net asks of a value's positions --
+  is made whole by the unit that makes it, so a value travelling to another unit carries what will
+  be asked of it. What a call asks by operation is handed by the calling unit, which no holder keeps
   ([a-type-is-told-to-the-library-as-a-record-both-sides-read](a-type-is-told-to-the-library-as-a-record-both-sides-read.md)
   D4), so a unit never answers for what another unit will do.
 - The unit records each operation asked with its function, or with none where the language does not

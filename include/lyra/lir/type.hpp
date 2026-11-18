@@ -251,13 +251,21 @@ struct RecordType {
   auto operator==(const RecordType&) const -> bool = default;
 };
 
-// The sealed endpoint of a cross-instance reference -- a resolution node
-// wrapping the referenced value type. The fold it resolves under (LRM 6.6) is
-// installed at construction, so it is the net's state rather than its type.
+// A net of a net type, which resolves its drivers' contributions position by
+// position (LRM 6.6, 6.6.7). The fold it resolves under is installed at
+// construction, so it is the net's state rather than its type.
 struct ResolvedType {
   TypeId value;
 
   auto operator==(const ResolvedType&) const -> bool = default;
+};
+
+// An unresolved net: a net of a nettype with no resolution function, which its
+// one driver gives whole (LRM 6.6.7).
+struct UnresolvedType {
+  TypeId value;
+
+  auto operator==(const UnresolvedType&) const -> bool = default;
 };
 
 // The drive capability for a net: a handle to one of a net's contributions.
@@ -348,8 +356,9 @@ class Type {
       MachineSpanType, MachineFunctionType, RealType, VoidType, ObjectType,
       ClosureType, ErasedCallableType, LibraryType, CoroutineType,
       VariableRefType, PointerType, ManagedRefType, UnmanagedRefType,
-      VectorType, TupleType, RecordType, ResolvedType, DriverType,
-      ObservableType, OpenWriteType, DesignationType, ObjectWriteType>;
+      VectorType, TupleType, RecordType, ResolvedType, UnresolvedType,
+      DriverType, ObservableType, OpenWriteType, DesignationType,
+      ObjectWriteType>;
 
  public:
   explicit Type(Data data) : data_(std::move(data)) {
@@ -380,15 +389,20 @@ class Type {
   // dereference of it invalid.
   [[nodiscard]] auto DerefTarget() const -> std::optional<TypeId>;
 
+  // True for a net's storage, of either kind (LRM 6.6, 6.6.7).
+  [[nodiscard]] auto IsNet() const -> bool {
+    return Is<ResolvedType>() || Is<UnresolvedType>();
+  }
+
   // A type whose storage object has no first-class value in LIR: operations on
-  // it consume its address. A storage cell (an observable variable, a net
-  // resolution node) and every object-tree node (a class object, a scope, an
-  // instance) are such a type -- there is nothing to read out of the storage,
+  // it consume its address. A storage cell (an observable variable, a net)
+  // and every object-tree node (a class object, a scope, an instance) are such
+  // a type -- there is nothing to read out of the storage,
   // write into it, or hand to a callee except where it lives.
   //
   // This is about the storage object, not about how a value is represented,
   // and not about a capability that reaches one. A net's driver is a handle
-  // naming one of a resolution node's slots, an ordinary first-class value its
+  // naming one of a net's contributions, an ordinary first-class value its
   // holder owns, so a place holding one is loaded and stored like any other.
   // The cell is what is address-only, never the value or the capability
   // reaching it.

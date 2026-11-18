@@ -13,21 +13,17 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-// What a net's data type gives its install (LRM 6.7.1): nothing for an integral
-// type, whose positions the type itself counts, or a value of an unpacked
-// aggregate type, whose shape the net takes. A type no net type resolves gives
-// a value of it too, and makes the net one of a nettype with no resolution
-// function (LRM 6.6.7), which is what an input port of such a type written
+// What a net's data type gives its install (LRM 6.7.1): nothing for a type a
+// net type resolves, whose positions the type the net was built with counts,
+// and the type's default for one no net type resolves, which makes the net one
+// of a nettype with no resolution function that shows that default where
+// nothing drives it (LRM 6.6.7) -- what an input port of such a type written
 // with no port kind is (LRM 23.2.2.3).
-struct IntegralNetData {};
-struct AggregateNetData {
-  mir::ExprId prototype;
-};
+struct ResolvedNetData {};
 struct UnresolvedNetData {
   mir::ExprId prototype;
 };
-using NetData =
-    std::variant<IntegralNetData, AggregateNetData, UnresolvedNetData>;
+using NetData = std::variant<ResolvedNetData, UnresolvedNetData>;
 
 // The install of the net `target` names, declared as `net`: what its data type
 // gives it, and what its declared net type states (LRM 6.6, Table 6-1) -- which

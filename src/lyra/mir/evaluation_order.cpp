@@ -182,7 +182,7 @@ auto EvaluationOrder::EffectsOf(const Block& block, ExprId id)
             [](const BinaryExpr&) {},
             [](const CastExpr&) {},
             [](const CompositeExpr&) {},
-            [](const UnionExpr&) {},
+            [](const TaggedUnionExpr&) {},
             [](const ClosureExpr&) {},
             [](const VectorGetExpr&) {},
             [](const DerefExpr&) {},

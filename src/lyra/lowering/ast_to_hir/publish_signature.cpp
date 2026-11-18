@@ -15,13 +15,11 @@
 #include <variant>
 #include <vector>
 
-#include <slang/ast/EvalContext.h>
 #include <slang/ast/Expression.h>
 #include <slang/ast/Scope.h>
 #include <slang/ast/SemanticFacts.h>
 #include <slang/ast/Symbol.h>
 #include <slang/ast/TimingControl.h>
-#include <slang/ast/ValuePath.h>
 #include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/expressions/OperatorExpressions.h>
 #include <slang/ast/expressions/SelectExpressions.h>
@@ -197,45 +195,6 @@ auto PeelPortExpression(const slang::ast::Expression& expr)
     }
     return std::nullopt;
   }
-}
-
-// How many positions a declaration has, in the terms a connection lays
-// positions over each other in: an integral declaration has one per bit (LRM
-// 10.11 states an alias over "bits within a net"), and every other kind has
-// one indivisible position, since nothing names a part of one.
-auto PositionsOfDeclaration(const slang::ast::ValueSymbol& base)
-    -> std::uint32_t {
-  const slang::ast::Type& type = base.getType();
-  if (!type.isIntegral()) {
-    return 1;
-  }
-  return static_cast<std::uint32_t>(type.getBitWidth());
-}
-
-// Which of the declaration's own positions the part a port stands for covers.
-// A port written as a plain name covers all of them; one written as a select
-// covers the positions the front end folded that select to. A select into a
-// declaration whose positions are not bits reaches a part that is none of
-// them, which is what the absent answer says.
-auto PositionsOfPortExpression(
-    const slang::ast::ValueSymbol& base, const slang::ast::Expression* written)
-    -> std::optional<hir::PublishedPositions> {
-  if (written == nullptr) {
-    return hir::PublishedPositions{
-        .position = 0, .width = PositionsOfDeclaration(base)};
-  }
-  if (!base.getType().isIntegral()) {
-    return std::nullopt;
-  }
-  slang::ast::EvalContext eval_context(base);
-  const slang::ast::ValuePath path(*written, eval_context);
-  if (path.lsp != written) {
-    return std::nullopt;
-  }
-  return hir::PublishedPositions{
-      .position = static_cast<std::uint32_t>(path.lspBounds.first),
-      .width = static_cast<std::uint32_t>(
-          path.lspBounds.second - path.lspBounds.first + 1)};
 }
 
 // The descent a port expression's own selects state, turned from the leaf-first
@@ -596,9 +555,7 @@ auto UnitLowerer::PublishSignature() -> diag::Result<void> {
         .target = hir::ImportProjection(
             importer, hir::MemberProjection{
                           .member = member_of(*peeled->base),
-                          .path = *std::move(path),
-                          .positions = PositionsOfPortExpression(
-                              *peeled->base, written)})}};
+                          .path = *std::move(path)})}};
   };
 
   // The ports are read before the members are given their storage, because a
@@ -958,11 +915,7 @@ auto UnitLowerer::PublishScopeClass(const slang::ast::Scope& scope)
       auto path = PublishPath(*this, peeled->steps, span);
       if (!path) return std::unexpected(std::move(path.error()));
       parts.push_back(
-          hir::MemberProjection{
-              .member = *id,
-              .path = *std::move(path),
-              .positions =
-                  PositionsOfPortExpression(*peeled->base, written_part)});
+          hir::MemberProjection{.member = *id, .path = *std::move(path)});
     }
     return parts;
   };

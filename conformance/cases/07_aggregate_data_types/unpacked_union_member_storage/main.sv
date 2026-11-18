@@ -7,8 +7,9 @@
 // name is a variable of the member's type: it is a target, an operand of a
 // read-modify-write, and the name a bit-select or a further member select
 // applies to, so a write to part of it -- an element of an array member, a
-// field of a structure member -- changes that part of the union and nothing
-// else, however large the member is. Assigning one union variable to another
+// field of a structure member, the member a tagged union member holds, or a
+// bit of that -- changes that part of the union and nothing else, however
+// large the member is. Assigning one union variable to another
 // copies the storage, and the two are independent afterwards (LRM 7.3, 6.8,
 // Table 6-7).
 module Top;
@@ -47,6 +48,21 @@ module Top;
     padded_t record;
   } large_t;
 
+  typedef union tagged {
+    logic [3:0] narrow;
+    logic [5:0] wide;
+  } choice_t;
+
+  typedef struct {
+    logic [1:0] pad;
+    choice_t choice;
+  } holder_t;
+
+  typedef union {
+    choice_t choice;
+    holder_t holder;
+  } chosen_t;
+
   four_state_first_t unknown_default;
   two_state_first_t zero_default;
   real_first_t real_default;
@@ -59,6 +75,8 @@ module Top;
   two_state_first_t duplicate;
   large_t in_array;
   large_t in_record;
+  chosen_t chosen;
+  chosen_t chosen_within;
 
   logic [15:0] read_unknown_default = 16'h5A5A;
   int read_zero_default = 77;
@@ -75,6 +93,8 @@ module Top;
   int read_duplicate_after_change;
   int read_element;
   int read_field;
+  logic [5:0] read_chosen = 6'h3f;
+  logic [3:0] read_chosen_within = 4'h0;
 
   initial begin
     read_unknown_default = unknown_default.unknown_first;
@@ -110,6 +130,15 @@ module Top;
     in_record.record.pad[0] = 6;
     in_record.record.count = 5;
     read_field = in_record.record.count;
+
+    chosen.choice = tagged wide 6'h2a;
+    chosen.choice.wide = 6'h15;
+    if (chosen.choice matches tagged wide .held) read_chosen = held;
+    chosen_within.holder.pad = 2'b11;
+    chosen_within.holder.choice = tagged narrow 4'hf;
+    chosen_within.holder.choice.narrow[1] = 1'b0;
+    if (chosen_within.holder.choice matches tagged narrow .held)
+      read_chosen_within = held;
   end
 
   final begin
@@ -157,6 +186,13 @@ module Top;
     if (in_record.record.pad[0] !== 6)
       $fatal(1, "the field beside the one written read %0d, expected 6",
              in_record.record.pad[0]);
+    if (read_chosen !== 6'h15)
+      $fatal(1, "read_chosen was %0h, expected 15", read_chosen);
+    if (read_chosen_within !== 4'hd)
+      $fatal(1, "read_chosen_within was %0h, expected d", read_chosen_within);
+    if (chosen_within.holder.pad !== 2'b11)
+      $fatal(1, "the field beside the tagged member read %b, expected 11",
+             chosen_within.holder.pad);
     $display("All checks passed");
   end
 endmodule

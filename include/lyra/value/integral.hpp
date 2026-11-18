@@ -766,27 +766,6 @@ class Integral {
     });
   }
 
-  // LRM 6.6: two contributions to a net folded under each of the three tables,
-  // and a stronger contribution over a weaker one (LRM 28.12.1).
-  [[nodiscard]] constexpr auto ResolveTriState(const Integral& b) const
-      -> Integral {
-    return Resolved(NetResolution::kTriState, b);
-  }
-  [[nodiscard]] constexpr auto ResolveWiredAnd(const Integral& b) const
-      -> Integral {
-    return Resolved(NetResolution::kWiredAnd, b);
-  }
-  [[nodiscard]] constexpr auto ResolveWiredOr(const Integral& b) const
-      -> Integral {
-    return Resolved(NetResolution::kWiredOr, b);
-  }
-  [[nodiscard]] constexpr auto Dominating(const Integral& weaker) const
-      -> Integral {
-    return Built([&](Integral& out) {
-      Dominate(out.MutableView(), View(), weaker.View());
-    });
-  }
-
   // LRM 20.8.1 `$clog2`, answered as an `integer`; LRM 20.9 `$countbits`,
   // answered as an `int`; and LRM 20.9 `$isunknown`.
   [[nodiscard]] constexpr auto Clog2() const -> Integer;
@@ -857,13 +836,6 @@ class Integral {
   [[nodiscard]] constexpr auto Reduced(ReductionOp op) const
       -> OneBit<kDomain> {
     return OneBit<kDomain>::Filled(Reduce(View(), op));
-  }
-
-  [[nodiscard]] constexpr auto Resolved(
-      NetResolution fold, const Integral& b) const -> Integral {
-    return Built([&](Integral& out) {
-      Resolve(out.MutableView(), View(), b.View(), fold);
-    });
   }
 
   Storage storage_;

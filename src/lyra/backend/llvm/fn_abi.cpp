@@ -77,7 +77,10 @@ auto WrapperOf(const lir::Type& type)
     return std::pair{WrapperKind::kCell, observable->value};
   }
   if (const auto* net = type.As<lir::ResolvedType>()) {
-    return std::pair{WrapperKind::kNet, net->value};
+    return std::pair{WrapperKind::kResolvedNet, net->value};
+  }
+  if (const auto* net = type.As<lir::UnresolvedType>()) {
+    return std::pair{WrapperKind::kUnresolvedNet, net->value};
   }
   if (const auto* driver = type.As<lir::DriverType>()) {
     return std::pair{WrapperKind::kDriver, driver->value};
@@ -197,7 +200,9 @@ auto ToldModeOf(
           [](const ToldWidthMetadataAhead&) -> Mode { return std::nullopt; },
           [](const ToldTypeMetadataAhead&) -> Mode { return std::nullopt; },
           [](const ToldContainerTypeAhead&) -> Mode { return std::nullopt; },
-          [](const ToldTypeAndNetFoldsAhead&) -> Mode { return std::nullopt; },
+          [](const ToldTypeAndNetWitnessesAhead&) -> Mode {
+            return std::nullopt;
+          },
           [](const ToldTakePositions&) -> Mode { return std::nullopt; },
           [](const ToldOperations&) -> Mode { return std::nullopt; },
           [&](const ToldWidthMetadata& t) -> Mode {
@@ -288,7 +293,7 @@ auto TypeArgsOfTheRealization(const std::optional<Realization>& realization)
           [](const ToldWidthMetadataAhead&) -> Args { return {}; },
           [](const ToldTypeMetadataAhead&) -> Args { return {}; },
           [](const ToldContainerTypeAhead&) -> Args { return {}; },
-          [](const ToldTypeAndNetFoldsAhead&) -> Args { return {}; },
+          [](const ToldTypeAndNetWitnessesAhead&) -> Args { return {}; },
           [](const ToldKeyType&) -> Args { return {}; },
           [](const ToldEntryType&) -> Args { return {}; }},
       realization->told);
@@ -378,8 +383,8 @@ auto ImplicitArgOf(
             return TypeMetadataArg{
                 .args = BuiltArrayTypeArgs(types, realization->of)};
           },
-          [&](const ToldTypeAndNetFoldsAhead&) -> ImplicitArg {
-            return TypeAndNetFoldsArg{.of = realization->of};
+          [&](const ToldTypeAndNetWitnessesAhead&) -> ImplicitArg {
+            return TypeAndNetWitnessesArg{.of = realization->of};
           },
           [](const ToldNothing&) -> ImplicitArg { return NoImplicitArg{}; },
           [](const ToldWidthMetadata&) -> ImplicitArg {

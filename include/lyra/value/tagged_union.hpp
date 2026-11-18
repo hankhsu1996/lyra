@@ -2,34 +2,69 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <new>
 #include <span>
 #include <type_traits>
 #include <utility>
 
 #include "lyra/value/integral.hpp"
 #include "lyra/value/layout.hpp"
-#include "lyra/value/union.hpp"
+#include "lyra/value/pack_element.hpp"
 
 namespace lyra::value {
 
-// A tagged union (LRM 7.3.2, 11.9): its members overlaid as an untagged
-// union's are, each at the start of one storage, and after them the tag, the
-// declaration-order position of the member it holds. A member is reached where
-// it lies only once the code reaching it has checked the tag, so nothing here
-// checks it. The tag is the one thing that knows which member is there, so it
-// is what copying, moving and ending a union whose member may own something
-// follow, as a sum type's own operations follow its discriminant; one whose
-// members own nothing is its bytes, copied and ended as bytes are, as a C++
-// union of such members is. A union built holding a member has every byte
-// the member does not take zero, and a copy carries every byte over. A tag
-// naming no member is bits another member of an untagged union holding this
-// one wrote, and only a union whose members own nothing is held so (LRM 7.3).
-// What the union answers as a whole value is its declaration's own methods, on
-// the type the unit declares over this one.
+namespace detail {
+
+// The storage every member of a tagged union lies at the start of, as large as
+// the largest and aligned as the strictest (LRM 7.3.2). A member is reached
+// where it lies by retyping that start, as C reaches one.
+template <typename... Ts>
+class UnionStorage {
+  using Positions = PackPositions<Ts...>;
+
+ public:
+  template <std::size_t I>
+  using Member = PackElement<I, Positions>;
+
+  template <std::size_t I>
+  [[nodiscard]] auto At() -> Member<I>& {
+    return *std::launder(std::bit_cast<Member<I>*>(bytes_.data()));
+  }
+  template <std::size_t I>
+  [[nodiscard]] auto At() const -> const Member<I>& {
+    return *std::launder(std::bit_cast<const Member<I>*>(bytes_.data()));
+  }
+
+  // Member `I` built from `value` over storage holding no member.
+  template <std::size_t I, typename V>
+  void Build(V&& value) {
+    std::construct_at(
+        std::bit_cast<Member<I>*>(bytes_.data()), std::forward<V>(value));
+  }
+
+ private:
+  alignas(Ts...) std::array<std::byte, std::max({sizeof(Ts)...})> bytes_{};
+};
+
+}  // namespace detail
+
+// A tagged union (LRM 7.3.2, 11.9): its members overlaid, each at the start of
+// one storage, and after them the tag, the declaration-order position of the
+// member it holds. A member is reached where it lies only once the code
+// reaching it has checked the tag, so nothing here checks it. The tag is the
+// one thing that knows which member is there, so it is what copying, moving and
+// ending a union whose member may own something follow, as a sum type's own
+// operations follow its discriminant; one whose members own nothing is its
+// bytes, copied and ended as bytes are, as a C++ union of such members is. A
+// union built holding a member has every byte the member does not take zero,
+// and a copy carries every byte over. What the union answers as a whole value
+// is its declaration's own methods, on the type the unit declares over this
+// one.
 template <typename... Ts>
 class TaggedUnion {
   using Storage = detail::UnionStorage<Ts...>;
@@ -130,13 +165,6 @@ class TaggedUnion {
     return storage_.template At<I>();
   }
 
-  // The positions above its widths the member the tag names keeps made clear.
-  void ClearAboveWidths() {
-    WithTag([&]<std::size_t I>() {
-      lyra::value::ClearAboveWidths(storage_.template At<I>());
-    });
-  }
-
  private:
   void End() {
     WithTag(
@@ -144,8 +172,9 @@ class TaggedUnion {
   }
 
   // `f` called with the member the tag names, through a table indexed by the
-  // tag, so nothing here is an expression over every member at once; nothing
-  // where the tag names no member, whose bytes are all there is of it.
+  // tag, so nothing here is an expression over every member at once, and
+  // nothing where the tag names no member, which no value built of the type
+  // holds.
   template <typename F>
   void WithTag(F f) const {
     using Entry = void (*)(F&);

@@ -414,9 +414,9 @@ auto LowerBuiltinMethodCall(
   // A method that changes the object it acts on takes the place that object
   // stands in, so the change lands where the source named it; one that does not
   // is entered on the object where it lies, and reads it there if it takes it
-  // by value. An object lying where another member of an untagged union may
-  // have written is changed in a copy read as its type holds a value, which is
-  // then written back, since the method reads what it changes (LRM 7.3.2).
+  // by value. An object in a member of an untagged union, which is a view of
+  // the union's storage, is changed in a copy read out of it, which is then
+  // written back, since the method reads what it changes (LRM 7.3).
   std::optional<mir::ExprId> receiver;
   std::optional<AccessPath> written_back;
   if (b.receiver.has_value()) {
@@ -424,7 +424,7 @@ auto LowerBuiltinMethodCall(
     if (entry.mutates_receiver) {
       auto recv_or = lowerer.LowerLhsExpr(object, frame);
       if (!recv_or) return std::unexpected(std::move(recv_or.error()));
-      if (ReachesOverlaidStorage(*recv_or)) {
+      if (ReachesUnionMember(*recv_or)) {
         ReadThenWritten changed =
             ReadThenWrite(lowerer.Owner().Unit(), frame, *std::move(recv_or));
         const mir::TypeId type = block.Get(changed.incoming).type;
@@ -447,15 +447,12 @@ auto LowerBuiltinMethodCall(
             auto args = lower_operands(steps.Frame());
             if (!args) return std::unexpected(std::move(args.error()));
             const mir::ExprId object_place = PathAsPlace(unit, body, path);
-            return body.Add(call_on(
-                body, mir::ReadIfOverlaid(unit, body, object_place),
-                *std::move(args)));
+            return body.Add(call_on(body, object_place, *std::move(args)));
           });
     } else {
       auto recv_or = lowerer.LowerAsPlace(object, frame);
       if (!recv_or) return std::unexpected(std::move(recv_or.error()));
-      receiver =
-          mir::ReadIfOverlaid(unit, block, block.Add(*std::move(recv_or)));
+      receiver = block.Add(*std::move(recv_or));
     }
   }
   auto args = lower_operands(frame);
@@ -470,8 +467,8 @@ auto LowerBuiltinMethodCall(
   const mir::Type& answered = unit.types.Get(result_type);
   if (!answered.Is<mir::VoidType>()) {
     throw InternalError(
-        "LowerBuiltinMethodCall: a method changing overlaid storage answers a "
-        "value");
+        "LowerBuiltinMethodCall: a method changing a member of an untagged "
+        "union answers a value");
   }
   block.AppendStmt(mir::ExprStmt{.expr = block.Add(std::move(call))});
   return BuildStoreExpr(unit, block, *written_back, block.Read(*receiver));

@@ -1,9 +1,12 @@
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -85,10 +88,16 @@ struct ReferenceStep {
   mir::Mutability mutability;
 };
 
+// A member of an untagged union, which is no storage of its own but a view of
+// the union's: read as the value of its type the storage's first positions
+// hold (LRM 7.3).
+struct MemberView {};
+
 // How one step is taken: as a field of what it is taken on, by a call
-// answering a reference to the part, or by a call answering the part.
-using StepTaken =
-    std::variant<mir::ComponentFieldTarget, ReferenceStep, StepCall>;
+// answering a reference to the part, by a call answering the part, or as a
+// view of a union's storage.
+using StepTaken = std::variant<
+    mir::ComponentFieldTarget, ReferenceStep, StepCall, MemberView>;
 
 // An element is reached by a read form and a write form, each answering a
 // reference, since reading a position that names no element answers the
@@ -157,11 +166,38 @@ auto ComponentStep(StepUse use, base::ComponentIndex position) -> StepTaken {
   throw InternalError("access path: unknown step use");
 }
 
-// A union's member is a component of the union, lying at the union's own start
-// (LRM 7.3), and is taken as one; it has no identity of its own, so nothing
-// lends it by reference (LRM 13.5.2), and a source text passing one by
-// reference is refused before this layer.
-auto UnionMemberStep(StepUse use, base::ComponentIndex position) -> StepTaken {
+// A union's member has no identity of its own, so nothing lends it by
+// reference (LRM 13.5.2), and a source text passing one by reference is
+// refused before this layer.
+[[noreturn]] void RefuseLentMember() {
+  throw InternalError(
+      "access path: a union's member has no identity of its own and is "
+      "refused where the source passes one by reference, and this descent "
+      "lends one");
+}
+
+// A member of an untagged union is a view of the union's storage, so it is
+// read as a value, and a write landing on it or below it is a write of the
+// storage's positions, which the store builds.
+auto UnionMemberStep(StepUse use) -> StepTaken {
+  switch (use) {
+    case StepUse::kRead:
+      return MemberView{};
+    case StepUse::kWrite:
+    case StepUse::kDesignate:
+      throw InternalError(
+          "access path: a write below a member of an untagged union lands on "
+          "the union's storage, which the store builds, and this descent takes "
+          "a step into the member for a write");
+    case StepUse::kLend:
+      RefuseLentMember();
+  }
+  throw InternalError("access path: unknown step use");
+}
+
+// A tagged union's member lies at the union's own start, under its tag (LRM
+// 7.3.2), and is taken as a component of the union.
+auto TaggedMemberStep(StepUse use, base::ComponentIndex position) -> StepTaken {
   switch (use) {
     case StepUse::kRead:
     case StepUse::kWrite:
@@ -172,10 +208,7 @@ auto UnionMemberStep(StepUse use, base::ComponentIndex position) -> StepTaken {
           .part = mir::CallPart{position},
           .arguments = {}};
     case StepUse::kLend:
-      throw InternalError(
-          "access path: a union's member has no identity of its own and is "
-          "refused where the source passes one by reference, and this descent "
-          "lends one");
+      RefuseLentMember();
   }
   throw InternalError("access path: unknown step use");
 }
@@ -272,26 +305,25 @@ auto StepTakenFor(
           [&](const StepToComponent& component) {
             return ComponentStep(use, component.position);
           },
-          [&](const StepToUnionMember& member) {
-            return UnionMemberStep(use, member.position);
-          },
+          [&](const StepToUnionMember&) { return UnionMemberStep(use); },
           [&](const StepToTaggedMember& member) {
-            return UnionMemberStep(use, member.position);
+            return TaggedMemberStep(use, member.position);
           }},
       step.to);
 }
 
 // Whether a step reaches a part a write in progress designates within itself:
-// an element, a component, or a union's member, each one place a write lands
-// on. Bits and several elements in a row are no one place, and a character
-// lies inside the string's own value.
+// an element, a component, or a tagged union's member, each one place a write
+// lands on. Bits and several elements in a row are no one place, a character
+// lies inside the string's own value, and an untagged union's member is a view
+// of the union's storage, which is what a write through it changes.
 auto DesignatedWithinAWrite(const DescentStep& step) -> bool {
   return std::visit(
       Overloaded{
           [](const StepToElement&) { return true; },
           [](const StepToAssocElement&) { return true; },
           [](const StepToComponent&) { return true; },
-          [](const StepToUnionMember&) { return true; },
+          [](const StepToUnionMember&) { return false; },
           [](const StepToTaggedMember&) { return true; },
           [](const StepToBits&) { return false; },
           [](const StepToElementRun&) { return false; },
@@ -364,6 +396,214 @@ auto ReferencedPart(
       type);
 }
 
+// A position a walk over a path's positions reads at every number it builds
+// from it, so the path was settled where it was named and the position
+// computes nothing.
+void RequireSettled(
+    const mir::CompilationUnit& unit, mir::Builder block,
+    mir::ExprId position) {
+  if (!mir::EvaluatesNothing(unit, block.Body(), position)) {
+    throw InternalError(
+        "access path: a position a path names is read more than once, so the "
+        "path is settled where it is named, and this one computes");
+  }
+}
+
+// Whether `position` names an element of an array of `count` elements: none
+// where it has an unknown bit or lies outside the array (LRM 7.4.5).
+auto BuildNamesAnElement(
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId position,
+    std::int64_t count) -> mir::ExprId {
+  const std::array named{
+      BuildConditionNot(
+          unit, block,
+          BuildValueOperation(
+              unit, block, support::BuiltinFn::kHasUnknown, position, {},
+              unit.builtins.machine_bool)),
+      mir::BuildMachineIntComparison(
+          unit, block, mir::BinaryOp::kGreaterEqual,
+          BuildToInt64Call(unit, block, position),
+          mir::BuildMachineIntLiteral(unit, block, 0)),
+      mir::BuildMachineIntComparison(
+          unit, block, mir::BinaryOp::kLessThan,
+          BuildToInt64Call(unit, block, position),
+          mir::BuildMachineIntLiteral(unit, block, count))};
+  return AllHold(unit, block, named);
+}
+
+// The positions the components of the product `within` before the one at
+// `position` take, the first component's first.
+auto PositionsBeforeComponent(
+    const mir::CompilationUnit& unit, mir::TypeId within,
+    base::ComponentIndex position) -> std::uint64_t {
+  std::uint64_t before = 0;
+  for (const mir::TypeId part :
+       mir::ProductElements(unit, within)->first(position.value)) {
+    before += PositionCountOf(unit, part);
+  }
+  return before;
+}
+
+// How far one step moves the first position of what it reaches, counted in the
+// positions of the part `within` it is taken on, which that part's type
+// numbers part by part (LRM 6.7.1); and, where the step's position is one the
+// program computes, whether it names a part at all -- an index naming no
+// element names none (LRM 7.4.5), and neither does a position with an unknown
+// bit (LRM 11.5.1). Each is built once, for one place to read it.
+struct StepPosition {
+  mir::ExprId offset;
+  std::optional<mir::ExprId> names_a_part;
+};
+
+auto PositionOfStep(
+    const mir::CompilationUnit& unit, mir::Builder block, mir::TypeId within,
+    const DescentStep& step) -> std::expected<StepPosition, UnnumberedPart> {
+  const auto literal = [&](std::uint64_t value) {
+    return mir::BuildMachineCount(unit, block, value);
+  };
+  const auto known = [&](mir::ExprId position) {
+    return BuildConditionNot(
+        unit, block,
+        BuildValueOperation(
+            unit, block, support::BuiltinFn::kHasUnknown, position, {},
+            unit.builtins.machine_bool));
+  };
+  // `position` counted in parts of `count` positions each.
+  const auto parts_of = [&](mir::ExprId position, std::uint64_t count) {
+    return mir::BuildMachineIntBinary(
+        unit, block, mir::BinaryOp::kMul,
+        BuildToInt64Call(unit, block, position), literal(count));
+  };
+  using Moved = std::expected<StepPosition, UnnumberedPart>;
+  return std::visit(
+      Overloaded{
+          [&](const StepToBits& bits) -> Moved {
+            RequireSettled(unit, block, bits.start);
+            return StepPosition{
+                .offset = BuildToInt64Call(unit, block, bits.start),
+                .names_a_part = known(bits.start)};
+          },
+          [&](const StepToElement& element) -> Moved {
+            const auto* array =
+                unit.types.Get(within).As<mir::UnpackedArrayType>();
+            if (array == nullptr) {
+              return std::unexpected(UnnumberedPart::kOfDynamicValue);
+            }
+            RequireSettled(unit, block, element.position);
+            return StepPosition{
+                .offset = parts_of(
+                    element.position, PositionCountOf(unit, step.part_type)),
+                .names_a_part = BuildNamesAnElement(
+                    unit, block, element.position,
+                    static_cast<std::int64_t>(array->count))};
+          },
+          [&](const StepToElementRun& run) -> Moved {
+            const auto* array =
+                unit.types.Get(within).As<mir::UnpackedArrayType>();
+            if (array == nullptr) {
+              return std::unexpected(UnnumberedPart::kOfDynamicValue);
+            }
+            RequireSettled(unit, block, run.start);
+            return StepPosition{
+                .offset = parts_of(
+                    run.start, PositionCountOf(unit, array->element_type)),
+                .names_a_part = known(run.start)};
+          },
+          [&](const StepToComponent& component) -> Moved {
+            return StepPosition{
+                .offset = literal(
+                    PositionsBeforeComponent(unit, within, component.position)),
+                .names_a_part = std::nullopt};
+          },
+          // Every member of an untagged union is a view of its storage from
+          // the first position (LRM 7.3).
+          [&](const StepToUnionMember&) -> Moved {
+            return StepPosition{
+                .offset = literal(0), .names_a_part = std::nullopt};
+          },
+          // Which member a tagged union holds is the whole value's tag, so a
+          // member lies at no position of a fixed numbering (LRM 7.3.2).
+          [](const StepToTaggedMember&) -> Moved {
+            return std::unexpected(UnnumberedPart::kTaggedMember);
+          },
+          [](const StepToAssocElement&) -> Moved {
+            return std::unexpected(UnnumberedPart::kOfDynamicValue);
+          },
+          [](const StepToCharacter&) -> Moved {
+            return std::unexpected(UnnumberedPart::kOfDynamicValue);
+          },
+          [](const StepToQueueRun&) -> Moved {
+            return std::unexpected(UnnumberedPart::kOfDynamicValue);
+          }},
+      step.to);
+}
+
+// Where in `path` its first step to a part of the kind `Step` names is, if it
+// takes one.
+template <class Step>
+auto FirstStepTo(const AccessPath& path) -> std::optional<std::size_t> {
+  for (std::size_t at = 0; at < path.descent.size(); ++at) {
+    if (std::holds_alternative<Step>(path.descent[at].to)) {
+      return at;
+    }
+  }
+  return std::nullopt;
+}
+
+// The path `path` names before its step `steps`, with the same owner.
+auto PrefixOf(const AccessPath& path, std::size_t steps) -> AccessPath {
+  return AccessPath{
+      .owner = path.owner,
+      .descent = {
+          path.descent.begin(),
+          path.descent.begin() + static_cast<std::ptrdiff_t>(steps)}};
+}
+
+}  // namespace
+
+auto UnionStorage(
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId receiver)
+    -> mir::ExprId {
+  const std::optional<mir::TypeId> storage =
+      mir::UnionStorageOf(unit, block.Get(receiver).type);
+  if (!storage.has_value()) {
+    throw InternalError(
+        "access path: a step to an untagged union's member is taken on a value "
+        "that is no untagged union");
+  }
+  return block.Add(
+      mir::MakeFieldAccessExpr(
+          receiver,
+          mir::ComponentFieldTarget{.position = base::ComponentIndex{0}},
+          *storage));
+}
+
+auto StorageBitsFor(
+    const mir::CompilationUnit& unit, mir::TypeId storage, mir::TypeId part)
+    -> mir::TypeId {
+  return mir::PackedVectorOf(
+      unit.types, PositionCountOf(unit, part),
+      unit.types.Get(storage).Integral().state_kind);
+}
+
+namespace {
+
+// The member of type `member` of the untagged union `receiver` is, or names:
+// the value of its type the union's storage holds from the first position
+// (LRM 7.3).
+auto MemberRead(
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId receiver,
+    mir::TypeId member) -> mir::Expr {
+  const mir::ExprId storage = UnionStorage(unit, block, receiver);
+  const mir::TypeId bits =
+      StorageBitsFor(unit, block.Get(storage).type, member);
+  const mir::ExprId held = block.Add(
+      mir::MakeBuiltinCall(
+          unit, block.Body(), support::BuiltinFn::kSlice, storage, std::nullopt,
+          {bits}, {BuildConstantPosition(unit, block, 0)}, bits));
+  return BuildFromPositions(unit, block, held, member);
+}
+
 // One step taken on `receiver` for `use`, answering `type`.
 auto StepExpr(
     const mir::CompilationUnit& unit, mir::Builder block,
@@ -383,7 +623,8 @@ auto StepExpr(
                 unit, block.Body(), call.entry, receiver, call.part,
                 std::move(call.type_arguments), std::move(call.arguments),
                 type);
-          }},
+          },
+          [&](MemberView) { return MemberRead(unit, block, receiver, type); }},
       StepTakenFor(unit, block, step, use));
 }
 
@@ -400,7 +641,7 @@ auto TakeStep(
 // actual (LRM 13.5.2). A producer hands this the driver in the cell's place;
 // arriving with the cell means it did not.
 void RefuseNetCell(const mir::Type& place_ty) {
-  if (place_ty.Is<mir::ResolvedType>()) {
+  if (place_ty.IsNet()) {
     throw InternalError(
         "access path: a net's cell takes no value a write may put there; the "
         "destination is one of its drivers");
@@ -416,7 +657,7 @@ auto StoredWrapper(
       Overloaded{
           [&](mir::ExprId place) -> std::optional<mir::ExprId> {
             const mir::Type& type = unit.types.Get(block.exprs.Get(place).type);
-            if (!type.IsCapabilityWrapper() || type.Is<mir::ResolvedType>()) {
+            if (!type.IsCapabilityWrapper() || type.IsNet()) {
               return std::nullopt;
             }
             return place;
@@ -484,7 +725,7 @@ auto NamedAgain(
           [&](const mir::MoveExpr&) { return computes(); },
           [&](const mir::ClosureExpr&) { return computes(); },
           [&](const mir::CompositeExpr&) { return computes(); },
-          [&](const mir::UnionExpr&) { return computes(); },
+          [&](const mir::TaggedUnionExpr&) { return computes(); },
           [&](const mir::AwaitExpr&) { return computes(); },
           [&](const mir::WaitExpr&) { return computes(); },
           [&](const mir::VectorGetExpr&) { return computes(); }},
@@ -645,12 +886,8 @@ auto ReachedForWrite(
 auto WriteOperandOf(
     const mir::CompilationUnit& unit, mir::Builder block,
     const AccessPath& path, std::size_t steps) -> mir::ExprId {
-  const AccessPath whole{
-      .owner = path.owner,
-      .descent = {
-          path.descent.begin(),
-          path.descent.begin() + static_cast<std::ptrdiff_t>(steps)}};
-  return ReachedForWrite(unit, block, whole, WriteEnd::kDesignated);
+  return ReachedForWrite(
+      unit, block, PrefixOf(path, steps), WriteEnd::kDesignated);
 }
 
 // The part `path` names, reached for a read where it lies: what the owner
@@ -707,13 +944,8 @@ void AppendTagChecks(
     if (!tag.has_value()) {
       continue;
     }
-    const AccessPath before{
-        .owner = path.owner,
-        .descent = {
-            path.descent.begin(),
-            path.descent.begin() + static_cast<std::ptrdiff_t>(taken)}};
     const mir::ExprId holds = BuildTagMatches(
-        unit, block, *tag, PlaceForRead(unit, block, before),
+        unit, block, *tag, PlaceForRead(unit, block, PrefixOf(path, taken)),
         hir::CaseKeyword::kCase);
     mir::AppendRunTimeCheck(
         unit, block, holds,
@@ -1087,7 +1319,7 @@ auto SettledPlace(
           [&](const mir::MoveExpr&) { return computed(); },
           [&](const mir::ClosureExpr&) { return computed(); },
           [&](const mir::CompositeExpr&) { return computed(); },
-          [&](const mir::UnionExpr&) { return computed(); },
+          [&](const mir::TaggedUnionExpr&) { return computed(); },
           [&](const mir::AwaitExpr&) { return computed(); },
           [&](const mir::WaitExpr&) { return computed(); },
           [&](const mir::VectorGetExpr&) { return computed(); }},
@@ -1184,10 +1416,8 @@ auto NamedIn(
   return path;
 }
 
-auto ReachesOverlaidStorage(const AccessPath& path) -> bool {
-  return std::ranges::any_of(path.descent, [](const DescentStep& step) {
-    return std::holds_alternative<StepToUnionMember>(step.to);
-  });
+auto ReachesUnionMember(const AccessPath& path) -> bool {
+  return FirstStepTo<StepToUnionMember>(path).has_value();
 }
 
 auto ReadThenWrite(
@@ -1199,22 +1429,71 @@ auto ReadThenWrite(
   return ReadThenWritten{.place = std::move(settled), .incoming = incoming};
 }
 
-auto BitsWithinOwner(
-    const mir::CompilationUnit& unit, mir::Builder block,
-    const AccessPath& path) -> PathPositions {
-  mir::ExprId first = BuildConstantPosition(unit, block, 0);
-  for (const DescentStep& step : path.descent) {
-    const auto* bits = std::get_if<StepToBits>(&step.to);
-    if (bits == nullptr) {
-      throw InternalError(
-          "access path: a part of a packed value is reached by steps naming "
-          "bits from one start, and this descent takes a step that is not one");
-    }
-    first = BuildPositionSum(unit, block, first, bits->start);
+auto PositionsWithinNet(
+    const mir::CompilationUnit& unit, const WalkFrame& frame,
+    const AccessPath& path) -> PositionsOfPart {
+  std::expected<PositionsOfPart, UnnumberedPart> named =
+      PositionsNamedBy(unit, frame, path);
+  if (!named) {
+    throw InternalError(
+        "a part of a net lies at no position, though a net's type numbers "
+        "every part of it");
   }
-  const mir::TypeId part = PathValueType(unit, block.Body(), path);
-  return PathPositions{
-      .first = first, .width = unit.types.Get(part).Integral().bit_width};
+  return *named;
+}
+
+auto PositionsNamedBy(
+    const mir::CompilationUnit& unit, const WalkFrame& frame,
+    const AccessPath& path) -> std::expected<PositionsOfPart, UnnumberedPart> {
+  mir::Builder block = frame.Builder();
+  // Each number is held once and read wherever it is used, since a computing
+  // node is evaluated at every place that reaches it.
+  const auto held = [&](mir::ExprId value) {
+    return EvaluatedOnce(frame, value);
+  };
+  const auto positions_of = [&](mir::TypeId type) {
+    return mir::BuildMachineCount(unit, block, PositionCountOf(unit, type));
+  };
+  const auto plus = [&](mir::ExprId lhs, mir::ExprId rhs) {
+    return mir::BuildMachineIntBinary(
+        unit, block, mir::BinaryOp::kAdd, lhs, rhs);
+  };
+  mir::TypeId within = OwnerValueType(unit, block.Body(), path.owner);
+  mir::ExprId first = mir::BuildMachineCount(unit, block, 0);
+  // The positions the part reached so far may land in: those inside every part
+  // a step reaches, which a select's position may leave (LRM 7.4.6, 11.5.1).
+  mir::ExprId low = first;
+  mir::ExprId high = positions_of(within);
+  std::vector<mir::ExprId> conditions;
+  for (const DescentStep& step : path.descent) {
+    const std::expected<StepPosition, UnnumberedPart> moved =
+        PositionOfStep(unit, block, within, step);
+    if (!moved) return std::unexpected(moved.error());
+    first = held(plus(first, moved->offset));
+    const mir::ExprId end = held(plus(first, positions_of(step.part_type)));
+    low = held(mir::BuildMachineIntMax(unit, block, low, first));
+    high = held(mir::BuildMachineIntMin(unit, block, high, end));
+    if (moved->names_a_part.has_value()) {
+      conditions.push_back(*moved->names_a_part);
+    }
+    within = step.part_type;
+  }
+  // The part reaches the positions the window keeps, and none where a step
+  // names no part or the window keeps none.
+  const mir::ExprId width = held(
+      mir::BuildMachineIntBinary(unit, block, mir::BinaryOp::kSub, high, low));
+  const mir::ExprId none = mir::BuildMachineCount(unit, block, 0);
+  conditions.push_back(
+      mir::BuildMachineIntComparison(
+          unit, block, mir::BinaryOp::kGreaterThan, width, none));
+  const mir::ExprId reaches = held(AllHold(unit, block, conditions));
+  return PositionsOfPart{
+      .first = first,
+      .count = PositionCountOf(unit, within),
+      .reached_first =
+          mir::BuildMachineIntConditional(unit, block, reaches, low, none),
+      .reached_count =
+          mir::BuildMachineIntConditional(unit, block, reaches, width, none)};
 }
 
 auto PartNamedBy(
@@ -1237,9 +1516,10 @@ auto PartNamedBy(
               return mir::BuildMachineIntLiteral(
                   unit, block, component.position.value);
             },
-            [&](const StepToUnionMember& member) -> std::optional<mir::ExprId> {
-              return mir::BuildMachineIntLiteral(
-                  unit, block, member.position.value);
+            // A member of an untagged union is a view of the whole union's
+            // storage, which is what a write through it changes.
+            [](const StepToUnionMember&) -> std::optional<mir::ExprId> {
+              return std::nullopt;
             },
             [&](const StepToTaggedMember& member)
                 -> std::optional<mir::ExprId> {
@@ -1293,16 +1573,6 @@ auto PartNamedBy(
 
 namespace {
 
-// Where in `path` the step to a character of a string is, if it takes one.
-auto CharacterAt(const AccessPath& path) -> std::optional<std::size_t> {
-  for (std::size_t at = 0; at < path.descent.size(); ++at) {
-    if (std::holds_alternative<StepToCharacter>(path.descent[at].to)) {
-      return at;
-    }
-  }
-  return std::nullopt;
-}
-
 // A write through the character at `at`: the string's `putc`, the write
 // indexing a string is defined as (LRM Table 6-9, 6.16.2), putting `value`, or
 // where the write names bits of the character (LRM 11.5.1), the character the
@@ -1311,11 +1581,7 @@ auto CharacterAt(const AccessPath& path) -> std::optional<std::size_t> {
 auto PutCharacterExpr(
     const mir::CompilationUnit& unit, mir::Builder block,
     const AccessPath& path, std::size_t at, mir::ExprId value) -> mir::Expr {
-  const AccessPath string{
-      .owner = path.owner,
-      .descent = {
-          path.descent.begin(),
-          path.descent.begin() + static_cast<std::ptrdiff_t>(at)}};
+  const AccessPath string = PrefixOf(path, at);
   const auto& character = std::get<StepToCharacter>(path.descent[at].to);
   mir::ExprId put = value;
   // A character is a `byte`, so what follows it in a write names its bits,
@@ -1397,6 +1663,22 @@ auto TrailingBitsAt(const AccessPath& path) -> std::optional<std::size_t> {
   return at;
 }
 
+// `value` written through `reference`, a reference to bits, as `std::bitset`'s
+// reference assigns (LRM 11.5.1).
+auto SetThrough(
+    const mir::CompilationUnit& unit, mir::ExprId reference, mir::ExprId value)
+    -> mir::Expr {
+  return mir::Expr{
+      .data =
+          mir::CallExpr{
+              .callee =
+                  mir::Direct{
+                      .target = support::BuiltinFn::kSet,
+                      .receiver = reference},
+              .arguments = {value}},
+      .type = unit.builtins.void_type};
+}
+
 // A write of `value` into the bits `path` ends in, from the step `at`: a
 // reference to them taken on the value they lie in, one part at a time, and
 // the reference's `set` (LRM 11.5.1), as `std::bitset`'s `b[i] = x` assigns
@@ -1415,21 +1697,136 @@ auto StoreBitsExpr(
             unit.types.Intern(
                 mir::Type{mir::BitsReferenceType{.bits = step.part_type}})));
   }
-  return mir::Expr{
-      .data =
-          mir::CallExpr{
-              .callee =
-                  mir::Direct{
-                      .target = support::BuiltinFn::kSet,
-                      .receiver = reference},
-              .arguments = {value}},
-      .type = unit.builtins.void_type};
+  return SetThrough(unit, reference, value);
+}
+
+// Where among a union's storage a write landing below the member `path` steps
+// into at `at` reaches: the first position, as a machine integer, the part it
+// lands on, and the step from which what is left selects within that part --
+// bits of it, or a run of its elements.
+struct StorageReached {
+  mir::ExprId first{};
+  mir::TypeId part{};
+  std::size_t bits_from = 0;
+};
+
+// Each step moves the write's first position as it moves a part's anywhere
+// (LRM 6.7.1), and the member a tagged union held there holds at the tagged
+// union's first position, which the write's tag check has made the member
+// named (LRM 7.3.2). An index naming no element moves the write to `nowhere`,
+// past the storage, where it lands on no position, as a write of such an
+// element writes nothing (LRM 7.4.5). The path's operands below a union's
+// member were settled where the path was named, so each is read here as often
+// as the position needs it.
+auto StorageReachedBelow(
+    const mir::CompilationUnit& unit, mir::Builder block,
+    const AccessPath& path, std::size_t at, std::uint64_t nowhere)
+    -> StorageReached {
+  mir::TypeId within = path.descent[at].part_type;
+  mir::ExprId first = mir::BuildMachineIntLiteral(unit, block, 0);
+  std::size_t step = at + 1;
+  for (; step < path.descent.size(); ++step) {
+    const DescentStep& taken = path.descent[step];
+    if (std::holds_alternative<StepToBits>(taken.to) ||
+        std::holds_alternative<StepToElementRun>(taken.to)) {
+      break;
+    }
+    const std::expected<StepPosition, UnnumberedPart> moved =
+        PositionOfStep(unit, block, within, taken);
+    within = taken.part_type;
+    if (!moved) {
+      switch (moved.error()) {
+        case UnnumberedPart::kTaggedMember:
+          continue;
+        case UnnumberedPart::kOfDynamicValue:
+          throw InternalError(
+              "access path: a member of an untagged union holds only parts its "
+              "type numbers (LRM 7.3)");
+      }
+      throw InternalError("access path: unknown unnumbered part");
+    }
+    first = mir::BuildMachineIntBinary(
+        unit, block, mir::BinaryOp::kAdd, first, moved->offset);
+    if (moved->names_a_part.has_value()) {
+      first = mir::BuildMachineIntConditional(
+          unit, block, *moved->names_a_part, first,
+          mir::BuildMachineCount(unit, block, nowhere));
+    }
+  }
+  return StorageReached{.first = first, .part = within, .bits_from = step};
+}
+
+// A write of `value` landing on the member of an untagged union `path` steps
+// into at `at`, or below it: the member is a view of the union's storage, so
+// the write replaces the storage's positions the part it lands on takes,
+// through a reference to them, and a write of bits of that part, or of a run
+// of its elements, narrows the reference to them (LRM 7.3, 11.5.1). A run
+// lying partly outside its array then writes the elements it names that are
+// there, as a run of an array lying anywhere does, and one at an unknown
+// index writes none. What a write in progress hears is the union's change.
+auto StoreIntoUnionStorage(
+    const mir::CompilationUnit& unit, mir::Builder block,
+    const AccessPath& path, std::size_t at, mir::ExprId value) -> mir::Expr {
+  const mir::ExprId storage = UnionStorage(
+      unit, block,
+      ReachedForWrite(unit, block, PrefixOf(path, at), WriteEnd::kLanded));
+  const mir::TypeId storage_type = block.Get(storage).type;
+  const StorageReached reached = StorageReachedBelow(
+      unit, block, path, at, PositionCountOf(unit, storage_type));
+  const mir::TypeId part_bits =
+      StorageBitsFor(unit, storage_type, reached.part);
+  const mir::ExprId start = block.Add(
+      mir::MakeBuiltinCall(
+          unit, block.Body(), support::BuiltinFn::kIntegralFromInt,
+          std::nullopt, {reached.first}, mir::PositionType(unit.types)));
+  mir::ExprId reference = block.Add(
+      mir::MakeBuiltinCall(
+          unit, block.Body(), support::BuiltinFn::kSliceMut, storage,
+          std::nullopt, {part_bits}, {start},
+          unit.types.Intern(
+              mir::Type{mir::BitsReferenceType{.bits = part_bits}})));
+  mir::TypeId landed_bits = part_bits;
+  bool lands_on_bits = false;
+  for (std::size_t i = reached.bits_from; i < path.descent.size(); ++i) {
+    const DescentStep& step = path.descent[i];
+    // A run of elements stands at its first element's positions, each element
+    // taking as many as its type has.
+    const auto* run = std::get_if<StepToElementRun>(&step.to);
+    const mir::TypeId position = mir::PositionType(unit.types);
+    const mir::ExprId start =
+        run == nullptr
+            ? std::get<StepToBits>(step.to).start
+            : block.Add(
+                  mir::MakeBinary(
+                      unit, block.Body(), mir::BinaryOp::kMul,
+                      ConvertToType(unit, block, run->start, position),
+                      BuildConstantPosition(
+                          unit, block,
+                          static_cast<std::int64_t>(PositionCountOf(
+                              unit, *unit.types.Get(step.part_type)
+                                         .ContainerElementType()))),
+                      position));
+    const mir::TypeId bits =
+        run == nullptr ? step.part_type
+                       : StorageBitsFor(unit, storage_type, step.part_type);
+    reference = block.Add(
+        mir::MakeBuiltinCall(
+            unit, block.Body(), support::BuiltinFn::kSliceMut, reference,
+            std::nullopt, {bits}, {start},
+            unit.types.Intern(
+                mir::Type{mir::BitsReferenceType{.bits = bits}})));
+    landed_bits = bits;
+    lands_on_bits = run == nullptr;
+  }
+  const mir::ExprId written =
+      lands_on_bits ? value : BuildToPositions(unit, block, value, landed_bits);
+  return SetThrough(unit, reference, written);
 }
 
 }  // namespace
 
 auto WritesBitsOfACharacter(const AccessPath& path) -> bool {
-  const std::optional<std::size_t> at = CharacterAt(path);
+  const std::optional<std::size_t> at = FirstStepTo<StepToCharacter>(path);
   return at.has_value() && *at + 1 < path.descent.size();
 }
 
@@ -1462,7 +1859,12 @@ auto BuildStoreExpr(
                 .arguments = {rhs_id}},
         .type = unit.builtins.void_type};
   }
-  if (const std::optional<std::size_t> at = CharacterAt(path)) {
+  if (const std::optional<std::size_t> at =
+          FirstStepTo<StepToUnionMember>(path)) {
+    return StoreIntoUnionStorage(unit, block, path, *at, rhs_id);
+  }
+  if (const std::optional<std::size_t> at =
+          FirstStepTo<StepToCharacter>(path)) {
     return PutCharacterExpr(unit, block, path, *at, rhs_id);
   }
   if (std::optional<mir::Expr> slice =

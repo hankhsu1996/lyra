@@ -165,11 +165,6 @@ class CodeGenModule {
       const std::string& symbol, llvm::Constant* value,
       llvm::GlobalValue::LinkageTypes linkage, llvm::Align align)
       -> llvm::GlobalVariable*;
-  // Every position above an integral's width in the value of `type` lying at
-  // `at` made clear, emitted where `builder` stands, as the C++ rendering's
-  // clear is once a compiler inlines it.
-  void EmitClearAboveWidths(
-      llvm::IRBuilderBase& builder, lir::TypeId type, llvm::Value* at);
   // The host's allocation function, handed a size and answering with storage
   // of it, and its sized deallocation function, handed the storage and its
   // size (C++ ABI mangling of `operator delete(void*, std::size_t)`).

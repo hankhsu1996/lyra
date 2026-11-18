@@ -72,6 +72,10 @@ enum class IntegralOp : std::uint8_t {
   // count of bits from a first one, both machine numbers: what a procedural
   // continuous assignment holding those positions shows there (LRM 10.6.2).
   kTakePositions,
+  // A value with the positions a net resolved replaced where they reach it,
+  // handed as a view of them whose first position stands at a position of the
+  // value a machine number names, which may lie outside it (LRM 6.6.7).
+  kWithPositions,
   // LRM 6.24.1 one integral type's value as another's; a machine number or
   // predicate carried into an integral type (LRM 11.6.1); a value read out as
   // a machine number (LRM 6.12.1); and the position an index names (LRM
@@ -89,14 +93,8 @@ enum class IntegralOp : std::uint8_t {
   kBitIdentical,
   kCountBits,
   kCeilLog2,
-  // LRM 11.4.11 the arms of a conditional whose condition is ambiguous; LRM
-  // 6.6.1, 6.6.3 two contributions to a net folded under each table; LRM
-  // 28.12.1 a stronger contribution over a weaker one.
+  // LRM 11.4.11 the arms of a conditional whose condition is ambiguous.
   kMergeConditional,
-  kResolveTriState,
-  kResolveWiredAnd,
-  kResolveWiredOr,
-  kDominate,
   // LRM 11.4.14.2 a value's fixed-size blocks in reversed order.
   kReverseBlocks,
   // LRM 5.9 text taken as a value, and what a foreign call left behind in the
@@ -128,6 +126,8 @@ enum class IntegralOperandKind : std::uint8_t {
   kText,
   kCanonicalBits,
   kCanonicalLogic,
+  // Some positions a net resolved, handed as a view of them where they lie.
+  kPositions,
 };
 
 // Whether an operand of this kind is an integral value.
@@ -144,6 +144,7 @@ enum class IntegralOperandKind : std::uint8_t {
     case IntegralOperandKind::kText:
     case IntegralOperandKind::kCanonicalBits:
     case IntegralOperandKind::kCanonicalLogic:
+    case IntegralOperandKind::kPositions:
       return false;
   }
   std::unreachable();
@@ -163,6 +164,7 @@ enum class IntegralOperandKind : std::uint8_t {
     case IntegralOperandKind::kText:
     case IntegralOperandKind::kCanonicalBits:
     case IntegralOperandKind::kCanonicalLogic:
+    case IntegralOperandKind::kPositions:
       return false;
   }
   std::unreachable();
@@ -431,6 +433,11 @@ inline constexpr std::array kIntegralOperations = {
         .operands = {kBits, kSameType, kMachineInt, kMachineInt},
         .answer = IntegralAnswer::kOfFirstOperand},
     IntegralOperation{
+        .op = IntegralOp::kWithPositions,
+        .name = "with_positions",
+        .operands = {kBits, kPositions, kMachineInt},
+        .answer = IntegralAnswer::kOfFirstOperand},
+    IntegralOperation{
         .op = IntegralOp::kConvert,
         .name = "convert",
         .operands = {kNumber},
@@ -478,26 +485,6 @@ inline constexpr std::array kIntegralOperations = {
     IntegralOperation{
         .op = IntegralOp::kMergeConditional,
         .name = "merge_conditional",
-        .operands = {kBits, kSameType},
-        .answer = IntegralAnswer::kOfFirstOperand},
-    IntegralOperation{
-        .op = IntegralOp::kResolveTriState,
-        .name = "resolve_tri_state",
-        .operands = {kBits, kSameType},
-        .answer = IntegralAnswer::kOfFirstOperand},
-    IntegralOperation{
-        .op = IntegralOp::kResolveWiredAnd,
-        .name = "resolve_wired_and",
-        .operands = {kBits, kSameType},
-        .answer = IntegralAnswer::kOfFirstOperand},
-    IntegralOperation{
-        .op = IntegralOp::kResolveWiredOr,
-        .name = "resolve_wired_or",
-        .operands = {kBits, kSameType},
-        .answer = IntegralAnswer::kOfFirstOperand},
-    IntegralOperation{
-        .op = IntegralOp::kDominate,
-        .name = "dominate",
         .operands = {kBits, kSameType},
         .answer = IntegralAnswer::kOfFirstOperand},
     IntegralOperation{

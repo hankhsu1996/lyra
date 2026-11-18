@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <span>
@@ -11,6 +12,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/simulation_error.hpp"
+#include "lyra/base/source_location.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/takeover.hpp"
 #include "lyra/support/strength_level.hpp"
@@ -73,68 +75,343 @@ auto NetPositions::Part(std::uint32_t from, std::uint32_t count) const
 NetName::NetName() = default;
 NetName::~NetName() = default;
 
-ConnectableNet::ConnectableNet(NetName& name) : name_(&name) {
+CarriedObjectSink::CarriedObjectSink() = default;
+CarriedObjectSink::~CarriedObjectSink() = default;
+
+DrivenNet::DrivenNet() = default;
+DrivenNet::~DrivenNet() = default;
+
+Net::Net(CarriedObjectSink& carried) : carried_(&carried) {
+}
+
+Net::~Net() = default;
+
+ConnectableNet::ConnectableNet(NetName& name, DrivenNet& driven)
+    : Net(driven), name_(&name), driven_(&driven) {
+}
+
+namespace {
+
+// Some adjacent positions, counted from `first`, which a select's position may
+// put partly or wholly outside what they are taken within.
+struct PositionRun {
+  std::int64_t first = 0;
+  std::int64_t count = 0;
+};
+
+// The part of `run` that lies within `within` (LRM 7.4.5, 11.5.1): none where
+// the two do not meet, which is then at the edge of `within` nearest `run`.
+auto Within(PositionRun run, PositionRun within) -> PositionRun {
+  const std::int64_t end = within.first + within.count;
+  const std::int64_t low =
+      std::clamp(std::max(run.first, within.first), within.first, end);
+  const std::int64_t high =
+      std::clamp(std::min(run.first + run.count, end), low, end);
+  return {.first = low, .count = high - low};
+}
+
+}  // namespace
+
+auto ConnectableNet::AttachDriverSlot(
+    std::int64_t strength, std::int64_t first, std::int64_t width,
+    std::int64_t reached_first, std::int64_t reached_count,
+    base::SourceLocation at) -> DriverSlot& {
+  const base::SourceLocationScope bound(at);
+  const PositionRun driven = Within(
+      Within(
+          {.first = first, .count = width},
+          {.first = reached_first, .count = reached_count}),
+      {.first = 0, .count = name_->Count()});
+  const std::uint32_t contribution = name_->Attach(
+      static_cast<support::StrengthLevel>(strength),
+      static_cast<std::uint32_t>(driven.first),
+      static_cast<std::uint32_t>(driven.count));
+  return slots_.emplace_back(
+      DriverSlot{
+          .net = driven_,
+          .contribution = contribution,
+          .width = static_cast<std::uint32_t>(width),
+          .skip = static_cast<std::uint32_t>(
+              std::max<std::int64_t>(driven.first - first, 0))});
+}
+
+void ConnectableNet::Join(
+    ConnectableNet* other, std::int64_t here, std::int64_t there,
+    std::int64_t count, std::int64_t here_reached_first,
+    std::int64_t here_reached_count, std::int64_t there_reached_first,
+    std::int64_t there_reached_count, base::SourceLocation at) {
+  const base::SourceLocationScope bound(at);
+  // Each side's run, as offsets into the `count` positions the two lay over
+  // each other, and the offsets both keep.
+  const PositionRun here_kept = Within(
+      {.first = here, .count = count},
+      {.first = here_reached_first, .count = here_reached_count});
+  const PositionRun there_kept = Within(
+      {.first = there, .count = count},
+      {.first = there_reached_first, .count = there_reached_count});
+  const PositionRun shared = Within(
+      {.first = here_kept.first - here, .count = here_kept.count},
+      {.first = there_kept.first - there, .count = there_kept.count});
+  if (shared.count == 0) {
+    return;
+  }
+  Name().Join(
+      other->Name(), static_cast<std::uint32_t>(here + shared.first),
+      static_cast<std::uint32_t>(there + shared.first),
+      static_cast<std::uint32_t>(shared.count));
 }
 
 ConnectableNet::~ConnectableNet() = default;
 
-auto ConnectableNet::Name() const -> NetName& {
+auto ConnectableNet::Name() -> NetName& {
   return *name_;
-}
-
-auto NetName::Reaches() const -> const std::vector<NetReach>& {
-  return reaches_;
-}
-
-void NetName::Occupy(support::StrengthLevel level) {
-  occupied_ |= LevelBit(level);
 }
 
 void NetHasNoResolution() {
   // LRM 6.7.1, 6.6.7.
   throw SimulationError(
       "a net whose data type no net type resolves -- a real, a string, a "
-      "class handle, or an aggregate holding one or a 2-state member -- has "
-      "more than one driver");
+      "class handle, or an aggregate holding one -- has more than one "
+      "driver");
 }
 
 void RequireUnsettled(const std::optional<NetDecision>& decision) {
   if (decision.has_value()) {
     throw InternalError(
-        "ResolvedNet: every driver attaches while the design resolves, which "
+        "Net: every driver attaches while the design resolves, which "
         "is before the net settles what decides it");
   }
 }
 
 void NetName::SettleReaches() {
+  settled_ = true;
   for (const NetReach& reach : reaches_) {
     reach.physical->names_settled_ = true;
   }
 }
 
-auto NetName::OnlyOwnDriversContribute() const -> bool {
-  if (reaches_.size() != 1) {
+auto NetName::Attach(
+    support::StrengthLevel strength, std::uint32_t first, std::uint32_t count)
+    -> std::uint32_t {
+  if (settled_) {
+    throw InternalError(
+        "NetName: every driver attaches while the design resolves, which is "
+        "before the net settles what decides it");
+  }
+  const auto index = static_cast<std::uint32_t>(contributions_.size());
+  contributions_.push_back(
+      NetContribution{
+          .first = first,
+          .strength = strength,
+          .positions =
+              NetPositions(count, value::FourStateBit::kHighImpedance)});
+  occupied_ |= LevelBit(strength);
+  std::uint32_t position = first;
+  std::uint32_t remaining = count;
+  while (remaining > 0) {
+    NetReach& reach = reaches_[ReachAt(position, remaining)];
+    reach.covering.push_back(index);
+    position += reach.count;
+    remaining -= reach.count;
+  }
+  return index;
+}
+
+auto NetName::PositionsOf(std::uint32_t index) -> NetPositions& {
+  if (index >= contributions_.size()) {
+    throw InternalError("NetName: a driver names no attached contribution");
+  }
+  return contributions_[index].positions;
+}
+
+auto NetName::FirstOf(std::uint32_t index) const -> std::uint32_t {
+  if (index >= contributions_.size()) {
+    throw InternalError("NetName: a driver names no attached contribution");
+  }
+  return contributions_[index].first;
+}
+
+auto NetName::ContributionCount() const -> std::size_t {
+  return contributions_.size();
+}
+
+auto NetName::Count() const -> std::uint32_t {
+  return reaches_.back().net_offset + reaches_.back().count;
+}
+
+auto NetName::DecidesAlone(std::uint32_t index) const -> bool {
+  const NetContribution& contribution = contributions_.at(index);
+  if (LevelBit(contribution.strength) == 0U) {
     return false;
   }
-  const PhysicalNet& physical = *reaches_.front().physical;
-  return physical.placements_.size() == 1 &&
-         physical.own_kind_ == OwnContribution::kFixed &&
-         LevelBit(physical.own_.strength) == 0U;
+  const auto [begin, end] = ReachesWithin(
+      {.lsb = contribution.first, .width = contribution.positions.Count()});
+  for (std::size_t r = begin; r < end; ++r) {
+    const NetReach& reach = reaches_[r];
+    const PhysicalNet& physical = *reach.physical;
+    if (reach.covering.size() != 1 || physical.placements_.size() != 1 ||
+        physical.own_kind_ != OwnContribution::kFixed ||
+        LevelBit(physical.own_.strength) != 0U) {
+      return false;
+    }
+  }
+  return true;
+}
+
+void NetName::Reresolve(RuntimeEffects& runtime, value::BitPositions within) {
+  const auto [begin, end] = ReachesWithin(within);
+  for (std::size_t r = begin; r < end; ++r) {
+    reaches_[r].physical->Reresolve(runtime);
+  }
 }
 
 auto NetName::Overridden() const -> bool {
-  return std::ranges::any_of(reaches_, [](const NetReach& reach) {
-    const PhysicalNet& physical = *reach.physical;
-    return physical.takeovers_ != nullptr && physical.takeovers_->Shows();
+  return OverriddenWithin({.lsb = 0, .width = Count()});
+}
+
+auto NetName::OverriddenWithin(value::BitPositions within) const -> bool {
+  const auto [begin, end] = ReachesWithin(within);
+  for (std::size_t r = begin; r < end; ++r) {
+    const PhysicalNet& physical = *reaches_[r].physical;
+    if (physical.takeovers_ != nullptr && physical.takeovers_->Shows()) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void NetName::FoldContributions(
+    support::StrengthLevel level, value::NetResolution fold,
+    std::uint32_t offset, NetPositions& group) const {
+  NetPositions contribution(group.Count(), value::FourStateBit::kHighImpedance);
+  for (const std::uint32_t index : reaches_[ReachHolding(offset)].covering) {
+    const NetContribution& driver = contributions_[index];
+    if (driver.strength == level) {
+      value::Extract(
+          contribution.MutableView(), driver.positions.View(),
+          offset - driver.first);
+      value::Resolve(
+          group.MutableView(), group.View(), contribution.View(), fold);
+    }
+  }
+}
+
+auto NetName::ReachHolding(std::uint32_t position) const -> std::size_t {
+  const auto after = std::ranges::upper_bound(
+      reaches_, position, std::less<>{}, &NetReach::net_offset);
+  if (after == reaches_.begin()) {
+    throw InternalError(
+        "NetName: a net's own reaches cover every position it has, so a "
+        "position of it lies in one");
+  }
+  return static_cast<std::size_t>(after - reaches_.begin()) - 1;
+}
+
+auto NetName::ReachesWithin(value::BitPositions within) const
+    -> std::pair<std::size_t, std::size_t> {
+  if (within.width == 0) {
+    return {0, 0};
+  }
+  const auto first = static_cast<std::uint32_t>(within.lsb);
+  const auto last = static_cast<std::uint32_t>(within.lsb + within.width - 1);
+  return {ReachHolding(first), ReachHolding(last) + 1};
+}
+
+namespace {
+
+// The positions of `within`, some of a name's own, that `reach` covers,
+// counted among the physical net's own.
+auto CoveredByReach(const NetReach& reach, value::BitPositions within)
+    -> value::BitPositions {
+  const std::uint64_t low =
+      std::max<std::uint64_t>(within.lsb, reach.net_offset);
+  const std::uint64_t high = std::min<std::uint64_t>(
+      within.lsb + within.width, std::uint64_t{reach.net_offset} + reach.count);
+  return {.lsb = low - reach.net_offset, .width = high - low};
+}
+
+}  // namespace
+
+auto NetName::BeginTakeover(
+    support::TakeoverLevel level, value::BitPositions held) -> std::uint32_t {
+  NameTakeover takeover{
+      .level = level, .generation = ++takeover_generation_, .parts = {}};
+  const auto [begin, end] = ReachesWithin(held);
+  for (std::size_t r = begin; r < end; ++r) {
+    const NetReach& reach = reaches_[r];
+    takeover.parts.push_back(
+        TakeoverPart{
+            .physical = reach.physical.get(),
+            .net_offset = reach.net_offset,
+            .generation = reach.physical->BeginTakeover(
+                level, CoveredByReach(reach, held))});
+  }
+  ForgetEndedTakeovers(level);
+  const std::uint32_t generation = takeover.generation;
+  takeovers_.push_back(std::move(takeover));
+  return generation;
+}
+
+auto NetName::DriveTakeover(
+    support::TakeoverLevel level, std::uint32_t generation,
+    const value::ConstIntegralView& forced)
+    -> std::optional<value::BitPositions> {
+  const auto found =
+      std::ranges::find_if(takeovers_, [&](const NameTakeover& takeover) {
+        return takeover.level == level && takeover.generation == generation;
+      });
+  if (found == takeovers_.end()) {
+    return std::nullopt;
+  }
+  std::optional<std::uint64_t> low;
+  std::uint64_t high = 0;
+  for (const TakeoverPart& part : found->parts) {
+    if (!part.physical->DriveTakeover(
+            level, part.generation, forced, part.net_offset)) {
+      continue;
+    }
+    low =
+        std::min(low.value_or(part.net_offset), std::uint64_t{part.net_offset});
+    high =
+        std::max(high, std::uint64_t{part.net_offset} + part.physical->Count());
+  }
+  if (!low.has_value()) {
+    takeovers_.erase(found);
+    return std::nullopt;
+  }
+  return value::BitPositions{.lsb = *low, .width = high - *low};
+}
+
+auto NetName::EndTakeover(
+    support::TakeoverLevel level, value::BitPositions released) -> bool {
+  bool ended = false;
+  const auto [begin, end] = ReachesWithin(released);
+  for (std::size_t r = begin; r < end; ++r) {
+    const NetReach& reach = reaches_[r];
+    ended =
+        reach.physical->EndTakeover(level, CoveredByReach(reach, released)) ||
+        ended;
+  }
+  ForgetEndedTakeovers(level);
+  return ended;
+}
+
+void NetName::ForgetEndedTakeovers(support::TakeoverLevel level) {
+  std::erase_if(takeovers_, [&](const NameTakeover& takeover) {
+    return takeover.level == level &&
+           std::ranges::none_of(takeover.parts, [&](const TakeoverPart& part) {
+             return part.physical->takeovers_ != nullptr &&
+                    part.physical->takeovers_->Holds(level, part.generation);
+           });
   });
 }
 
 auto PhysicalNet::Count() const -> std::uint32_t {
-  return own_.value.Count();
+  return own_.positions.Count();
 }
 
 PhysicalNet::PhysicalNet(
-    DriveContribution<NetPositions> own, value::FourStateBit own_fill,
+    NetContribution own, value::FourStateBit own_fill,
     value::NetResolution fold, OwnContribution own_kind)
     : own_(std::move(own)),
       own_fill_(own_fill),
@@ -173,7 +450,7 @@ auto PhysicalNet::Resolve() const -> NetPositions {
     }
     NetPositions group =
         own_.strength == at
-            ? own_.value
+            ? own_.positions
             : NetPositions(Count(), value::FourStateBit::kHighImpedance);
     for (const NetPlacement& placement : placements_) {
       placement.net->FoldContributions(at, fold_, placement.net_offset, group);
@@ -192,7 +469,7 @@ void PhysicalNet::Reresolve(RuntimeEffects& runtime) {
   // A takeover displaces what the positions show and not what they hold, so
   // this happens before one is consulted (LRM 10.6.2).
   if (own_kind_ == OwnContribution::kRetained) {
-    own_.value = next;
+    own_.positions = next;
   }
   if (takeovers_ != nullptr) {
     takeovers_->Overlay(next);
@@ -212,12 +489,12 @@ auto PhysicalNet::BeginTakeover(
 
 auto PhysicalNet::DriveTakeover(
     support::TakeoverLevel level, std::uint32_t generation,
-    const value::ConstIntegralView& forced) -> bool {
+    const value::ConstIntegralView& forced, std::uint32_t from) -> bool {
   if (takeovers_ == nullptr) {
     return false;
   }
   NetPositions evaluated(Count(), value::FourStateBit::kHighImpedance);
-  value::Extract(evaluated.MutableView(), forced, 0);
+  value::Extract(evaluated.MutableView(), forced, from);
   return takeovers_->Drive(level, generation, evaluated);
 }
 
@@ -244,16 +521,17 @@ auto PhysicalNet::Split(std::uint32_t cut) -> std::shared_ptr<PhysicalNet> {
         "them settles what decides it");
   }
   auto high = std::make_shared<PhysicalNet>(
-      DriveContribution<NetPositions>{
-          .value = own_.value.Part(cut, Count() - cut),
-          .strength = own_.strength},
+      NetContribution{
+          .first = 0,
+          .strength = own_.strength,
+          .positions = own_.positions.Part(cut, Count() - cut)},
       own_fill_, fold_, own_kind_);
   for (const NetPlacement& placement : placements_) {
     high->placements_.push_back(
         NetPlacement{
             .net = placement.net, .net_offset = placement.net_offset + cut});
   }
-  own_.value = own_.value.Part(0, cut);
+  own_.positions = own_.positions.Part(0, cut);
   return high;
 }
 
@@ -262,15 +540,19 @@ auto NetName::Declare(
     value::NetResolution fold, OwnContribution own_kind, std::uint32_t count)
     -> NetPositions {
   auto physical = std::make_shared<PhysicalNet>(
-      DriveContribution<NetPositions>{
-          .value = NetPositions(count, own_fill), .strength = strength},
+      NetContribution{
+          .first = 0,
+          .strength = strength,
+          .positions = NetPositions(count, own_fill)},
       own_fill, fold, own_kind);
   physical->Admit(NetPlacement{.net = this, .net_offset = 0});
-  NetPositions resolved = physical->Resolve();
   reaches_.push_back(
       NetReach{
-          .physical = std::move(physical), .net_offset = 0, .count = count});
-  return resolved;
+          .physical = physical,
+          .net_offset = 0,
+          .count = count,
+          .covering = {}});
+  return physical->Resolve();
 }
 
 void NetName::Join(
@@ -303,25 +585,16 @@ void NetName::Join(
 
 auto NetName::ReachAt(std::uint32_t position, std::uint32_t within)
     -> std::size_t {
-  for (std::size_t index = 0; index < reaches_.size(); ++index) {
-    const NetReach& reach = reaches_[index];
-    if (position < reach.net_offset ||
-        position - reach.net_offset >= reach.count) {
-      continue;
-    }
-    if (position > reach.net_offset) {
-      CutPhysical(reach.physical, position - reach.net_offset);
-      return ReachAt(position, within);
-    }
-    if (reach.count > within) {
-      CutPhysical(reach.physical, within);
-      return ReachAt(position, within);
-    }
-    return index;
+  const std::size_t index = ReachHolding(position);
+  const NetReach& reach = reaches_[index];
+  if (position > reach.net_offset) {
+    CutPhysical(reach.physical, position - reach.net_offset);
+    return ReachAt(position, within);
   }
-  throw InternalError(
-      "ResolvedNet: a net's own reaches cover every position it has, so a "
-      "connection naming one reaches a physical net that holds it");
+  if (reach.count > within) {
+    CutPhysical(reach.physical, within);
+  }
+  return index;
 }
 
 void NetName::CutPhysical(
@@ -329,19 +602,16 @@ void NetName::CutPhysical(
   const std::shared_ptr<PhysicalNet> above = physical->Split(cut);
   for (const NetPlacement& placement : above->placements_) {
     std::vector<NetReach>& reaches = placement.net->reaches_;
-    for (std::size_t i = 0; i < reaches.size(); ++i) {
-      if (reaches[i].physical != physical) {
-        continue;
-      }
-      const NetReach tail{
-          .physical = above,
-          .net_offset = reaches[i].net_offset + cut,
-          .count = reaches[i].count - cut};
-      reaches[i].count = cut;
-      reaches.insert(
-          reaches.begin() + static_cast<std::ptrdiff_t>(i) + 1, tail);
-      break;
-    }
+    const std::size_t i =
+        placement.net->ReachHolding(placement.net_offset - cut);
+    NetReach tail{
+        .physical = above,
+        .net_offset = reaches[i].net_offset + cut,
+        .count = reaches[i].count - cut,
+        .covering = reaches[i].covering};
+    reaches[i].count = cut;
+    reaches.insert(
+        reaches.begin() + static_cast<std::ptrdiff_t>(i) + 1, std::move(tail));
   }
 }
 

@@ -30,10 +30,6 @@ auto SuspensionCppType() -> std::string_view {
   return "lyra::runtime::Suspension";
 }
 
-auto OverlaidReadCppFunction() -> std::string_view {
-  return "lyra::value::ReadOverlaid";
-}
-
 namespace {
 
 // Whether a value of `type` is an object of the root, named as its own class
@@ -326,6 +322,9 @@ void WriteOne(TargetText& out, const CppType& spelling) {
           [&](const mir::ResolvedType& r) {
             Write(out, "lyra::runtime::ResolvedNet<", type(r.value), ">");
           },
+          [&](const mir::UnresolvedType& r) {
+            Write(out, "lyra::runtime::UnresolvedNet<", type(r.value), ">");
+          },
           [&](const mir::DriverType& d) {
             Write(out, "lyra::runtime::Driver<", type(d.value), ">");
           },
@@ -481,6 +480,7 @@ auto DerefSpellingAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
           [&](const mir::TupleType&) { return reaches_nothing(); },
           [&](const mir::ObservableType&) { return reaches_nothing(); },
           [&](const mir::ResolvedType&) { return reaches_nothing(); },
+          [&](const mir::UnresolvedType&) { return reaches_nothing(); },
           [&](const mir::DriverType&) { return reaches_nothing(); },
           [&](const mir::RecordType&) { return reaches_nothing(); },
           [&](const mir::ClosureType&) { return reaches_nothing(); },
@@ -550,6 +550,7 @@ auto ReceiverSpellingAsCpp(
               [&](const mir::TupleType&) { return holds_no_object(); },
               [&](const mir::ObservableType&) { return holds_no_object(); },
               [&](const mir::ResolvedType&) { return holds_no_object(); },
+              [&](const mir::UnresolvedType&) { return holds_no_object(); },
               [&](const mir::DriverType&) { return holds_no_object(); },
               [&](const mir::RecordType&) { return holds_no_object(); },
               [&](const mir::ClosureType&) { return holds_no_object(); },
@@ -584,7 +585,7 @@ void WriteNull(
       spelling);
 }
 
-void WriteOne(TargetText& out, const CppUnionMemberTag& tag) {
+void WriteOne(TargetText& out, const CppTaggedUnionMemberTag& tag) {
   Write(out, "std::in_place_index<", tag.member.value, ">");
 }
 
@@ -663,6 +664,7 @@ void WriteOne(TargetText& out, const CppConstructorName& constructor) {
           [&](const mir::TupleType& t) { by_naming_itself(t); },
           [&](const mir::ObservableType& t) { by_naming_itself(t); },
           [&](const mir::ResolvedType& t) { by_naming_itself(t); },
+          [&](const mir::UnresolvedType& t) { by_naming_itself(t); },
           [&](const mir::DriverType& t) { by_naming_itself(t); },
           [&](const mir::OpenWriteType& t) { by_naming_itself(t); },
           [&](const mir::DesignationType& t) { by_naming_itself(t); },
@@ -838,21 +840,16 @@ void WriteOne(TargetText& out, const CppTupleComponents& components) {
 }
 
 void WriteOne(TargetText& out, const CppRecordBase& base) {
-  const auto overlay = [&](std::string_view library_type) {
-    out += library_type;
-    WriteTypeList(out, *base.unit, base.of->elements);
-    out += ">";
-  };
-  switch (base.of->kind) {
+  const std::span<const mir::TypeId> components = mir::ComponentsOf(*base.of);
+  switch (mir::KindOf(*base.of)) {
     case mir::RecordKind::kStruct:
-      Write(
-          out, CppTupleComponents{.unit = base.unit, .of = base.of->elements});
-      return;
     case mir::RecordKind::kUnion:
-      overlay("lyra::value::Union<");
+      Write(out, CppTupleComponents{.unit = base.unit, .of = components});
       return;
     case mir::RecordKind::kTaggedUnion:
-      overlay("lyra::value::TaggedUnion<");
+      out += "lyra::value::TaggedUnion<";
+      WriteTypeList(out, *base.unit, components);
+      out += ">";
       return;
   }
   throw InternalError("backend::cpp: unknown record kind");

@@ -24,6 +24,7 @@
 #include "lyra/mir/library_record_builder.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/unary_op.hpp"
+#include "lyra/mir/verify.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/integral_operation.hpp"
 #include "lyra/value/integral_words.hpp"
@@ -213,9 +214,120 @@ auto MakeBinary(
       unit, block, IntegralOpOf(op), std::array{lhs, rhs}, std::move(binary));
 }
 
+namespace {
+
+// What a machine integer is where a literal fixes it before the program runs.
+// A machine word compares by its own signedness, so only a signed machine
+// integer is folded as one.
+auto MachineIntConstant(
+    const CompilationUnit& unit, const Block& block, ExprId id)
+    -> std::optional<std::int64_t> {
+  const Expr& expr = block.exprs.Get(id);
+  const auto* literal = std::get_if<MachineIntLiteral>(&expr.data);
+  if (literal == nullptr || expr.type != unit.builtins.machine_int64) {
+    return std::nullopt;
+  }
+  return literal->value;
+}
+
+// What the arithmetic `op` makes of two machine integers, wrapping as the
+// machine's does; none for a quotient or a remainder, whose divisor may be
+// zero, and for every operator that is no sum, difference or product.
+auto FoldedMachineArithmetic(BinaryOp op, std::int64_t lhs, std::int64_t rhs)
+    -> std::optional<std::int64_t> {
+  const auto wrapped = [](std::uint64_t value) {
+    return static_cast<std::int64_t>(value);
+  };
+  const auto l = static_cast<std::uint64_t>(lhs);
+  const auto r = static_cast<std::uint64_t>(rhs);
+  switch (op) {
+    case BinaryOp::kAdd:
+      return wrapped(l + r);
+    case BinaryOp::kSub:
+      return wrapped(l - r);
+    case BinaryOp::kMul:
+      return wrapped(l * r);
+    case BinaryOp::kDiv:
+    case BinaryOp::kMod:
+    case BinaryOp::kBitwiseAnd:
+    case BinaryOp::kBitwiseOr:
+    case BinaryOp::kBitwiseXor:
+    case BinaryOp::kEquality:
+    case BinaryOp::kInequality:
+    case BinaryOp::kGreaterEqual:
+    case BinaryOp::kGreaterThan:
+    case BinaryOp::kLessEqual:
+    case BinaryOp::kLessThan:
+    case BinaryOp::kLogicalAnd:
+    case BinaryOp::kLogicalOr:
+      return std::nullopt;
+  }
+  throw InternalError("BuildMachineIntBinary: unknown binary operator");
+}
+
+// Whether the comparison `op` holds of two machine integers; none for an
+// operator that compares nothing.
+auto FoldedMachineComparison(BinaryOp op, std::int64_t lhs, std::int64_t rhs)
+    -> std::optional<bool> {
+  switch (op) {
+    case BinaryOp::kEquality:
+      return lhs == rhs;
+    case BinaryOp::kInequality:
+      return lhs != rhs;
+    case BinaryOp::kGreaterEqual:
+      return lhs >= rhs;
+    case BinaryOp::kGreaterThan:
+      return lhs > rhs;
+    case BinaryOp::kLessEqual:
+      return lhs <= rhs;
+    case BinaryOp::kLessThan:
+      return lhs < rhs;
+    case BinaryOp::kAdd:
+    case BinaryOp::kSub:
+    case BinaryOp::kMul:
+    case BinaryOp::kDiv:
+    case BinaryOp::kMod:
+    case BinaryOp::kBitwiseAnd:
+    case BinaryOp::kBitwiseOr:
+    case BinaryOp::kBitwiseXor:
+    case BinaryOp::kLogicalAnd:
+    case BinaryOp::kLogicalOr:
+      return std::nullopt;
+  }
+  throw InternalError("BuildMachineIntComparison: unknown binary operator");
+}
+
+// `lhs` where `lhs keeps rhs` holds and `rhs` otherwise: the greater under
+// `>`, the lesser under `<`.
+auto BuildMachineIntChosen(
+    const CompilationUnit& unit, Builder block, BinaryOp keeps, ExprId lhs,
+    ExprId rhs) -> ExprId {
+  if (!EvaluatesNothing(unit, block.Body(), lhs) ||
+      !EvaluatesNothing(unit, block.Body(), rhs)) {
+    throw InternalError(
+        "BuildMachineIntMax/Min: each operand is read where it is compared and "
+        "where it is the answer, so each evaluates nothing, and one computes");
+  }
+  return BuildMachineIntConditional(
+      unit, block, BuildMachineIntComparison(unit, block, keeps, lhs, rhs), lhs,
+      rhs);
+}
+
+}  // namespace
+
 auto BuildMachineIntBinary(
     const CompilationUnit& unit, Builder block, BinaryOp op, ExprId lhs,
     ExprId rhs) -> ExprId {
+  const std::optional<std::int64_t> l =
+      MachineIntConstant(unit, block.Body(), lhs);
+  const std::optional<std::int64_t> r =
+      MachineIntConstant(unit, block.Body(), rhs);
+  if (l.has_value() && r.has_value()) {
+    if (const std::optional<std::int64_t> folded =
+            FoldedMachineArithmetic(op, *l, *r)) {
+      return BuildMachineIntLiteral(unit, block, *folded);
+    }
+  }
   return block.Add(MakeBinary(
       unit, block.Body(), op, lhs, rhs, unit.builtins.machine_int64));
 }
@@ -234,13 +346,42 @@ void AppendRunTimeCheck(
 auto BuildMachineIntComparison(
     const CompilationUnit& unit, Builder block, BinaryOp op, ExprId lhs,
     ExprId rhs) -> ExprId {
+  const std::optional<std::int64_t> l =
+      MachineIntConstant(unit, block.Body(), lhs);
+  const std::optional<std::int64_t> r =
+      MachineIntConstant(unit, block.Body(), rhs);
+  if (l.has_value() && r.has_value()) {
+    if (const std::optional<bool> folded =
+            FoldedMachineComparison(op, *l, *r)) {
+      return block.Add(
+          Expr{
+              .data = MachineBoolLiteral{.value = *folded},
+              .type = unit.builtins.machine_bool});
+    }
+  }
   return block.Add(
       MakeBinary(unit, block.Body(), op, lhs, rhs, unit.builtins.machine_bool));
+}
+
+auto BuildMachineIntMax(
+    const CompilationUnit& unit, Builder block, ExprId lhs, ExprId rhs)
+    -> ExprId {
+  return BuildMachineIntChosen(unit, block, BinaryOp::kGreaterThan, lhs, rhs);
+}
+
+auto BuildMachineIntMin(
+    const CompilationUnit& unit, Builder block, ExprId lhs, ExprId rhs)
+    -> ExprId {
+  return BuildMachineIntChosen(unit, block, BinaryOp::kLessThan, lhs, rhs);
 }
 
 auto BuildMachineIntConditional(
     const CompilationUnit& unit, Builder block, ExprId condition,
     ExprId then_value, ExprId else_value) -> ExprId {
+  if (const auto* fixed =
+          std::get_if<MachineBoolLiteral>(&block.Get(condition).data)) {
+    return fixed->value ? then_value : else_value;
+  }
   return block.Add(
       Expr{
           .data =

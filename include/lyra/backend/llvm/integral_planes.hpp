@@ -84,6 +84,7 @@ using PlaneAnswer = std::variant<Planes, llvm::Value*>;
     case support::IntegralOp::kNegate:
     case support::IntegralOp::kPower:
     case support::IntegralOp::kTakePositions:
+    case support::IntegralOp::kWithPositions:
     case support::IntegralOp::kBitwiseAnd:
     case support::IntegralOp::kBitwiseOr:
     case support::IntegralOp::kBitwiseXor:
@@ -124,10 +125,6 @@ using PlaneAnswer = std::variant<Planes, llvm::Value*>;
     case support::IntegralOp::kCountBits:
     case support::IntegralOp::kCeilLog2:
     case support::IntegralOp::kMergeConditional:
-    case support::IntegralOp::kResolveTriState:
-    case support::IntegralOp::kResolveWiredAnd:
-    case support::IntegralOp::kResolveWiredOr:
-    case support::IntegralOp::kDominate:
     case support::IntegralOp::kReverseBlocks:
     case support::IntegralOp::kFromText:
     case support::IntegralOp::kReadCanonicalBits:
@@ -158,11 +155,6 @@ auto LoadPlanes(
 // storage unit, which is what keeps every position above the width clear.
 void StorePlanes(
     llvm::IRBuilderBase& builder, Planes planes, llvm::Value* at,
-    const value::IntegralShape& shape);
-// The value of type `shape` lying at `at` laid back out there as its type
-// holds one, every position above its width clear.
-void ClearAboveWidth(
-    llvm::IRBuilderBase& builder, llvm::Value* at,
     const value::IntegralShape& shape);
 
 // The 0, 1 or x a comparison answers (LRM 11.4.4, 11.4.5) as the byte a runtime

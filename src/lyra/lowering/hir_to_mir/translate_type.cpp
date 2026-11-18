@@ -1,6 +1,9 @@
+#include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
@@ -106,31 +109,69 @@ auto UnitLowerer::UnionMemberTypes(const hir::UnpackedUnionDefinition& src)
 }
 
 void UnitLowerer::DefineRecord(const hir::Type& source, mir::RecordId id) {
+  if (unit_.records.IsDefined(id)) {
+    return;
+  }
   const hir::TypeDeclarationRef& declaration = *source.NamedDeclaration();
   const bool is_own = hir_->IsItself(declaration.unit_name);
-  const auto declared = [&](mir::RecordKind kind,
-                            std::vector<mir::TypeId> elements) {
-    return mir::RecordDecl{
-        .defining_unit =
-            is_own ? std::nullopt : std::optional{declaration.unit_name},
-        .path = declaration.path,
-        .kind = kind,
-        .elements = std::move(elements)};
-  };
+  const auto declared =
+      [&](std::variant<
+          mir::StructRecord, mir::UnionRecord, mir::TaggedUnionRecord>
+              shape) {
+        return mir::RecordDecl{
+            .defining_unit =
+                is_own ? std::nullopt : std::optional{declaration.unit_name},
+            .path = declaration.path,
+            .shape = std::move(shape)};
+      };
   if (const auto* structure = source.As<hir::UnpackedStructType>()) {
+    const hir::UnpackedStructDefinition& product =
+        hir_->DefinitionOf(*structure);
+    for (const auto& field : product.fields) {
+      DefineRecordsWithin(field.type);
+    }
     unit_.records.Define(
         id, declared(
-                mir::RecordKind::kStruct,
-                TranslateMemberTypes(
-                    *this, hir_->DefinitionOf(*structure).fields)));
-  } else {
-    const hir::UnpackedUnionDefinition& overlay =
-        hir_->DefinitionOf(source.Get<hir::UnpackedUnionType>());
+                mir::StructRecord{
+                    .members = TranslateMemberTypes(*this, product.fields)}));
+    return;
+  }
+  const hir::UnpackedUnionDefinition& definition =
+      hir_->DefinitionOf(source.Get<hir::UnpackedUnionType>());
+  for (const auto& field : definition.fields) {
+    DefineRecordsWithin(field.type);
+  }
+  std::vector<mir::TypeId> members = UnionMemberTypes(definition);
+  if (definition.tagged) {
     unit_.records.Define(
-        id, declared(
-                overlay.tagged ? mir::RecordKind::kTaggedUnion
-                               : mir::RecordKind::kUnion,
-                UnionMemberTypes(overlay)));
+        id, declared(mir::TaggedUnionRecord{.members = std::move(members)}));
+    return;
+  }
+  // The storage is as many positions as the widest member has, of a state
+  // that can hold every member's bits, as a packed union's is (LRM 7.3.1,
+  // 7.2.1).
+  const bool four_state = std::ranges::any_of(members, [&](mir::TypeId member) {
+    return CarriesUnknowns(unit_, member);
+  });
+  unit_.records.Define(
+      id, declared(
+              mir::UnionRecord{
+                  .storage = mir::PackedVectorOf(
+                      unit_.types, WidestPositionCountOf(unit_, members),
+                      four_state ? mir::IntegralStateKind::kFourState
+                                 : mir::IntegralStateKind::kTwoState),
+                  .members = std::move(members)}));
+}
+
+void UnitLowerer::DefineRecordsWithin(hir::TypeId type) {
+  const hir::Type& held = hir_->types.Get(type);
+  if (held.As<hir::UnpackedStructType>() != nullptr ||
+      held.As<hir::UnpackedUnionType>() != nullptr) {
+    DefineRecord(held, *mir::RecordOf(unit_.types.Get(TranslateType(type))));
+    return;
+  }
+  if (const auto* array = held.As<hir::UnpackedArrayType>()) {
+    DefineRecordsWithin(array->element_type);
   }
 }
 

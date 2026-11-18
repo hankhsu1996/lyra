@@ -93,6 +93,7 @@ extern template class SampledHistory<value::RuntimeAssociativeArray>;
 
 extern template class ResolvedNet<value::WideLogicVector>;
 extern template class ResolvedNet<value::LaidOutValue>;
+extern template class UnresolvedNet<value::LaidOutValue>;
 
 extern template class Driver<value::WideLogicVector>;
 extern template class Driver<value::LaidOutValue>;

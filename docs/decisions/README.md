@@ -86,11 +86,12 @@ the detail lives in the entry itself.
   decision left open: overlapping storage is neither a product nor a sum, and this settles which one
   MIR models it as. Its active-member value is superseded by the entry below.
 - [a-union-is-one-storage-its-members-overlay](a-union-is-one-storage-its-members-overlay.md) -- an
-  untagged union is C's union: every member at offset 0, a read through another member answers its
-  bits cleared above each width, a literal zeroes what it does not write, whole-value uses read the
-  first member, and a member that owns something is refused. A tagged union is that overlay with its
-  tag after it, checked in MIR before every member access. rustc's tag-first layout and recording
-  which member an untagged union holds are rejected.
+  untagged union is the bits of its widest member, every member a view of them from the first
+  position, so a net of one resolves those bits as any net does; a literal zeroes what it does not
+  write, whole-value uses read the first member, and a member that owns something is refused. A
+  tagged union is its members overlaid with its tag after them, checked in MIR before every member
+  access. C's byte overlay, rustc's tag-first layout and recording which member an untagged union
+  holds are rejected.
 - [aggregate-names-are-type-content](aggregate-names-are-type-content.md) -- superseded: an
   aggregate's member names were put on its MIR type for rendering, and came off again once rendering
   was built from the source type.
@@ -203,10 +204,11 @@ the detail lives in the entry itself.
   answer is a fixed-size array, a prototype standing for a type, and a bound as an operand are
   rejected.
 - [a-structures-operations-are-stated-in-mir](a-structures-operations-are-stated-in-mir.md) -- `==`,
-  `===`, `$bits`, `$countbits`, `$isunknown`, the bit stream and the net folds on a structure or a
-  union are methods its declaration states in MIR, one per operation the type has, and the program's
-  use is a call of one. Each backend compiles them like any other declared body; the execution
-  backend also hands its runtime records of them. Composing them in a backend is rejected.
+  `===`, `$bits`, `$countbits`, `$isunknown`, the bit stream and the positions a net reads and
+  writes on a structure or a union are methods its declaration states in MIR, one per operation the
+  type has, and the program's use is a call of one. Each backend compiles them like any other
+  declared body; the execution backend also hands its runtime records of them. Composing them in a
+  backend is rejected.
 - [a-fixed-arrays-operations-are-stated-per-unit](a-fixed-arrays-operations-are-stated-per-unit.md)
   -- a fixed-size array, which has no declaration, has its whole-value operations built as MIR
   bodies by each unit that needs them, found on finished LIR, built from its elements' operations,
@@ -242,10 +244,10 @@ the detail lives in the entry itself.
   whether an expression is a place is its node kind; a field step names a component or a union
   member; an array element is a read form and a write form, each answering a reference; bits are no
   place, read by the value's `slice` and written through the reference its `slice_mut` answers, as
-  `bitset::operator[]` answers one; a place's kind -- whether it has an address and whether it is
-  overlaid -- follows from its nodes; a read is a node, realized by that kind; an assignment's
-  target is a place. Records how part access reached its shape as the value representation changed
-  under it. Implicit reads, a bounds guard before the step, and one element form are rejected.
+  `bitset::operator[]` answers one; a place's kind -- whether it has an address -- follows from its
+  nodes; a read is a node, realized by that kind; an assignment's target is a place. Records how
+  part access reached its shape as the value representation changed under it. Implicit reads, a
+  bounds guard before the step, and one element form are rejected.
 - [queue-operators](queue-operators.md) -- queue access operators lower to built-in method calls;
   read and write are distinct methods chosen at lowering. Where it places the receiver is superseded
   by [call-receiver-on-the-callee](call-receiver-on-the-callee.md).
@@ -818,8 +820,8 @@ the detail lives in the entry itself.
   so a driver's first value is a change a waiting procedure sees.
 - [net-driver-resolution](net-driver-resolution.md) -- a net is a resolution node with node-owned
   driver contributions and capability-handle drivers, with the topology frozen at a Seal barrier;
-  what a single-driver net shows is the N=1 reading, and such a net holds its driver's value as its
-  own.
+  what a single-driver net shows is the N=1 reading, and positions one driver decides show its value
+  as their own.
 - [net-type-is-a-fold-and-a-contribution](net-type-is-a-fold-and-a-contribution.md) -- a net type
   states a fold and the contribution it makes to its own resolution, so strength decides between
   levels and the truth table within one; a per-bit strength on the resolved value, a value-only fold

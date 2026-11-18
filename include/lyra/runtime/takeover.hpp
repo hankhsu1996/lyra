@@ -6,11 +6,14 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <utility>
 #include <vector>
 
 #include "lyra/support/takeover_level.hpp"
+#include "lyra/value/frame_bound.hpp"
 #include "lyra/value/integral_words.hpp"
 #include "lyra/value/positions.hpp"
+#include "lyra/value/small_box.hpp"
 #include "lyra/value/value_type.hpp"
 
 namespace lyra::runtime {
@@ -32,8 +35,9 @@ namespace lyra::runtime {
 
 // The positions a takeover entry names of a value: `count` of them from
 // `first`, numbered as the value's type numbers them (LRM 10.6.2) -- an
-// integral value's bits from its least significant, an aggregate's parts' one
-// part after another, and the one position of any other value.
+// integral value's bits from its least significant, a real's IEEE 754 bits, an
+// aggregate's parts' one part after another, and the one position of any other
+// value.
 [[nodiscard]] inline auto PositionsNamed(std::int64_t first, std::int64_t count)
     -> value::BitPositions {
   return {
@@ -147,7 +151,7 @@ class Takeovers {
 
   // Begins a takeover at `level` over `positions`, which every other takeover
   // at that level stops holding, and answers with its generation. A value held
-  // whole is always named whole, as its one position.
+  // whole is always named whole.
   auto Begin(support::TakeoverLevel level, value::BitPositions positions)
       -> std::uint32_t {
     Remove(level, positions);
@@ -181,6 +185,14 @@ class Takeovers {
   // value yet.
   [[nodiscard]] auto Holds() const -> bool {
     return !takeovers_.empty();
+  }
+
+  // Whether the takeover of `generation` at `level` still holds a position.
+  [[nodiscard]] auto Holds(
+      support::TakeoverLevel level, std::uint32_t generation) const -> bool {
+    return std::ranges::any_of(takeovers_, [&](const Takeover& t) {
+      return t.level == level && t.generation == generation;
+    });
   }
 
   // Whether any takeover shows at any position: one whose evaluation has
@@ -259,14 +271,19 @@ class Takeovers {
     std::erase_if(takeovers_, [](const Takeover& t) { return t.held.Empty(); });
   }
 
-  // `written` showing what `held` holds at `run`.
+  // `written` showing what `held` holds at `run`. A value taken over in part
+  // is made where a frame does not keep it, and then built where `written`
+  // lies.
   void OverlayRun(T& written, const T& held, value::BitPositions run) const {
     if constexpr (TakenOverByBits<T>) {
       value::InsertWithin(written.MutableView(), held.View(), 0, run);
     } else {
-      written = take_positions_.Taken(
-          written, held, static_cast<std::int64_t>(run.lsb),
-          static_cast<std::int64_t>(run.width));
+      value::SmallBox<T> taken = value::SmallBox<T>::BuiltBy([&] {
+        return take_positions_.Taken(
+            written, held, static_cast<std::int64_t>(run.lsb),
+            static_cast<std::int64_t>(run.width));
+      });
+      value::RebuildFrom(written, [&] { return std::move(*taken); });
     }
   }
 

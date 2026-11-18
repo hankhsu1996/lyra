@@ -80,12 +80,14 @@ what the construct means.
   nothing else (`compiler_generated_storage.md` invariant 10); and the **object** (`mir::Class`),
   the rich nominal object with methods and dispatch. A component of a tuple or a record is reached
   the same way: by its position, as a field step on the place holding it, whether that place is a
-  variable, a dereference or a value held for the full-expression; a union's members all lie at its
-  start. The closure and the object share a **field substrate** -- a field declaration, a field id
-  keyed within one declaration, and one access node -- while staying distinct types; an access names
-  the declaration it reaches into, so what the substrate shares is the vocabulary and never the
-  identity. Structural versus nominal, and storage versus callable, are the ordinary
-  generic-language distinctions (C++/Rust/LLVM carry them).
+  variable, a dereference or a value held for the full-expression. An untagged union's one component
+  is its storage, the bits of its widest member, which every member is a view of from the first
+  position; a tagged union's members all lie at its start. The closure and the object share a
+  **field substrate** -- a field declaration, a field id keyed within one declaration, and one
+  access node -- while staying distinct types; an access names the declaration it reaches into, so
+  what the substrate shares is the vocabulary and never the identity. Structural versus nominal, and
+  storage versus callable, are the ordinary generic-language distinctions (C++/Rust/LLVM carry
+  them).
 - Two references to an object that are values of the simulation, beside the machine pointer: a
   managed reference, whose object lives while some reference reaches it (a class handle, LRM 8.3),
   and one owning nothing (a `chandle`, LRM 6.14, whose pointee is `void`; a virtual interface, LRM
@@ -118,10 +120,13 @@ what the construct means.
   types, the name another unit reaches it by and a method for each operation the language defines on
   its whole value, which every unit naming it calls through the declaration, handing it each value
   it asks about by reference, as Rust's comparison operators borrow theirs; another unit holds it by
-  that name. A structure's type is the record and nothing else; a union's also carries its member
-  types, which a member access reads where it lies. A local a scope keeps past its end (LRM 6.21) is
-  no struct: it is its own cell, reached through a `Shared<>` wrapper. A closure is not a
-  struct-with-invoke but its own callable-value category.
+  that name. A structure's type is the record and nothing else; an untagged union's record has one
+  component, its storage, and also carries its member types, the views a member access reads and
+  writes it through -- a read makes the member out of the storage's first positions, and a write
+  replaces those positions by the member's; a tagged union's carries its members, each read where it
+  lies. A local a scope keeps past its end (LRM 6.21) is no struct: it is its own cell, reached
+  through a `Shared<>` wrapper. A closure is not a struct-with-invoke but its own callable-value
+  category.
 - A packed structure or union the **source declared** is the single vector its members project onto.
   No member name is carried by any aggregate: an access names a member by its declaration-order
   position, the carrier LLVM IR and Rust MIR both use, and what the language reads a name for --
@@ -445,10 +450,9 @@ suspect, not the analysis (`lowering_organization.md` states this discipline in 
     owns -- computes nothing itself, so it may stand anywhere, and what it stands for is the
     evaluations of what it reaches. Which storage a read reaches is a fact of its place, so deciding
     where a value lies, which holds a large one through a box, changes no node's answer. A read of
-    any other storage computes, since a write between two of them makes them two values; so does a
-    read of overlaid storage, which makes a value of its type out of the bits there (invariant 16),
-    and reaching an object through a class handle, which opens the handle and can fail the design,
-    in the unit as it is built as much as once a conversion has made the opening a call. Which
+    any other storage computes, since a write between two of them makes them two values; so does
+    reaching an object through a class handle, which opens the handle and can fail the design, in
+    the unit as it is built as much as once a conversion has made the opening a call. Which
     computations would be harmless to repeat is not stated and not asked: a call with no effect is a
     call. The unit's verification refuses a body that breaks this, where the unit is produced.
 
@@ -459,17 +463,16 @@ suspect, not the analysis (`lowering_organization.md` states this discipline in 
 16. Whether an expression names storage or makes a value is the kind of its node, settled where the
     node is built. A reference to a variable, a dereference and a field step on a place are places,
     and nothing else is. A place states what kind of storage it is -- ordinary, with an address of
-    its own; with none of its own, at or below a member of a union, which nothing binds (LRM
-    13.5.2); overlaid, at or below a member of an untagged union, whose bits may be another member's
-    -- and each node's kind follows from its operand's. Storage is read by a read node, written by
-    an assignment whose target is a place, and referred to by a borrow, and each is realized by the
-    place's kind. A method changing overlaid storage changes a read of it, held in a local, which is
-    then written back, so what lands holds what its type requires. _Programming-language
-    consequence: this is value category -- a THIR expression's place-or-value category in rustc, a
-    value kind and an object kind on every clang expression -- and like theirs it follows from the
-    expression's own nodes, read by one query every consumer asks, so no consumer works out from a
-    finished tree which expressions name storage by a rule of its own, and no pair of nodes or
-    entries differs only by whether it is read or written._
+    its own; or with none of its own, at or below a member of a tagged union, which nothing binds
+    (LRM 13.5.2) -- and each node's kind follows from its operand's. A member of an untagged union
+    is no place: it is a value made from the union's storage, and a write to it or below it is a
+    write of the storage's positions it takes. Storage is read by a read node, written by an
+    assignment whose target is a place, and referred to by a borrow, and each is realized by the
+    place's kind. _Programming-language consequence: this is value category -- a THIR expression's
+    place-or-value category in rustc, a value kind and an object kind on every clang expression --
+    and like theirs it follows from the expression's own nodes, read by one query every consumer
+    asks, so no consumer works out from a finished tree which expressions name storage by a rule of
+    its own, and no pair of nodes or entries differs only by whether it is read or written._
 
 ## Boundary to Adjacent Layers
 
@@ -790,19 +793,19 @@ through, and a window by its array's own `assign_element_slice` or a queue's own
 the two positions it clamps (LRM 7.10.1), each taken on the place the value lies in. Where the owner
 is a capability wrapper, the write is opened on it, the whole of the wrapper's contents is
 designated within it, and each step into a part a write lands on (an element, or a component, a
-union's member among them) is taken within the write in progress rather than on the storage. So the
-write hears what forming each part did -- an element made by being written, an index naming none --
-and keeps only what it lands on. It lands where what those steps designate is dereferenced, or,
-where the descent ends in bits or a window, the reference to the bits or the window's write is taken
-on the last designation. A union's member is no storage of its own, so the change the write reports
-is to the union, whose bytes every member reads. The write and a place designated within it are two
-types: the write is held by the writer, ended with the full-expression, which is when it reports,
-and names no place itself, while a designation borrows the write and ends with nothing to do. The
-variable learns whether the write changed it from what it heard and from the part it landed on (LRM
-4.3). Whether a part is storage of its own is the language's fact about the type it is part of
-(`storage.md`), and the place states it as its kind (invariant 16), so no layer below works it out.
-A construct that binds the designated part rather than writing it -- an output pack component, a
-nonblocking update -- binds the same statement of owner and descent; it is owner-relative, so it
+tagged union's member among them) is taken within the write in progress rather than on the storage.
+So the write hears what forming each part did -- an element made by being written, an index naming
+none -- and keeps only what it lands on. It lands where what those steps designate is dereferenced,
+or, where the descent ends in bits or a window, the reference to the bits or the window's write is
+taken on the last designation. A union's member is no storage of its own, so the change the write
+reports is to the union, whose bits every member reads. The write and a place designated within it
+are two types: the write is held by the writer, ended with the full-expression, which is when it
+reports, and names no place itself, while a designation borrows the write and ends with nothing to
+do. The variable learns whether the write changed it from what it heard and from the part it landed
+on (LRM 4.3). Whether a part is storage of its own is the language's fact about the type it is part
+of (`storage.md`), and the place states it as its kind (invariant 16), so no layer below works it
+out. A construct that binds the designated part rather than writing it -- an output pack component,
+a nonblocking update -- binds the same statement of owner and descent; it is owner-relative, so it
 names no interior pointer and aliases nothing the owner does not already own. A reference actual
 binds the part for as long as the callee holds it, and each write through it is a write of the owner
 at the moment it lands (LRM 13.5.2, 4.3), which no write ended with the caller's full-expression can

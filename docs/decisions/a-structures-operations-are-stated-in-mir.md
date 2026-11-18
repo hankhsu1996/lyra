@@ -6,10 +6,10 @@ Date: 2026-09-27 Status: accepted.
 
 The language defines operations on an unpacked structure as a whole: `==` and `!=` (LRM 11.2.2,
 11.4.5), `===` and `!==` (11.4.5), `$bits` (20.6.2), `$countbits` and `$isunknown` (20.9), the bit
-stream in both directions (6.24.3, 11.4.14), and resolving a net of the type (6.6, 6.7.1). Whether a
-write changed a variable is decided the same way (4.3, 9.4.2). Every one is defined member by
-member. The runtime performs them too, on values it holds: a container's elements, a variable's
-change test, a net's drivers.
+stream in both directions (6.24.3, 11.4.14), and the positions a net of the type resolves (6.6.7,
+6.7.1). Whether a write changed a variable is decided the same way (4.3, 9.4.2). Every one is
+defined member by member. The runtime performs them too, on values it holds: a container's elements,
+a variable's change test, a net's drivers.
 
 Each backend defined them itself: the C++ value library composed them in `Tuple<Ts...>`, and the
 execution backend's code generator composed them once per type. What an operation means for a type
@@ -52,13 +52,16 @@ call, and so is every whole-value question a structure's own body asks of a memb
   them, across the dependency it already has, and never states them again.
 - **An operation the type does not have has no method.** A real or a chandle leaves no bit stream
   (6.24.3), a stream is built only where the type fixes its width, and only a type the net types'
-  tables fold resolves: one whose every part can hold the `z` a driver leaves where it drives
-  nothing, a 4-state integral part or an aggregate of such (6.6.1).
+  tables fold resolves: one whose every bit is a bit of an integral value of either state, which the
+  tables read (6.6.1, 6.11.2). Revised 2026-11-17: this named 4-state parts alone, because a net
+  then held each contribution as a value of its type, which a 2-state part could not hold `z` in; a
+  net now holds positions, which are 4-state whatever the type.
 - **The questions the runtime asks as predicates are entries of their own**: whether two values are
-  the same bits and whether one holds an unknown bit. So is each of the net's three truth tables,
-  for the reason a net's installation is one entry per resolution. `!=` is a method too.
-  `$isunknown`'s bit is not, since MIR states it at the call as the unknown-bit question taken into
-  a `bit` ([builtin-call-identity](builtin-call-identity.md)).
+  the same bits and whether one holds an unknown bit. `!=` is a method too. Revised 2026-11-17: each
+  of the net's three truth tables was one too, folding two values of the type; a net now resolves
+  positions, and the type states only how its positions are read out and written in. `$isunknown`'s
+  bit is not, since MIR states it at the call as the unknown-bit question taken into a `bit`
+  ([builtin-call-identity](builtin-call-identity.md)).
 - **A backend compiles those methods as it compiles any declared body** and lays the structure out.
   Copying, moving, ending and assigning one go member by member, which the C++ backend takes from
   the host language and the execution backend from functions the lowering to LIR states
@@ -129,14 +132,15 @@ call, and so is every whole-value question a structure's own body asks of a memb
   the same four positions as a view of any width.
 - A union and a tagged union are identified by their declarations too (LRM 6.22.1), and are
   declarations in MIR the same way (revised 2026-10-16): the declaration states the same methods, an
-  untagged union's answered through its first member and a tagged union's through the member its tag
-  names ([a-union-is-one-storage-its-members-overlay](a-union-is-one-storage-its-members-overlay.md)
-  D4), and the C++ backend spells it as a type of the declaring unit built on the library's storage
-  for its members. The three are one MIR type, a record naming its declaration, as clang's record
-  type names its record declaration and rustc's ADT type its definition; which aggregate it is and
-  its members are the declaration's. The declaration is settled where its type is first translated,
-  and its methods stated beside it once that type is interned, as rustc's derived implementation is
-  an item beside the definition it derives from, since a method reaches the record's own members. A
+  untagged union's answered through its first member, but for its positions, which are its
+  storage's, and a tagged union's through the member its tag names
+  ([a-union-is-one-storage-its-members-overlay](a-union-is-one-storage-its-members-overlay.md) D4),
+  and the C++ backend spells it as a type of the declaring unit built on the library's storage for
+  its members. The three are one MIR type, a record naming its declaration, as clang's record type
+  names its record declaration and rustc's ADT type its definition; which aggregate it is and its
+  members are the declaration's. The declaration is settled where its type is first translated, and
+  its methods stated beside it once that type is interned, as rustc's derived implementation is an
+  item beside the definition it derives from, since a method reaches the record's own members. A
   fixed-size array has no declaration, and each unit reaching one states the operations it reaches
   ([a-fixed-arrays-operations-are-stated-per-unit](a-fixed-arrays-operations-are-stated-per-unit.md)).
 - [a-type-owned-computation-has-no-object](a-type-owned-computation-has-no-object.md) rejected a MIR

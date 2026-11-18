@@ -30,8 +30,8 @@ owned nothing and so lay whole on the stack.
 ## Decision
 
 **D1. Every type is laid out flat at every size, on both backends.** An integral is its words, an
-array its elements, a structure its members, a union its members overlaid. No value type owns
-storage of its own on account of its size.
+array its elements, a structure its members, an untagged union its storage, a tagged union its
+members overlaid. No value type owns storage of its own on account of its size.
 
 **D2. A position where a value would lie in a frame holds a value of a type too large for a frame
 through a uniquely owning pointer MIR states.** The positions are a local, a parameter taken by

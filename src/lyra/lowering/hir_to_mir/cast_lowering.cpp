@@ -466,6 +466,7 @@ auto BuildValueConversion(
           [&](const mir::TupleType& t) { return none(t); },
           [&](const mir::ObservableType& t) { return none(t); },
           [&](const mir::ResolvedType& t) { return none(t); },
+          [&](const mir::UnresolvedType& t) { return none(t); },
           [&](const mir::DriverType& t) { return none(t); },
           [&](const mir::OpenWriteType& t) { return none(t); },
           [&](const mir::DesignationType& t) { return none(t); },

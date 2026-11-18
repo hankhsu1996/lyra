@@ -43,7 +43,7 @@ auto LibraryStep(const support::RuntimeObject& object, ValueStep step)
 }
 
 // The parts a value laid out by its type is made of: a product's components,
-// a union's members, an array's element.
+// a tagged union's members, an array's element.
 auto PartsOf(const CompilationUnit& unit, TypeId type)
     -> std::span<const TypeId> {
   const Type& stated = unit.types.Get(type);
@@ -125,19 +125,8 @@ auto NeedsEnd(const CompilationUnit& unit, TypeId type) -> bool {
       Overloaded{
           [](const value::Scalar&) { return false; },
           // A value laid out by its type ends as its parts do, where any has
-          // anything to end; an untagged union's members are only bits
-          // another member may have written, so none of them is held to end.
+          // anything to end.
           [&](const LaidOutByType&) {
-            if (const std::optional<RecordKind> kind =
-                    RecordKindOf(unit, type)) {
-              switch (*kind) {
-                case RecordKind::kUnion:
-                  return false;
-                case RecordKind::kStruct:
-                case RecordKind::kTaggedUnion:
-                  break;
-              }
-            }
             return std::ranges::any_of(PartsOf(unit, type), [&](TypeId part) {
               return NeedsEnd(unit, part);
             });

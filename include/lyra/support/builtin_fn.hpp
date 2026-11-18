@@ -302,24 +302,31 @@ enum class BuiltinFn : std::uint16_t {
   // one the program writes.
   kBitIdentical,
   kHasUnknown,
-  // Folding two contributions of equal strength to a net, one entry per truth
-  // table for the reason a net's installation is one entry per resolution (LRM
-  // 6.6.1, 6.6.3); what a stronger contribution leaves a weaker one (LRM
-  // 28.12.1); and a value shaped as another is, with every bit set to one fill
-  // (LRM 6.7.1).
-  kResolveTriState,
-  kResolveWiredAnd,
-  kResolveWiredOr,
-  kDominating,
-  kFilledLike,
   // The positions a procedural continuous assignment may hold some of (LRM
-  // 10.6.2): an integral value's bits, an unpacked structure's and a
-  // fixed-size unpacked array's parts' positions one part after another, and
-  // one for any other value, which is held whole. How many a type has, asked
-  // of the type, and a value with the run of positions a first one and a
-  // count name taken from another of its type.
+  // 10.6.2) and a net resolves (LRM 6.6.7): an integral value's bits, a
+  // real's IEEE 754 bits, an unpacked structure's and a fixed-size unpacked
+  // array's parts' positions one part after another, an untagged union's
+  // storage's, a tagged union's held member's and then its tag's, and one for
+  // any other value, which is held whole. How many a type has, asked of the
+  // type, and a value with the run of positions a first one and a count name
+  // taken from another of its type.
   kPositionCount,
   kTakePositions,
+  // The positions a net resolves of a value whose every part is an integral
+  // value (LRM 6.7.1, 6.6.7), numbered as a procedural continuous assignment
+  // numbers them: all of them as one integral value of as many bits, the first
+  // position least significant, which a driver of such a value gives; and the
+  // value with the positions a view of resolved ones reaches replaced in place,
+  // the view's first position standing at a position of the value, answering
+  // whether any changed (LRM 9.4.2) and reaching only the parts they lie in.
+  // The positions of every type with a fixed sequence of bits are numbered
+  // so, a real's being its IEEE 754 bits, which is how a member of an untagged
+  // union is a view of the union's storage (LRM 7.3); the value of the type
+  // that one integral value of its positions holds is the inverse of the
+  // first, which a read of such a member makes.
+  kToPositions,
+  kWritePositions,
+  kFromPositions,
   // The value a variable of an aggregate starts as (LRM Table 7-1): a
   // structure's each member at the initial value its declaration assigns (LRM
   // 7.2.2), and at its own type's default where it assigns none; a union's its
@@ -327,8 +334,8 @@ enum class BuiltinFn : std::uint16_t {
   // own answers it with its own body, and no value the library holds does.
   kDeclaredDefault,
   // A value of a type holding a bounded queue below its outermost dimension, as
-  // a value
-  // of the same type with no queue in it bounded, and back (LRM 6.22.2 e, 7.6,
+  // a value of the same type with no queue in it bounded, and back (LRM 6.22.2
+  // e, 7.6,
   // 7.10.5). Every type equivalent to it has that unbounded form, so a value is
   // assigned across types that differ only in their queues' bounds by taking it
   // into that form and out of it again. Into it nothing is lost; out of it each
@@ -386,26 +393,20 @@ enum class BuiltinFn : std::uint16_t {
   // an operation is named here. What the contribution is stays a value the
   // call carries.
   //
-  // A net of an integral type counts its positions by that type, which is all
-  // a connection can name of it (LRM 23.3.3.7). A net of an unpacked aggregate
-  // is handed a value of its data type, whose shape it takes (LRM 6.7.1), so
-  // its install is an entry of its own.
+  // A net of an integral type or of an unpacked aggregate a net type resolves
+  // was told its data type where it was built, which counts its positions, so
+  // its install carries only what the net type states (LRM 6.7.1).
   //
   // A net of a type no net type resolves -- a real, a string, a class handle,
-  // or an aggregate holding one or a 2-state part, which only an input port
-  // written with no port
+  // or an aggregate holding one, which only an input port written with no port
   // kind declares (LRM 23.2.2.3) -- is a net of a nettype with no resolution
-  // function (LRM 6.6.7): its net type contributes nothing, one driver decides
-  // it, and where none does it holds the value it is handed, its type's
-  // default. So its install takes that value alone.
+  // function (LRM 6.6.7): its net type contributes nothing, its one driver
+  // gives it whole, and where none does it holds the value it is handed, its
+  // type's default. So its install takes that value alone.
   kNetInitializeTriState,
   kNetInitializeWiredAnd,
   kNetInitializeWiredOr,
   kNetInitializeRetaining,
-  kAggregateNetInitializeTriState,
-  kAggregateNetInitializeWiredAnd,
-  kAggregateNetInitializeWiredOr,
-  kAggregateNetInitializeRetaining,
   kUnresolvedNetInitialize,
   // Reading what a cell holds, and replacing it. Both act on the wrapper rather
   // than name its storage: a read answers with a reference to what the cell
@@ -442,26 +443,26 @@ enum class BuiltinFn : std::uint16_t {
   // the whole lands.
   kDesignateWhole,
   // A step taken within a write in progress, into a part of what it designates
-  // that a write lands on: an element or a component, a union's member among
-  // the components. It answers with the part designated within the same write
-  // -- a value of its own that borrows the write -- which is not what the step
-  // answering with the part alone answers, and the write keeps only what it
-  // lands on. The write hears what the step did to the variable where the part
+  // that a write lands on: an element or a component, a tagged union's member
+  // among the components. It answers with the part designated within the same
+  // write -- a value of its own that borrows the write -- which is not what the
+  // step answering with the part alone answers, and the write keeps only what
+  // it lands on. The write hears what the step did to the variable where the
+  // part
   // cannot say so itself -- an element made by being written, an index naming
   // none (LRM 7.8.7, 7.10.1, 7.4.6); a component is formed by nothing, so its
-  // step has nothing to tell. A union's member lies where every other member
-  // does (LRM 7.3), so the change is reported at the union, whose bytes every
-  // member reads. Dereferencing what the steps designate is where the write
-  // lands. Bits and a run of elements are no storage of their own, and are
+  // step has nothing to tell. A tagged union's member lies where every other
+  // member does (LRM 7.3.2), so the change is reported at the union.
+  // Dereferencing what the steps designate is where the write lands. Bits and a
+  // run of elements are no storage of their own, and are
   // written within the write by the value's own operations taken on its
   // designation.
   kDesignateElement,
   kQueueDesignateElement,
   kDesignateComponent,
-  // A step into a member of a union a write designates. Every member lies at
-  // the union's own start (LRM 7.3), so no step of a path stands for one, and
-  // the path the write reports stops at the union, whose bytes every member
-  // reads.
+  // A step into a member of a tagged union a write designates. Every member
+  // lies at the union's own start (LRM 7.3.2), so no step of a path stands for
+  // one, and the path the write reports stops at the union.
   kDesignateMember,
   // A step taken on a reference, into a part of what it refers to that may be
   // passed by reference -- an element or a component (LRM 13.5.2). It answers
@@ -516,28 +517,39 @@ enum class BuiltinFn : std::uint16_t {
   // once nothing overrides it (LRM 10.6.2).
   kDrivesContinuously,
   // Attaching a driver to a net (LRM 6.5), at the strength its source drives at
-  // (LRM 28.11): a `ResolvedNet` method returning the driver handle the drive
+  // (LRM 28.11): a net's method returning the driver handle the drive
   // capability is reached through. The strength is fixed when the driver
   // attaches rather than restated on every update, because it is a property of
-  // the source and not of the value it puts on the net.
+  // the source and not of the value it puts on the net. So are the positions
+  // it drives, which its target names by constant selects (LRM 10.3.2,
+  // A.8.5): they are operands of the attach, and the driver gives them as one
+  // integral value, its type the call's type argument: the part itself where it
+  // is integral, and its positions otherwise. So is the run of them the net
+  // has, which a select's position may leave short of the part (LRM 7.4.5,
+  // 11.5.1), and the driver drives only that.
   kAttachDriver,
-  // Stating, as the design is built, that what a driver gives is the whole of a
-  // variable, a net, or an input port declared as a variable, of its net's own
-  // type, unchanged: a `Driver` method taking the variable's cell, the net, or
-  // the port's reference. A net that driver alone decides shows that object
-  // where it lies (LRM 23.3.3, 4.8).
+  // Attaching the one driver of a net of a nettype with no resolution function
+  // (LRM 6.6.7): an `UnresolvedNet` method returning the driver handle. Such a
+  // net has no strength levels (LRM 28.12), so the attach names none.
+  kAttachWholeDriver,
+  // Stating, as the design is built, that what a net's driver of the whole of
+  // it gives is the whole of a variable, another net, or an input port declared
+  // as a variable, of the net's own type, unchanged: a `Net` method taking the
+  // variable's cell, the other net, or the port's reference. A net that driver
+  // alone decides shows that object where it lies (LRM 23.3.3, 4.8).
   kDriveFromVariable,
   kDriveFromNet,
   kDriveFromReference,
-  // A driver's turn at time zero (LRM 4.9.1): a `Driver` method answering
-  // whether its net shows the object the driver carries from here on, which
-  // leaves the drive nothing to do.
+  // That driver's turn at time zero (LRM 4.9.1): a `Net` method
+  // answering whether the net shows the object its driver carries from here
+  // on, which leaves the drive nothing to do.
   kShowSource,
-  // Joining two nets into one resolution (LRM 23.3.3.7): a `ResolvedNet`
-  // method taking the other net, after which every driver of either is a
-  // contribution to the same fold at the strength it drives at, and both nets
-  // show what that fold produces. It states no direction, because the
-  // connection it realizes has none (LRM 23.3.3).
+  // Joining two nets into one resolution (LRM 23.3.3.7): a net's method taking
+  // the other net, after which every driver of either is a contribution to the
+  // same fold at the strength it drives at, and both nets show what that fold
+  // produces. It states no direction, because the connection it realizes has
+  // none (LRM 23.3.3). Each side states the run of the part it names that its
+  // net has, and only positions both sides have are joined.
   kNetJoin,
   // Putting a variable or a net, reached through its cell or a reference naming
   // it, under a procedural continuous assignment and taking it back out (LRM
@@ -1545,10 +1557,7 @@ enum class BuiltinFn : std::uint16_t {
   kIntegralBitIdentical,
   kIntegralHasUnknown,
   kIntegralCountBits,
-  kIntegralResolveTriState,
-  kIntegralResolveWiredAnd,
-  kIntegralResolveWiredOr,
-  kIntegralDominating,
+  kIntegralWithPositions,
   kIntegralTakePositions,
   kIntegralMergeConditional,
   kIntegralFromInt,

@@ -2099,13 +2099,12 @@ auto FunctionLowerer::WrapperContentsPlace(
     return Land(
         *std::move(designation), unit_->TranslateType(designated->value));
   }
-  // A wrapper that is itself storage -- an observable cell, a net's resolved
-  // value -- is storage the chain has already reached, so naming what it
+  // A wrapper that is itself storage -- an observable cell, a net of either
+  // kind -- is storage the chain has already reached, so naming what it
   // represents extends that chain by one step. Everything else here refers to
   // storage elsewhere: a pointer, a reference, the driver handle a net issued
   // are values, and a value opens a chain rather than continuing one.
-  if (wrapper_ty.Is<mir::ObservableType>() ||
-      wrapper_ty.Is<mir::ResolvedType>()) {
+  if (wrapper_ty.Is<mir::ObservableType>() || wrapper_ty.IsNet()) {
     auto place = LowerPlace(block, wrapper);
     if (!place) {
       return std::unexpected(std::move(place.error()));
@@ -2310,7 +2309,7 @@ auto FunctionLowerer::LowerPlace(const mir::Block& block, mir::ExprId id)
           },
           // An element a reference into its whole reaches is a step of the
           // place the whole lies in, so the chain names every step a load
-          // reaches through, a member of an untagged union among them.
+          // reaches through.
           [&](const mir::DerefExpr& deref) -> diag::Result<lir::Place> {
             if (const mir::CallExpr* element = ReferencedPartCall(block, id)) {
               return ElementPlace(block, *element);
@@ -2373,7 +2372,7 @@ auto FunctionLowerer::LowerPlace(const mir::Block& block, mir::ExprId id)
           [&](const mir::CompositeExpr&) {
             return names_no_place("a value composed of its parts");
           },
-          [&](const mir::UnionExpr&) {
+          [&](const mir::TaggedUnionExpr&) {
             return names_no_place("a union built holding a member");
           },
           [&](const mir::AwaitExpr&) {
@@ -2403,10 +2402,6 @@ auto FunctionLowerer::LowerRead(const mir::Block& block, mir::ExprId place)
   auto named = LowerPlace(block, place);
   if (!named) {
     return std::unexpected(std::move(named.error()));
-  }
-  if (mir::KindOfPlace(unit_->Mir(), block, place) ==
-      mir::PlaceKind::kOverlaid) {
-    return Emit(type, lir::OverlaidLoadInstr{.place = *std::move(named)});
   }
   return Load(*std::move(named), type);
 }
@@ -3477,7 +3472,7 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
             return LowerReadAsAnother(block, cast.operand, type);
           },
           [&](const mir::CompositeExpr&) -> Lowered { return computed(); },
-          [&](const mir::UnionExpr&) -> Lowered { return computed(); },
+          [&](const mir::TaggedUnionExpr&) -> Lowered { return computed(); },
           [&](const mir::VectorGetExpr&) -> Lowered { return computed(); },
           [&](const mir::DiscriminantExpr&) -> Lowered { return computed(); },
           [&](const mir::ClosureExpr&) -> Lowered { return computed(); },
@@ -3524,20 +3519,6 @@ auto FunctionLowerer::LowerRvalue(const mir::Block& block, mir::ExprId id)
       return std::unexpected(std::move(value.error()));
     }
     return of_type(ConsumeByCopyOrMove(*std::move(value)));
-  };
-  // A read of storage another member of an untagged union may have written
-  // makes a value of its own, so it is computed where it goes rather than
-  // first into a value of the whole read's size.
-  const auto read = [&](mir::ExprId place) -> Lowered {
-    if (mir::KindOfPlace(unit_->Mir(), block, place) !=
-        mir::PlaceKind::kOverlaid) {
-      return used();
-    }
-    auto named = LowerPlace(block, place);
-    if (!named) {
-      return std::unexpected(std::move(named.error()));
-    }
-    return of_type(lir::OverlaidLoadInstr{.place = *std::move(named)});
   };
   Lowered lowered = std::visit(
       Overloaded{
@@ -3596,13 +3577,13 @@ auto FunctionLowerer::LowerRvalue(const mir::Block& block, mir::ExprId id)
             return of_type(
                 AssembledFrom(unit_->Lir(), built, *std::move(parts)));
           },
-          [&](const mir::UnionExpr& built) -> Lowered {
+          [&](const mir::TaggedUnionExpr& built) -> Lowered {
             auto value = LowerExpr(block, built.value);
             if (!value) {
               return std::unexpected(std::move(value.error()));
             }
             return of_type(
-                lir::UnionInstr{
+                lir::TaggedUnionInstr{
                     .member = built.member, .value = *std::move(value)});
           },
           // The tag is read where the union lies, as rustc reads an enum's
@@ -3706,8 +3687,8 @@ auto FunctionLowerer::LowerRvalue(const mir::Block& block, mir::ExprId id)
           [&](const mir::AssignExpr&) { return used(); },
           [&](const mir::ConditionalExpr&) { return used(); },
           [&](const mir::BlockExpr&) { return used(); },
-          [&](const mir::MoveExpr& move) { return read(move.operand); },
-          [&](const mir::CopyExpr& copy) { return read(copy.place); },
+          [&](const mir::MoveExpr&) { return used(); },
+          [&](const mir::CopyExpr&) { return used(); },
           [&](const mir::AwaitExpr&) { return used(); },
           [&](const mir::WaitExpr&) { return used(); },
       },
@@ -3760,7 +3741,7 @@ auto FunctionLowerer::LowerExprInto(
           [&](const mir::AddressOfExpr&) { return assigned(); },
           [&](const mir::CastExpr&) { return assigned(); },
           [&](const mir::CompositeExpr&) { return assigned(); },
-          [&](const mir::UnionExpr&) { return assigned(); },
+          [&](const mir::TaggedUnionExpr&) { return assigned(); },
           [&](const mir::VectorGetExpr&) { return assigned(); },
           [&](const mir::DiscriminantExpr&) { return assigned(); },
           [&](const mir::ClosureExpr&) { return assigned(); },

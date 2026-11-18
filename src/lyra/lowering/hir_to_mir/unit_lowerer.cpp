@@ -503,9 +503,17 @@ auto UnitLowerer::MemberCellType(
           [&](const hir::VariableStorage&) {
             return mir::ObservableCellOf(unit_.types, value_type);
           },
+          // A net of a value whose positions the net types resolve resolves
+          // its drivers; one of any other value is a net of a nettype with no
+          // resolution function, which its one driver gives whole (LRM
+          // 6.6.7).
           [&](const hir::NetStorage&) {
-            return unit_.types.Intern(
-                mir::Type{mir::ResolvedType{.value = value_type}});
+            return NetResolves(unit_, value_type)
+                       ? unit_.types.Intern(
+                             mir::Type{mir::ResolvedType{.value = value_type}})
+                       : unit_.types.Intern(
+                             mir::Type{
+                                 mir::UnresolvedType{.value = value_type}});
           },
           [&](const hir::ReferenceStorage& reference) {
             // A port's member is bound by its connection after the object is

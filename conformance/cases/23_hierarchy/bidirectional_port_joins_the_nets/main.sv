@@ -115,6 +115,37 @@ module Window(.p(inner[2:1]));
   assign inner[3] = 1'b1;
 endmodule
 
+// An element of an unpacked array of nets, or a slice of one, is a run of
+// that declaration's positions like any other part (LRM 6.7.1), so a port
+// standing for one joins that run and the elements beside it keep their own
+// drivers.
+module Slot(.p(cells[1]));
+  inout wire [3:0] cells [2];
+
+  assign cells[1] = 4'b10zz;
+  assign cells[0] = 4'h5;
+endmodule
+
+module Run(.p(cells[1:2]));
+  inout wire [1:0] cells [0:3];
+
+  assign cells[0] = 2'b11;
+  assign cells[1] = 2'b0z;
+endmodule
+
+// A net of an unpacked structure resolves position by position as a vector
+// net does (LRM 6.7.1), so a port of one joins every position of the net it is
+// connected to, and a driver of one member on either side meets the other
+// side's driver of that member alone.
+typedef struct {
+  logic [3:0] a;
+  logic [3:0] b;
+} parts_t;
+
+module PartsPad(inout parts_t w);
+  assign w.a = 4'b1100;
+endmodule
+
 module Top;
   logic child_en;
   logic child_d;
@@ -196,6 +227,19 @@ module Top;
   wire frame_t framed;
   Leaf member_pad(.w(framed.first), .en(1'b1));
   assign framed.last = 1'b0;
+
+  wire [3:0] slotted;
+  Slot slot(.p(slotted));
+  assign slotted = 4'bzz01;
+
+  wire [1:0] run [2];
+  Run run_pad(.p(run));
+  assign run[1] = 2'b10;
+
+  wire parts_t parts;
+  PartsPad parts_pad(.w(parts));
+  assign parts.a = 4'b1010;
+  assign parts.b = 4'b0011;
 
   logic undriven;
   logic driven_from_child;
@@ -365,6 +409,26 @@ module Top;
     // driver of the last.
     if (framed !== 4'b1zz0)
       $fatal(1, "framed was %b, expected 1zz0", framed);
+    // The child's element meets this module's driver position by position,
+    // and the element no port stands for is the child's alone.
+    if (slotted !== 4'b1001)
+      $fatal(1, "slotted was %b, expected 1001", slotted);
+    if (slot.cells[1] !== 4'b1001 || slot.cells[0] !== 4'h5)
+      $fatal(1, "slot.cells was %b %h, expected 1001 5", slot.cells[1],
+             slot.cells[0]);
+    // The slice's first element meets `run`'s first and its second `run`'s
+    // second, and the child's elements outside the slice are its own.
+    if (run[0] !== 2'b0z || run[1] !== 2'b10)
+      $fatal(1, "run was %b %b, expected 0z 10", run[0], run[1]);
+    if (run_pad.cells[0] !== 2'b11 || run_pad.cells[3] !== 2'bzz)
+      $fatal(1, "run_pad.cells outside the slice was %b %b, expected 11 zz",
+             run_pad.cells[0], run_pad.cells[3]);
+    // 1100 against 1010 on `a`, and `b` driven on this side alone.
+    if (parts.a !== 4'b1xx0 || parts.b !== 4'b0011)
+      $fatal(1, "parts was %b %b, expected 1xx0 0011", parts.a, parts.b);
+    if (parts_pad.w.a !== 4'b1xx0 || parts_pad.w.b !== 4'b0011)
+      $fatal(1, "the port showed %b %b, expected 1xx0 0011", parts_pad.w.a,
+             parts_pad.w.b);
     $display("All checks passed");
   end
 endmodule

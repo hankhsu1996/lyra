@@ -349,9 +349,9 @@ auto LowerUnpackedUnion(
         // Both the untagged overlapping-storage form (LRM 7.3) and the tagged
         // type-checked sum form (LRM 7.3.2) come through here.
         //
-        // An untagged union's members lie over one another's bytes, so a
+        // An untagged union's members are views of one storage of bits, so a
         // member owning what it holds, or one whose value is no bits, has no
-        // such bytes to share. The standard admits one only in a tagged union
+        // bits to share. The standard admits one only in a tagged union
         // (LRM 7.3, 6.16), and the front end lets a string, a class handle and
         // an event through.
         if (!union_type.isTagged) {

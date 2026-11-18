@@ -395,9 +395,9 @@ auto UnitLowerer::BuildStepFunction(lir::TypeId type, lir::ValueStep step)
   // the union holding a copy of that member, and so does a move, which leaves
   // the one moved from to be ended; a write over one ends what was there and
   // builds a copy of the other in its place, unless the two are one.
-  if (lir::IsTaggedUnion(out_, type)) {
-    const std::span<const lir::TypeId> members =
-        *lir::OverlaidMembers(out_, type);
+  if (const std::optional<std::span<const lir::TypeId>> tagged =
+          lir::OverlaidMembers(out_, type)) {
+    const std::span<const lir::TypeId> members = *tagged;
     if (step == lir::ValueStep::kAssign) {
       const lir::BlockId replace = body.NewBlock();
       const lir::BlockId done = body.NewBlock();
@@ -451,7 +451,7 @@ auto UnitLowerer::BuildStepFunction(lir::TypeId type, lir::ValueStep step)
       } else {
         body.Into(
             *made,
-            lir::UnionInstr{
+            lir::TaggedUnionInstr{
                 .member = base::ComponentIndex{static_cast<std::uint32_t>(k)},
                 .value = body.Load(member, members[k])});
       }

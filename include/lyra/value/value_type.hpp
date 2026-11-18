@@ -150,34 +150,32 @@ struct ValueWitnessTable {
 // table it states.
 [[noreturn]] void LacksOperation();
 
-// How a net whose data type the library was compiled without resolves what
-// drives it (LRM 6.6, 6.7.1, 28.12.1), one function each, handed the type
-// first: the fold of two contributions under each truth
-// table, what a stronger contribution leaves a weaker one, and a value of the
-// prototype's shape with every bit at a scalar fill, `fill` being the bytes
-// of a `logic`. Each answers in `out`. Only a net asks these, so the net is
-// built holding the table.
-struct NetFoldTable {
-  void (*tri_state)(
-      const ValueType& type, const void* lhs, const void* rhs, void* out);
-  void (*wired_and)(
-      const ValueType& type, const void* lhs, const void* rhs, void* out);
-  void (*wired_or)(
-      const ValueType& type, const void* lhs, const void* rhs, void* out);
-  void (*dominating)(
-      const ValueType& type, const void* stronger, const void* weaker,
-      void* out);
-  void (*filled_like)(
-      const ValueType& type, const void* prototype, const void* fill,
-      void* out);
+// What a net whose data type the library was compiled without asks of the
+// type (LRM 6.6.7, 6.7.1), one function each, handed the type first: a value's
+// positions, read out whole and written in part, and how many it has. Only a
+// net asks these, so the net is built holding the table.
+struct NetWitnessTable {
+  // Every position the net resolves of a value, the first least significant,
+  // written into `out`, which is as wide as the value has positions.
+  void (*to_positions)(
+      const ValueType& type, const void* value, const IntegralView& out);
+  // How many positions a value of the type has.
+  std::int64_t (*position_count)(const ValueType& type);
+  // Some of a value's positions replaced in place by `in`'s, whose first
+  // position stands at position `start` of the value and which holds `count`;
+  // answers whether any changed (LRM 6.6.7, 9.4.2).
+  bool (*write_positions)(
+      const ValueType& type, void* value, const ConstIntegralView* in,
+      std::int64_t start, std::int64_t count);
 };
 
 // `into` with the `count` positions from `first` taken from `from`, a value of
 // `type`, which a procedural continuous assignment holding them shows there
-// (LRM 10.6.2): an integral value's bits, an aggregate's parts' positions one
-// part after another, and the one position of any other value, held whole. The
-// two numbers are machine integers, passed by address as every operand is.
-// Only a takeover asks it, so a takeover is handed it where it begins.
+// (LRM 10.6.2): an integral value's bits, a real's IEEE 754 bits, an
+// aggregate's parts' positions one part after another, and the one position of
+// any other value, held whole. The two numbers are machine integers, passed by
+// address as every operand is. Only a takeover asks it, so a takeover is handed
+// it where it begins.
 using TakePositionsWitness = void (*)(
     const ValueType& type, const void* into, const void* from,
     const std::int64_t* first, const std::int64_t* count, void* out);
@@ -353,7 +351,7 @@ static_assert(std::is_standard_layout_v<PartsWitnessTable>);
 static_assert(std::is_standard_layout_v<OperationFunctions>);
 static_assert(std::is_standard_layout_v<ValueOperations>);
 static_assert(std::is_standard_layout_v<ValueWitnessTable>);
-static_assert(std::is_standard_layout_v<NetFoldTable>);
+static_assert(std::is_standard_layout_v<NetWitnessTable>);
 static_assert(std::is_standard_layout_v<ValueType>);
 
 // A value the library holds of a type it was compiled without and is handed as
