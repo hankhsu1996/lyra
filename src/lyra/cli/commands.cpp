@@ -177,8 +177,10 @@ auto DesignOf(const CommandContext& ctx)
   const status::Phase phase("Elaborating");
   return compiler::DeclareUnits(
       std::move(ctx.elaborated->compilation),
-      compiler::LoweringPolicy{.assertions = ctx.args->assertions}, *ctx.sink,
-      ctx.elaborated->diag_sources);
+      support::LoweringPolicy{
+          .assertions = ctx.args->assertions,
+          .force_targets = ctx.elaborated->force_targets},
+      *ctx.sink, ctx.elaborated->diag_sources);
 }
 
 // Writes the design's emitted C++ sources into `dir` and answers with what

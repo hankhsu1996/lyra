@@ -8,15 +8,19 @@
 #include <slang/driver/Driver.h>
 
 #include "lyra/frontend/slang_source_manager.hpp"
+#include "lyra/support/force_targets.hpp"
 
 namespace lyra::frontend {
 
-// What the rest of the compiler reads once the front end has run. The driver
-// that produced it owns the text every span names a piece of, so it has to
-// outlive this.
+// What the rest of the compiler reads once the front end has run: the
+// elaborated design, how its diagnostics name their sources, and what a force
+// takes over as the front end was told to read the standard. The driver that
+// produced it owns the text every span names a piece of, so it has to outlive
+// this.
 struct ParseResult {
   std::unique_ptr<slang::ast::Compilation> compilation;
   SlangSourceManager diag_sources;
+  support::ForceTargets force_targets;
 };
 
 // Applies the driver's options, reads everything it was pointed at, and

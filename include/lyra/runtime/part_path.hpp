@@ -6,6 +6,8 @@
 #include <optional>
 #include <span>
 
+#include "lyra/support/part_step.hpp"
+
 namespace lyra::runtime {
 
 // The path from a variable to one part of it: one step for each member or
@@ -48,6 +50,13 @@ class PartPath {
 
   // The path of a select no step stands for.
   [[nodiscard]] static auto Inexact() -> PartPath;
+
+  // The path a write reports it changed when it steps to the part of the kind
+  // `step`, numbered `number`: the step, where a written path follows that
+  // kind, and otherwise the stop there, inexact, as it is where the number
+  // names no part.
+  [[nodiscard]] static auto Written(
+      support::PartStep step, std::optional<std::int64_t> number) -> PartPath;
 
   // This path followed by `further`.
   [[nodiscard]] auto Join(const PartPath& further) const -> PartPath;

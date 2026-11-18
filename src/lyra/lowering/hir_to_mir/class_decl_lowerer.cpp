@@ -16,7 +16,6 @@
 #include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/param_direction.hpp"
 #include "lyra/hir/procedural_body.hpp"
-#include "lyra/hir/random_qualifier.hpp"
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/hir/subroutine_kind.hpp"
 #include "lyra/hir/type.hpp"
@@ -57,6 +56,7 @@
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/library_callback.hpp"
 #include "lyra/support/library_decl.hpp"
+#include "lyra/support/random_qualifier.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -573,7 +573,7 @@ void ClassDeclLowerer::DefineRandomizationHooks(
     const hir::CompilationUnit& hir = unit_lowerer.Hir();
     const auto walk = [&](const auto& self, AccessPath path,
                           hir::TypeId hir_type, mir::TypeId type,
-                          hir::RandomQualifier random) -> void {
+                          support::RandomQualifier random) -> void {
       const hir::Type& held = hir.types.Get(hir_type);
       const auto* structure_type = held.As<hir::UnpackedStructType>();
       if (structure_type == nullptr) {
@@ -584,7 +584,7 @@ void ClassDeclLowerer::DefineRandomizationHooks(
           hir.DefinitionOf(*structure_type);
       for (std::uint32_t i = 0; i < structure.fields.size(); ++i) {
         const hir::UnpackedAggregateField& member = structure.fields[i];
-        if (!hir::IsRandom(member.random)) {
+        if (!support::IsRandom(member.random)) {
           continue;
         }
         const mir::TypeId member_type = unit_lowerer.TranslateType(member.type);
@@ -599,7 +599,7 @@ void ClassDeclLowerer::DefineRandomizationHooks(
     };
     for (const hir::FieldId id : declared.properties.Ids()) {
       const hir::DeclaredProperty& field = declared.properties.Get(id);
-      if (!hir::IsRandom(field.random)) {
+      if (!support::IsRandom(field.random)) {
         continue;
       }
       const mir::FieldId slot{id.value};
@@ -619,7 +619,7 @@ void ClassDeclLowerer::DefineRandomizationHooks(
     }
     for (const hir::StaticPropertyId id : declared.static_properties.Ids()) {
       const hir::DeclaredStatic& property = declared.static_properties.Get(id);
-      if (!hir::IsRandom(property.random)) {
+      if (!support::IsRandom(property.random)) {
         continue;
       }
       const mir::TypeId type = unit_lowerer.TranslateType(property.type);
@@ -640,7 +640,7 @@ void ClassDeclLowerer::DefineRandomizationHooks(
     begin(body, support::LibraryCallback::kClassRandVariables);
     each_random_variable(
         body, [&](const AccessPath& path, hir::TypeId hir_type,
-                  mir::TypeId type, hir::RandomQualifier random) {
+                  mir::TypeId type, support::RandomQualifier random) {
           if (HoldsHandles(unit_lowerer.Hir().types, hir_type)) {
             return;
           }
@@ -653,7 +653,7 @@ void ClassDeclLowerer::DefineRandomizationHooks(
           }
           body.Run(
               mir::Direct{
-                  .target = random == hir::RandomQualifier::kRandc
+                  .target = random == support::RandomQualifier::kRandc
                                 ? support::BuiltinFn::kConstraintRandc
                                 : support::BuiltinFn::kConstraintRand},
               {body.Problem(), named.reference, named.value});
@@ -739,7 +739,7 @@ void ClassDeclLowerer::DefineRandomizationHooks(
     begin(body, support::LibraryCallback::kClassRandObjects);
     each_random_variable(
         body, [&](const AccessPath& path, hir::TypeId hir_type,
-                  mir::TypeId type, hir::RandomQualifier) {
+                  mir::TypeId type, support::RandomQualifier) {
           if (!HoldsHandles(unit_lowerer.Hir().types, hir_type)) {
             return;
           }

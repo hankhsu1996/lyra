@@ -72,7 +72,7 @@ auto LowerDesign(std::string_view source) -> std::vector<Lowering> {
 
   diag::DiagnosticSink sink;
   auto design = compiler::DeclareUnits(
-      std::move(text.front.elaborated->compilation), compiler::LoweringPolicy{},
+      std::move(text.front.elaborated->compilation), support::LoweringPolicy{},
       sink, text.front.elaborated->diag_sources);
   EXPECT_TRUE(design.has_value()) << "the design did not declare";
   if (!design.has_value()) return {};

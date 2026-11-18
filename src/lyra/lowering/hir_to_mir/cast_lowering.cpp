@@ -57,19 +57,6 @@ auto MakeRealConversionCall(
       .type = dst_type};
 }
 
-auto MakeRoundCall(const mir::CompilationUnit& unit, mir::ExprId operand_id)
-    -> mir::Expr {
-  return mir::Expr{
-      .data =
-          mir::CallExpr{
-              .callee =
-                  mir::Direct{
-                      .target = support::BuiltinFn::kRound,
-                      .receiver = operand_id},
-              .arguments = {}},
-      .type = unit.builtins.machine_int64};
-}
-
 // A string built from an integral value's bytes or from a byte array.
 auto MakeStringFromFactory(
     const mir::CompilationUnit& unit, mir::ExprId src_id, support::BuiltinFn id)
@@ -116,8 +103,7 @@ auto ToReal(
   }
   if (source.IsIntegral()) {
     return MakeRealConversionCall(
-        support::BuiltinFn::kFromInt, BuildToInt64Call(unit, block, operand),
-        destination);
+        support::BuiltinFn::kFromIntegral, operand, destination);
   }
   RefuseConversion("a real");
 }
@@ -126,11 +112,19 @@ auto ToIntegral(
     const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId operand,
     mir::TypeId destination) -> mir::Expr {
   const mir::Type& source = unit.types.Get(block.Get(operand).type);
+  // LRM 6.12.1: the real rounded to the nearest integer, kept to the
+  // destination's width.
   if (source.Is<mir::RealType>()) {
-    const mir::ExprId rounded = block.Add(MakeRoundCall(unit, operand));
-    return mir::MakeBuiltinCall(
-        unit, block.Body(), support::BuiltinFn::kIntegralFromInt, std::nullopt,
-        {rounded}, destination);
+    return mir::Expr{
+        .data =
+            mir::CallExpr{
+                .callee =
+                    mir::Direct{
+                        .target = support::BuiltinFn::kToIntegral,
+                        .receiver = operand,
+                        .type_arguments = {destination}},
+                .arguments = {}},
+        .type = destination};
   }
   if (source.IsIntegral()) {
     return mir::MakeIntegralConversion(

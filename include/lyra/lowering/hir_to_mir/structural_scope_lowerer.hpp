@@ -523,7 +523,7 @@ auto ApplyInstanceSelects(
     UnitLowerer& unit_lowerer, mir::Builder block, ReachedObject reached,
     std::span<const std::uint32_t> selects) -> ReachedObject;
 
-// Where the bodies reading and subscribing to what a scope describes go:
+// Where the bodies reaching what a scope describes go:
 // methods of the scope's class, entered on an instance, or bodies of the
 // unit's namespace, which has no object and ignores the one it is handed, as a
 // reflective read of a static field ignores its receiver (Java's `Field.get`).

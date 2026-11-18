@@ -11,10 +11,10 @@
 #include "lyra/hir/declared_method.hpp"
 #include "lyra/hir/field_id.hpp"
 #include "lyra/hir/method_id.hpp"
-#include "lyra/hir/random_qualifier.hpp"
 #include "lyra/hir/static_property_id.hpp"
 #include "lyra/hir/type_id.hpp"
 #include "lyra/support/def_path.hpp"
+#include "lyra/support/random_qualifier.hpp"
 
 namespace lyra::hir {
 
@@ -23,7 +23,7 @@ namespace lyra::hir {
 struct DeclaredProperty {
   std::string name;
   TypeId type;
-  RandomQualifier random = RandomQualifier::kNone;
+  support::RandomQualifier random = support::RandomQualifier::kNone;
 
   auto operator==(const DeclaredProperty&) const -> bool = default;
 };
@@ -42,7 +42,7 @@ using DeclaredProperties = base::Arena<DeclaredProperty, FieldId>;
 struct DeclaredStatic {
   support::QualifiedName name;
   TypeId type;
-  RandomQualifier random = RandomQualifier::kNone;
+  support::RandomQualifier random = support::RandomQualifier::kNone;
 
   auto operator==(const DeclaredStatic&) const -> bool = default;
 };

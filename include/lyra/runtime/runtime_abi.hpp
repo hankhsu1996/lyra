@@ -1039,17 +1039,41 @@ void lyra_rt_dump_ports_limit(
 void lyra_rt_dump_ports_flush(void* runtime, const void* name);
 
 // What the code reading a data object hands the reader that asked for it --
-// an integral value's planes, a real, the object an event variable names --
-// and what the code watching one hands it: the trigger a wait for a change of
-// the object would enrol (LRM 38.15, 21.7.2.3, 9.4.2).
+// an integral value's planes, a real, a string, the object an event variable
+// names -- and what the code watching one hands it: the trigger a wait for a
+// change of the object would enrol (LRM 38.15, 21.7.2.3, 9.4.2).
 void lyra_rt_value_serializer_bits(
     void* serializer, const void* bits, std::int64_t bits_width,
     bool bits_are_four_state);
 void lyra_rt_real_value_serializer_real(void* serializer, const void* value);
 void lyra_rt_shortreal_value_serializer_real(
     void* serializer, const void* value);
+void lyra_rt_value_serializer_text(void* serializer, const void* text);
 void lyra_rt_value_serializer_event(void* serializer, const void* event);
+auto lyra_rt_value_serializer_size(void* serializer, std::int64_t size) -> bool;
+void lyra_rt_value_serializer_key(
+    void* serializer, const void* key, const void* key_type);
 void lyra_rt_subscriber_subscribe(void* subscriber, const void* trigger);
+
+// What the code reaching a part of a data object asks of the selection it is
+// handed, and what the code writing one takes from the deserializer it is
+// handed (LRM 37.19, 37.26, 38.34).
+auto lyra_rt_selection_depth(const void* selection) -> std::int64_t;
+auto lyra_rt_selection_number(const void* selection, std::int64_t depth)
+    -> std::int64_t;
+auto lyra_rt_selection_key(
+    const void* selection, std::int64_t depth, const void* answer_type,
+    void* out) -> void*;
+void lyra_rt_selection_settler_settle_key(
+    void* settler, std::int64_t depth, const void* key, const void* key_type);
+void lyra_rt_selection_settler_settle_positions(
+    void* settler, std::int64_t before);
+void lyra_rt_selection_settler_settle_unfixed(void* settler);
+auto lyra_rt_selection_settler_fixed(void* settler) -> bool;
+auto lyra_rt_selection_settler_positions(void* settler) -> std::int64_t;
+auto lyra_rt_value_deserializer_bits(void* deserializer, void* out) -> void*;
+auto lyra_rt_value_deserializer_real(void* deserializer, void* out) -> void*;
+auto lyra_rt_value_deserializer_text(void* deserializer, void* out) -> void*;
 
 // Whether the simulation's own arguments carry a plusarg with the given prefix
 // (LRM 21.6). Those arguments are the runtime's, so only the prefix crosses, as
@@ -1660,12 +1684,16 @@ auto lyra_rt_real_atanh(const void* value, void* out) -> void*;
 
 // Reading a real out as an integer: LRM 6.12.1 rounds, LRM 20.5 `$rtoi`
 // truncates, and the bit-pattern pair carries the IEEE 754 encoding itself.
-auto lyra_rt_real_round(const void* value) -> std::int64_t;
+auto lyra_rt_real_to_integral(
+    const void* value, std::int64_t out_width, bool out_is_four_state,
+    void* out) -> void*;
 auto lyra_rt_real_truncate(const void* value) -> std::int64_t;
 auto lyra_rt_real_to_bits(const void* value) -> std::int64_t;
 auto lyra_rt_real_from_bits(std::int64_t bits, void* out) -> void*;
 
-auto lyra_rt_real_from_int(std::int64_t value, void* out) -> void*;
+auto lyra_rt_real_from_integral(
+    const void* value, std::int64_t value_width, bool value_is_signed,
+    bool value_is_four_state, void* out) -> void*;
 auto lyra_rt_real_convert_from_shortreal(const void* value, void* out) -> void*;
 auto lyra_rt_real_convert_from_real(const void* value, void* out) -> void*;
 auto lyra_rt_real_value_cell_alloc() noexcept -> void*;
@@ -1680,10 +1708,14 @@ auto lyra_rt_shortreal_case_equal(const void* lhs, const void* rhs, void* out)
     -> void*;
 auto lyra_rt_shortreal_pow(const void* base, const void* exponent, void* out)
     -> void*;
-auto lyra_rt_shortreal_round(const void* value) -> std::int64_t;
+auto lyra_rt_shortreal_to_integral(
+    const void* value, std::int64_t out_width, bool out_is_four_state,
+    void* out) -> void*;
 auto lyra_rt_shortreal_to_bits(const void* value) -> std::int64_t;
 auto lyra_rt_shortreal_from_bits(std::int64_t bits, void* out) -> void*;
-auto lyra_rt_shortreal_from_int(std::int64_t value, void* out) -> void*;
+auto lyra_rt_shortreal_from_integral(
+    const void* value, std::int64_t value_width, bool value_is_signed,
+    bool value_is_four_state, void* out) -> void*;
 auto lyra_rt_shortreal_convert_from_real(const void* value, void* out) -> void*;
 auto lyra_rt_shortreal_value_cell_alloc() noexcept -> void*;
 void lyra_rt_shortreal_value_cell_store(void* cell, const void* value) noexcept;

@@ -47,12 +47,14 @@
 #include "lyra/lowering/ast_to_hir/integral_constant.hpp"
 #include "lyra/lowering/ast_to_hir/name_in_a_path.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
+#include "lyra/lowering/ast_to_hir/random_qualifier.hpp"
 #include "lyra/lowering/ast_to_hir/reads.hpp"
 #include "lyra/lowering/ast_to_hir/std_classes.hpp"
 #include "lyra/lowering/ast_to_hir/subroutine_decl.hpp"
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
 #include "lyra/lowering/ast_to_hir/unit_lowerer.hpp"
 #include "lyra/support/def_path.hpp"
+#include "lyra/support/random_qualifier.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -226,28 +228,26 @@ auto LowerMemberDefault(
 // it to; an array's elements are each such a value.
 auto RandomQualifierOf(
     const slang::ast::Type& type, slang::ast::RandMode mode,
-    diag::SourceSpan span) -> diag::Result<hir::RandomQualifier> {
-  switch (mode) {
-    case slang::ast::RandMode::None:
-      return hir::RandomQualifier::kNone;
-    case slang::ast::RandMode::Rand:
-      return hir::RandomQualifier::kRand;
-    case slang::ast::RandMode::RandC: {
-      const slang::ast::Type* value = &type.getCanonicalType();
-      while (value->isUnpackedArray()) {
-        value = &value->getArrayElementType()->getCanonicalType();
-      }
-      if (value->isIntegral() && value->getBitWidth() > 64) {
-        return diag::Fail(
-            span, diag::DiagCode::kUnsupportedClassFeature,
-            "a 'randc' variable of {} bits is wider than the 64 bits "
-            "supported",
-            value->getBitWidth());
-      }
-      return hir::RandomQualifier::kRandc;
-    }
+    diag::SourceSpan span) -> diag::Result<support::RandomQualifier> {
+  const support::RandomQualifier declared = DeclaredRandomQualifier(mode);
+  switch (declared) {
+    case support::RandomQualifier::kNone:
+    case support::RandomQualifier::kRand:
+      return declared;
+    case support::RandomQualifier::kRandc:
+      break;
   }
-  throw InternalError("RandomQualifierOf: unknown rand mode");
+  const slang::ast::Type* value = &type.getCanonicalType();
+  while (value->isUnpackedArray()) {
+    value = &value->getArrayElementType()->getCanonicalType();
+  }
+  if (value->isIntegral() && value->getBitWidth() > 64) {
+    return diag::Fail(
+        span, diag::DiagCode::kUnsupportedClassFeature,
+        "a 'randc' variable of {} bits is wider than the 64 bits supported",
+        value->getBitWidth());
+  }
+  return declared;
 }
 
 auto LowerUnpackedAggregateFields(
@@ -1240,7 +1240,7 @@ auto UnitLowerer::InternOwnClass(
           hir::DeclaredStatic{
               .name = local.name,
               .type = *var_type,
-              .random = hir::RandomQualifier::kNone});
+              .random = support::RandomQualifier::kNone});
       DeclareClassStatic(*local.var, cls, replicating, std::move(local.name));
     }
   }

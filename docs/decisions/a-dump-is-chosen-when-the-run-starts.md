@@ -6,7 +6,9 @@
 is recorded as what the declaration it fills is; revised 2026-11-12: a class states each data object
 as a row naming the methods that read it and subscribe to it; revised 2026-11-13: a package states
 its variables the same way and is recorded as a package; revised 2026-11-15: each port is a row of
-its own naming the object it connects, and two methods per class reach every row by its position)
+its own naming the object it connects, and two methods per class reach every row by its position;
+revised 2026-11-16: a row describes every static variable, the rows are what VPI reaches a variable
+by too, and the class's methods read and write a part of one)
 
 ## Status
 
@@ -61,46 +63,53 @@ axis with an optimizing compiler's code behind it.
 ### D1. Every scope class describes what a dump may record of it, and a run chooses from that
 
 A class of the design hierarchy states, beside its definition, one row for each data object it
-declares that a reader reaching the design by name may record -- a variable, a net, a named event,
-the static variables of a named block, task or function. A row holds the object's name; what it is
-declared as, a variable or a net of its net type; its type as the language declares it -- the kind
-of type, its bits, the outermost packed range, an enumeration's base; and the declaration of the
-block, task or function it lies in, which the class states once among the scopes it declares. Beside
-the rows the class states each of its ports, in the order the declaration gives them, by the port's
-name, its direction and the position of the row of the object it connects inside (LRM 21.7.4.2), so
-two ports connecting one object are two ports, as the standard counts them; and two methods of the
-class, each handed the instance, the position of a row and what the reader gave, which switch on the
-position to the case for that row. One reads the object's name as the class's own code reads it and
-hands the value to the reader: an integral value's bits, a real, or the object an event variable
-names. The other builds the trigger a wait for a change of the object would enrol and hands it to
-the reader, which enrols on it as a waiting process would; an event variable also changes with each
-trigger of the object it names, which the reader follows from the object each read hands it. A
-package and the compilation unit's scope, each one object of the run beside the instance tree (LRM
-37.10), state the same rows for the variables they keep, and their two bodies are the unit's own:
-they take an object as a class's do and leave it unread, as Java's `Field.get` does for a static
-field. The runtime walks its own object tree, reads each selected instance's rows from the
-definition the instance's first word names, and calls those methods on the instance with the row's
-position; it reads a package's rows from what the package handed it as its storage came up. Nothing
-is listed for child scopes, which the tree already holds, and nothing opens or closes a block, which
-the declaration each variable names already places. The keyword, width and range a file declares are
-the dump's reading of the row (LRM 21.7.2.1, 21.7.5), since they are one format's spelling of the
-declaration rather than the declaration. Each name is recorded under a code of its own, though two
-may share one (LRM 21.7.2.3 `$var` b): a port is a member a force rebinds (LRM 10.6.2), so the value
-it shows can part from its connection's, and nothing else two names of one walk stand for reaches
-one place.
+declares that a reader reaching the design by name finds -- every static variable, of whatever type,
+a net, a named event, the static variables of a named block, task or function -- which a dump and
+VPI (`a-vpi-handle-is-a-reference-to-an-object.md` D7) read alike. A row holds the object's name;
+what it is declared as, a variable or a net of its net type, whether it is declared `const` and
+whether it is the name a `ref` port gives the variable connected to it; its type as the source
+declares it (LRM 37.25) -- the kind of type, its bits and sign, its range, the typedef naming it,
+and the typespecs it is built from: an element's, an associative array's index's, an enumeration's
+base and members, a structure's or union's members -- each a constant of the unit held once; and the
+declaration of the block, task or function it lies in, which the class states once among the scopes
+it declares. Beside the rows the class states each of its ports, in the order the declaration gives
+them, by the port's name, its direction and the position of the row of the object it connects inside
+(LRM 21.7.4.2), so two ports connecting one object are two ports, as the standard counts them; and
+methods of the class, each handed the instance, the position of a row, what the reader gave and
+where the reader's call was made, which switch on the position to the case for that row. One reads
+the part of the object a selection names as the class's own code reads it and hands the value to the
+reader: an integral value's bits, a real, a string, or the object an event variable names. One
+writes it, one forces and one releases it (`a-vpi-handle-is-a-reference-to-an-object.md` D8, D9).
+The last builds the trigger a wait for a change of the object would enrol and hands it to the
+reader, which enrols on it as a waiting process would; an event variable also changes with each
+trigger of the object it names, which the reader follows from the object each read hands it. A dump
+reads each object whole, with no selection. A package and the compilation unit's scope, each one
+object of the run beside the instance tree (LRM 37.10), state the same rows for the variables they
+keep, and their bodies are the unit's own: they take an object as a class's do and leave it unread,
+as Java's `Field.get` does for a static field. The runtime walks its own object tree, reads each
+selected instance's rows from the definition the instance's first word names, and calls those
+methods on the instance with the row's position; it reads a package's rows from what the package
+handed it as its storage came up. Nothing is listed for child scopes, which the tree already holds,
+and nothing opens or closes a block, which the declaration each variable names already places. The
+keyword, width and range a file declares are the dump's reading of the row (LRM 21.7.2.1, 21.7.5),
+since they are one format's spelling of the declaration rather than the declaration. Each name is
+recorded under a code of its own, though two may share one (LRM 21.7.2.3 `$var` b): a port is a
+member a force rebinds (LRM 10.6.2), so the value it shows can part from its connection's, and
+nothing else two names of one walk stand for reaches one place.
 
-The reading and the subscribing are methods of the class because the class is where the object's
-type is known, and the runtime is handed values and triggers rather than told how to read storage. A
-method reads through a net's resolution and a port's binding as the design does, follows a force
-(LRM 10.6.2), and passes the runtime nothing it would have to interpret. It is how the runtime
-library already reaches a method of a class it does not know -- the entry of the method, handed the
-object as the root every object is -- and how serde has generated code hand a value to a serializer
-the library supplies. They are two for the whole class rather than two for each row, as serde
-generates one serialize function for a type that handles every field of it: what a design costs to
-compile grows with the code it states, and a row is data.
+The reading, the writing and the subscribing are methods of the class because the class is where the
+object's type is known, and the runtime is handed values and triggers rather than told how to read
+storage. A method reads through a net's resolution and a port's binding as the design does, follows
+a force (LRM 10.6.2), and passes the runtime nothing it would have to interpret. It is how the
+runtime library already reaches a method of a class it does not know -- the entry of the method,
+handed the object as the root every object is -- and how serde has generated code hand a value to a
+serializer the library supplies. They are one of each for the whole class rather than one of each
+for each row, as serde generates one serialize function for a type that handles every field of it:
+what a design costs to compile grows with the code it states, and a row is data.
 
-What is never recorded is what the standard leaves out (LRM 21.7.2.1), which is an unpacked array or
-structure, a string, a handle and a dynamic container, and a parameter, which is no storage.
+What a dump never records is what the standard leaves out (LRM 21.7.2.1), which is an unpacked array
+or structure, a string, a handle and a dynamic container, whose rows the dump passes over by the
+kind of type they state, and a parameter, which is no storage and has no row.
 
 ### D2. A run's own options are the defaults and the design's tasks override them
 

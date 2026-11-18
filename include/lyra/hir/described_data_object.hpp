@@ -13,12 +13,14 @@ namespace lyra::hir {
 // block, a task or a function of the scope writes among them (LRM 6.21). It is
 // its cell, as the scope's own code reaches it, which names the declaration --
 // and so the block it is written in -- and is what is read for its value and
-// watched for a change of it; the type a value of it has; and each port of the
-// scope connecting it (LRM 21.7.4.2).
+// watched for a change of it; the type a value of it has; each port of the
+// scope connecting it (LRM 21.7.4.2); and whether it is a variable declared
+// `const` (LRM 6.20.6, 37.17).
 struct DescribedDataObject {
   ValueTarget cell;
   TypeId type;
   std::vector<support::DescribedPort> ports;
+  bool constant = false;
 
   auto operator==(const DescribedDataObject&) const -> bool = default;
 };

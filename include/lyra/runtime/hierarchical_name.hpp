@@ -10,14 +10,23 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <string>
 #include <string_view>
+#include <variant>
 #include <vector>
 
 #include "lyra/abi/records.hpp"
+#include "lyra/value/bit_vec.hpp"
 
 namespace lyra::runtime {
 
 class Scope;
+
+// An index a name selects by: a number; a decimal number no 64-bit integer
+// holds, as its bits read signed, which selects an entry of an associative
+// array indexed by an integral type; or the text of a string literal, which
+// selects an entry of one indexed by `string` (LRM 7.8.1, 7.8.4).
+using NameIndex = std::variant<std::int64_t, value::BitVec, std::string>;
 
 // One of the names a hierarchical name is made of (LRM 23.6): an identifier,
 // and the constant indices selecting one element of what it declares.
@@ -25,8 +34,12 @@ struct NamePart {
   // Without the backslash and the white space an escaped identifier is
   // written with, which are no part of it (LRM 5.6.1).
   std::string_view identifier;
-  std::vector<std::int64_t> indices;
+  std::vector<NameIndex> indices;
 };
+
+// `text` as the string literal a name selects it by, escaped as LRM 5.9 has
+// one written, which reading the name takes back to `text`.
+[[nodiscard]] auto StringLiteralOf(std::string_view text) -> std::string;
 
 struct HierarchicalName {
   // Where the name begins with a package's name and `::` (LRM 26.3), that

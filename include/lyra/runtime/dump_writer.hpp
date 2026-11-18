@@ -52,9 +52,11 @@ struct DumpVarDeclaration {
 // 21.7.2.3), and a variable by its type -- an `int`, an `integer` and an
 // enumeration whose base is one as an `integer`, a `time` as a `time`, and
 // every other integral one as a `reg` of all its bits. An event is declared
-// one bit wide, and a real as wide as a double.
+// one bit wide, and a real as wide as a double. None for an object of a type a
+// dump records nothing of (LRM 21.7.2.1): an unpacked aggregate, a string, a
+// handle and a container.
 auto DumpVarDeclarationOf(const abi::DataObjectRecord& object)
-    -> DumpVarDeclaration;
+    -> std::optional<DumpVarDeclaration>;
 
 // How an extended dump declares the port `port` at `position` among its
 // scope's ports (LRM 21.7.4.2): as `connects`, the object it connects, under

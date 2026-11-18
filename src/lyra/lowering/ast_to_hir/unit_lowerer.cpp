@@ -120,6 +120,7 @@ UnitLowerer::UnitLowerer(
       unit_{std::move(names.unit), {}},
       lowering_(std::move(names.lowering)) {
   unit_.definition = UnitDefinitionOf(home, scope_->asSymbol());
+  unit_.force_targets = facts_.ForceTargets();
   unit_.source_name = SourceNameOf(home);
   unit_.fixed_name = FixedNameOf(*scope_);
   signature_.unit_name = unit_.name;

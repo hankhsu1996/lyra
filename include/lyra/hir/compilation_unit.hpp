@@ -4,25 +4,23 @@
 #include <string>
 #include <string_view>
 #include <utility>
-#include <vector>
 
 #include "lyra/base/arena.hpp"
 #include "lyra/hir/class_registry.hpp"
 #include "lyra/hir/coverage_library.hpp"
 #include "lyra/hir/covergroup.hpp"
-#include "lyra/hir/expr_id.hpp"
 #include "lyra/hir/fixed_name.hpp"
 #include "lyra/hir/foreign_import.hpp"
 #include "lyra/hir/foreign_import_id.hpp"
 #include "lyra/hir/namespace.hpp"
-#include "lyra/hir/procedural_scope.hpp"
 #include "lyra/hir/scope_class.hpp"
 #include "lyra/hir/structural_scope.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/type_definition.hpp"
 #include "lyra/hir/type_id.hpp"
+#include "lyra/hir/typespec.hpp"
 #include "lyra/hir/unit_definition.hpp"
-#include "lyra/support/def_path.hpp"
+#include "lyra/support/force_targets.hpp"
 
 namespace lyra::hir {
 
@@ -63,10 +61,16 @@ struct CompilationUnit {
   // the package's, and nothing for a design element or `$unit`.
   FixedName fixed_name;
   UnitDefinition definition;
+  // What a force takes over, as the build reads the standard, which a reader
+  // reaching the design by name forces under too (LRM 38.34).
+  support::ForceTargets force_targets = support::ForceTargets::kWholeVariables;
   TypePool types;
   // What each enumeration, unpacked structure and unpacked union `types` names
   // declares, whichever unit declares it.
   TypeDefinitions type_definitions;
+  // The type each data object a reader reaching the design by name finds was
+  // declared with.
+  TypespecPool typespecs;
   BuiltinHirTypes builtins;
   StructuralScope root_scope;
   // Every namespace this unit names, the unit itself where it is one.

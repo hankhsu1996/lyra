@@ -1477,6 +1477,8 @@ HIR_TEXT_FIELDS = {
     ("type.hpp", "PackedAggregateField", "name"): SPELLING,
     ("type_definition.hpp", "EnumMember", "name"): SPELLING,
     ("type_definition.hpp", "UnpackedAggregateField", "name"): SPELLING,
+    ("typespec.hpp", "ClassTypespec", "name"): SPELLING,
+    ("typespec.hpp", "TypedefTypespec", "name"): SPELLING,
     ("unit_definition.hpp", "UnitDefinition", "library"): SPELLING,
     ("unit_definition.hpp", "UnitDefinition", "cell"): SPELLING,
     ("unit_signature.hpp", "PortDecl", "name"): SPELLING,

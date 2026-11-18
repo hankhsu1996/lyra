@@ -1062,6 +1062,8 @@ class MirDumper {
               ? support::NetTypeKeyword(*object.net_type)
               : "variable",
           object.typespec.value);
+      if (object.constant) data_objects += " const";
+      if (object.reference) data_objects += " ref";
       for (const support::DescribedPort& port : object.ports) {
         data_objects += std::format(
             " port={}:{}:{}", port.position,
@@ -1075,11 +1077,15 @@ class MirDumper {
     Line(
         std::format(
             "ScopeDeclarations: definition=Constant[{}] elaborated=[{}] "
-            "lexical=[{}] data_objects=[{}] read=Callable[{}] "
+            "lexical=[{}] data_objects=[{}] settle=Callable[{}] "
+            "read=Callable[{}] "
+            "write=Callable[{}] force=Callable[{}] release=Callable[{}] "
             "subscribe=Callable[{}]",
             declarations.definition.value, listed(declarations.elaborated),
             listed(declarations.lexical), data_objects,
-            declarations.bodies.read.value,
+            declarations.bodies.settle.value, declarations.bodies.read.value,
+            declarations.bodies.write.value, declarations.bodies.force.value,
+            declarations.bodies.release.value,
             declarations.bodies.subscribe.value));
   }
 

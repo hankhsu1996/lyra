@@ -127,10 +127,10 @@ struct StructuralDataObjectDecl {
   // static variables are the scope's own as much as one written beside them
   // (LRM 6.21), and absent for one written in the scope itself.
   std::optional<ProceduralScopeId> lexical_scope;
-  // The type as the source declared it, for a declaration of a type a reader
-  // reaching the design by name describes; none for any other, and for one
-  // the lowering introduced.
-  std::optional<Typespec> typespec = std::nullopt;
+  // The type as the source declared it, among the unit's typespecs, for a
+  // declaration a reader reaching the design by name finds; none for any
+  // other, and for one the lowering introduced.
+  std::optional<TypespecId> typespec = std::nullopt;
 
   auto operator==(const StructuralDataObjectDecl&) const -> bool = default;
 };

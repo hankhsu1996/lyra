@@ -36,6 +36,14 @@ auto PartPath::Element(std::optional<std::int64_t> ordinal) -> PartPath {
                              : Inexact();
 }
 
+auto PartPath::Written(
+    support::PartStep step, std::optional<std::int64_t> number) -> PartPath {
+  if (!support::FollowingOf(step).written) {
+    return Inexact();
+  }
+  return Element(number);
+}
+
 auto PartPath::Inexact() -> PartPath {
   PartPath path;
   path.inexact_ = true;

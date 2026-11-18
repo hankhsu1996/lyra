@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-namespace lyra::hir {
+namespace lyra::support {
 
 // How a class property or a structure member is declared random (LRM 18.4):
 // not at all, `rand`, or `randc`.
@@ -24,4 +24,4 @@ enum class RandomQualifier : std::uint8_t {
   return false;
 }
 
-}  // namespace lyra::hir
+}  // namespace lyra::support

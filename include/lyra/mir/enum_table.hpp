@@ -2,15 +2,18 @@
 
 #include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/constant_id.hpp"
 #include "lyra/mir/expr_id.hpp"
-#include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type_id.hpp"
 
 namespace lyra::mir {
 
 // The members `enumeration` declares, as the table the questions LRM 6.19.5
-// and 6.24.2 ask of a value are answered against: a constant of the unit, named
-// as a value of `block`.
+// and 6.24.2 ask of a value are answered against: a constant of the unit.
+[[nodiscard]] auto EnumMemberTableConstant(
+    const CompilationUnit& unit, TypeId enumeration) -> ConstantId;
+
+// That table, named as a value of `block`.
 [[nodiscard]] auto BuildEnumMemberTable(
     const CompilationUnit& unit, Builder block, TypeId enumeration) -> ExprId;
 

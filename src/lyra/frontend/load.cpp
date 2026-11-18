@@ -10,6 +10,8 @@
 
 #include <slang/analysis/AnalysisManager.h>
 #include <slang/ast/Compilation.h>
+#include <slang/diagnostics/DiagnosticEngine.h>
+#include <slang/diagnostics/StatementsDiags.h>
 #include <slang/diagnostics/TextDiagnosticClient.h>
 #include <slang/driver/Driver.h>
 #include <slang/parsing/Token.h>
@@ -21,6 +23,7 @@
 #include "lyra/frontend/library_texts.hpp"
 #include "lyra/frontend/slang_source_manager.hpp"
 #include "lyra/frontend/std_definitions_text.hpp"
+#include "lyra/support/force_targets.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
 namespace lyra::frontend {
@@ -109,9 +112,18 @@ auto Elaborate(slang::driver::Driver& driver) -> std::optional<ParseResult> {
         driver, kCoverageLibraryText, kCoverageLibrary.buffer));
   }
 
+  // A force of a part of a variable is forbidden (LRM 10.6.2), and the front
+  // end is told to take one anyway exactly where it does not give that text
+  // an error.
+  const bool parts_forced =
+      driver.diagEngine.getSeverity(
+          slang::diag::BadProceduralForce, slang::SourceLocation::NoLocation) !=
+      slang::DiagnosticSeverity::Error;
   return ParseResult{
       .compilation = driver.createCompilation(),
-      .diag_sources = SlangSourceManager(driver.sourceManager)};
+      .diag_sources = SlangSourceManager(driver.sourceManager),
+      .force_targets = parts_forced ? support::ForceTargets::kParts
+                                    : support::ForceTargets::kWholeVariables};
 }
 
 auto ReportSlangDiagnostics(

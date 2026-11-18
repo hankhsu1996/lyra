@@ -477,7 +477,7 @@ class IndexOrder {
 struct DeclaredDesign::Units {
   std::unique_ptr<slang::ast::Compilation> front_end;
   SensitivityAnalyzer sensitivity;
-  support::AssertionPolicy assertion_policy;
+  support::LoweringPolicy policy;
   ElaboratedInstances instances;
   StdDefinitions std_classes;
   std::optional<CoverageLibrary> coverage;
@@ -495,8 +495,8 @@ struct DeclaredDesign::Units {
 
   Units(
       std::unique_ptr<slang::ast::Compilation> elaborated,
-      support::AssertionPolicy assertion_policy)
-      : front_end(std::move(elaborated)), assertion_policy(assertion_policy) {
+      support::LoweringPolicy policy)
+      : front_end(std::move(elaborated)), policy(policy) {
   }
 
   // What the lowering of `instance` publishes, declared in `names`, or
@@ -505,8 +505,8 @@ struct DeclaredDesign::Units {
       const slang::ast::InstanceSymbol& instance, const InstanceNames& names,
       diag::DiagnosticSink& sink) -> std::optional<hir::UnitSignature> {
     const LoweringFacts facts_in(
-        sensitivity, assertion_policy, names, instances,
-        specialization_homes.placed, std_classes, coverage);
+        sensitivity, policy, names, instances, specialization_homes.placed,
+        std_classes, coverage);
     UnitLowerer lowerer(
         facts_in, instance.body, instances.EnvironmentOf(instance),
         hir::LoweringRef{
@@ -596,10 +596,10 @@ struct DeclaredDesign::Units {
 // taking turns.
 auto DeclaredDesign::Declare(
     std::unique_ptr<slang::ast::Compilation> front_end,
-    support::AssertionPolicy assertion_policy, diag::DiagnosticSink& sink)
+    support::LoweringPolicy policy, diag::DiagnosticSink& sink)
     -> std::optional<DeclaredDesign> {
-  auto units = std::make_unique<Units>(std::move(front_end), assertion_policy);
-  const LowerCompilationFacts facts(*units->front_end, assertion_policy);
+  auto units = std::make_unique<Units>(std::move(front_end), policy);
+  const LowerCompilationFacts facts(*units->front_end, policy.assertions);
 
   if (auto stand = TopsStandAlone(facts); !stand) {
     sink.Report(std::move(stand.error()));
@@ -625,9 +625,8 @@ auto DeclaredDesign::Declare(
     return std::nullopt;
   }
   units->facts.emplace(
-      units->sensitivity, assertion_policy, *units->unit_names,
-      units->instances, units->specialization_homes.placed, units->std_classes,
-      units->coverage);
+      units->sensitivity, policy, *units->unit_names, units->instances,
+      units->specialization_homes.placed, units->std_classes, units->coverage);
 
   units->DeclareEveryUnit(facts, lowered, sink);
   if (sink.HasErrors()) {

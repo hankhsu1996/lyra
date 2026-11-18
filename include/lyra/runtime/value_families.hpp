@@ -1,8 +1,6 @@
 #pragma once
 
-#include "lyra/runtime/bound_members.hpp"
 #include "lyra/runtime/coroutine.hpp"
-#include "lyra/runtime/net.hpp"
 #include "lyra/runtime/sampled_history.hpp"
 #include "lyra/runtime/takeover.hpp"
 #include "lyra/runtime/value_cell.hpp"
@@ -30,9 +28,11 @@ namespace lyra::runtime {
 // A declaration here does not reach a constructor or destructor defaulted where
 // it is declared, which a unit defines itself wherever it constructs one; that
 // is why the families a unit holds default theirs outside the class. What each
-// declaration needs in return is the matching definition in this header's own
-// source file -- a family member used but not defined there is a link error
-// rather than a silent copy per unit.
+// declaration needs in return is the matching definition in the library -- in
+// this header's own source file, or for a reference in the bound members'
+// own, where the members a reference takes a part over with are defined -- and
+// a family member used but not defined there is a link error rather than a
+// silent copy per unit.
 //
 // A unit calls a member of these by the name its own compiler gives it, and the
 // library's is another compiler's. A constraint on the member is part of that
@@ -109,17 +109,11 @@ extern template class Coroutine<value::UnmanagedRef>;
 extern template class Coroutine<value::ObjectRef>;
 extern template class Coroutine<value::Tuple<>>;
 
-// What a write keeps of the part it lands on, and the step to an element an
-// associative array indexes by one of these (LRM 7.8).
+// What a write keeps of the part it lands on.
 extern template class KeptPart<value::String>;
 extern template class KeptPart<value::Real>;
 extern template class KeptPart<value::ShortReal>;
 extern template class KeptPart<value::UnmanagedRef>;
 extern template class KeptPart<value::ObjectRef>;
-
-extern template auto StepTo<value::String>(const value::String& key)
-    -> PartPath;
-extern template auto StepTo<value::ObjectRef>(const value::ObjectRef& key)
-    -> PartPath;
 
 }  // namespace lyra::runtime

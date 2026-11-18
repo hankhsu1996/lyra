@@ -38,8 +38,12 @@ Trigger::Trigger(
     : observable(place.ReportedTo()),
       through(place.Member()),
       part(place.PathOf(steps)),
-      observation(std::move(observation)),
-      reads(PositionsInPart(lsb_bit_offset, bit_width)) {
+      observation(std::move(observation)) {
+  // A path that stops short of the part watches all of what it reaches, since
+  // the positions given are the part's and not that.
+  if (!part.IsInexact()) {
+    reads = PositionsInPart(lsb_bit_offset, bit_width);
+  }
 }
 
 Change::Change() = default;

@@ -13,11 +13,11 @@ namespace lyra::runtime {
 namespace {
 
 // The words of the error are handed out as the structure's characters, so
-// they are kept here until the next routine clears them. Every error these
-// routines report is of level `vpiError`.
+// they are kept here until the next routine clears them.
 struct VpiError {
   std::string message;
   std::string routine;
+  PLI_INT32 level = vpiError;
 };
 
 auto LastError() -> std::optional<VpiError>& {
@@ -38,9 +38,12 @@ void ClearVpiError() {
   LastError().reset();
 }
 
-void ReportVpiError(std::string_view routine, std::string message) {
-  LastError() =
-      VpiError{.message = std::move(message), .routine = std::string(routine)};
+void ReportVpiError(
+    std::string_view routine, std::string message, PLI_INT32 level) {
+  LastError() = VpiError{
+      .message = std::move(message),
+      .routine = std::string(routine),
+      .level = level};
 }
 
 auto CheckVpiError(p_vpi_error_info error_info_p) -> PLI_INT32 {
@@ -50,14 +53,14 @@ auto CheckVpiError(p_vpi_error_info error_info_p) -> PLI_INT32 {
   }
   if (error_info_p != nullptr) {
     error_info_p->state = vpiRun;
-    error_info_p->level = vpiError;
+    error_info_p->level = error->level;
     error_info_p->message = error->message.data();
     error_info_p->product = VpiProduct();
     error_info_p->code = error->routine.data();
     error_info_p->file = NoFile();
     error_info_p->line = 0;
   }
-  return vpiError;
+  return error->level;
 }
 
 auto VpiProduct() -> PLI_BYTE8* {

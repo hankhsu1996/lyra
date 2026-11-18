@@ -13,6 +13,7 @@
 #include "lyra/runtime/rng.hpp"
 #include "lyra/runtime/runtime.hpp"
 #include "lyra/runtime/var.hpp"
+#include "lyra/support/random_qualifier.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_value_type.hpp"
 #include "lyra/value/object_ref.hpp"
@@ -30,7 +31,7 @@ using lyra::runtime::RandomSeed;
 using lyra::value::BitVector;
 using lyra::value::IntegralValueType;
 
-constexpr auto kRand = lyra::runtime::RandomQualifier::kRand;
+constexpr auto kRand = lyra::support::RandomQualifier::kRand;
 
 // The run the problems are made in, at the budget a run has by default.
 auto TheRun() -> lyra::runtime::Runtime& {
@@ -53,7 +54,7 @@ auto Lent(T& storage) -> ErasedReference {
 template <typename T>
 auto TermOf(
     ConstraintProblem& problem, T& storage,
-    lyra::runtime::RandomQualifier declared,
+    lyra::support::RandomQualifier declared,
     lyra::runtime::ConstraintCycle* cycle = nullptr) -> std::int64_t {
   problem.Declare(
       Lent(storage), &storage, TypeOf<T>(), declared, true, cycle, nullptr);
@@ -233,7 +234,7 @@ TEST(ConstraintProblemTest, ACyclicVariableTakesEachValueOncePerCycle) {
       ConstraintProblem problem(
           TheRun(), rng, lyra::value::ObjectRef{}, false, kWrittenAt);
       const std::int64_t term =
-          TermOf(problem, y, lyra::runtime::RandomQualifier::kRandc, &cycle);
+          TermOf(problem, y, lyra::support::RandomQualifier::kRandc, &cycle);
       ASSERT_GE(term, 0);
       ASSERT_TRUE(problem.Solve());
       problem.Commit();

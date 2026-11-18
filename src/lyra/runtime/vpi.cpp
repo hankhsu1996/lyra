@@ -13,27 +13,35 @@
 // and LRM 38.36.3 lets a tool lack.
 // Nothing here throws across the C boundary.
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <exception>
+#include <expected>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 #include <variant>
 #include <vector>
 
 #include "lyra/base/overloaded.hpp"
+#include "lyra/base/simulation_error.hpp"
 #include "lyra/runtime/ambient_run_context.hpp"
+#include "lyra/runtime/cancellation.hpp"
 #include "lyra/runtime/command_line.hpp"
 #include "lyra/runtime/dpi_context.hpp"
 #include "lyra/runtime/file_table.hpp"
-#include "lyra/runtime/import_call_chain.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/vpi_object.hpp"
+#include "lyra/runtime/vpi_routines.hpp"
 #include "lyra/runtime/vpi_status.hpp"
 #include "lyra/runtime/vpi_time.hpp"
+#include "lyra/runtime/vpi_value.hpp"
+#include "lyra/runtime/vpi_variable.hpp"
 #include "lyra/value/string.hpp"
 #include "vpi_user.h"
 
@@ -45,6 +53,7 @@ using lyra::runtime::Referent;
 using lyra::runtime::ReportVpiError;
 using lyra::runtime::Simulation;
 using lyra::runtime::VpiIteration;
+using lyra::runtime::VpiMode;
 using lyra::runtime::VpiObject;
 using lyra::runtime::VpiObjectHandles;
 
@@ -98,44 +107,120 @@ auto ObjectOf(
   return std::nullopt;
 }
 
-// What `answer` holds, or `fallback` where it holds nothing, which is reported
-// as the routine's error.
-template <typename T>
-auto Answered(
-    lyra::runtime::VpiAnswer<T> answer, T fallback, std::string_view routine)
-    -> T {
-  if (!answer.has_value()) {
-    ReportVpiError(routine, std::move(answer.error()));
-    return fallback;
+// What `compute`, a routine's answer, comes to, where nothing it raises
+// crosses into foreign code (LRM 35.9). What foreign code asked of the design
+// that the design cannot do -- a member of a tagged union other than the one
+// its tag names, an operation not yet carried out -- is that request's error,
+// answered as the routine's (LRM 38.2), and the run goes on as it would had the
+// request not been made. A departure -- a disable, the run's end -- was
+// recorded where it was raised, so it is taken where the design called into
+// foreign code, as that call returns. Anything else is a fault of the run
+// itself, which ends it and is reported as one (LRM Table 38-1). Whatever it
+// answers nothing for is reported as the error of the routine `routine`.
+template <typename Compute>
+auto Guarded(
+    AmbientRunContext& context, std::string_view routine,
+    const Compute& compute) -> std::invoke_result_t<const Compute&> {
+  const auto refused = [&](std::string why, PLI_INT32 level) {
+    ReportVpiError(routine, why, level);
+    return std::unexpected<std::string>(std::move(why));
+  };
+  try {
+    std::invoke_result_t<const Compute&> answer = compute();
+    if (!answer.has_value()) ReportVpiError(routine, answer.error());
+    return answer;
+  } catch (const lyra::runtime::ControlEffect&) {
+    return refused("what called into foreign code has ended", vpiError);
+  } catch (const lyra::SimulationError& raised) {
+    return refused(raised.what(), vpiError);
+  } catch (const std::exception&) {
+    lyra::runtime::SettleRaised(context.Effects(), std::current_exception());
+    return refused("a fault of the tool's own ends the run", vpiInternal);
   }
+}
+
+// What `compute` answers, or `fallback` where it answers nothing, which is
+// reported as the routine's error.
+template <typename T, typename Compute>
+auto Answered(
+    AmbientRunContext& context, std::string_view routine, T fallback,
+    const Compute& compute) -> T {
+  lyra::runtime::VpiAnswer<T> answer = Guarded(context, routine, compute);
+  if (!answer.has_value()) return fallback;
   return *std::move(answer);
 }
 
-// A handle to what `found` holds, null where it holds nothing; an answer of
+// A handle to the object `find` finds, null where it finds none; an answer of
 // nothing is an error where it says why.
+template <typename Find>
 auto HandOut(
-    VpiObjectHandles& handles,
-    lyra::runtime::VpiAnswer<std::optional<VpiObject>> found,
-    std::string_view routine) -> vpiHandle {
+    AmbientRunContext& context, std::string_view routine, const Find& find)
+    -> vpiHandle {
   const std::optional<VpiObject> object =
-      Answered(std::move(found), std::optional<VpiObject>{}, routine);
-  return object.has_value() ? handles.Issue(*object) : nullptr;
+      Answered(context, routine, std::optional<VpiObject>{}, find);
+  return object.has_value() ? context.ObjectHandles().Issue(*object) : nullptr;
 }
 
-// What `vpi_get` and `vpi_get64` answer of `object`, the one named `routine`
-// reporting why where it answers nothing.
+// What `vpi_get` and `vpi_get64` answer of `object` in `mode`, the one named
+// `routine` reporting why where it answers nothing.
 auto IntegerPropertyOf(
-    PLI_INT32 property, vpiHandle object, std::string_view routine)
-    -> PLI_INT64 {
+    VpiMode mode, PLI_INT32 property, vpiHandle object,
+    std::string_view routine) -> PLI_INT64 {
   ClearVpiError();
   AmbientRunContext* context = RunningContext(routine);
   if (context == nullptr) return vpiUndefined;
   const std::optional<Referent> of =
       Resolve(context->ObjectHandles(), object, routine);
   if (!of.has_value()) return vpiUndefined;
-  return Answered(
-      lyra::runtime::IntegerProperty(context->Effects(), property, *of),
-      PLI_INT64{vpiUndefined}, routine);
+  return Answered(*context, routine, PLI_INT64{vpiUndefined}, [&] {
+    return lyra::runtime::IntegerProperty(
+        context->Effects(), property, *of, mode);
+  });
+}
+
+// The version of the standard an application compiled for none is read in
+// (LRM 36.12.2.2): the one the run's `+lyra+vpi+compatibility=` names, by the
+// suffix its compiler symbol carries (LRM 36.12.2.1), and the latest where it
+// names none or no version there is.
+auto DefaultMode(AmbientRunContext& context) -> VpiMode {
+  constexpr std::string_view kOption = "lyra+vpi+compatibility=";
+  constexpr std::array<std::pair<std::string_view, VpiMode>, 8> kVersions = {{
+      {"1364v1995", VpiMode::k1364v1995},
+      {"1364v2001", VpiMode::k1364v2001},
+      {"1364v2005", VpiMode::k1364v2005},
+      {"1800v2005", VpiMode::k1800v2005},
+      {"1800v2009", VpiMode::k1800v2009},
+      {"1800v2012", VpiMode::k1800v2012},
+      {"1800v2017", VpiMode::k1800v2012},
+      {"1800v2023", VpiMode::k1800v2012},
+  }};
+  VpiMode mode = VpiMode::k1800v2012;
+  for (const std::string& argument :
+       context.Effects().CommandLine().Plusargs()) {
+    const std::string_view text(argument);
+    if (!text.starts_with(kOption)) continue;
+    const std::string_view named = text.substr(kOption.size());
+    for (const auto& [version, versioned] : kVersions) {
+      if (named == version) mode = versioned;
+    }
+  }
+  return mode;
+}
+
+// The default version, where a running simulation is there to say it; the
+// routine itself reports that one is not.
+auto DefaultMode() -> VpiMode {
+  AmbientRunContext* context = AmbientRunContext::TryCurrent();
+  return context == nullptr ? VpiMode::k1800v2012 : DefaultMode(*context);
+}
+
+// Runs `access`, what a routine does, reporting why it did nothing where it
+// did nothing.
+template <typename Access>
+void ReportFailure(
+    AmbientRunContext& context, std::string_view routine,
+    const Access& access) {
+  Guarded(context, routine, access);
 }
 
 // Channel 1 of a multichannel descriptor is the tool's output (LRM 38.27),
@@ -163,6 +248,53 @@ auto HandedOutName(std::string_view name) -> PLI_BYTE8* {
 }
 
 }  // namespace
+
+namespace lyra::runtime {
+
+auto VpiGet(VpiMode mode, PLI_INT32 property, vpiHandle object) -> PLI_INT32 {
+  return static_cast<PLI_INT32>(
+      IntegerPropertyOf(mode, property, object, "vpi_get"));
+}
+
+auto VpiGetStr(VpiMode mode, PLI_INT32 property, vpiHandle object)
+    -> PLI_BYTE8* {
+  ClearVpiError();
+  AmbientRunContext* context = RunningContext("vpi_get_str");
+  if (context == nullptr) return nullptr;
+  const std::optional<Referent> of =
+      Resolve(context->ObjectHandles(), object, "vpi_get_str");
+  if (!of.has_value()) return nullptr;
+  const std::optional<std::string> answer = Answered(
+      *context, "vpi_get_str", std::optional<std::string>{},
+      [&] { return StringProperty(property, *of, mode); });
+  return answer.has_value() ? HandedOutName(*answer) : nullptr;
+}
+
+// An iteration that holds nothing is no iterator: the routine answers null
+// (LRM 38.23).
+auto VpiIterate(VpiMode mode, PLI_INT32 type, vpiHandle refHandle)
+    -> vpiHandle {
+  ClearVpiError();
+  AmbientRunContext* context = RunningContext("vpi_iterate");
+  if (context == nullptr) return nullptr;
+  VpiObjectHandles& handles = context->ObjectHandles();
+  const std::optional<Referent> from =
+      Resolve(handles, refHandle, "vpi_iterate");
+  if (!from.has_value()) return nullptr;
+  std::vector<VpiObject> related = Answered(
+      *context, "vpi_iterate", std::vector<VpiObject>{},
+      [&] { return Related(context->Effects(), type, *from, mode); });
+  if (related.empty()) return nullptr;
+  const auto* use = std::get_if<VpiObject>(&*from);
+  return handles.Issue(
+      VpiIteration{
+          .relation = type,
+          .use = use == nullptr ? std::nullopt : std::optional(*use),
+          .objects = std::move(related),
+          .next = 0});
+}
+
+}  // namespace lyra::runtime
 
 extern "C" {
 
@@ -397,9 +529,9 @@ auto vpi_handle_by_name(PLI_BYTE8* name, vpiHandle scope) -> vpiHandle {
   const std::optional<Referent> within =
       Resolve(handles, scope, "vpi_handle_by_name");
   if (!within.has_value()) return nullptr;
-  return HandOut(
-      handles, lyra::runtime::ObjectNamed(context->Effects(), name, *within),
-      "vpi_handle_by_name");
+  return HandOut(*context, "vpi_handle_by_name", [&] {
+    return lyra::runtime::ObjectNamed(context->Effects(), name, *within);
+  });
 }
 
 // An iterator's use is the object it was made on, none where it was made on
@@ -412,30 +544,13 @@ auto vpi_handle(PLI_INT32 type, vpiHandle refHandle) -> vpiHandle {
   const std::optional<Referent> from =
       Resolve(handles, refHandle, "vpi_handle");
   if (!from.has_value()) return nullptr;
-  return HandOut(handles, lyra::runtime::RelatedOne(type, *from), "vpi_handle");
+  return HandOut(*context, "vpi_handle", [&] {
+    return lyra::runtime::RelatedOne(context->Effects(), type, *from);
+  });
 }
 
-// An iteration that holds nothing is no iterator: the routine answers null
-// (LRM 38.23).
 auto vpi_iterate(PLI_INT32 type, vpiHandle refHandle) -> vpiHandle {
-  ClearVpiError();
-  AmbientRunContext* context = RunningContext("vpi_iterate");
-  if (context == nullptr) return nullptr;
-  VpiObjectHandles& handles = context->ObjectHandles();
-  const std::optional<Referent> from =
-      Resolve(handles, refHandle, "vpi_iterate");
-  if (!from.has_value()) return nullptr;
-  std::vector<VpiObject> related = Answered(
-      lyra::runtime::Related(context->Effects(), type, *from),
-      std::vector<VpiObject>{}, "vpi_iterate");
-  if (related.empty()) return nullptr;
-  const auto* use = std::get_if<VpiObject>(&*from);
-  return handles.Issue(
-      VpiIteration{
-          .relation = type,
-          .use = use == nullptr ? std::nullopt : std::optional(*use),
-          .objects = std::move(related),
-          .next = 0});
+  return lyra::runtime::VpiIterate(DefaultMode(), type, refHandle);
 }
 
 // The iterator is freed where it has no object left (LRM 38.40).
@@ -469,9 +584,9 @@ auto vpi_handle_by_index(vpiHandle object, PLI_INT32 indx) -> vpiHandle {
       ObjectOf(handles, object, "vpi_handle_by_index");
   if (!of.has_value()) return nullptr;
   const std::int64_t index = indx;
-  return HandOut(
-      handles, lyra::runtime::ElementAt(*of, std::span(&index, 1)),
-      "vpi_handle_by_index");
+  return HandOut(*context, "vpi_handle_by_index", [&] {
+    return lyra::runtime::ElementAt(*of, std::span(&index, 1));
+  });
 }
 
 auto vpi_handle_by_multi_index(
@@ -490,34 +605,115 @@ auto vpi_handle_by_multi_index(
   const std::span<const PLI_INT32> given(
       index_array, static_cast<std::size_t>(num_index));
   const std::vector<std::int64_t> indices(given.begin(), given.end());
-  return HandOut(
-      handles, lyra::runtime::ElementAt(*of, indices),
-      "vpi_handle_by_multi_index");
+  return HandOut(*context, "vpi_handle_by_multi_index", [&] {
+    return lyra::runtime::ElementAt(*of, indices);
+  });
 }
 
 auto vpi_get64(PLI_INT32 property, vpiHandle object) -> PLI_INT64 {
-  return IntegerPropertyOf(property, object, "vpi_get64");
+  return IntegerPropertyOf(DefaultMode(), property, object, "vpi_get64");
 }
 
 auto vpi_get(PLI_INT32 property, vpiHandle object) -> PLI_INT32 {
-  return static_cast<PLI_INT32>(IntegerPropertyOf(property, object, "vpi_get"));
+  return lyra::runtime::VpiGet(DefaultMode(), property, object);
 }
 
 auto vpi_get_str(PLI_INT32 property, vpiHandle object) -> PLI_BYTE8* {
-  ClearVpiError();
-  AmbientRunContext* context = RunningContext("vpi_get_str");
-  if (context == nullptr) return nullptr;
-  const std::optional<Referent> of =
-      Resolve(context->ObjectHandles(), object, "vpi_get_str");
-  if (!of.has_value()) return nullptr;
-  const std::optional<std::string> answer = Answered(
-      lyra::runtime::StringProperty(property, *of),
-      std::optional<std::string>{}, "vpi_get_str");
-  return answer.has_value() ? HandedOutName(*answer) : nullptr;
+  return lyra::runtime::VpiGetStr(DefaultMode(), property, object);
 }
 
-// Two handles to one object compare equal however each was reached; an
-// iterator is an object of its own (LRM 38.3).
+// The value of `expr` in the format `value_p` names (LRM 38.15).
+void vpi_get_value(vpiHandle expr, p_vpi_value value_p) {
+  ClearVpiError();
+  AmbientRunContext* context = RunningContext("vpi_get_value");
+  if (context == nullptr) return;
+  if (value_p == nullptr) {
+    ReportVpiError("vpi_get_value", "no value structure was given");
+    return;
+  }
+  const std::optional<VpiObject> object =
+      ObjectOf(context->ObjectHandles(), expr, "vpi_get_value");
+  if (!object.has_value()) return;
+  ReportFailure(
+      *context, "vpi_get_value", [&]() -> lyra::runtime::VpiAnswer<void> {
+        const lyra::runtime::VpiAnswer<lyra::runtime::ValueShape> shape =
+            lyra::runtime::ValueShapeOf(*object);
+        if (!shape.has_value()) return std::unexpected(shape.error());
+        const lyra::runtime::VpiAnswer<lyra::runtime::HeldValue> held =
+            lyra::runtime::ReadVariablePart(*object);
+        if (!held.has_value()) return std::unexpected(held.error());
+        return lyra::runtime::FillValue(*shape, *held, *value_p);
+      });
+}
+
+// Writes `object` the value `value_p` holds as `flags` says (LRM 38.34): with
+// no delay as the design's own write would land, or as a procedural force or
+// release of it (LRM 10.6.2), the value it holds after a release handed back.
+// A write after a delay schedules an event, which nothing here yet does, so no
+// event is ever handed back.
+auto vpi_put_value(
+    vpiHandle object, p_vpi_value value_p, p_vpi_time time_p, PLI_INT32 flags)
+    -> vpiHandle {
+  ClearVpiError();
+  AmbientRunContext* context = RunningContext("vpi_put_value");
+  if (context == nullptr) return nullptr;
+  const std::optional<VpiObject> target =
+      ObjectOf(context->ObjectHandles(), object, "vpi_put_value");
+  if (!target.has_value()) return nullptr;
+  ReportFailure(
+      *context, "vpi_put_value", [&]() -> lyra::runtime::VpiAnswer<void> {
+        // The flags name one delay mode, beside the bits asking for an event
+        // handed back and how values are handed (LRM 38.34, Annex K). A
+        // cancel is handed no value, and no object reached here is a scheduled
+        // event.
+        const PLI_INT32 mode = flags & ~(vpiReturnEvent | vpiUserAllocFlag |
+                                         vpiOneValue | vpiPropagateOff);
+        if (mode == vpiCancelEvent) {
+          return std::unexpected<std::string>(
+              "the object is no scheduled event");
+        }
+        if (std::holds_alternative<lyra::runtime::VariableObject>(*target) &&
+            lyra::runtime::TypeOfVariablePart(*target, DefaultMode()) ==
+                vpiNamedEvent) {
+          return lyra::runtime::VpiNotYet("a toggle of a named event");
+        }
+        if (value_p == nullptr) {
+          return std::unexpected<std::string>("no value structure was given");
+        }
+        const lyra::runtime::VpiAnswer<lyra::runtime::ValueShape> shape =
+            lyra::runtime::ValueShapeOf(*target);
+        if (!shape.has_value()) return std::unexpected(shape.error());
+        if (mode == vpiReleaseFlag) {
+          const lyra::runtime::VpiAnswer<lyra::runtime::HeldValue> after =
+              lyra::runtime::ReleaseVariablePart(*target);
+          if (!after.has_value()) return std::unexpected(after.error());
+          return lyra::runtime::FillValue(*shape, *after, *value_p);
+        }
+        const lyra::runtime::VpiAnswer<lyra::runtime::HeldValue> written =
+            lyra::runtime::ValueToWrite(*shape, *value_p);
+        if (!written.has_value()) return std::unexpected(written.error());
+        switch (mode) {
+          case vpiNoDelay:
+            return lyra::runtime::WriteVariablePart(*target, *written);
+          case vpiForceFlag:
+            return lyra::runtime::ForceVariablePart(*target, *written);
+          case vpiInertialDelay:
+          case vpiTransportDelay:
+          case vpiPureTransportDelay:
+            if (time_p == nullptr) {
+              return std::unexpected<std::string>("no delay was given");
+            }
+            return lyra::runtime::VpiNotYet("a write after a delay");
+          default:
+            return std::unexpected<std::string>("the flags name no delay mode");
+        }
+      });
+  return nullptr;
+}
+
+// Two handles to one object compare equal however each was reached, a part of
+// a packed value by the bits it is; an iterator is an object of its own (LRM
+// 38.3).
 auto vpi_compare_objects(vpiHandle object1, vpiHandle object2) -> PLI_INT32 {
   ClearVpiError();
   AmbientRunContext* context = RunningContext("vpi_compare_objects");
@@ -533,7 +729,11 @@ auto vpi_compare_objects(vpiHandle object1, vpiHandle object2) -> PLI_INT32 {
   const auto* a = std::get_if<VpiObject>(first);
   const auto* b = std::get_if<VpiObject>(second);
   if (a == nullptr || b == nullptr) return object1 == object2 ? 1 : 0;
-  return *a == *b ? 1 : 0;
+  return Answered(
+      *context, "vpi_compare_objects", PLI_INT32{0},
+      [&]() -> lyra::runtime::VpiAnswer<PLI_INT32> {
+        return lyra::runtime::SameVariablePart(*a, *b) ? 1 : 0;
+      });
 }
 
 auto vpi_release_handle(vpiHandle object) -> PLI_INT32 {
@@ -561,16 +761,18 @@ void vpi_get_time(vpiHandle object, p_vpi_time time_p) {
   const std::optional<Referent> of =
       Resolve(context->ObjectHandles(), object, "vpi_get_time");
   if (!of.has_value()) return;
-  lyra::runtime::RuntimeEffects& run = context->Effects();
-  const lyra::runtime::VpiAnswer<std::int8_t> unit =
-      lyra::runtime::TimeUnitOf(run, *of);
-  if (!unit.has_value()) {
-    ReportVpiError("vpi_get_time", unit.error());
-    return;
-  }
-  if (!lyra::runtime::FillTime(run, *unit, *time_p)) {
-    ReportVpiError("vpi_get_time", "the time structure names no format");
-  }
+  ReportFailure(
+      *context, "vpi_get_time", [&]() -> lyra::runtime::VpiAnswer<void> {
+        lyra::runtime::RuntimeEffects& run = context->Effects();
+        const lyra::runtime::VpiAnswer<std::int8_t> unit =
+            lyra::runtime::TimeUnitOf(run, *of);
+        if (!unit.has_value()) return std::unexpected(unit.error());
+        if (!lyra::runtime::FillTime(run, *unit, *time_p)) {
+          return std::unexpected<std::string>(
+              "the time structure names no format");
+        }
+        return {};
+      });
 }
 
 }  // extern "C"

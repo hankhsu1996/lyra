@@ -797,15 +797,44 @@ enum class BuiltinFn : std::uint16_t {
   kDumpPortsFlush,
   // What the code reading and the code watching a data object hand a reader
   // reaching the design by name, each a method of what the reader handed in:
-  // an integral value's bits, a real, the object an event variable names, and
-  // the trigger a wait for a change of the object would enrol (LRM 38.15,
-  // 21.7.2.3, 9.4.2). An integral value crosses with its width, so one library
-  // function takes every integral value; a real is handed at the width it is
-  // held at.
+  // an integral value's bits, a real, a string, the object an event variable
+  // names, how many elements an array whose size the run sets holds, the key
+  // of an entry of an associative array, and the trigger a wait for a change
+  // of the object would enrol (LRM 38.15, 21.7.2.3, 37.17 detail 9, 9.4.2). An
+  // integral value crosses with its width, so one library function takes every
+  // integral value; a real is handed at the width it is held at; a key crosses
+  // with its type.
   kSerializeBits,
   kSerializeReal,
+  kSerializeText,
   kSerializeEvent,
+  kSerializeSize,
+  kSerializeKey,
   kSubscribe,
+  // What the code reaching a part of a data object asks of the selection a
+  // reader handed it: how many steps it takes, and the step at a depth, as a
+  // number or as the key of an entry at the index type it asks it at (LRM
+  // 37.19, 37.26).
+  kSelectionDepth,
+  kSelectionNumber,
+  kSelectionKey,
+  // What the code settling a selection hands the settler a reader handed it,
+  // by the types alone: the key an entry of an associative array at a depth is
+  // kept by, with its type, how many positions a takeover counts before the
+  // part a step reaches, and that a step reaches a part no takeover holds at a
+  // fixed position (LRM 7.8.4, 10.6.2); and, read back by a takeover, whether
+  // the part lies at a fixed position and how many positions lie before it.
+  kSettleKey,
+  kSettlePositions,
+  kSettleUnfixed,
+  kSettledFixed,
+  kSettledPositions,
+  // What the code writing a data object takes from the deserializer a reader
+  // handed it: the bits of the whole packed value it lands on, a real, or a
+  // string (LRM 38.34).
+  kDeserializeBits,
+  kDeserializeReal,
+  kDeserializeText,
   // LRM 21.6 command-line plusargs. Free functions on `lyra::runtime` that
   // take the runtime handle plus SV `string` operands; the value form also
   // takes the destination's value and completes with it beside the answer. A
@@ -1341,15 +1370,15 @@ enum class BuiltinFn : std::uint16_t {
   // A namespace's storage is being installed, so the run holds it among the
   // objects the design brought up (LRM 37.10), with what it states of itself.
   kRegisterNamespace,
-  // The inner step of a value conversion: reading the source out as a machine
-  // integer. HIR-to-MIR dispatches on the (src, dst) type pair and emits a
-  // `CallExpr` to the matching entry, which the backend renders with no
-  // type-driven branching of its own. `kToInt64` is the integral accessor the
-  // integral-to-real path reads through; `kRound` is the `Real` / `ShortReal`
-  // accessor that rounds to int64 per LRM 6.12.1, which the real-to-integral
-  // path reads through.
+  // An integral value read out as a machine integer, which a position, a
+  // count or a C argument is computed in.
   kToInt64,
-  kRound,
+  // A `Real` or `ShortReal` as a value of the integral type the call names,
+  // of any width: rounded to the nearest integer, ties away from zero, and
+  // kept to that width (LRM 6.12.1). HIR-to-MIR dispatches on the (src, dst)
+  // type pair and emits a `CallExpr` to the matching entry, which the backend
+  // renders with no type-driven branching of its own.
+  kToIntegral,
   // LRM 20.5 real conversions. `kTruncate` is `$rtoi`'s reading of a real as an
   // integer, which drops the fraction where the LRM 6.12.1 conversion rounds
   // it. `kToBits` and `kFromBits` carry the IEEE 754 pattern itself rather than
@@ -1428,11 +1457,11 @@ enum class BuiltinFn : std::uint16_t {
   // Free functions over the run.
   kCurrentExportScope,
   kFindExportEntry,
-  // The outer step of a value conversion: what lands a machine-level result in
-  // the destination's declared representation, which is the type the call
-  // answers with. `kFromInt` builds a value of that type from a machine integer
-  // and `kConvertFrom` reshapes another value of the same family into it.
-  kFromInt,
+  // A value converted into the destination's declared representation, which
+  // is the type the call answers with. `kFromIntegral` builds the real nearest
+  // the number an integral value of any width is (LRM 6.12.1), and
+  // `kConvertFrom` reshapes another value of the same family into it.
+  kFromIntegral,
   kConvertFrom,
   // The position an index names, as a value position arithmetic can be done in
   // without wrapping, and unknown where the index names none: every select,

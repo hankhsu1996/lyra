@@ -177,6 +177,7 @@ enum class LibraryDecl : std::uint8_t {
   kInstantiation,
   kGeneratePlaces,
   kTypespec,
+  kTypespecMember,
   kDataObjectRecord,
   kDescribedPort,
   kSourceLocation,
@@ -189,11 +190,16 @@ enum class LibraryDecl : std::uint8_t {
   kFileTable,
   kDiagnosticDispatcher,
 
-  // What a reader reaching the design by name hands the code reading and the
-  // code watching one data object, each reached as a live reference: where the
-  // value read is handed, and where the trigger a wait for a change of the
-  // object would enrol is handed (LRM 38.15, 21.7.2.3).
+  // What a reader reaching the design by name hands the code reaching one
+  // data object, each reached as a live reference: where the value read is
+  // handed, what a write lands, the selection naming the part reached, where
+  // what its steps come to by the types alone is handed, and where the trigger
+  // a wait for a change of the object would enrol is handed (LRM 38.15, 38.34,
+  // 7.8.4, 21.7.2.3).
   kValueSerializer,
+  kValueDeserializer,
+  kSelection,
+  kSelectionSettler,
   kSubscriber,
 
   // Some positions of a net's value, borrowed for the one call they are handed
@@ -1015,6 +1021,11 @@ constexpr auto FindDeclaration(LibraryDecl decl) -> const LibraryDeclData* {
           kNamedByAddress("typespec", "lyra::abi::Typespec");
       return &kTypespec;
     }
+    case LibraryDecl::kTypespecMember: {
+      static constexpr LibraryDeclData kTypespecMember =
+          kNamedByAddress("typespec member", "lyra::abi::TypespecMember");
+      return &kTypespecMember;
+    }
     case LibraryDecl::kDataObjectRecord: {
       static constexpr LibraryDeclData kDataObjectRecord =
           kNamedByAddress("data object record", "lyra::abi::DataObjectRecord");
@@ -1063,6 +1074,21 @@ constexpr auto FindDeclaration(LibraryDecl decl) -> const LibraryDeclData* {
       static constexpr LibraryDeclData kValueSerializer =
           kFacility("value serializer", "lyra::runtime::ValueSerializer&");
       return &kValueSerializer;
+    }
+    case LibraryDecl::kSelectionSettler: {
+      static constexpr LibraryDeclData kSelectionSettler =
+          kFacility("selection settler", "lyra::runtime::SelectionSettler&");
+      return &kSelectionSettler;
+    }
+    case LibraryDecl::kValueDeserializer: {
+      static constexpr LibraryDeclData kValueDeserializer =
+          kFacility("value deserializer", "lyra::runtime::ValueDeserializer&");
+      return &kValueDeserializer;
+    }
+    case LibraryDecl::kSelection: {
+      static constexpr LibraryDeclData kSelection =
+          kFacility("selection", "const lyra::runtime::Selection&");
+      return &kSelection;
     }
     case LibraryDecl::kSubscriber: {
       static constexpr LibraryDeclData kSubscriber =

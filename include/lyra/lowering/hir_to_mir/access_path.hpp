@@ -333,6 +333,11 @@ void AppendReadChecks(
     const mir::CompilationUnit& unit, mir::Builder block,
     const AccessPath& path);
 
+// The same checks a write along `path` owes before it lands.
+void AppendWriteChecks(
+    const mir::CompilationUnit& unit, mir::Builder block,
+    const AccessPath& path);
+
 // The part the path names, as the place it lies in where it is one: what the
 // owner holds, then each step as a read takes it, so nothing on the way to the
 // part is read whole.
@@ -474,6 +479,24 @@ enum class UnnumberedPart : std::uint8_t {
   kOfDynamicValue,
   kTaggedMember,
 };
+
+// How far one step moves the first position of what it reaches, counted in the
+// positions of the part `within` it is taken on, which that part's type
+// numbers part by part (LRM 6.7.1); and, where the step's position is one the
+// program computes, whether it names a part at all -- an index naming no
+// element names none (LRM 7.4.5), and neither does a position with an unknown
+// bit (LRM 11.5.1). Each is built once, for one place to read it.
+struct StepPosition {
+  mir::ExprId offset;
+  std::optional<mir::ExprId> names_a_part;
+};
+
+// Where `step`, taken on a part of type `within`, moves the first position,
+// built in `block`, or why it lies at no position of a fixed numbering. A
+// position it selects by is read more than once, so it is a settled one.
+[[nodiscard]] auto PositionOfStep(
+    const mir::CompilationUnit& unit, mir::Builder block, mir::TypeId within,
+    const DescentStep& step) -> std::expected<StepPosition, UnnumberedPart>;
 
 // The positions of its owner a path names. A value's type numbers its
 // positions part by part, the first part's first, so each step moves the first

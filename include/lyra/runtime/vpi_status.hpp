@@ -13,8 +13,10 @@ namespace lyra::runtime {
 void ClearVpiError();
 
 // The routine named `routine` could not do what it was asked, for the reason
-// `message` says, which a program reads as an error (`vpiError`).
-void ReportVpiError(std::string_view routine, std::string message);
+// `message` says, which a program reads at `level` (LRM Table 38-1): an error
+// of the request (`vpiError`), or a fault of the tool's own (`vpiInternal`).
+void ReportVpiError(
+    std::string_view routine, std::string message, PLI_INT32 level = vpiError);
 
 // `vpi_chk_error`: the severity of the last routine's error, or 0 where it met
 // none, with what is known of it written to `error_info_p` where one is given.

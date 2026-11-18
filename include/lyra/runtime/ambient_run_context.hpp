@@ -12,6 +12,7 @@ namespace lyra::runtime {
 class Scope;
 class RuntimeEffects;
 class VpiObjectHandles;
+class VariablesByStorage;
 
 // The design context in effect for the duration of a running simulation. A
 // foreign C function that calls back an exported SV subroutine (LRM 35.5), that
@@ -19,8 +20,9 @@ class VpiObjectHandles;
 // routine (LRM 38), reaches the runtime with plain C arguments and no design
 // pointer, so it has nothing to reach the run from unless the runtime anchors
 // it ambiently. This holds the run's effects facade for the executing process
-// and time queries, and the handles the run has given foreign code: DPI's to
-// scopes, and VPI's to objects.
+// and time queries, the handles the run has given foreign code -- DPI's to
+// scopes, and VPI's to objects -- and the table VPI finds a variable by its
+// storage in.
 //
 // It is an RAII guard over a thread-local slot: installed once around the
 // simulation run at the single run entry, and torn down when the run returns.
@@ -49,6 +51,10 @@ class AmbientRunContext {
     return *object_handles_;
   }
 
+  [[nodiscard]] auto StoredVariables() -> VariablesByStorage& {
+    return *stored_variables_;
+  }
+
   static auto Current() -> AmbientRunContext&;
 
   // The context in effect, or null where no simulation is running on this
@@ -60,6 +66,7 @@ class AmbientRunContext {
   RuntimeEffects* effects_;
   DpiScopeHandles scope_handles_;
   std::unique_ptr<VpiObjectHandles> object_handles_;
+  std::unique_ptr<VariablesByStorage> stored_variables_;
 };
 
 // The scope a module-scoped exported subroutine runs against: the current DPI

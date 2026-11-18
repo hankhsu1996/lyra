@@ -80,6 +80,23 @@ theirs it went into, and tells the waits on everything lying in what it changed 
 reached. Waits on any other part are not visited. A variable no wait names a part of holds one list
 and an empty place for the tree, which is one pointer more than it held before.
 
+**D6. Which kinds of step a path goes on through is stated once, for the part watched and for the
+part written.** The two differ where a write of a part changes more than the part: every member of a
+union is one storage (LRM 7.3), so a wait on a member and a procedure's report of one name the
+member, where the union lies in a structure or an array whose parts a wait names, while a write of a
+member reports the union; a union standing alone is watched whole; a write of a character of a
+string reports the string, while a wait on the character names it; an entry of an associative array
+is named by neither (D4). So a part's written path is a prefix of its own watched path, and D5,
+which visits the waits on the part a write reports, on what it lies in and on what lies in it,
+reaches every wait on a part the write can change: a write of `s.a` the wait on `s`, a write of
+`u.a` the wait on `u.b`. Leaving a procedure's own write out of its implicit list (LRM 9.2.2.2.1) is
+a question of what the procedure watches, answered where its list is made, and not of what the write
+reports. The lowering that names a wait's part and every step a write or a reference takes into a
+part read that one statement, so the two cannot name one part differently, and the kind of a step is
+the kind of what it selects from -- an associative array's entry is one whatever type its index has
+-- never the type of the key in hand. A path that stops short of the part it was meant for watches
+all of what it reaches, since the bit positions given are the part's and not that.
+
 ## Rejected
 
 - **Number every part on one line and compare intervals.** One test would answer a part, what it

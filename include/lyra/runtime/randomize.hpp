@@ -12,6 +12,7 @@
 #include "lyra/runtime/object_ref.hpp"
 #include "lyra/runtime/randomization.hpp"
 #include "lyra/runtime/var.hpp"
+#include "lyra/support/random_qualifier.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/enumeration.hpp"
 #include "lyra/value/integral.hpp"
@@ -120,8 +121,8 @@ struct DeclaredPart {
 // are on, `part` saying what it takes from the variable it lies in.
 void ConstraintDeclareErased(
     const value::ObjectRef& problem, const ErasedReference& variable,
-    const void* value, const value::ValueType& type, RandomQualifier declared,
-    const DeclaredPart& part);
+    const void* value, const value::ValueType& type,
+    support::RandomQualifier declared, const DeclaredPart& part);
 
 // The variable `variable` names is of an enumerated type, or an array of one,
 // declaring `members` (LRM 18.5), stated before the variable is declared or
@@ -193,7 +194,8 @@ template <value::LyraValue T>
 template <value::LyraValue T>
 void ConstraintDeclare(
     const value::ObjectRef& problem, const ErasedReference& variable,
-    const T& value, RandomQualifier declared, const DeclaredPart& part) {
+    const T& value, support::RandomQualifier declared,
+    const DeclaredPart& part) {
   if constexpr (value::OrdinalElements<T>) {
     const bool on = part.enabled && RandEnabledErased(variable, part.path);
     std::optional<std::int64_t> array = part.within;
@@ -219,7 +221,7 @@ void ConstraintRand(
     const value::ObjectRef& problem, const VariableRef<T>& variable,
     const T& value) {
   ConstraintDeclare(
-      problem, variable.Erased(), value, RandomQualifier::kRand,
+      problem, variable.Erased(), value, support::RandomQualifier::kRand,
       DeclaredWhole(problem, variable.Erased()));
 }
 
@@ -261,7 +263,7 @@ void ConstraintRandc(
     const value::ObjectRef& problem, const VariableRef<T>& variable,
     const T& value) {
   ConstraintDeclare(
-      problem, variable.Erased(), value, RandomQualifier::kRandc,
+      problem, variable.Erased(), value, support::RandomQualifier::kRandc,
       DeclaredWhole(problem, variable.Erased()));
 }
 

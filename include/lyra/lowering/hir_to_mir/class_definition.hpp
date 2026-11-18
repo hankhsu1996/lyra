@@ -36,10 +36,14 @@ auto BuildDefinitionRead(
 // complete.
 void StateObjectDefinitions(mir::CompilationUnit& unit);
 
-// The typespec `type` as a constant of `unit` (LRM 37.25), its base's first
-// for an enumeration, which a data object's record names.
+// The typespec `id` of the unit `hir` as a constant of `unit` (LRM 37.25),
+// which a data object's record names, after the typespecs it is built from; a
+// structure's or a union's members are the ones its type declares, and an
+// enumeration's are the table of the type `translate` answers for it.
 auto TypespecConstant(
-    const mir::CompilationUnit& unit, const hir::Typespec& type)
+    const mir::CompilationUnit& unit, const hir::CompilationUnit& hir,
+    hir::TypespecId id,
+    const std::function<mir::TypeId(hir::TypeId)>& translate)
     -> mir::ConstantId;
 
 // The record of the definition every scope of the unit `hir` comes from

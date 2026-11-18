@@ -52,8 +52,9 @@ auto Lower(Compilation& compilation, std::size_t width)
   lyra::diag::DiagnosticSink sink;
   auto design = lyra::compiler::DeclareUnits(
       std::move(compilation.front.elaborated->compilation),
-      lyra::compiler::LoweringPolicy{
-          .assertions = lyra::support::AssertionPolicy::kCheck},
+      lyra::support::LoweringPolicy{
+          .assertions = lyra::support::AssertionPolicy::kCheck,
+          .force_targets = lyra::support::ForceTargets::kWholeVariables},
       sink, compilation.front.elaborated->diag_sources);
   if (!design.has_value()) {
     return std::nullopt;

@@ -107,13 +107,45 @@ class CaptureSerializer final : public ValueSerializer {
       : into_(&into), code_(code) {
   }
 
-  void SerializeBits(const value::ConstIntegralView& value) override {
-    into_->Bits(code_, value);
+  // A dump records no string and no array (LRM 21.7.2.1), and reads each
+  // object whole, so no object it reads hands it either.
+  void Receive(const Serialized& handed) override {
+    std::visit(
+        Overloaded{
+            [&](const value::ConstIntegralView& bits) {
+              into_->Bits(code_, bits);
+            },
+            [&](double real) { into_->Real(code_, real); },
+            [](const value::String*) {
+              throw InternalError(
+                  "dump: a data object a dump records read as a string -- "
+                  "please report this as a bug");
+            },
+            [&](const value::ObjectRef* event) { Event(*event); },
+            [](const SerializedSize&) {
+              throw InternalError(
+                  "dump: a data object a dump records read as an array -- "
+                  "please report this as a bug");
+            },
+            [](const SerializedKey&) {
+              throw InternalError(
+                  "dump: a data object a dump records handed an entry's key "
+                  "-- please report this as a bug");
+            }},
+        handed);
   }
-  void SerializeReal(double value) override {
-    into_->Real(code_, value);
+
+  [[nodiscard]] auto WantsKeys() const -> bool override {
+    return false;
   }
-  void SerializeEvent(const value::ObjectRef& event) override {
+
+  // The object an event variable names; none for any other.
+  [[nodiscard]] auto TakeReferent() -> value::ObjectRef {
+    return std::move(referent_);
+  }
+
+ private:
+  void Event(const value::ObjectRef& event) {
     referent_ = event;
     switch (EventTriggered(event, current_runtime(), nullptr).Truth()) {
       case value::Truthiness::kKnownNonzero:
@@ -125,12 +157,6 @@ class CaptureSerializer final : public ValueSerializer {
     }
   }
 
-  // The object an event variable names; none for any other.
-  [[nodiscard]] auto TakeReferent() -> value::ObjectRef {
-    return std::move(referent_);
-  }
-
- private:
   DumpCapture* into_;
   DumpCode code_;
   value::ObjectRef referent_;
@@ -151,7 +177,9 @@ class TriggerSubscriber final : public Subscriber {
 // does.
 auto WatchedTriggerOf(const DumpedObject& dumped) -> Trigger {
   TriggerSubscriber subscriber;
-  dumped.declarations->subscribe(dumped.instance, dumped.position, subscriber);
+  dumped.declarations->subscribe(
+      dumped.instance, dumped.position, subscriber,
+      base::SourceLocation{base::kNoSourceLocation});
   return subscriber.trigger;
 }
 
@@ -177,7 +205,10 @@ DumpWatch::~DumpWatch() = default;
 
 void DumpWatch::Read(DumpCapture& into) {
   CaptureSerializer serializer(into, code_);
-  dumped_.declarations->read(dumped_.instance, dumped_.position, serializer);
+  const Selection whole;
+  dumped_.declarations->read(
+      dumped_.instance, dumped_.position, whole, serializer,
+      base::SourceLocation{base::kNoSourceLocation});
   FollowReferent(serializer.TakeReferent());
 }
 
@@ -766,11 +797,14 @@ class SelectionDeclarer final {
       return;
     }
     const abi::DataObjectRecord& object = dumped.Record();
+    std::optional<DumpVarDeclaration> variable = DumpVarDeclarationOf(object);
+    if (!variable.has_value()) {
+      return;
+    }
     MoveToScopesAround(object);
     OpenPending();
     const DumpCode code{static_cast<std::uint32_t>(watches_->size())};
-    output_->Send(
-        VarCommand{.code = code, .variable = DumpVarDeclarationOf(object)});
+    output_->Send(VarCommand{.code = code, .variable = *std::move(variable)});
     watches_->push_back(std::make_unique<DumpWatch>(*dump_, code, dumped));
   }
 

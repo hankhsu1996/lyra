@@ -40,21 +40,40 @@ class RealValue {
     return v_;
   }
 
-  // LRM 6.12.1: integer-to-real keeps the integer value (the caller collapses
-  // X/Z bits to 0 before this); real-to-integer rounds to nearest, ties away
-  // from zero, which is `std::llround`.
-  [[nodiscard]] static auto FromInt(std::int64_t i) -> RealValue {
-    return RealValue{static_cast<Host>(i)};
+  // LRM 6.12.1: an integral value of any width, as the real nearest the
+  // number it is, with its x and z bits read as 0; the other way, a real
+  // rounds to the nearest integer, ties away from zero, which
+  // is kept to the integral type's width as a number carried into it is.
+  [[nodiscard]] static auto ConvertFromIntegral(AnyConstIntegralView auto value)
+      -> RealValue {
+    return RealValue{ToFloating<Host>(value)};
   }
-
-  [[nodiscard]] auto Round() const -> std::int64_t {
-    return std::llround(v_);
+  template <IntegralValue I>
+  [[nodiscard]] static auto ConvertFromIntegral(const I& value) -> RealValue {
+    return ConvertFromIntegral(value.View());
+  }
+  template <IntegralValue I>
+  [[nodiscard]] auto ToIntegral() const -> I {
+    I out = I::Zero();
+    RoundInto(out.AsMutableWords().MutableView());
+    return out;
+  }
+  template <
+      PlaneWord WrittenWord, std::size_t kWrittenValueWords,
+      std::size_t kWrittenUnknownWords>
+  void RoundInto(
+      IntegralViewOf<WrittenWord, kWrittenValueWords, kWrittenUnknownWords> out)
+      const {
+    FromFloating(out, std::round(v_));
   }
 
   // LRM 20.5 `$rtoi` drops the fraction instead of rounding it, so a value
-  // moves toward zero rather than toward the nearest integer.
+  // moves toward zero rather than toward the nearest integer, kept to 64 bits
+  // as a number carried into one is.
   [[nodiscard]] auto Truncate() const -> std::int64_t {
-    return static_cast<std::int64_t>(v_);
+    LongInt out = LongInt::Zero();
+    FromFloating(out.AsMutableWords().MutableView(), std::trunc(v_));
+    return ToInt64(out.View());
   }
 
   // LRM 20.5 `$realtobits` / `$bitstoreal`: the IEEE 754 pattern the value is

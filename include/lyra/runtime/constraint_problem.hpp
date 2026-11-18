@@ -17,6 +17,7 @@
 #include "lyra/runtime/randomization.hpp"
 #include "lyra/runtime/rng.hpp"
 #include "lyra/runtime/var.hpp"
+#include "lyra/support/random_qualifier.hpp"
 #include "lyra/value/enumeration.hpp"
 #include "lyra/value/object_ref.hpp"
 #include "lyra/value/value_type.hpp"
@@ -106,8 +107,8 @@ class ConstraintProblem final : public GcObject {
   // array is below.
   void Declare(
       const ErasedReference& lent, const void* value,
-      const value::ValueType& type, RandomQualifier declared, bool enabled,
-      ConstraintCycle* cycle, const value::Enumeration* members,
+      const value::ValueType& type, support::RandomQualifier declared,
+      bool enabled, ConstraintCycle* cycle, const value::Enumeration* members,
       std::optional<std::int64_t> within = std::nullopt);
 
   // A dynamic array or a queue declared random (LRM 18.4), answered as which
@@ -287,8 +288,8 @@ class ConstraintProblem final : public GcObject {
   [[nodiscard]] auto ChooseDistributions(CircuitLiteral& condition) -> bool;
 
   [[nodiscard]] auto Chosen(
-      RandomQualifier declared, bool enabled, const void* storage) const
-      -> bool;
+      support::RandomQualifier declared, bool enabled,
+      const void* storage) const -> bool;
   // A new variable, answering its term.
   auto AddVariable(
       const ErasedReference& lent, const void* value,

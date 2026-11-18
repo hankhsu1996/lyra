@@ -216,7 +216,11 @@ auto ClassHookPrototype(
     case support::LibraryCallback::kScopeResolve:
     case support::LibraryCallback::kScopeInitialize:
     case support::LibraryCallback::kScopeCreateProcesses:
+    case support::LibraryCallback::kScopeSettleDataObject:
     case support::LibraryCallback::kScopeReadDataObject:
+    case support::LibraryCallback::kScopeWriteDataObject:
+    case support::LibraryCallback::kScopeForceDataObject:
+    case support::LibraryCallback::kScopeReleaseDataObject:
     case support::LibraryCallback::kScopeSubscribeDataObject:
       break;
   }

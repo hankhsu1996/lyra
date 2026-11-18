@@ -1548,10 +1548,84 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "value_serializer_real",
           .declaration = Method{"Real"},
           .takes_the_location = false};
+    case BuiltinFn::kSerializeText:
+      return {
+          .name = "value_serializer_text",
+          .declaration = Method{"SerializeText"},
+          .takes_the_location = false};
     case BuiltinFn::kSerializeEvent:
       return {
           .name = "value_serializer_event",
           .declaration = Method{"SerializeEvent"},
+          .takes_the_location = false};
+    case BuiltinFn::kSerializeSize:
+      return {
+          .name = "value_serializer_size",
+          .declaration = Method{"SerializeSize"},
+          .takes_the_location = false};
+    case BuiltinFn::kSerializeKey:
+      return {
+          .name = "value_serializer_key",
+          .declaration = Method{"Key"},
+          .takes_the_location = false,
+          .operands = {kMachine, kTyped}};
+    case BuiltinFn::kSelectionDepth:
+      return {
+          .name = "selection_depth",
+          .declaration = Method{"Depth"},
+          .takes_the_location = false};
+    case BuiltinFn::kSelectionNumber:
+      return {
+          .name = "selection_number",
+          .declaration = Method{"Number"},
+          .takes_the_location = false};
+    case BuiltinFn::kSelectionKey:
+      return {
+          .name = "selection_key",
+          .declaration = Method{"Key"},
+          .takes_a_type_argument = true,
+          .takes_the_location = false,
+          .answer_told = AnswerTold::kAnswerType};
+    case BuiltinFn::kSettleKey:
+      return {
+          .name = "selection_settler_settle_key",
+          .declaration = Method{"Key"},
+          .takes_the_location = false,
+          .operands = {kMachine, kMachine, kTyped}};
+    case BuiltinFn::kSettlePositions:
+      return {
+          .name = "selection_settler_settle_positions",
+          .declaration = Method{"SettlePositions"},
+          .takes_the_location = false};
+    case BuiltinFn::kSettleUnfixed:
+      return {
+          .name = "selection_settler_settle_unfixed",
+          .declaration = Method{"SettleUnfixed"},
+          .takes_the_location = false};
+    case BuiltinFn::kSettledFixed:
+      return {
+          .name = "selection_settler_fixed",
+          .declaration = Method{"Fixed"},
+          .takes_the_location = false};
+    case BuiltinFn::kSettledPositions:
+      return {
+          .name = "selection_settler_positions",
+          .declaration = Method{"Positions"},
+          .takes_the_location = false};
+    case BuiltinFn::kDeserializeBits:
+      return {
+          .name = "value_deserializer_bits",
+          .declaration = Method{"Bits"},
+          .takes_the_location = false};
+    case BuiltinFn::kDeserializeReal:
+      return {
+          .name = "value_deserializer_real",
+          .declaration = Method{"Real"},
+          .takes_the_location = false};
+    case BuiltinFn::kDeserializeText:
+      return {
+          .name = "value_deserializer_text",
+          .declaration = Method{"Text"},
           .takes_the_location = false};
     case BuiltinFn::kSubscribe:
       return {
@@ -2656,11 +2730,13 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .takes_the_location = false};
     case BuiltinFn::kToInt64:
       return IntegralEntry(IntegralOp::kToInt64, Method{"ToInt64"});
-    case BuiltinFn::kRound:
+    case BuiltinFn::kToIntegral:
       return {
-          .name = "round",
-          .declaration = Method{"Round"},
-          .takes_the_location = false};
+          .name = "to_integral",
+          .declaration = Method{"ToIntegral"},
+          .takes_a_type_argument = true,
+          .takes_the_location = false,
+          .answer_told = AnswerTold::kIntegralExtent};
     case BuiltinFn::kTruncate:
       return {
           .name = "truncate",
@@ -2761,12 +2837,13 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "find_export_entry",
           .declaration = RuntimeFunction("FindExportEntry"),
           .takes_the_location = false};
-    case BuiltinFn::kFromInt:
+    case BuiltinFn::kFromIntegral:
       return {
-          .name = "from_int",
-          .declaration = StaticFactory{"FromInt"},
+          .name = "from_integral",
+          .declaration = StaticFactory{"ConvertFromIntegral"},
           .takes_a_type_argument = true,
-          .takes_the_location = false};
+          .takes_the_location = false,
+          .operands = {kNumber}};
     case BuiltinFn::kIntegralFromInt:
       return IntegralEntry(IntegralOp::kFromInt, StaticFactory{"FromInt"});
     case BuiltinFn::kConvertFrom:
