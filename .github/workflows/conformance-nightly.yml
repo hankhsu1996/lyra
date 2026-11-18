@@ -33,7 +33,7 @@ jobs:
   # which is the one the setup below installs.
   lyra:
     name: Run the Suite on Lyra (${{ matrix.path }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 360
     strategy:
       # Each configuration's record stands on its own, so one failing does not
