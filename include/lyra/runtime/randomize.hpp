@@ -9,7 +9,6 @@
 
 #include "lyra/base/source_location.hpp"
 #include "lyra/runtime/class_object.hpp"
-#include "lyra/runtime/object_change.hpp"
 #include "lyra/runtime/object_ref.hpp"
 #include "lyra/runtime/randomization.hpp"
 #include "lyra/runtime/var.hpp"
@@ -86,8 +85,8 @@ void RandomizeConstrain(const value::ObjectRef& problem);
 // program chooses.
 struct DeclaredPart {
   RandomVariablePath path;
-  bool enabled;
-  const value::Enumeration* members;
+  bool enabled = false;
+  const value::Enumeration* members = nullptr;
   std::optional<std::int64_t> within;
 
   // The part at `position` of this one, where whether this one is chosen is

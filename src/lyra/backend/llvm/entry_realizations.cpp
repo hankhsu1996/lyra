@@ -205,7 +205,7 @@ constexpr std::array kForUnpackedArraysAndQueues{
 constexpr std::array kForComponentsSteppedInto{
     RealizedFor{.domains = kLaidOutByType}};
 constexpr std::array kForMembersSteppedInto{
-    RealizedFor{.domains = kLaidOutByType, .told = ToldNothing{}}};
+    RealizedFor{.domains = kLaidOutByType}};
 constexpr std::array kForComponentsReferredTo{
     RealizedFor{.domains = kLaidOutByType}};
 constexpr std::array kForJoinedNets{RealizedFor{.domains = kIntegral}};

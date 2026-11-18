@@ -12,9 +12,10 @@ namespace lyra::runtime {
 // The waits woken by what happens on storage: an event control (LRM 9.4.2,
 // 15.5.2), an implicit sensitivity (LRM 9.2.2.2.1, 9.4.2.2), a `wait`
 // statement (LRM 9.4.3), and the sensitivity of a continuous process (LRM
-// 4.9.1, 4.9.2). They part company in four places: what they watch is fixed
+// 4.9.1, 4.9.2). They part company in five places: what they watch is fixed
 // where the wait is built or known only once the process has evaluated,
 // whether a change made while the process runs is an occurrence for it,
+// whether each write is one or only what an event's execution leaves,
 // whether resuming from them is a report flush point (LRM 12.4.2.1, 16.4.2),
 // and what starting a stopped process again asks of them (LRM 9.7).
 
@@ -26,7 +27,9 @@ namespace lyra::runtime {
 [[nodiscard]] auto WaitOn(std::span<const Trigger> triggers) -> Wait;
 [[nodiscard]] auto WaitOn(std::span<const Trigger* const> triggers) -> Wait;
 
-// The same on the implicit list `report` settled.
+// The wait of an `always_comb` or `always_latch` on the implicit list `report`
+// settled (LRM 9.2.2.2.1), woken by what an event's execution leaves changed
+// of what it watches, not by each write that execution made.
 [[nodiscard]] auto WaitOnImplicitList(const ReadReport* report) -> Wait;
 
 // The wait of a continuous assignment or a procedural continuous assignment,

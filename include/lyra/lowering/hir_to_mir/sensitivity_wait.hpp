@@ -134,8 +134,10 @@ auto ReportReads(
 // one wait holding one trigger per leaf -- `@*` (LRM 9.4.2.2), `@(...)` (LRM
 // 9.4.2), `@e` (LRM 15.5.2), an implicit list (LRM 9.2.2.2.1), and a
 // continuous assignment (LRM 4.9.1) -- differing in what decides that reaching
-// a leaf is an event for them and in whether a change the waiting process makes
-// itself counts, and built so a stop reached again stops at the same wait.
+// a leaf is an event for them, in whether a change the waiting process makes
+// itself counts, and in whether each write is an event for them or only what
+// an event's execution leaves, and built so a stop reached again stops at
+// the same wait.
 
 // The block a wait is built in to be reused, where `cells` are what it watches,
 // `evaluated` the expressions of `exprs` its observations evaluate where a

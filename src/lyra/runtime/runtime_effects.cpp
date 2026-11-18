@@ -8,6 +8,7 @@
 #include <string_view>
 #include <utility>
 #include <variant>
+#include <vector>
 
 #include "lyra/base/diag_message.hpp"
 #include "lyra/base/internal_error.hpp"
@@ -16,6 +17,7 @@
 #include "lyra/base/source_location.hpp"
 #include "lyra/runtime/assertion_control.hpp"
 #include "lyra/runtime/closure.hpp"
+#include "lyra/runtime/combinational_awaiter.hpp"
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/delay.hpp"
 #include "lyra/runtime/diagnostic.hpp"
@@ -467,43 +469,75 @@ class TellingAnOccurrence {
 
 }  // namespace
 
+void RuntimeEffects::TellWrite(
+    IntrusiveList<WaitMembership>& members, const Change& change, bool kept) {
+  const TellingAnOccurrence telling(AsRuntime(*this).occurrences_being_told_);
+  members.ForEach([&](WaitMembership& membership) {
+    if (change.KnownUnchanged(membership.reads)) {
+      return;
+    }
+    std::visit(
+        Overloaded{
+            [&](Awaiter* awaiter) {
+              if (Activation* woken = awaiter->WokenBy(membership)) {
+                Wake(woken);
+              }
+            },
+            [&](CombinationalAwaiter* awaiter) {
+              awaiter->Reached(*this, membership, kept);
+            },
+            [](SampledValue* sampled) { sampled->Reached(); },
+            [](SourceFollower* follower) { follower->Reached(); },
+            [this](ProgramThreads* program) { program->RootEnded(*this); },
+            [&](PropertyEvaluation* evaluation) {
+              evaluation->Reached(membership);
+            },
+            [](DumpWatch* watch) { watch->Reached(); }},
+        membership.observer);
+  });
+}
+
+// An occurrence that is no write of a place -- an event triggered, an object's
+// property written, an object expiring -- keeps nothing to judge it by.
 void RuntimeEffects::WakeParkedOn(
     IntrusiveList<WaitMembership>& members, const Change& change) {
-  const auto told = [&] {
-    const TellingAnOccurrence telling(AsRuntime(*this).occurrences_being_told_);
-    members.ForEach([&](WaitMembership& membership) {
-      if (change.KnownUnchanged(membership.reads)) {
-        return;
-      }
-      std::visit(
-          Overloaded{
-              [&](Awaiter* awaiter) {
-                if (Activation* woken = awaiter->WokenBy(membership)) {
-                  Wake(woken);
-                }
-              },
-              [](SampledValue* sampled) { sampled->Reached(); },
-              [](SourceFollower* follower) { follower->Reached(); },
-              [this](ProgramThreads* program) { program->RootEnded(*this); },
-              [&](PropertyEvaluation* evaluation) {
-                evaluation->Reached(membership);
-              },
-              [](DumpWatch* watch) { watch->Reached(); }},
-          membership.observer);
-    });
-  };
-  told();
+  const bool kept = false;
+  TellWrite(members, change, kept);
   RunWokenAtTheOccurrence();
 }
 
 void RuntimeEffects::WakeParkedOn(
     Observable& place, const PartPath& written, const Change& change) {
-  const auto told = [&] {
+  {
     const TellingAnOccurrence telling(AsRuntime(*this).occurrences_being_told_);
-    place.WakeAffectedBy(*this, written, change);
-  };
-  told();
+    place.WakeAffectedBy(
+        *this, written, change, place.KeepsWhatWasWritten(written, change));
+  }
   RunWokenAtTheOccurrence();
+}
+
+void RuntimeEffects::TellWhatTheEventLeft(
+    IntrusiveList<WaitMembership>& members, const Change& change) {
+  members.ForEach([&](WaitMembership& membership) {
+    if (change.KnownUnchanged(membership.reads)) {
+      return;
+    }
+    std::visit(
+        Overloaded{
+            [&](CombinationalAwaiter* awaiter) { awaiter->LeftChanged(*this); },
+            [](Awaiter*) {}, [](SampledValue*) {}, [](SourceFollower*) {},
+            [](ProgramThreads*) {}, [](PropertyEvaluation*) {},
+            [](DumpWatch*) {}},
+        membership.observer);
+  });
+}
+
+void RuntimeEffects::JudgeOnceTheEventIsExecuted(CombinationalWatch& watch) {
+  AsRuntime(*this).kept_originals_.PushBack(watch);
+}
+
+void RuntimeEffects::AskOnceTheEventIsExecuted(ReachedWait& reached) {
+  AsRuntime(*this).reached_waits_.PushBack(reached);
 }
 
 auto RuntimeEffects::Bound() -> BoundMembers& {

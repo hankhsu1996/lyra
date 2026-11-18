@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <span>
 #include <utility>
 
@@ -143,6 +144,14 @@ auto Change::BitsUnmoved(value::BitPositions at) const -> bool {
 
 auto Change::Unmoved() const -> bool {
   return count_ != 0 && BitsUnmoved(reached_);
+}
+
+// A change of bits keeps the words they lie in, and one of elements none.
+auto Change::ElementsReached() const -> std::optional<value::BitPositions> {
+  if (count_ != 0 || reached_.width == 0) {
+    return std::nullopt;
+  }
+  return reached_;
 }
 
 auto Change::KnownUnchanged(value::BitPositions reads) const -> bool {

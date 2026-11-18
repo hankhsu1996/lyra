@@ -25,6 +25,7 @@
 #include "lyra/base/source_location.hpp"
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/cancellation.hpp"
+#include "lyra/runtime/combinational_awaiter.hpp"
 #include "lyra/runtime/design.hpp"
 #include "lyra/runtime/evaluation_attempts.hpp"
 #include "lyra/runtime/file_table.hpp"
@@ -629,7 +630,7 @@ void Runtime::RunRegion(support::Region region) {
           const NoThreadRunsScope ends(*this);
           RunAsLanding(*this, effect);
         }
-        TellExpired();
+        EndEventExecution();
       };
   draining_.effects.Drain(run_effect);
   // A timer comes off its queue as it fires, so arming it again from what the
@@ -642,19 +643,50 @@ void Runtime::RunRegion(support::Region region) {
           procedure_in_force_, fired->timer->BoundBy());
       RunAsLanding(*this, [fired] { fired->timer->Fire(); });
     }
-    TellExpired();
+    EndEventExecution();
   }
   while (QueuePlace* queued = draining_.activations.PopFront()) {
     Activation* activation = queued->activation;
     ConsumeWait(activation);
     RunProcess(activation);
-    TellExpired();
+    EndEventExecution();
   }
   // What was kept for the end of this pass runs once everything the pass held
   // has, in the order it was kept, before anything the pass placed in the slot.
   while (!pass_end_effects_.Empty()) {
     draining_.effects.Append(pass_end_effects_);
     draining_.effects.Drain(run_effect);
+  }
+}
+
+// What expiry runs belongs to the execution too, and dropping what a place kept
+// can let an object expire, so judging, telling expiry and deciding each wait
+// go in turn until none has anything left. Judging and deciding wake and run
+// nothing.
+void Runtime::EndEventExecution() {
+  while (!kept_originals_.Empty() || !expired_.Empty() ||
+         !reached_waits_.Empty()) {
+    while (CombinationalWatch* watch = kept_originals_.PopFront()) {
+      const KeptParts kept = std::exchange(watch->kept, {});
+      for (const auto& [at, original] : kept) {
+        if (const std::optional<Change> change = original->Changed()) {
+          watch->place->TellWhatWasLeft(*this, at, *change);
+        }
+      }
+      auto bits = std::exchange(watch->bits, {});
+      for (auto& [at, kept_bits] : bits) {
+        if (const std::optional<Change> change = kept_bits.Changed()) {
+          watch->place->TellWhatWasLeft(*this, at, *change);
+        }
+      }
+    }
+    if (!expired_.Empty()) {
+      TellExpired();
+      continue;
+    }
+    while (ReachedWait* reached = reached_waits_.PopFront()) {
+      reached->awaiter->EventExecuted(*this);
+    }
   }
 }
 

@@ -622,7 +622,13 @@ void WideRefSet(void* reference, std::int64_t width, const void* value) {
       lent, [&] { ApplyOverriddenWriteThrough<T>(lent, value, assign); },
       assign,
       [&] { return std::memcmp(held.bytes, value, held.ByteSize()) == 0; },
-      [&] { return ReplaceWhole(held, assign); });
+      [&] {
+        KeeperThrough(lent).Keep(PartPath{}, [&] {
+          return std::make_unique<KeptWideOriginal<value::WideAt<T::kDomain>>>(
+              held);
+        });
+        return ReplaceWhole(held, assign);
+      });
 }
 
 // A value lying after what holds it, lent by reference or by its holder as a
@@ -776,6 +782,9 @@ class ReferenceWrite {
   void PublishTransition(const PartPath& reached, const Change& change) const {
     lent_.Report(reached, change);
   }
+  [[nodiscard]] auto Keeper() const -> OriginalKeeper {
+    return KeeperThrough(lent_);
+  }
 
  private:
   // What a continuous driver gave the variable `lent` names the whole of,
@@ -860,6 +869,15 @@ class HolderWrite {
   void PublishTransition(const PartPath& reached, const Change& change) const {
     holder_->PublishTransition(reached, change);
   }
+  // A variable keeps what its parts held; a driver writes what its net
+  // resolves.
+  [[nodiscard]] auto Keeper() const -> OriginalKeeper {
+    if constexpr (kOverridable) {
+      return {.place = holder_};
+    } else {
+      return {};
+    }
+  }
 
  private:
   Holder* holder_;
@@ -902,6 +920,9 @@ void WriteLaidOutThrough(
       },
       assign, [&] { return type.BitIdentical(lent.storage, value); },
       [&] {
+        KeeperThrough(lent).Keep(PartPath{}, [&] {
+          return std::make_unique<KeptLaidOutOriginal>(type, lent.storage);
+        });
         assign();
         return Change::Whole();
       });
@@ -1040,14 +1061,17 @@ auto DesignationAt(const void* designation) -> const ErasedDesignation& {
 
 // The steps and the landing a write in progress takes, each over the value a
 // designation names; they do what a designation's own methods do where the
-// value's type is known.
+// value's type is known. A container moves and ends its elements as it grows
+// and shrinks (LRM 7.5, 7.8, 7.10), so it is kept whole before a step into
+// it.
 template <typename Container, typename Index>
 auto DesignateElement(const void* designation, const Index& index, void* out)
     -> void* {
   const ErasedDesignation& within = DesignationAt(designation);
+  auto& container = *static_cast<Container*>(within.part);
+  within.write->KeepPartOriginal(container);
   value::Formation formed{};
-  void* element =
-      static_cast<Container*>(within.part)->ElementMut(index, formed);
+  void* element = container.ElementMut(index, formed);
   within.write->Formed(formed);
   if (within.write->Undecided()) {
     within.write->Stepped(StepTo(index));
@@ -1057,16 +1081,19 @@ auto DesignateElement(const void* designation, const Index& index, void* out)
       ErasedDesignation{.write = within.write, .part = element});
 }
 
+// The same of a slice of a container, which is kept whole before it changes.
 template <typename Container, typename Replacement>
 void AssignDesignatedSlice(
     const void* designation, std::optional<std::int64_t> start,
     std::int64_t count, const Replacement& replacement) {
   const ErasedDesignation& within = DesignationAt(designation);
+  auto& container = *static_cast<Container*>(within.part);
+  within.write->KeepPartOriginal(container);
   // A start that names no position assigns nothing, so one that moved an
-  // element names one.
-  if (static_cast<Container*>(within.part)
-          ->AssignSlice(start, count, replacement)) {
-    within.write->Moved(*start, count);
+  // element names one; an element past the last is skipped (LRM 7.4.5).
+  if (container.AssignSlice(start, count, replacement)) {
+    const std::int64_t size = *value::ReadPosition(container.Size());
+    within.write->Moved(*start, std::min(*start + count, size) - *start);
   }
 }
 
@@ -1120,11 +1147,24 @@ void AssignDesignatedArraySlice(
     std::optional<std::int64_t> start, std::int64_t count,
     std::span<const void* const> replacement) {
   const ErasedDesignation& within = DesignationAt(designation);
+  // Each element the slice writes is kept where it lies, before it changes;
+  // which exist is read off the array's count.
+  if (within.write->Undecided()) {
+    for (const std::int64_t ordinal : PositionsASliceWrites(
+             start, count, static_cast<std::int64_t>(type.Count()))) {
+      value::Formation formed{};
+      within.write->KeepLaidOutOriginal(
+          type.ElementType().Type(),
+          type.ElementMut(within.part, ordinal, formed),
+          PartPath::Element(ordinal));
+    }
+  }
   // A start that names no position assigns nothing, so one that moved an
-  // element names one.
+  // element names one; an element past the last is skipped (LRM 7.4.5).
   if (type.AssignSlice(
           within.part, start, static_cast<std::size_t>(count), replacement)) {
-    within.write->Moved(*start, count);
+    const auto size = static_cast<std::int64_t>(type.Count());
+    within.write->Moved(*start, std::min(*start + count, size) - *start);
   }
 }
 
@@ -1160,9 +1200,14 @@ auto StepIntoElement(
     -> SteppedElement {
   const base::SourceLocationScope bound(at);
   from.AdmitStep();
+  auto& container = *static_cast<Container*>(from.storage);
+  if (StepCanReshape(container, index)) {
+    KeeperThrough(from).Keep(PartPath{}, [&] {
+      return std::make_unique<KeptPartOriginal<Container>>(container);
+    });
+  }
   value::Formation formed{};
-  void* element =
-      static_cast<Container*>(from.storage)->ElementMut(index, formed);
+  void* element = container.ElementMut(index, formed);
   return {
       .element = element,
       .formed = formed,
@@ -1899,6 +1944,7 @@ void InsertDesignatedBits(
   }
   const ErasedDesignation& within = DesignationAt(designation);
   T& whole = *static_cast<T*>(within.part);
+  within.write->KeepPartOriginal(whole);
   const T before = whole;
   InsertBitsInto(
       whole.MutableView().Truncated(static_cast<std::uint64_t>(width)), bits,
@@ -1928,6 +1974,7 @@ void InsertDesignatedWideBits(
   const ErasedDesignation& within = DesignationAt(designation);
   const value::WideAt<T::kDomain> whole{
       .bytes = within.part, .width = static_cast<std::uint64_t>(width)};
+  within.write->KeepBitsOriginal(whole.MutableView(), range->clamped);
   if (!within.write->Undecided()) {
     InsertBitsInto(
         whole.MutableView(), bits, count, bits_are_four_state, *range);
@@ -8171,10 +8218,12 @@ auto lyra_rt_laidout_designate_component(
                   .ComponentAt(within.part, static_cast<std::size_t>(index))});
 }
 
-auto lyra_rt_laidout_designate_member(const void* designation, void* out)
-    -> void* {
+auto lyra_rt_laidout_designate_member(
+    const void* designation, const void* union_type, void* out) -> void* {
   const ErasedDesignation& within = DesignationAt(designation);
   if (within.write->Undecided()) {
+    within.write->KeepLaidOutOriginal(
+        lyra::runtime::TypeAt(union_type), within.part);
     within.write->Stepped(lyra::runtime::PartPath::Inexact());
   }
   return std::construct_at(static_cast<ErasedDesignation*>(out), within);
@@ -8203,11 +8252,11 @@ void lyra_rt_queue_assign_slice(
     const void* location) {
   const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
   const ErasedDesignation& within = DesignationAt(designation);
-  if (const auto written = static_cast<RuntimeQueue*>(within.part)
-                               ->AssignSlice(
-                                   PositionNamedAt(lo), PositionNamedAt(hi),
-                                   lyra::runtime::ElementHandles(
-                                       replacement, replacement_type))) {
+  auto& queue = *static_cast<RuntimeQueue*>(within.part);
+  within.write->KeepPartOriginal(queue);
+  if (const auto written = queue.AssignSlice(
+          PositionNamedAt(lo), PositionNamedAt(hi),
+          lyra::runtime::ElementHandles(replacement, replacement_type))) {
     within.write->Moved(
         static_cast<std::int64_t>(written->start),
         static_cast<std::int64_t>(written->count));

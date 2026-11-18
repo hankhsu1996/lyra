@@ -14,9 +14,6 @@ HammerBlade:16x8:hello:
 NVDLA:default:hello:
   stops: run
   says: did not end within
-OpenPiton:1x1:hello:
-  stops: run
-  says: the design keeps scheduling work and time never advances
 OpenTitan:default:hello:
   stops: run
   says: did not end within

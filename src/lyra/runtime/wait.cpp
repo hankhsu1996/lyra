@@ -27,7 +27,7 @@ void EnrolOnPlace(
   membership.through = watched.through;
   membership.reads = watched.reads;
   membership.observation = watched.observation;
-  watched.observable->MembersAt(watched.part).PushBack(membership);
+  watched.observable->Enrol(watched.part, membership);
 }
 
 Awaiter::Awaiter(std::size_t places) : memberships_(places) {
@@ -36,7 +36,11 @@ Awaiter::Awaiter(std::size_t places) : memberships_(places) {
 Awaiter::~Awaiter() = default;
 
 void Awaiter::EnrolOnLeaf(const Trigger& trigger) {
-  EnrolOnPlace(NextMembership(), this, trigger);
+  EnrolOnLeafAs(this, trigger);
+}
+
+void Awaiter::EnrolOnLeafAs(Observer observer, const Trigger& trigger) {
+  EnrolOnPlace(NextMembership(), observer, trigger);
 }
 
 void Awaiter::EnrolOn(IntrusiveList<WaitMembership>& target) {

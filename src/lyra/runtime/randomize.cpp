@@ -38,7 +38,7 @@ namespace lyra::runtime {
 namespace {
 
 auto ProblemOf(const value::ObjectRef& handle) -> ConstraintProblem& {
-  ConstraintProblem* problem = handle.Get<ConstraintProblem>();
+  auto* problem = handle.Get<ConstraintProblem>();
   if (problem == nullptr ||
       problem->definition != &ConstraintProblem::kDefinition) {
     throw InternalError(
@@ -86,11 +86,12 @@ auto Begin(
   if (!listed) {
     ObjectRandObjects(*object, handle);
   }
-  for (std::size_t position = 0; position < problem->Nested().size();
-       ++position) {
+  std::size_t position = 0;
+  while (position < problem->Nested().size()) {
     GcObject& nested = *ObjectRootOf(problem->Nested()[position]);
     ObjectPreRandomize(&nested);
     ObjectRandObjects(nested, handle);
+    ++position;
   }
   return handle;
 }

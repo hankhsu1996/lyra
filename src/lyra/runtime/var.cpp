@@ -1,8 +1,12 @@
 #include "lyra/runtime/var.hpp"
 
+#include <algorithm>
 #include <bit>
 #include <cstdint>
+#include <limits>
 #include <memory>
+#include <optional>
+#include <span>
 #include <utility>
 #include <variant>
 
@@ -13,6 +17,10 @@
 #include "lyra/runtime/owned_call.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/trigger.hpp"
+#include "lyra/value/integral.hpp"
+#include "lyra/value/integral_value_type.hpp"
+#include "lyra/value/kept_copy.hpp"
+#include "lyra/value/value_type.hpp"
 
 namespace lyra::runtime {
 
@@ -141,6 +149,68 @@ void ErasedReference::AdmitStep() const {
         "lending part of a variable a procedural continuous assignment holds "
         "is not yet supported");
   }
+}
+
+// A start past the array holds none of its elements, and an end the sum would
+// overflow lies past the array too.
+auto PositionsASliceWrites(
+    std::optional<std::int64_t> start, std::int64_t count, std::int64_t size)
+    -> std::ranges::iota_view<std::int64_t, std::int64_t> {
+  if (!start.has_value() || count <= 0 || *start >= size) {
+    return {};
+  }
+  const std::int64_t first = std::max<std::int64_t>(*start, 0);
+  const std::int64_t end =
+      *start > std::numeric_limits<std::int64_t>::max() - count
+          ? size
+          : std::min(*start + count, size);
+  return {first, std::max(first, end)};
+}
+
+auto ChangeBetween(
+    const value::ValueType& type, const void* before, const void* now)
+    -> std::optional<Change> {
+  if (const value::IntegralValueType* integral = type.AsIntegral()) {
+    const value::LoadedWords kept = integral->Load(before);
+    Change change = Change::Reaching(
+        kept.View(),
+        value::BitPositions{.lsb = 0, .width = integral->Shape().width});
+    change.SetAfter(integral->Load(now).View());
+    if (change.Unmoved()) {
+      return std::nullopt;
+    }
+    return change;
+  }
+  if (type.BitIdentical(before, now)) {
+    return std::nullopt;
+  }
+  return Change::Whole();
+}
+
+void ExchangeLaidOut(const value::ValueType& type, void* live, void* kept) {
+  const value::KeptCopy held(type, live);
+  type.Assign(live, kept);
+  type.Assign(kept, held.Bytes());
+}
+
+void OriginalKeeper::KeepBits(
+    const PartPath& within, value::IntegralView live,
+    value::BitPositions bits) const {
+  if (place == nullptr) {
+    return;
+  }
+  place->KeepBitsOriginal(named.Join(within), live, bits);
+}
+
+// Only a variable keeps anything: a class object's properties are never what
+// an `always_comb` or `always_latch` is triggered by (LRM 9.2.2.2.1), and a
+// net's shown value moves as the net resolves.
+auto KeeperThrough(const ErasedReference& lent) -> OriginalKeeper {
+  VariableCell* const* variable = std::get_if<VariableCell*>(&lent.holder);
+  if (variable == nullptr || !lent.NamesItsPart()) {
+    return {};
+  }
+  return {.place = *variable, .named = lent.part};
 }
 
 auto ErasedReference::Part(

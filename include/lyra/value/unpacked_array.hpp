@@ -51,10 +51,12 @@ template <typename T, OrdinalElements C>
 auto AssignRun(
     std::span<T> elements, std::optional<std::int64_t> start, std::size_t count,
     const C& value) -> bool {
-  if (!start.has_value()) {
+  const auto size = static_cast<std::int64_t>(elements.size());
+  // A start at or past the end names no element of the window, which also
+  // keeps the positions below from passing the largest one.
+  if (!start.has_value() || *start >= size) {
     return false;
   }
-  const auto size = static_cast<std::int64_t>(elements.size());
   bool moved = false;
   for (std::size_t i = 0; i < count; ++i) {
     const std::int64_t at = *start + static_cast<std::int64_t>(i);

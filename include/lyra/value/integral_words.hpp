@@ -208,6 +208,15 @@ struct IntegralViewOf {
         .width = width,
         .signedness = Signedness::kUnsigned};
   }
+
+  // The same value with the count of its words open, which only a value held
+  // as 64-bit words has.
+  [[nodiscard]] constexpr auto AsDynamic() const
+      -> IntegralViewOf<std::uint64_t, std::dynamic_extent, std::dynamic_extent>
+    requires std::same_as<Word, std::uint64_t>
+  {
+    return {.value = value, .unknown = unknown, .width = width};
+  }
 };
 using IntegralView =
     IntegralViewOf<std::uint64_t, std::dynamic_extent, std::dynamic_extent>;

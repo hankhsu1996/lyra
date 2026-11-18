@@ -4,16 +4,21 @@
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <memory>
 #include <optional>
+#include <ranges>
 #include <type_traits>
 #include <utility>
 #include <variant>
+#include <vector>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/base/source_location.hpp"
+#include "lyra/runtime/kept_original.hpp"
+#include "lyra/runtime/laid_out_storage.hpp"
 #include "lyra/runtime/object_change.hpp"
 #include "lyra/runtime/object_ref.hpp"
 #include "lyra/runtime/observable.hpp"
@@ -25,11 +30,13 @@
 #include "lyra/runtime/takeover.hpp"
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/runtime/value_storage_core.hpp"
+#include "lyra/runtime/words_storage.hpp"
 #include "lyra/support/region.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/container_lease.hpp"
 #include "lyra/value/formation.hpp"
 #include "lyra/value/integral.hpp"
+#include "lyra/value/kept_copy.hpp"
 #include "lyra/value/small_box.hpp"
 #include "lyra/value/value_type.hpp"
 #include "lyra/value/wide.hpp"
@@ -39,6 +46,12 @@ namespace lyra::value {
 template <typename T, std::int64_t kBound>
 class Queue;
 class RuntimeQueue;
+template <typename T>
+class DynamicArray;
+class RuntimeDynamicArray;
+template <typename K, typename V>
+class AssociativeArray;
+class RuntimeAssociativeArray;
 
 }  // namespace lyra::value
 
@@ -53,7 +66,28 @@ inline constexpr bool kIsQueue<value::Queue<T, kBound>> = true;
 template <>
 inline constexpr bool kIsQueue<value::RuntimeQueue> = true;
 
+template <typename Container>
+inline constexpr bool kIsDynamicArray = false;
+template <typename T>
+inline constexpr bool kIsDynamicArray<value::DynamicArray<T>> = true;
+template <>
+inline constexpr bool kIsDynamicArray<value::RuntimeDynamicArray> = true;
+
+template <typename Container>
+inline constexpr bool kIsAssociative = false;
+template <typename K, typename V>
+inline constexpr bool kIsAssociative<value::AssociativeArray<K, V>> = true;
+template <>
+inline constexpr bool kIsAssociative<value::RuntimeAssociativeArray> = true;
+
 }  // namespace detail
+
+// An array whose size changes at run time -- a dynamic array, an associative
+// array, a queue (LRM 7.5, 7.8, 7.10) -- and so moves and ends its elements
+// while it lies where it is itself.
+template <class T>
+concept ResizableArray = detail::kIsQueue<T> || detail::kIsDynamicArray<T> ||
+                         detail::kIsAssociative<T>;
 
 // A value a wait reads by bit position (LRM 9.4.2): an integral value, of a
 // type known where it is compiled or one held as its words at a width it was
@@ -98,7 +132,7 @@ void KeepAfter(Change& change, const T& storage) {
 
 // What a write into part of an owner's storage writes through (LRM 11.5.1).
 // The write reaches the owner's storage and lands its part there directly; the
-// owner is told once, when the write is over, whether it changed. Three things
+// owner is told once, when the write is over, whether it changed. Four things
 // that takes, named for the role rather than for either owner's vocabulary.
 //
 // `MutationStorage` is the storage itself, so a write reaches the part it
@@ -117,11 +151,20 @@ void KeepAfter(Change& change, const T& storage) {
 // owner's storage the write reached, and what can be said about which bits of
 // that part moved.
 //
+// `Keeper` is where a write keeps, before it changes a part, what the part held
+// before the event's execution under way, where an `always_comb` or
+// `always_latch` watches it: the variable `MutationStorage` is a part of, at
+// the path of that part; a part an inexact path reaches keeps nothing. A net's
+// driver keeps nothing: what an execution leaves of a net is its resolved
+// value, not one driver's contribution.
+//
 // Each sink claims the contract with a `static_assert(MutationSink<...>)`
 // beside its own definition, the way a value type claims its `lyra::value`
 // concepts; the bracket itself takes the sink unconstrained, because a sink
 // names the handle in its own partial-write entry's return type and checking
 // the constraint there would depend on the sink being complete.
+struct OriginalKeeper;
+
 template <class S>
 concept MutationSink =
     requires(S sink, const PartPath& reached, const Change& change) {
@@ -129,6 +172,7 @@ concept MutationSink =
       { sink.MutationStorage() } -> std::same_as<typename S::ValueType&>;
       { sink.Watched() } -> std::same_as<bool>;
       sink.PublishTransition(reached, change);
+      { sink.Keeper() } -> std::same_as<OriginalKeeper>;
     };
 
 // A sink whose writes a procedural continuous assignment can override (LRM
@@ -170,15 +214,41 @@ template <typename Key>
 }
 
 // The same step as a reference keeps it (LRM 13.5.2). A reference to an
-// element of a queue stays good while other elements are added and removed
-// around it (LRM 7.10), so the ordinal it was taken at says nothing of where
-// the element is later: its path stops at the queue, inexact.
+// element of an array whose size changes goes on naming that element while
+// the array grows, shrinks or is replaced around it, where it becomes an
+// outdated reference to an element the array no longer holds (LRM 13.5.2,
+// 7.10.3). The position it was taken at says nothing of where the element is
+// later, so its path stops at the array, inexact.
 template <typename Container, typename Key>
 [[nodiscard]] auto RetainedStepTo(const Key& key) -> PartPath {
-  if constexpr (detail::kIsQueue<Container>) {
+  if constexpr (ResizableArray<Container>) {
     return PartPath::Inexact();
   } else {
     return StepTo(key);
+  }
+}
+
+// The positions of an array of `size` elements that a slice of `count`
+// elements from `start` writes: those it names that the array holds, an
+// element past the last skipped (LRM 7.4.5, 7.6), so they cost the elements
+// written however far the slice reaches. None where `start` names no position.
+[[nodiscard]] auto PositionsASliceWrites(
+    std::optional<std::int64_t> start, std::int64_t count, std::int64_t size)
+    -> std::ranges::iota_view<std::int64_t, std::int64_t>;
+
+// Whether a step into the element `key` names can change the shape of
+// `container` and not only one element of it: the entry of an associative
+// array a write makes (LRM 7.8.7), or the element a write just past a queue's
+// last appends (LRM 7.10.1). What the container held before such a step is
+// kept whole.
+template <typename Container, typename Key>
+[[nodiscard]] auto StepCanReshape(const Container& container, const Key& key)
+    -> bool {
+  if constexpr (detail::kIsQueue<Container>) {
+    return StepTo(key) ==
+           PartPath::Element(value::ReadPosition(container.Size()));
+  } else {
+    return detail::kIsAssociative<Container>;
   }
 }
 
@@ -543,6 +613,7 @@ class Cell : public VariableCell {
     if (already_held()) {
       return;
     }
+    this->KeepOriginal(PartPath{}, [&] { return OriginalOf(storage_); });
     PublishTransition(PartPath{}, ReplaceWhole(storage_.Get(), overwrite));
   }
 
@@ -675,6 +746,33 @@ auto MakeTailCell(const Told& told) -> std::shared_ptr<TailCell<HeldAs>> {
   return MakeWithTail<TailCell<HeldAs>>(HeldAs::ValueLayoutFor(told), told);
 }
 
+// What became of a part between `before` and `now`: the bits that moved where
+// it is a packed value, so a wait reading only bits that moved back is passed
+// over, the whole of it otherwise, and none where it is as it was.
+template <class Part>
+  requires value::LyraValue<Part> || BitAddressed<Part>
+[[nodiscard]] auto ChangeBetween(const Part& before, const Part& now)
+    -> std::optional<Change> {
+  if constexpr (BitAddressed<Part>) {
+    Change change = KeptBefore(before);
+    KeepAfter(change, now);
+    if (change.Unmoved()) {
+      return std::nullopt;
+    }
+    return change;
+  } else {
+    if (before.IsBitIdentical(now)) {
+      return std::nullopt;
+    }
+    return Change::Whole();
+  }
+}
+// The same of a value laid out by `type` at `before` and at `now`, an integral
+// one compared by its bits, read as its type lays them out, however narrow.
+[[nodiscard]] auto ChangeBetween(
+    const value::ValueType& type, const void* before, const void* now)
+    -> std::optional<Change>;
+
 // What a write keeps of the part it lands on, to tell afterwards what it did
 // to it: a copy, of which nothing but whether it moved can be shown. The write
 // lies in the frame of whatever writes, so the copy is kept as a frame keeps a
@@ -705,10 +803,7 @@ KeptPart<Part>::~KeptPart() = default;
 
 template <class Part>
 auto KeptPart<Part>::ChangeTo(const Part& part) -> std::optional<Change> {
-  if (before_->IsBitIdentical(part)) {
-    return std::nullopt;
-  }
-  return Change::Whole();
+  return ChangeBetween(*before_, part);
 }
 
 // A bit-addressed part keeps only the words it lies in, as a change reaching
@@ -735,6 +830,98 @@ class KeptPart<Part> {
  private:
   Change reached_;
 };
+
+// Puts the value laid out by `type` at `kept` into `live`, and keeps what
+// `live` held instead.
+void ExchangeLaidOut(const value::ValueType& type, void* live, void* kept);
+
+// What a part held before the event's execution under way first wrote it,
+// kept as the value it is: a copy, compared once the execution ends with the
+// part it was copied from. The part is one a variable reaches by steps that fix
+// where it lies -- the variable itself, a member, an element of a fixed-size
+// array, an array whose size changes taken whole -- so it lies where it is for
+// as long as the place does.
+template <value::LyraValue Part>
+class KeptPartOriginal final : public KeptOriginal {
+ public:
+  explicit KeptPartOriginal(Part& live) : live_(&live), before_(live) {
+  }
+
+  [[nodiscard]] auto Changed() -> std::optional<Change> override {
+    return ChangeBetween(*before_, *live_);
+  }
+
+  void Exchange() override {
+    std::swap(*live_, *before_);
+  }
+
+ private:
+  Part* live_;
+  value::SmallBox<Part> before_;
+};
+
+// The same of an integral value wider than a word where it lies, named by a
+// view of its words: what is kept is a copy of the words, since a copy of the
+// view would name the part itself.
+template <value::HeldAsWords Wide>
+class KeptWideOriginal final : public KeptOriginal {
+ public:
+  explicit KeptWideOriginal(Wide live) : live_(live), before_(live.ByteSize()) {
+    std::memcpy(before_.data(), live_.bytes, before_.size());
+  }
+
+  [[nodiscard]] auto Changed() -> std::optional<Change> override {
+    return ChangeBetween(
+        Wide{.bytes = before_.data(), .width = live_.width}, live_);
+  }
+
+  void Exchange() override {
+    std::swap_ranges(
+        before_.begin(), before_.end(), static_cast<std::byte*>(live_.bytes));
+  }
+
+ private:
+  Wide live_;
+  std::vector<std::byte> before_;
+};
+
+// The same of a value laid out by a type the library is handed, which is its
+// bytes where it lies.
+class KeptLaidOutOriginal final : public KeptOriginal {
+ public:
+  KeptLaidOutOriginal(const value::ValueType& type, void* live)
+      : type_(&type), live_(live), before_(type, live) {
+  }
+
+  [[nodiscard]] auto Changed() -> std::optional<Change> override {
+    return ChangeBetween(*type_, before_.Bytes(), live_);
+  }
+
+  void Exchange() override {
+    ExchangeLaidOut(*type_, live_, before_.Bytes());
+  }
+
+ private:
+  const value::ValueType* type_;
+  void* live_;
+  value::KeptCopy before_;
+};
+
+// What each kind of storage keeps of the whole value it holds.
+template <value::LyraValue T>
+auto OriginalOf(ValueStorageCore<T>& storage) -> std::unique_ptr<KeptOriginal> {
+  return std::make_unique<KeptPartOriginal<T>>(storage.Storage());
+}
+template <value::StateDomain kDomain>
+auto OriginalOf(WordsStorage<kDomain>& storage)
+    -> std::unique_ptr<KeptOriginal> {
+  return std::make_unique<KeptWideOriginal<value::WideAt<kDomain>>>(
+      storage.Get());
+}
+inline auto OriginalOf(LaidOutStorage& storage)
+    -> std::unique_ptr<KeptOriginal> {
+  return std::make_unique<KeptLaidOutOriginal>(storage.Type(), storage.Bytes());
+}
 
 // Writes `value` into the bits `bits` names (LRM 11.5.1) and answers what the
 // write did to the bits of its value it reached, kept only where `watched` says
@@ -810,6 +997,14 @@ struct ErasedReference {
   // formed by, from the whole.
   PartPath part{};
 
+  // Whether the reference says which part of what holds it it names: the
+  // whole, or a part by the path it was formed by. One the solver forms, by a
+  // walk over storage whose type it does not hold, says neither, so a write
+  // through it keeps nothing.
+  [[nodiscard]] auto NamesItsPart() const -> bool {
+    return whole || !part.IsWhole();
+  }
+
   // Written here rather than in the library's own source because every write
   // through a reference asks them, and for storage whose variable nothing
   // samples or takes over each is a test or two.
@@ -873,6 +1068,35 @@ struct ErasedReference {
       void* storage, value::Formation formed, const PartPath& within) const
       -> ErasedReference;
 };
+
+// Where a write keeps what it changes from before the event's execution (LRM
+// 9.2.2.2): the place that is told of it, and the path of what the write names
+// within that place. Nothing where the write changes no place an execution
+// keeps anything of.
+struct OriginalKeeper {
+  Observable* place = nullptr;
+  PartPath named{};
+
+  // Has the place keep what the part `within` of what the write names holds,
+  // which `make` copies, before the write changes it.
+  template <class Make>
+  void Keep(const PartPath& within, Make make) const {
+    if (place == nullptr) {
+      return;
+    }
+    place->KeepOriginal(named.Join(within), make);
+  }
+
+  // The same of the bits `bits` of the integral value the part `within` is,
+  // whose words `live` names.
+  void KeepBits(
+      const PartPath& within, value::IntegralView live,
+      value::BitPositions bits) const;
+};
+
+// Where a write through `lent` keeps what it changes: in the variable it names
+// a part of, where it says which part.
+[[nodiscard]] auto KeeperThrough(const ErasedReference& lent) -> OriginalKeeper;
 
 // What keeps storage a call binds by reference in existence until the call
 // returns, whatever the program does meanwhile (LRM 13.5.2, 8.29): a share of
@@ -1034,7 +1258,10 @@ class VariableRef {
     SetThrough(
         erased_, [&] { ApplyOverriddenWrite(new_val); }, assign,
         [&] { return Storage().IsBitIdentical(new_val); },
-        [&] { return ReplaceWhole(Storage(), assign); });
+        [&] {
+          KeepWhole();
+          return ReplaceWhole(Storage(), assign);
+        });
   }
 
   // Opens a write into the referenced storage, as an observable cell itself
@@ -1064,6 +1291,9 @@ class VariableRef {
       const Key& key, base::SourceLocation at) const {
     const base::SourceLocationScope bound(at);
     erased_.AdmitStep();
+    if (StepCanReshape(Storage(), key)) {
+      KeepWhole();
+    }
     value::Formation formed{};
     auto& element = Storage().ElementMut(key, formed);
     return VariableRef<std::remove_reference_t<decltype(element)>>{
@@ -1077,6 +1307,9 @@ class VariableRef {
       const Key& key, base::SourceLocation at) const -> LeasedReference {
     const base::SourceLocationScope bound(at);
     erased_.AdmitStep();
+    if (StepCanReshape(Storage(), key)) {
+      KeepWhole();
+    }
     value::Formation formed{};
     auto& element = Storage().ElementMut(key, formed);
     const ErasedReference part =
@@ -1166,7 +1399,19 @@ class VariableRef {
     erased_.Report(within, change);
   }
 
+  [[nodiscard]] auto Keeper() const -> OriginalKeeper {
+    return KeeperThrough(erased_);
+  }
+
  private:
+  // Has the place this names a part of keep what that part holds, before a
+  // write through it, or a step that can make an element, changes it.
+  void KeepWhole() const {
+    Keeper().Keep(PartPath{}, [&] {
+      return std::make_unique<KeptPartOriginal<T>>(Storage());
+    });
+  }
+
   [[nodiscard]] auto Storage() const -> T& {
     return *static_cast<T*>(erased_.storage);
   }
@@ -1453,6 +1698,37 @@ class WriteBracket {
     return *storage_;
   }
 
+  // Has the place the sink writes keep what the part `further` leads to from
+  // the part the steps so far reached holds, which `make` copies, before the
+  // write changes it: where an `always_comb` or `always_latch` watches the
+  // place (LRM 9.2.2.2). Only a write whose steps are still followed keeps
+  // anything: one a step settled has changed only what that step kept, or
+  // lands where no read reaches (LRM 7.4.5); and an overridden write changes
+  // the place only once it is over, where the place keeps what it takes as a
+  // whole.
+  template <class Make>
+  void KeepOriginal(const PartPath& further, Make make) {
+    if (!Undecided()) {
+      return;
+    }
+    sink_.Keeper().Keep(reached_.Join(further), make);
+  }
+  // The same of a part of a type known here.
+  template <value::LyraValue Part>
+  void KeepPartOriginal(Part& part, const PartPath& further = PartPath{}) {
+    KeepOriginal(further, [&] {
+      return std::make_unique<KeptPartOriginal<Part>>(part);
+    });
+  }
+  // The same of the bits `bits` of the integral value the steps so far
+  // reached, whose words `live` names.
+  void KeepBitsOriginal(value::IntegralView live, value::BitPositions bits) {
+    if (!Undecided()) {
+      return;
+    }
+    sink_.Keeper().KeepBits(reached_, live, bits);
+  }
+
   // Whether the part a write lands on is worth keeping from before the write:
   // something reads the answer, and no step has given it already.
   [[nodiscard]] auto Undecided() const -> bool {
@@ -1478,7 +1754,8 @@ class WriteBracket {
 
   // A write of the `count` elements from `start` of the part reached (LRM 7.6)
   // moved at least one of them. Those lying before the first element are no
-  // elements of it.
+  // elements of it; the caller, which knows the part's size, ends the run at
+  // its last.
   void Moved(std::int64_t start, std::int64_t count) {
     if (!Open()) {
       return;
@@ -1589,8 +1866,13 @@ class Designation {
     }
   }
 
+  // An array whose size changes moves and ends its elements as it grows and
+  // shrinks (LRM 7.5, 7.8, 7.10), so it is kept whole before a step into it.
   template <typename Key>
   auto DesignateElement(const Key& key) {
+    if constexpr (ResizableArray<Part>) {
+      write_->KeepPartOriginal(*part_);
+    }
     value::Formation formed{};
     auto& element = part_->ElementMut(key, formed);
     write_->Formed(formed);
@@ -1619,11 +1901,14 @@ class Designation {
 
   // A member of a union lies where every other member does (LRM 7.3), so no
   // step of a path stands for it: the path stops at the union, which every
-  // member reads, while the write keeps only what it lands on below it.
+  // member reads, so the union is what the event's execution keeps from before
+  // its first write, while the write itself keeps only what it lands on below
+  // it.
   template <std::size_t I>
   auto DesignateMember() {
     auto& member = part_->template Component<I>();
     if (write_->Undecided()) {
+      write_->KeepPartOriginal(*part_);
       write_->Stepped(PartPath::Inexact());
     }
     return Designation<Sink, std::remove_reference_t<decltype(member)>>{
@@ -1632,22 +1917,36 @@ class Designation {
 
   // A reference to the bits of a value of `Bits` at `position` within the
   // part (LRM 11.5.1), written within this write. They lie in the part's own
-  // words, so a write through it lands on them where they are.
+  // words, so a write through it lands on them where they are. An event's
+  // execution keeps the words the bits written lie in; a part narrower than a
+  // word is that word, kept whole.
   template <typename Bits, typename Position>
   auto SliceMut(const Position& position) {
     auto bits = part_->template SliceMut<Bits>(position);
-    return DesignatedBits<Sink, decltype(bits)>{*write_, std::move(bits)};
+    const auto words = part_->MutableView();
+    if constexpr (requires { words.AsDynamic(); }) {
+      return DesignatedBits<Sink, decltype(bits)>{
+          *write_, std::move(bits), words.AsDynamic()};
+    } else {
+      write_->KeepPartOriginal(*part_);
+      return DesignatedBits<Sink, decltype(bits)>{
+          *write_, std::move(bits), std::nullopt};
+    }
   }
 
   // `value` written into `count` elements of the part from `start` (LRM 7.6),
   // several elements rather than one place, so the write learns what moved
   // from the assignment, which compares each element before writing it. A
-  // start that names no position assigns nothing.
+  // start that names no position assigns nothing, and an element past the
+  // last is skipped (LRM 7.4.5), so what moved ends at the part's end.
   template <typename Position, typename Value>
   void AssignSlice(
       const Position& start, std::int64_t count, const Value& value) {
+    KeepSlice(value::ReadPosition(start), count);
     if (part_->AssignSlice(start, count, value)) {
-      write_->Moved(*value::ReadPosition(start), count);
+      const std::int64_t first = *value::ReadPosition(start);
+      const std::int64_t size = *value::ReadPosition(part_->Size());
+      write_->Moved(first, std::min(first + count, size) - first);
     }
   }
 
@@ -1658,6 +1957,7 @@ class Designation {
   void AssignSlice(
       const Position& lo, const Position& hi, const Value& value,
       base::SourceLocation at) {
+    write_->KeepPartOriginal(*part_);
     if (const auto written = part_->AssignSlice(lo, hi, value, at)) {
       write_->Moved(
           static_cast<std::int64_t>(written->start),
@@ -1666,6 +1966,7 @@ class Designation {
   }
 
   auto operator*() -> Part& {
+    write_->KeepPartOriginal(*part_);
     if (write_->Undecided()) {
       kept_.emplace(*part_);
     }
@@ -1679,6 +1980,27 @@ class Designation {
   }
 
  private:
+  // What the `count` elements from `first` held, kept before a slice write
+  // changes them: each where it lies in a fixed-size array, the whole of an
+  // array whose size changes, which moves its elements. A bound naming no
+  // position writes nothing.
+  void KeepSlice(std::optional<std::int64_t> first, std::int64_t count) {
+    if constexpr (ResizableArray<Part>) {
+      write_->KeepPartOriginal(*part_);
+    } else {
+      if (!write_->Undecided()) {
+        return;
+      }
+      for (const std::int64_t ordinal : PositionsASliceWrites(
+               first, count, *value::ReadPosition(part_->Size()))) {
+        value::Formation formed{};
+        write_->KeepPartOriginal(
+            part_->ElementMut(value::Position::FromInt(ordinal), formed),
+            PartPath::Element(ordinal));
+      }
+    }
+  }
+
   WriteBracket<Sink>* write_;
   Part* part_;
   std::optional<KeptPart<Part>> kept_;
@@ -1688,12 +2010,16 @@ class Designation {
 // named by `Bits`, the reference to them the value hands out. They lie in the
 // value's own words, so the write lands on them where they are, and each write
 // through them keeps what they held, writes them, and tells the write which
-// bits it reached.
+// bits it reached. `whole` names the words of the value they lie in, of which
+// an event's execution keeps those the bits written lie in; none for a value
+// narrower than a word, which the execution has kept whole already.
 template <class Sink, class Bits>
 class DesignatedBits {
  public:
-  DesignatedBits(WriteBracket<Sink>& write, Bits bits)
-      : write_(&write), bits_(std::move(bits)) {
+  DesignatedBits(
+      WriteBracket<Sink>& write, Bits bits,
+      std::optional<value::IntegralView> whole)
+      : write_(&write), bits_(std::move(bits)), whole_(whole) {
   }
 
   DesignatedBits(const DesignatedBits&) = delete;
@@ -1704,6 +2030,11 @@ class DesignatedBits {
 
   template <class Value>
   void Set(const Value& value) {
+    if (whole_.has_value() && write_->Undecided()) {
+      if (const std::optional<value::BitPositions> reached = bits_.Reached()) {
+        write_->KeepBitsOriginal(*whole_, *reached);
+      }
+    }
     if (const std::optional<Change> change =
             WriteBits(bits_, value, write_->Undecided())) {
       write_->Landed(*change);
@@ -1715,12 +2046,14 @@ class DesignatedBits {
   template <class Inner, class Position>
   [[nodiscard]] auto SliceMut(const Position& position) const {
     auto inner = bits_.template SliceMut<Inner>(position);
-    return DesignatedBits<Sink, decltype(inner)>{*write_, std::move(inner)};
+    return DesignatedBits<Sink, decltype(inner)>{
+        *write_, std::move(inner), whole_};
   }
 
  private:
   WriteBracket<Sink>* write_;
   Bits bits_;
+  std::optional<value::IntegralView> whole_;
 };
 
 // A write opened in the full-expression that writes, and ended with it, which

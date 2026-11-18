@@ -27,6 +27,7 @@ namespace lyra::runtime {
 class AssertionControl;
 class AssertionControls;
 class CancellationTarget;
+struct CombinationalWatch;
 class DiagnosticDispatcher;
 class FileTable;
 class LoopBlocks;
@@ -40,6 +41,7 @@ class Scope;
 class Timer;
 class ValueDumps;
 class RandomizeSettings;
+struct ReachedWait;
 class RuntimeEffects;
 
 // The runtime capability surface reachable from generated code. Every side
@@ -93,9 +95,11 @@ class RuntimeEffects {
   // untouched is passed over, and every other one asks its awaiter what is
   // parked there now and whether this was an event for it: an event control
   // whose evaluation only reads storage by what its expression is worth now, a
-  // wait for a state by whether that state holds, and every other wait by
-  // having been reached at all, its process deciding once it runs (LRM 4.5,
-  // 9.2.2.2.1, 9.4.2, 15.5.1). Waking only queues and leaves every membership
+  // wait for a state by whether that state holds, the wait of an
+  // `always_comb` or `always_latch` by what the event's execution under way
+  // leaves, asked once it ends, and every other wait by having been reached at
+  // all, its process deciding once it runs (LRM 4.5, 9.2.2.2, 9.2.2.2.1, 9.4.2,
+  // 15.5.1). Waking only queues and leaves every membership
   // where it is, so each activation is woken as it is found; what is woken to
   // run at the occurrence runs once every membership has been asked, so no
   // code of the design runs while the list is walked.
@@ -108,6 +112,29 @@ class RuntimeEffects {
   // place is visited.
   void WakeParkedOn(
       Observable& place, const PartPath& written, const Change& change);
+
+  // Asks each wait on `members`, the waits on one part of a place a write
+  // reached, whether `change` was an event for it, and runs nothing woken.
+  // `kept` says whether what the place kept holds all the write changed, as
+  // it was before the event's execution.
+  void TellWrite(
+      IntrusiveList<WaitMembership>& members, const Change& change, bool kept);
+
+  // Tells the waits on `members` what the event's execution that ended left
+  // changed there. Each write of the execution told every other wait as it
+  // landed, so only an `always_comb`'s or `always_latch`'s is told.
+  void TellWhatTheEventLeft(
+      IntrusiveList<WaitMembership>& members, const Change& change);
+
+  // What the event's execution under way -- a process up to its stop, one
+  // deferred update, one timer firing (LRM 4.5) -- leaves is judged once it
+  // hands control back: `watch` keeps what the parts of its place the
+  // execution wrote held before it, and `reached` is a wait a write of the
+  // execution reached while a process was parked on it, or one that began
+  // watching in the middle of it. Each leaves the run's list as it ends, so one
+  // that ends first is asked nothing.
+  void JudgeOnceTheEventIsExecuted(CombinationalWatch& watch);
+  void AskOnceTheEventIsExecuted(ReachedWait& reached);
 
   // The members of scopes that references were bound into, which a force on
   // one acts through (LRM 10.6.2).

@@ -53,7 +53,9 @@ a foreign task carried on a fiber (LRM 35.9), which waits for no occurrence at a
   observable, a `wait fork` condition, a process's termination -- when it is built, and leaves when
   it ends. Reaching a place asks the wait whether an activation is parked on it, and takes that
   activation if the occurrence is an event for it. One stop answers every change that arrives before
-  the activation runs.
+  the activation runs. Revised 2026-11-15: the wait of an `always_comb` or `always_latch` is asked
+  once the event's execution making a change ends, from what the execution left
+  (`an-always-comb-is-triggered-by-what-a-run-leaves.md`).
 - **What a change made while the process runs is depends on what the process is.** A procedure's
   timing control waits only for what happens once the procedure reaches it (LRM 9.4.2), so a change
   the procedure makes itself while running, or one that reaches the wait while nothing is parked
