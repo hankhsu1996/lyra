@@ -864,10 +864,12 @@ auto lyra_rt_wait_until(void* reports, std::uint64_t reports_count, void* out)
     -> void*;
 
 // A wait for what happens at one of `triggers` to be an event for it (LRM
-// 9.4.2 / 9.4.2.2 / 15.5.2), or at one leaf of the implicit list a report
-// settled (LRM 9.2.2.2.1). An empty span means "never wake up".
+// 9.4.2 / 9.4.2.2 / 15.5.2). An empty span means "never wake up".
 auto lyra_rt_wait_on(void* triggers, std::uint64_t triggers_count, void* out)
     -> void*;
+// The wait of an `always_comb` or `always_latch` on the implicit list a report
+// settled (LRM 9.2.2.2.1), woken by what an event's execution leaves changed
+// of a leaf.
 auto lyra_rt_wait_on_implicit_list(const void* report, void* out) -> void*;
 
 // The wait of a continuous process on the source elements of its expression,
@@ -2921,12 +2923,13 @@ auto lyra_rt_assocarray_designate_element(
 auto lyra_rt_laidout_designate_component(
     const void* designation, std::int64_t index, const void* tuple_type,
     void* out) -> void*;
-// A member of the union a write designates (LRM 7.3). Every member lies at the
-// union's own start, so the part is where the union lies whichever member it
-// is, and it takes neither the position nor the type; no step of a path stands
-// for one, so the path the write reports stops at the union.
-auto lyra_rt_laidout_designate_member(const void* designation, void* out)
-    -> void*;
+// A member of the union a write designates (LRM 7.3), laid out by
+// `union_type`. Every member lies at the union's own start, so the part is
+// where the union lies whichever member it is, and it takes no position; no
+// step of a path stands for one, so the path the write reports stops at the
+// union, which is the part kept from before the event's execution.
+auto lyra_rt_laidout_designate_member(
+    const void* designation, const void* union_type, void* out) -> void*;
 // A slice of what a write designates, written within it (LRM 7.6), telling the
 // write whether an element moved. The replacement is a fixed-size unpacked
 // array, crossing with its type; a designated array of that kind is told its

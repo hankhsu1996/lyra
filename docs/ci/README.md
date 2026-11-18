@@ -362,6 +362,13 @@ because no case names a path.
 Each runs on pull requests, and all but `exception-policy.yml`, `architecture.yml` and
 `runtime-abi.yml` on push to `main` as well.
 
+Every job of every workflow names its runner's Ubuntu release, `ubuntu-24.04`, rather than
+`ubuntu-latest`. The image moves its compiler, its C++ library and the release apt.llvm.org has to
+publish for on its own schedule, and a job whose machine moves under it goes red on a change that
+touched nothing of it: when `ubuntu-latest` became 26.04, the formatter could not be installed and
+the GCC build found headers its toolchain does not declare. Moving to a newer release is a change of
+its own, made to every job at once.
+
 | Workflow               | What it enforces                                                                                       |
 | ---------------------- | ------------------------------------------------------------------------------------------------------ |
 | `bazel-build.yml`      | `bazel build //...` with warnings fatal, then the default set, the same build optimized, and under GCC |

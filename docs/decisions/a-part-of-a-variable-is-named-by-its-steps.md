@@ -67,8 +67,10 @@ procedure's own write is taken out of its reads (LRM 9.2.2.2.1) only where its p
 past the bound a procedure is run once more by a write of its own that the standard leaves off its
 list, where that write lands after the procedure has stopped, as a nonblocking assignment's does. A
 blocking one lands while the procedure runs, when it waits on nothing, and runs it no further. A
-reference into a queue is inexact from the queue on for another reason: the element it names keeps
-no ordinal while others are added and removed around it (LRM 7.10).
+reference into a queue or a dynamic array is inexact from the array on for another reason: the
+element it names stays the one it named while the array grows, shrinks or is replaced around it, an
+outdated reference once the array no longer holds it (LRM 13.5.2, 7.10.3), so it keeps no position
+in the array (revised 2026-11-17, from queues alone).
 
 **D5. A variable keeps its waits on a tree shaped like its parts.** The waits on the whole variable
 are at the root, and the waits on a part at the node its path leads to, each node made when a wait

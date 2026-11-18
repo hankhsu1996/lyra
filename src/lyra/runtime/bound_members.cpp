@@ -5,10 +5,11 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <variant>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
-#include "lyra/runtime/intrusive_list.hpp"
+#include "lyra/runtime/combinational_awaiter.hpp"
 #include "lyra/runtime/observable.hpp"
 #include "lyra/runtime/owned_call.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
@@ -122,8 +123,16 @@ void BoundMembers::Move(
       const PartPath watched =
           enrolled.path.StripPrefix(membership.through->part);
       membership.Unlink();
+      const PartPath at = names.part.Join(watched);
+      // A wait the event's execution under way reached here is no longer where
+      // what the execution left here is told, so it is woken as a write's own
+      // reaching would have woken it, and it watches the new place from now on.
+      if (CombinationalAwaiter* const* awaiter =
+              std::get_if<CombinationalAwaiter*>(&membership.observer)) {
+        (*awaiter)->Relocated(current_runtime());
+      }
       if (to != nullptr) {
-        to->MembersAt(names.part.Join(watched)).PushBack(membership);
+        to->Enrol(at, membership);
       }
     }
   }

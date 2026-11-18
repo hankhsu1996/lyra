@@ -87,6 +87,47 @@ class OpenWrite {
     bracket_of_->landed(bracket_.data(), change);
   }
 
+  // Has the place the write writes keep what the part `further` leads to from
+  // the part the steps so far reached holds, which `make` copies, before the
+  // write changes it, where an `always_comb` or `always_latch` watches the
+  // place (LRM 9.2.2.2). A write nothing reads the answer of asks only that.
+  template <class Make>
+  void KeepOriginal(const PartPath& further, Make make) {
+    if (!Undecided()) {
+      return;
+    }
+    bracket_of_->keep_original(bracket_.data(), further, OriginalMadeBy(make));
+  }
+  // The same of a part of a type known here, of one laid out by `type`, and
+  // of an integral value wider than a word.
+  template <value::LyraValue Part>
+  void KeepPartOriginal(Part& part) {
+    KeepOriginal(PartPath{}, [&] {
+      return std::make_unique<KeptPartOriginal<Part>>(part);
+    });
+  }
+  void KeepLaidOutOriginal(
+      const value::ValueType& type, void* part,
+      const PartPath& further = PartPath{}) {
+    KeepOriginal(further, [&] {
+      return std::make_unique<KeptLaidOutOriginal>(type, part);
+    });
+  }
+  template <value::HeldAsWords Wide>
+  void KeepWideOriginal(Wide part) {
+    KeepOriginal(PartPath{}, [&] {
+      return std::make_unique<KeptWideOriginal<Wide>>(part);
+    });
+  }
+  // The same of the bits `bits` of the integral value the steps so far
+  // reached, whose words `live` names: only the words they lie in.
+  void KeepBitsOriginal(value::IntegralView live, value::BitPositions bits) {
+    if (!Undecided()) {
+      return;
+    }
+    bracket_of_->keep_bits_original(bracket_.data(), live, bits);
+  }
+
   // The write lands on `part`, whose value from before the write is kept where
   // the answer is still wanted.
   template <typename Part>
@@ -94,6 +135,7 @@ class OpenWrite {
     if (!Undecided()) {
       return;
     }
+    KeepPartOriginal(part);
     std::construct_at(Landing<PartLanding<Part>>(landing_.data()), part);
     landing_of_ = &kLandingOf<Part>;
   }
@@ -105,6 +147,7 @@ class OpenWrite {
     if (!Undecided()) {
       return;
     }
+    KeepLaidOutOriginal(type, part);
     std::construct_at(Landing<LaidOutLanding>(landing_.data()), type, part);
     landing_of_ = &kLaidOutLandingOf;
   }
@@ -117,6 +160,7 @@ class OpenWrite {
     if (!Undecided()) {
       return;
     }
+    KeepWideOriginal(part);
     std::construct_at(Landing<WideLanding<Wide>>(landing_.data()), part);
     landing_of_ = &kWideLandingOf<Wide>;
   }
@@ -138,6 +182,10 @@ class OpenWrite {
     void (*stepped)(void* room, const PartPath& step);
     void (*moved)(void* room, std::int64_t start, std::int64_t count);
     void (*landed)(void* room, const Change& change);
+    void (*keep_original)(
+        void* room, const PartPath& further, MakeOriginal make);
+    void (*keep_bits_original)(
+        void* room, value::IntegralView live, value::BitPositions bits);
     void (*end)(void* room);
   };
 
@@ -171,6 +219,14 @@ class OpenWrite {
       .landed =
           [](void* room, const Change& change) {
             Bracket<Sink>(room)->Landed(change);
+          },
+      .keep_original =
+          [](void* room, const PartPath& further, MakeOriginal make) {
+            Bracket<Sink>(room)->KeepOriginal(further, make);
+          },
+      .keep_bits_original =
+          [](void* room, value::IntegralView live, value::BitPositions bits) {
+            Bracket<Sink>(room)->KeepBitsOriginal(live, bits);
           },
       .end =
           [](void* room) {

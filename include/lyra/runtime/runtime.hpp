@@ -22,6 +22,7 @@
 #include "lyra/runtime/assertion_control.hpp"
 #include "lyra/runtime/bound_members.hpp"
 #include "lyra/runtime/closure.hpp"
+#include "lyra/runtime/combinational_awaiter.hpp"
 #include "lyra/runtime/command_line.hpp"
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/coverage.hpp"
@@ -29,6 +30,7 @@
 #include "lyra/runtime/effect_storage.hpp"
 #include "lyra/runtime/file_table.hpp"
 #include "lyra/runtime/intrusive_list.hpp"
+#include "lyra/runtime/kept_original.hpp"
 #include "lyra/runtime/mem_file.hpp"
 #include "lyra/runtime/observable.hpp"
 #include "lyra/runtime/owned_call.hpp"
@@ -344,6 +346,12 @@ class Runtime final : public RuntimeEffects {
   auto DrainRegions(
       support::Region first, support::Region last, SlotPasses& passes) -> bool;
   void RunRegion(support::Region region);
+  // The end of one event's execution -- a process up to its stop, one deferred
+  // update, one timer firing (LRM 4.5) -- once it has handed control back: each
+  // part it wrote of a place an `always_comb` or `always_latch` watches is
+  // compared with what it held before, the waits on objects that expired
+  // meanwhile are told, and each wait the execution has to ask is decided.
+  void EndEventExecution();
   // Tells the waits on objects that expired since this was last asked (LRM
   // 8.30.3), with no execution running: each runs where its context places a
   // wake, as at any other occurrence, and what that runs may expire more.
@@ -382,6 +390,13 @@ class Runtime final : public RuntimeEffects {
   // before everything that holds an object, so it outlives every object that
   // can expire into it.
   IntrusiveList<WaitMembership> expired_;
+  // What the event's execution under way leaves, judged once it ends: the
+  // places keeping what the parts it wrote held before it, and the waits its
+  // writes reached while a process was parked on them or that began watching
+  // in the middle of it. Declared before everything that holds a place or a
+  // wait, each of which leaves its list as it ends.
+  IntrusiveList<CombinationalWatch> kept_originals_;
+  IntrusiveList<ReachedWait> reached_waits_;
   std::unique_ptr<Design> design_;
   // Where every deferred effect of the run gets its bytes, whichever slot and
   // region holds it, so it outlives every slot.

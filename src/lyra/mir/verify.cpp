@@ -1220,12 +1220,25 @@ void VerifyWritesLandInWritableStorage(
       if (const auto* field = std::get_if<FieldAccessExpr>(&data)) {
         reached = field->receiver;
       } else if (const auto* opened = std::get_if<DerefExpr>(&data)) {
-        if (ReachesReadOnly(
-                unit.types.Get(block.exprs.Get(opened->pointer).type))) {
+        const Type& through =
+            unit.types.Get(block.exprs.Get(opened->pointer).type);
+        if (ReachesReadOnly(through)) {
           throw InternalError(
               std::format(
                   "mir verify: {} writes through a read-only reference "
                   "(expression {} of its block) -- please report this as a bug",
+                  describe(), id.value));
+        }
+        // Storage a capability wrapper stands for is written through a write
+        // opened on the wrapper, which is what tells whoever waits on it and
+        // keeps what an event's execution changed (LRM 4.3, 9.2.2.2); a write
+        // landing in it any other way would do neither.
+        if (through.IsCapabilityWrapper()) {
+          throw InternalError(
+              std::format(
+                  "mir verify: {} writes into what a capability wrapper holds "
+                  "without opening a write on it (expression {} of its block) "
+                  "-- please report this as a bug",
                   describe(), id.value));
         }
         reached = opened->pointer;

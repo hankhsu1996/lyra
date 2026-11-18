@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 
 #include "lyra/base/fixed_array.hpp"
@@ -107,7 +108,8 @@ struct Trigger {
 // its bits can be shown unchanged and every wait on it is asked. Which part it
 // was is told beside the change, by the part's path.
 //
-// It is only ever told for a write that changed the bits it reached, so a leaf
+// It is only ever told where the bits it reached moved -- by a write, or by an
+// event's execution measured against what the part held before it -- so a leaf
 // reading all of them is moved without being compared.
 class Change {
  public:
@@ -154,6 +156,11 @@ class Change {
   // those bits need not be asked; `false` only that it may have been affected,
   // which is all a change whose parts are not bits can say.
   [[nodiscard]] auto KnownUnchanged(value::BitPositions reads) const -> bool;
+
+  // The elements a change of elements reached, by their ordinals; none for a
+  // change of bits, of the whole, or of no elements in particular.
+  [[nodiscard]] auto ElementsReached() const
+      -> std::optional<value::BitPositions>;
 
  private:
   Change();

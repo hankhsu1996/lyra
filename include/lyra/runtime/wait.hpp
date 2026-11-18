@@ -60,6 +60,7 @@ struct InRegion {
 using Resumption = std::variant<
     WithoutStopping, OnAnOccurrence, LaterInThisTimeStep, AtTime, InRegion>;
 
+class CombinationalAwaiter;
 class DumpWatch;
 class ProgramThreads;
 class PropertyEvaluation;
@@ -67,7 +68,10 @@ class SampledValue;
 class SourceFollower;
 
 // What is enrolled on a place to be told of what happens there: the awaiter of
-// a wait, told so that the execution parked on it may be woken; a sampled
+// a wait, told so that the execution parked on it may be woken; the wait of an
+// `always_comb` or `always_latch`, which notes what reaches it and is woken
+// once the event's execution that wrote it ends, by what that execution left;
+// a sampled
 // value, which wakes nothing; what keeps forced storage showing its source,
 // which wakes nothing either; a program, told as each of its initial
 // procedures ends, which ends the rest of its threads at once once they all
@@ -76,8 +80,8 @@ class SourceFollower;
 // either (LRM 16.17); or a value dump recording the place, which wakes nothing
 // and records the change at the end of the time step (LRM 21.7.1.4).
 using Observer = std::variant<
-    Awaiter*, SampledValue*, SourceFollower*, ProgramThreads*,
-    PropertyEvaluation*, DumpWatch*>;
+    Awaiter*, CombinationalAwaiter*, SampledValue*, SourceFollower*,
+    ProgramThreads*, PropertyEvaluation*, DumpWatch*>;
 
 // One place an observer watches: an observable, a join, a `wait fork`
 // condition, a process's termination. It stands for as long as the observer
@@ -101,7 +105,8 @@ struct WaitMembership : IntrusiveListNode<WaitMembership> {
 
   // What decides whether reaching this membership is an event for the wait
   // (LRM 9.4.2): reaching it is a candidacy, and this decides. It holds nothing
-  // where being reached is the whole of it -- an implicit sensitivity, a join.
+  // where it decides nothing -- an implicit sensitivity, which being reached
+  // decides, or for an `always_comb` what an event's execution left; a join.
   // It is held rather than pointed at, so it lives as long as anything watching
   // for that wait does.
   Observation observation;
@@ -184,6 +189,14 @@ class Awaiter {
 
   // Enrols on the place `trigger` watches, for this awaiter's whole life.
   void EnrolOnLeaf(const Trigger& trigger);
+  // The same, enrolled as `observer`: the alternative of `Observer` this
+  // awaiter is told as.
+  void EnrolOnLeafAs(Observer observer, const Trigger& trigger);
+
+  // Whether an activation is parked here now.
+  [[nodiscard]] auto Parked() const -> bool {
+    return parked_ != nullptr;
+  }
 
   // Enrols on `target`, which fires unconditionally, for this awaiter's whole
   // life.

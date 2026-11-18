@@ -11,6 +11,10 @@
 # BuildBuddy.
 build:gcc --config=rbe
 build:gcc --extra_toolchains=@buildbuddy_toolchain//:ubuntu_cc_toolchain
+# A test that runs only on a machine of its own is still compiled and linked
+# in the image, since that is where this GCC is; the build under it runs no
+# test.
+build:gcc --modify_execution_info=CppCompile=-no-remote-exec,CppLink=-no-remote-exec
 
 # Every compile targets the oldest Linux Lyra supports, whichever machine runs
 # it. Every program the build's clang links carries its C++ library inside it,

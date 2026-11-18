@@ -1965,6 +1965,11 @@ class Driver {
   void PublishTransition(const PartPath& reached, const Change& change) const {
     Net().DriverWrote(current_runtime(), contribution_, reached, change);
   }
+  // A net keeps nothing of what it shows: each evaluation of a driver writes
+  // it once, so each write is what that evaluation leaves.
+  static auto Keeper() -> OriginalKeeper {
+    return {};
+  }
 
  private:
   void RecordVariable(const ErasedReference& variable) const {

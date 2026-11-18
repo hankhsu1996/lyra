@@ -5,7 +5,9 @@
 #include <utility>
 #include <vector>
 
+#include "lyra/runtime/combinational_awaiter.hpp"
 #include "lyra/runtime/object_ref.hpp"
+#include "lyra/runtime/observable.hpp"
 #include "lyra/runtime/observation.hpp"
 #include "lyra/runtime/read_report.hpp"
 #include "lyra/runtime/region.hpp"
@@ -18,9 +20,9 @@ namespace lyra::runtime {
 namespace {
 
 // A wait on storage that stays the same for as long as the body holding it
-// runs: an event control a change decides (LRM 9.4.2), or an implicit list
-// (LRM 9.2.2.2.1, 9.4.2.2). It enrols on each place once, where it is built,
-// and a stop says only that an activation is parked here now.
+// runs: an event control a change decides (LRM 9.4.2), `@*` among them (LRM
+// 9.4.2.2). It enrols on each place once, where it is built, and a stop says
+// only that an activation is parked here now.
 class StandingAwaiter final : public Awaiter {
  public:
   explicit StandingAwaiter(std::span<const Trigger> triggers)
@@ -56,8 +58,8 @@ class StandingAwaiter final : public Awaiter {
     return OnAnOccurrence{};
   }
 
-  // An event control and an implicit list are each a violation report flush
-  // point when they resume their process (LRM 12.4.2.1).
+  // An event control is a violation report flush point when it resumes its
+  // process (LRM 12.4.2.1).
   [[nodiscard]] auto IsReportFlushPoint() const -> bool override {
     return true;
   }
@@ -245,6 +247,103 @@ auto Collected(std::span<ReadReport* const> reports) -> ReachedPlaces {
 
 }  // namespace
 
+CombinationalAwaiter::CombinationalAwaiter(std::span<const Trigger> triggers)
+    : Awaiter(triggers.size()) {
+  reached_.awaiter = this;
+  for (const Trigger& trigger : triggers) {
+    EnrolOnLeafAs(this, trigger);
+  }
+}
+
+auto CombinationalAwaiter::Begin() -> Resumption {
+  Forget();
+  owed_ = false;
+  return OnAnOccurrence{};
+}
+
+// Started again from outside, it is the one way this wait begins while another
+// process's execution may be under way; stopping at its own stop it begins at
+// the end of an execution of its own, whose writes never reach it.
+auto CombinationalAwaiter::Again() -> Resumption {
+  if (owed_ || reached_through_ != nullptr) {
+    Forget();
+    owed_ = false;
+    return WithoutStopping{};
+  }
+  const Resumption resumption = Begin();
+  BeginWatching(current_runtime());
+  return resumption;
+}
+
+void CombinationalAwaiter::BeginWatching(RuntimeEffects& effects) {
+  begun_during_the_execution_ = true;
+  AskOnceTheEventIsExecuted(effects);
+}
+
+void CombinationalAwaiter::AskOnceTheEventIsExecuted(RuntimeEffects& effects) {
+  if (reached_.next == nullptr) {
+    effects.AskOnceTheEventIsExecuted(reached_);
+  }
+}
+
+void CombinationalAwaiter::Reached(
+    RuntimeEffects& effects, const WaitMembership& membership, bool judged) {
+  if (!Parked()) {
+    return;
+  }
+  if (reached_through_ == nullptr) {
+    reached_through_ = &membership;
+    AskOnceTheEventIsExecuted(effects);
+  }
+  if (!judged || begun_during_the_execution_) {
+    unjudged_ = true;
+  }
+}
+
+void CombinationalAwaiter::Relocated(RuntimeEffects& effects) {
+  if (reached_through_ != nullptr) {
+    unjudged_ = true;
+  }
+  BeginWatching(effects);
+}
+
+void CombinationalAwaiter::LeftChanged(RuntimeEffects& effects) {
+  if (reached_through_ == nullptr || !Parked()) {
+    return;
+  }
+  Wake(effects);
+}
+
+// Nothing but process control takes a process off this wait while an event is
+// executed, so one no longer parked here was stopped from outside.
+void CombinationalAwaiter::EventExecuted(RuntimeEffects& effects) {
+  if (!Parked()) {
+    owed_ = reached_through_ != nullptr;
+    Forget();
+    return;
+  }
+  if (reached_through_ != nullptr && unjudged_) {
+    Wake(effects);
+    return;
+  }
+  Forget();
+}
+
+void CombinationalAwaiter::Wake(RuntimeEffects& effects) {
+  const WaitMembership* through = reached_through_;
+  Forget();
+  if (Activation* woken = WokenBy(*through)) {
+    effects.Wake(woken);
+  }
+}
+
+void CombinationalAwaiter::Forget() {
+  reached_.Unlink();
+  reached_through_ = nullptr;
+  begun_during_the_execution_ = false;
+  unjudged_ = false;
+}
+
 auto WaitOn(std::span<const Trigger> triggers) -> Wait {
   return MakeWait<StandingAwaiter>(triggers);
 }
@@ -254,7 +353,7 @@ auto WaitOn(std::span<const Trigger* const> triggers) -> Wait {
 }
 
 auto WaitOnImplicitList(const ReadReport* report) -> Wait {
-  return WaitOn(report->ImplicitList());
+  return MakeWait<CombinationalAwaiter>(report->ImplicitList());
 }
 
 auto WaitContinuouslyOn(std::span<const Trigger> triggers) -> Wait {

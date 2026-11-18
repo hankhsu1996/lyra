@@ -870,10 +870,11 @@ enum class BuiltinFn : std::uint16_t {
   // an event evaluates it, by the waiting process for a wait that process
   // decides (LRM 4.5), and answers one or zero.
   kObservationFires,
-  // LRM 9.4.2 / 9.4.2.2 value-change wait -- an `@(...)`, an `@*`, an
-  // implicit list. The wait is built on one trigger per watched leaf, or on
-  // the implicit list a report settled (LRM 9.2.2.2.1), so a stop reached again
-  // stops at the same wait. Each answers the wait.
+  // LRM 9.4.2 / 9.4.2.2 value-change wait -- an `@(...)`, an `@*` -- built on
+  // one trigger per watched leaf, so a stop reached again stops at the same
+  // wait; and the wait of an `always_comb` or `always_latch` on the implicit
+  // list a report settled (LRM 9.2.2.2.1), woken by what an event's execution
+  // leaves changed of it. Each answers the wait.
   kWaitOn,
   kWaitOnImplicitList,
   // LRM 4.9.1 / 4.9.2 the wait of a continuous assignment or a procedural

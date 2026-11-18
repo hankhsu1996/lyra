@@ -41,7 +41,7 @@ permissions:
 jobs:
   plan:
     name: Choose what is counted
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       base: ${{ steps.revisions.outputs.base }}
       head: ${{ steps.revisions.outputs.head }}
@@ -78,7 +78,7 @@ jobs:
   corpus:
     name: Count the corpus
     needs: plan
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
       - name: Checkout code
@@ -128,7 +128,7 @@ jobs:
     name: Count ${{ matrix.design }}
     needs: plan
     if: needs.plan.outputs.designs != '[]'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
       # Every design reports, and with the corpus job beside them these take
@@ -207,7 +207,7 @@ jobs:
     name: Compare
     needs: [plan, corpus, design]
     if: always() && needs.plan.result == 'success'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout code
         uses: actions/checkout@v6

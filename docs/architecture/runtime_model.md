@@ -130,7 +130,9 @@ constraint that the type system should be enforcing.
 - A pipeline where the frontend-elaborated instance graph drives compile-time work.
 - A constructor body that yields to the scheduler or advances simulation time.
 - A trace or update-set subsystem layered over writes. A store notifies its subscribers as it
-  happens, so there is no separate pass that reconciles what changed afterwards.
+  happens. The one thing reconciled afterwards is what an event's execution left, for the waits of
+  `always_comb` and `always_latch` alone, from what the writes kept of the parts they changed
+  (`decisions/an-always-comb-is-triggered-by-what-a-run-leaves.md`).
 
 ## Adjacent docs
 

@@ -227,8 +227,11 @@ auto IsTheDesignsOwn(
 // or a few stores.
 // The list is what makes that a decision rather than a drift: an entry is added
 // only with the reason it has to be read where it is used.
-constexpr std::array<std::string_view, 8> kFoldedByTheWritePath = {
+constexpr std::array<std::string_view, 9> kFoldedByTheWritePath = {
     "lyra::runtime::Observable::HasMembers() const",
+    // Asked by every watched store, before it changes anything, whether an
+    // `always_comb` watches the place and so the store keeps what it held.
+    "lyra::runtime::Observable::WatchedCombinationally() const",
     "lyra::runtime::IntrusiveList<lyra::runtime::WaitMembership>::Empty() "
     "const",
     "lyra::runtime::VariableCell::OverridesWrites() const",
