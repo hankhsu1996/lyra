@@ -160,8 +160,8 @@ enum class BuiltinFn : std::uint16_t {
   kAssocPrev,
   // The smallest and largest currently allocated index (LRM 20.7 `$low` /
   // `$high` over an associative dimension). Where no index is allocated each
-  // answers the index type's default, which is `'x` for a 4-state index, as
-  // LRM 20.7 requires.
+  // answers its answer type's default, which is the `'x` LRM 20.7 requires,
+  // since the query answers a 4-state type.
   kAssocMinIndex,
   kAssocMaxIndex,
   // LRM 7.9.11: an associative array equal to the one acted on whose read of

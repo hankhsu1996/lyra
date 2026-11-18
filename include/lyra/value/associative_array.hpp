@@ -184,7 +184,7 @@ class AssociativeArray {
   // largest currently allocated index, as a value of `R`, the integral type the
   // query answers at, which need not be the index type. With none allocated the
   // dimension has no index to report and the query reads `R`'s default, which
-  // is `'x` for the `integer` LRM 20.7 states.
+  // is the `'x` LRM 20.7 requires, since the query answers a 4-state type.
   template <IntegralValue R>
   [[nodiscard]] auto MinIndex() const -> R {
     return IndexAs<R>(FirstIndex());

@@ -138,10 +138,10 @@ default, since each comes out the same at every evaluation:
   reduction (LRM 7.12.3 `sum`, `product`, `and`, `or`, `xor`) over a receiver holding no entries,
   which the clause leaves open, answers the default of the type it answers -- the element type's, or
   the type the `with` expression chose. `$low` and `$high` over an associative dimension holding
-  nothing "shall return 'x" (LRM 20.7), which in a 4-state answer type is its default and in a
-  2-state one becomes its default. Both answers are singular types (LRM 6.4), whose default Table
-  6-7 fixes from the type alone, so the entry is told its answer's type and builds that default
-  itself. An aggregate's default needs code the design states (D2), and no such entry answers one.
+  nothing "shall return 'x" (LRM 20.7), which is the default of the 4-state type they answer. Both
+  answers are singular types (LRM 6.4), whose default Table 6-7 fixes from the type alone, so the
+  entry is told its answer's type and builds that default itself. An aggregate's default needs code
+  the design states (D2), and no such entry answers one.
 - **A conversion out of a stream of bits is told its answer's type and handed nothing else of it**
   (LRM 6.24.3). Its destination's stream has a shape the type fixes, a fixed-size array's count
   included, so the reader of each type takes the stream and writes the value; no value of the type
