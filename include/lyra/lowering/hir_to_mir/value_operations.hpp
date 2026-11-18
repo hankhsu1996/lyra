@@ -22,13 +22,13 @@ class UnitLowerer;
 
 // The operations on a whole value the struct or the union `record` names has,
 // over values of `type`, each answered by a method of the record: what it
-// answers is read off its members, a struct's (LRM 7.2) each member in turn
-// and a union's (LRM 7.3) its first member, read as that member's type holds a
-// value (LRM 7.3.2), or for a tagged union the member its tag names, which has
-// no stream and no net's folds. Which there are follows from the members
-// alone, so the unit declaring the record and every unit reaching it list the
-// same methods. `structure` is the record's declaration where it is a struct,
-// and nothing for a union.
+// answers is read off its members, a struct's (LRM 7.2) each member in turn,
+// an untagged union's (LRM 7.3) its first member read through its storage but
+// for what the storage answers itself -- whether it changed, its positions, a
+// fill -- and a tagged union's the member its tag names, which has no stream.
+// Which there are follows from the members alone, so the unit declaring the
+// record and every unit reaching it list the same methods. `structure` is the
+// record's declaration where it is a struct, and nothing for a union.
 [[nodiscard]] auto RecordOperationsOf(
     UnitLowerer& lowerer, const hir::UnpackedStructDefinition* structure,
     mir::RecordId record, mir::TypeId type)
@@ -48,16 +48,16 @@ struct RecordMethodBody {
     UnitLowerer& lowerer, const hir::UnpackedStructDefinition* structure,
     mir::RecordId record, mir::TypeId type) -> std::vector<RecordMethodBody>;
 
-// Whether the net types' tables fold contributions to a net of `type` (LRM
-// 6.6.1, 6.6.3). They are tables over 4-state bits. An integral net holds its
-// contributions as 4-state positions whatever its type, and shows the result
-// at its type, a 2-state one taking x and z as 0 (LRM 6.11.2), so it folds in
-// either state. A fixed-size unpacked array, structure or union holds each
-// contribution as a value of its own type, so it folds where every part can
-// hold the `z` a driver leaves where it drives nothing: a 4-state integral part
-// and an aggregate of such. A net of any other type has no resolution
-// function, and one driver decides it (LRM 6.6.7).
-[[nodiscard]] auto HasNetFolds(
+// Whether the net types' tables resolve a net of `type` position by position
+// (LRM 6.6.1, 6.6.3, 6.6.7). They are tables over 4-state bits, and a net
+// holds its drivers' contributions as 4-state positions whatever its type,
+// showing the result at its type, where a 2-state bit takes x and z as 0 (LRM
+// 6.11.2). So a net resolves where every bit it has is a bit of an integral
+// value: an integral type of either state, and a fixed-size unpacked array,
+// structure or untagged union of such. A net of any other type -- one holding
+// a real, a string or a handle, which have no bits a table reads -- has no
+// resolution function and is unresolved (LRM 6.6.7).
+[[nodiscard]] auto NetResolves(
     const mir::CompilationUnit& unit, mir::TypeId type) -> bool;
 
 // How a body answering an operation of a type takes each value it is asked
@@ -75,13 +75,40 @@ struct RecordMethodBody {
     const mir::CompilationUnit& unit, mir::TypeId type,
     support::ValueOperation answers) -> std::optional<mir::CallableCode>;
 
-// How many positions a procedural continuous assignment may hold some of in a
-// value of `type` (LRM 10.6.2): an integral value's bits, a product's
-// components' and a fixed-size unpacked array's elements' positions one part
-// after another, the first part's first, and one for any other value, which is
-// held whole.
+// How many positions a value of `type` has, which a procedural continuous
+// assignment may hold some of (LRM 10.6.2) and a net resolves each of (LRM
+// 6.6.7): an integral value's bits; a real's IEEE 754 bits (LRM 6.12); a
+// product's components' and a fixed-size unpacked array's elements' positions
+// one part after another, the first part's first; an untagged union's
+// storage's, which each member is a view of from the first (LRM 7.3); a tagged
+// union's widest member's and then its tag's (LRM 7.3.2); and one for any
+// other value, which is held whole.
 [[nodiscard]] auto PositionCountOf(
     const mir::CompilationUnit& unit, mir::TypeId type) -> std::uint64_t;
+
+// How many positions the widest of `members` has, which every member of a
+// union lies within from the first (LRM 7.3, 7.3.2).
+[[nodiscard]] auto WidestPositionCountOf(
+    const mir::CompilationUnit& unit, std::span<const mir::TypeId> members)
+    -> std::uint64_t;
+
+// The integral type holding every position of a value of `type`, the first
+// least significant: what a driver of a part of an unpacked type gives, and
+// what a type's positions operations take and answer.
+[[nodiscard]] auto PositionsTypeOf(
+    const mir::CompilationUnit& unit, mir::TypeId type) -> mir::TypeId;
+
+// `value`'s positions as one integral value of `positions_type`, and the value
+// of `type` an integral value of its positions holds: an integral value's bits
+// as they are, a real's IEEE 754 bits (LRM 6.12, 20.5), and any other value's
+// by its type's own positions operations. Together they make a member of an
+// untagged union a view of the union's storage (LRM 7.3).
+[[nodiscard]] auto BuildToPositions(
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId value,
+    mir::TypeId positions_type) -> mir::ExprId;
+[[nodiscard]] auto BuildFromPositions(
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId positions,
+    mir::TypeId type) -> mir::Expr;
 
 // Whether `operation` is one asked of a whole value, which a type with
 // operations of its own answers with its own body, rather than an operation of

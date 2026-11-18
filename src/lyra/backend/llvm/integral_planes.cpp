@@ -584,78 +584,6 @@ class PlaneArithmetic {
     return Planes{.value = Or(kept, Not(agreed)), .unknown = Not(agreed)};
   }
 
-  // LRM 6.6.1 Table 6-2, 6.6.3 Tables 6-3 and 6-4: z defers to the other
-  // driver; where both drive, tri-state passes agreement and makes a conflict
-  // x, wired-and lets any 0 win, wired-or any 1.
-  [[nodiscard]] auto Resolved(
-      Planes a, Planes b, value::NetResolution fold) const -> Planes {
-    llvm::Value* const a_z = And(Not(a.value), a.unknown);
-    llvm::Value* const b_z = And(Not(b.value), b.unknown);
-    llvm::Value* const take_a = And(Not(a_z), b_z);
-    llvm::Value* const a_drives = Not(a_z);
-    llvm::Value* const b_drives = Not(b_z);
-    llvm::Value* const both = And(a_drives, b_drives);
-    llvm::Value* const value_from_b = And(a_z, b.value);
-    llvm::Value* const value_from_a = And(take_a, a.value);
-    llvm::Value* const value = Or(value_from_b, value_from_a);
-    llvm::Value* const unknown_from_b = And(a_z, b.unknown);
-    llvm::Value* const unknown_from_a = And(take_a, a.unknown);
-    llvm::Value* const unknown = Or(unknown_from_b, unknown_from_a);
-    const auto any_x = [&] {
-      llvm::Value* const a_x = And(a.value, a.unknown);
-      llvm::Value* const b_x = And(b.value, b.unknown);
-      return Or(a_x, b_x);
-    };
-    switch (fold) {
-      case value::NetResolution::kTriState: {
-        llvm::Value* const values_agree = Not(Xor(a.value, b.value));
-        llvm::Value* const unknowns_agree = Not(Xor(a.unknown, b.unknown));
-        llvm::Value* const same = And(both, And(values_agree, unknowns_agree));
-        llvm::Value* const conflict = And(both, Not(same));
-        return Planes{
-            .value = Or(value, Or(And(same, a.value), conflict)),
-            .unknown = Or(unknown, Or(And(same, a.unknown), conflict))};
-      }
-      case value::NetResolution::kWiredAnd: {
-        llvm::Value* const a_value_clear = Not(a.value);
-        llvm::Value* const a_zero = And(a_value_clear, Not(a.unknown));
-        llvm::Value* const b_value_clear = Not(b.value);
-        llvm::Value* const b_zero = And(b_value_clear, Not(b.unknown));
-        llvm::Value* const any_zero = Or(a_zero, b_zero);
-        llvm::Value* const no_zero = And(both, Not(any_zero));
-        return Planes{
-            .value = Or(value, no_zero),
-            .unknown = Or(unknown, And(no_zero, any_x()))};
-      }
-      case value::NetResolution::kWiredOr: {
-        llvm::Value* const a_one = And(a.value, Not(a.unknown));
-        llvm::Value* const b_one = And(b.value, Not(b.unknown));
-        llvm::Value* const any_one = Or(a_one, b_one);
-        llvm::Value* const undecided = And(both, Not(any_one));
-        llvm::Value* const x_bits = And(undecided, any_x());
-        return Planes{
-            .value = Or(value, Or(And(both, any_one), x_bits)),
-            .unknown = Or(unknown, x_bits)};
-      }
-    }
-    throw InternalError("llvm codegen: unknown net fold");
-  }
-
-  // LRM 28.12.1: the stronger contribution determines every position it
-  // drives, which is every position where it is not z, and the weaker one the
-  // rest.
-  [[nodiscard]] auto Dominating(Planes stronger, Planes weaker) const
-      -> Planes {
-    llvm::Value* const undriven = And(Not(stronger.value), stronger.unknown);
-    llvm::Value* const stronger_value = And(stronger.value, Not(undriven));
-    llvm::Value* const weaker_value = And(weaker.value, undriven);
-    llvm::Value* const value = Or(stronger_value, weaker_value);
-    llvm::Value* const stronger_unknown = And(stronger.unknown, Not(undriven));
-    llvm::Value* const weaker_unknown = And(weaker.unknown, undriven);
-    return Planes{
-        .value = value, .unknown = Or(stronger_unknown, weaker_unknown)};
-  }
-
  private:
   [[nodiscard]] static auto Bits(std::uint64_t count) -> unsigned {
     return static_cast<unsigned>(count);
@@ -881,11 +809,6 @@ auto LowerOnPlanes(
   const auto reduced = [&](value::ReductionOp reduction) {
     return answer_bit(words.Reduced(load(0), reduction));
   };
-  const auto resolved = [&](value::NetResolution fold) {
-    const Planes lhs = load(0);
-    const Planes rhs = load(1);
-    return words.Resolved(lhs, rhs, fold);
-  };
   const auto shifted = [&](ShiftKind kind) {
     const Planes operand = load(0);
     const std::uint64_t operand_width = width(0);
@@ -1058,20 +981,14 @@ auto LowerOnPlanes(
       const bool holds_unknown = answers_unknown();
       return words.MergeConditional(lhs, rhs, holds_unknown);
     }
-    case IntegralOp::kResolveTriState:
-      return resolved(value::NetResolution::kTriState);
-    case IntegralOp::kResolveWiredAnd:
-      return resolved(value::NetResolution::kWiredAnd);
-    case IntegralOp::kResolveWiredOr:
-      return resolved(value::NetResolution::kWiredOr);
-    case IntegralOp::kDominate:
-      return binary(&PlaneArithmetic::Dominating);
     // Long work at every width, which the library carries out: a power, a
     // count of bits, a logarithm, a reversal of blocks, and a value read out
     // of text or of what a foreign call left. The positions a procedural
     // continuous assignment shows are the library's too, since only a write it
-    // overrides asks for them.
+    // overrides asks for them, and so are the positions a net resolved, which
+    // only a net showing them asks to have laid in.
     case IntegralOp::kTakePositions:
+    case IntegralOp::kWithPositions:
     case IntegralOp::kPower:
     case IntegralOp::kCountBits:
     case IntegralOp::kCeilLog2:
@@ -1130,12 +1047,6 @@ void StorePlanes(
         planes.unknown, builder.CreateConstInBoundsGEP1_64(
                             builder.getInt8Ty(), at, plane_bytes));
   }
-}
-
-void ClearAboveWidth(
-    llvm::IRBuilderBase& builder, llvm::Value* at,
-    const value::IntegralShape& shape) {
-  StorePlanes(builder, LoadPlanes(builder, at, shape), at, shape);
 }
 
 }  // namespace lyra::backend::llvm_backend

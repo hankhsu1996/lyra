@@ -148,11 +148,10 @@ void ForEachExpr(const StmtData& data, const auto& reach) {
 // and two of them are the same program, and the evaluations it stands for are
 // those of what it reaches. A read of storage with no base is an evaluation,
 // since a write between two of them makes them two values -- a static variable
-// or property is storage a call the body makes can write. So is a read of
-// overlaid storage, which makes a value of its type out of the bits there, and
-// reaching an object through a class handle, which opens the handle and can
-// fail the design (LRM 8.4), in the unit as it is built as much as once the
-// conversion has made the opening a call.
+// or property is storage a call the body makes can write. So is reaching an
+// object through a class handle, which opens the handle and can fail the
+// design (LRM 8.4), in the unit as it is built as much as once the conversion
+// has made the opening a call.
 auto ComputesNothingItself(
     const CompilationUnit& unit, const Block& block, ExprId id) -> bool {
   const TypePool& types = unit.types;
@@ -171,8 +170,7 @@ auto ComputesNothingItself(
           [](const AddressOfExpr&) { return true; },
           [](const BorrowExpr&) { return true; },
           [&](const CopyExpr& copy) {
-            return ValueLiesInStorage(unit, block, id) &&
-                   BaseOfPlace(types, block, copy.place).has_value();
+            return BaseOfPlace(types, block, copy.place).has_value();
           },
           [](const DiscriminantExpr&) { return true; },
           [](const FieldAccessExpr&) { return true; },
@@ -187,7 +185,7 @@ auto ComputesNothingItself(
           [](const MoveExpr&) { return false; },
           [](const ClosureExpr&) { return false; },
           [](const CompositeExpr&) { return false; },
-          [](const UnionExpr&) { return false; },
+          [](const TaggedUnionExpr&) { return false; },
           [](const AwaitExpr&) { return false; },
           [](const WaitExpr&) { return false; },
           [](const VectorGetExpr&) { return false; }},
@@ -258,7 +256,9 @@ auto Describe(const ExprData& data) -> std::string {
             return "a closure construction";
           },
           [](const CompositeExpr&) -> std::string { return "a composite"; },
-          [](const UnionExpr&) -> std::string { return "a union literal"; },
+          [](const TaggedUnionExpr&) -> std::string {
+            return "a tagged union built holding a member";
+          },
           [](const AwaitExpr&) -> std::string { return "an await"; },
           [](const WaitExpr&) -> std::string { return "a wait"; },
           [](const VectorGetExpr&) -> std::string {
@@ -413,12 +413,8 @@ void VerifyPlacesAreRead(
               describe(), taker, Describe(block.exprs.Get(id).data), id.value));
     }
   };
-  // A read of overlaid storage is the value a read through that member makes
-  // of the bits there, which lies in no storage, so it is held as any value
-  // is.
   const auto as_storage = [&](ExprId id, std::string_view taker) {
-    if (std::holds_alternative<CopyExpr>(block.exprs.Get(id).data) &&
-        ValueLiesInStorage(unit, block, id)) {
+    if (std::holds_alternative<CopyExpr>(block.exprs.Get(id).data)) {
       throw InternalError(
           std::format(
               "mir verify: in {}, {} takes a read (expression {} of its "
@@ -724,7 +720,7 @@ auto RefersToStorageEndingWith(
           [&](const CompositeExpr& composite) {
             return any_refers(composite.parts, itself);
           },
-          [&](const UnionExpr& u) { return refers(u.value); },
+          [&](const TaggedUnionExpr& u) { return refers(u.value); },
           [&](const ClosureExpr& closure) {
             return any_refers(closure.field_inits, [](const FieldInit& init) {
               return init.value;
@@ -888,15 +884,18 @@ void VerifyUnionValues(
               "(expression {} of its block) -- please report this as a bug",
               describe(), id.value));
     }
-    if (const auto* built = std::get_if<UnionExpr>(&expr.data)) {
+    // A tagged union is built holding a member it has; an untagged union is
+    // built as its one storage (LRM 7.3, 7.3.2).
+    if (const auto* built = std::get_if<TaggedUnionExpr>(&expr.data)) {
       const std::optional<std::span<const TypeId>> members =
           OverlaidMembers(unit, expr.type);
-      if (!members.has_value() || built->member.value >= members->size()) {
+      if (!IsTaggedUnion(unit, expr.type) ||
+          built->member.value >= members->size()) {
         throw InternalError(
             std::format(
-                "mir verify: {} builds a union holding a member its type does "
-                "not have (expression {} of its block) -- please report this "
-                "as a bug",
+                "mir verify: {} builds a union holding a member, of a type "
+                "that is no tagged union or has no such member (expression {} "
+                "of its block) -- please report this as a bug",
                 describe(), id.value));
       }
     }
@@ -1537,13 +1536,16 @@ auto CodeNamed(
 }
 
 // The type of each position a composite of `type` fills, in order: a
-// product's components, an element list's elements, or the members of a
-// structure of the library. Nothing for any other type, whose positions no
-// MIR type states.
+// product's components, an untagged union's one storage, an element list's
+// elements, or the members of a structure of the library. Nothing for any
+// other type, whose positions no MIR type states.
 auto PositionsOf(const CompilationUnit& unit, TypeId type)
     -> std::optional<std::vector<TypeId>> {
   if (const auto components = ProductElements(unit, type)) {
     return std::vector<TypeId>(components->begin(), components->end());
+  }
+  if (const std::optional<TypeId> storage = UnionStorageOf(unit, type)) {
+    return std::vector<TypeId>{*storage};
   }
   const Type& composed = unit.types.Get(type);
   if (const auto* elements = composed.As<MachineArrayType>()) {
@@ -1957,54 +1959,21 @@ void VerifyConstantsMeetTheirTypes(
   }
 }
 
-// Storage with no address of its own -- a member of a union, and what lies
-// under one -- is never what a reference the program holds ends on (LRM
-// 13.5.2), so nothing takes its address. Storage another member of an
-// untagged union overlays holds bits that make a value of its type only once
-// read, so a borrow binds its read, and a call is entered on it only to reach
-// a part of it or to change it.
+// Storage with no address of its own -- a member of a tagged union, and what
+// lies under one -- is never what a reference the program holds ends on (LRM
+// 13.5.2), so nothing takes its address.
 void VerifyStorageWithoutAnAddress(
     const CompilationUnit& unit, const Block& block, const auto& describe) {
-  const auto kind_of = [&](ExprId operand) {
-    return IsPlace(block.exprs.Get(operand).data)
-               ? KindOfPlace(unit, block, operand)
-               : PlaceKind::kOrdinary;
-  };
-  const auto refuse = [&](ExprId id, std::string_view what) {
-    throw InternalError(
-        std::format(
-            "mir verify: {} {} (expression {} of its block) -- please report "
-            "this as a bug",
-            describe(), what, id.value));
-  };
   for (const ExprId id : block.exprs.Ids()) {
-    const ExprData& data = block.exprs.Get(id).data;
-    if (const auto* address = std::get_if<AddressOfExpr>(&data)) {
-      if (kind_of(address->operand) != PlaceKind::kOrdinary) {
-        refuse(id, "takes the address of storage with none of its own");
-      }
-    } else if (const auto* borrow = std::get_if<BorrowExpr>(&data)) {
-      if (kind_of(borrow->operand) == PlaceKind::kOverlaid) {
-        refuse(id, "borrows storage another member of a union overlays");
-      }
-    } else if (const auto* call = std::get_if<CallExpr>(&data)) {
-      const std::optional<ExprId> receiver = CalleeReceiver(call->callee);
-      if (!receiver.has_value() || kind_of(*receiver) != PlaceKind::kOverlaid) {
-        continue;
-      }
-      // Only a step into a part, and a write of a window of elements, which
-      // writes what it is handed without reading what it replaces, are
-      // entered where overlaid storage lies; a method changing such storage
-      // reads what it changes, so it is entered on a read of it, written back.
-      const std::optional<support::BuiltinFn> entry = DirectBuiltinFn(*call);
-      if (!entry.has_value() ||
-          (!SelectionOf(*call).has_value() &&
-           *entry != support::BuiltinFn::kAssignElementSlice)) {
-        refuse(
-            id,
-            "enters a call on storage another member of a union overlays "
-            "without reading it");
-      }
+    const auto* address = std::get_if<AddressOfExpr>(&block.exprs.Get(id).data);
+    if (address != nullptr && IsPlace(block.exprs.Get(address->operand).data) &&
+        KindOfPlace(unit, block, address->operand) != PlaceKind::kOrdinary) {
+      throw InternalError(
+          std::format(
+              "mir verify: {} takes the address of storage with none of its "
+              "own (expression {} of its block) -- please report this as a "
+              "bug",
+              describe(), id.value));
     }
   }
   for (const BlockId id : block.child_scopes.Ids()) {
@@ -2086,7 +2055,7 @@ void VerifyConstantsAreFolded(
             [](const BorrowExpr&) {}, [](const MoveExpr&) {},
             [](const CopyExpr&) {}, [](const DiscriminantExpr&) {},
             [](const FieldAccessExpr&) {}, [](const ClosureExpr&) {},
-            [](const CompositeExpr&) {}, [](const UnionExpr&) {},
+            [](const CompositeExpr&) {}, [](const TaggedUnionExpr&) {},
             [](const AwaitExpr&) {}, [](const WaitExpr&) {},
             [](const VectorGetExpr&) {}},
         expr.data);
@@ -2305,7 +2274,7 @@ void VerifyLargeValuesLieInStorage(
     }
     if (made_in_storage.at(id.value) ||
         !IsTooLargeForAFrame(unit, block.exprs.Get(id).type) ||
-        ValueLiesInStorage(unit, block, id)) {
+        ValueLiesInStorage(block, id)) {
       continue;
     }
     throw InternalError(
@@ -2562,7 +2531,7 @@ auto StatedNotToLeave(const Expr& expr) -> bool {
           [](const DiscriminantExpr&) { return false; },
           [](const ClosureExpr&) { return false; },
           [](const CompositeExpr&) { return false; },
-          [](const UnionExpr&) { return false; },
+          [](const TaggedUnionExpr&) { return false; },
           [](const AwaitExpr&) { return false; },
           [](const WaitExpr&) { return false; },
           [](const VectorGetExpr&) { return false; }},
@@ -3398,7 +3367,7 @@ class HandedClosures {
             [&](const DiscriminantExpr&) -> Reached { RefuseUnfollowed(id); },
             [&](const ClosureExpr&) -> Reached { RefuseUnfollowed(id); },
             [&](const CompositeExpr&) -> Reached { RefuseUnfollowed(id); },
-            [&](const UnionExpr&) -> Reached { RefuseUnfollowed(id); },
+            [&](const TaggedUnionExpr&) -> Reached { RefuseUnfollowed(id); },
             [&](const AwaitExpr&) -> Reached { RefuseUnfollowed(id); },
             [&](const WaitExpr&) -> Reached { RefuseUnfollowed(id); },
             [&](const VectorGetExpr&) -> Reached { RefuseUnfollowed(id); }},

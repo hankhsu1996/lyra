@@ -460,30 +460,14 @@ struct PortConnection {
   auto operator==(const PortConnection&) const -> bool = default;
 };
 
-// Some of one net's positions, as one operand of a side names them. `part` is
-// the part of a net the source wrote -- the net whole, or a constant select of
-// it -- and `offset` and `width` say where among that part's positions they
-// start, counted from the part's lowest, and how many there are. A select's
-// index may be a value each construction is given, so the part is stated as
-// the select rather than as the positions one construction settles it to.
-//
-// They are counted in positions, never in the `[msb:lsb]` the net was declared
-// with: LRM 10.11 gives an overlay the bit overlay rules of a packed union, and
-// LRM 7.6 makes whole-value correspondence positional rather than
-// range-relative.
-struct NetPositions {
-  ExprId part;
-  std::uint32_t offset{};
-  std::uint32_t width{};
-
-  auto operator==(const NetPositions&) const -> bool = default;
-};
-
-// One side of a join: the positions each of its operands names, most
-// significant first. A side naming one whole net has one operand, and a
-// concatenation names the positions of each of its operands (LRM 10.11
-// `net_lvalue`).
-using NetSide = std::vector<NetPositions>;
+// One side of a join: the part of a net each of its operands names -- the net
+// whole, or a constant select of it -- most significant first. A side naming
+// one whole net has one operand, and a concatenation names each of its
+// operands (LRM 10.11 `net_lvalue`). A select's index may be a value each
+// construction is given, so a part is stated as the select rather than as the
+// positions one construction settles it to, and every position of it takes
+// part, as many as its type numbers (LRM 6.7.1).
+using NetSide = std::vector<ExprId>;
 
 // The sides one construct states are the same physical nets (LRM 23.3.3.7,
 // 10.11), each named once, in the order the source lists them. Every side

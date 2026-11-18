@@ -63,8 +63,7 @@ using StepRealization = std::variant<
 
 // Whether ending a value of `type` does anything: it holds something the
 // library ends, an object, a closure, or storage it owns. A value laid out by
-// its type does exactly where one of its parts does, but an untagged union,
-// whose members are only bits another member may have written.
+// its type does exactly where one of its parts does.
 [[nodiscard]] auto NeedsEnd(const CompilationUnit& unit, TypeId type) -> bool;
 
 // How `step` of a value of `type` is carried out in `unit`. Where the answer is

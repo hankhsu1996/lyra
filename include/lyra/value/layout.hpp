@@ -56,9 +56,9 @@ template <typename Parts>
   return laid;
 }
 
-// The storage a union's members overlay, each at its start (LRM 7.3), of
-// `members` each stating its `size` and its `align`: as large as the largest,
-// rounded up to the strictest alignment.
+// The storage a tagged union's members overlay, each at its start (LRM
+// 7.3.2), of `members` each stating its `size` and its `align`: as large as the
+// largest, rounded up to the strictest alignment.
 template <typename Members>
 [[nodiscard]] constexpr auto OverlayLayoutOf(const Members& members)
     -> support::Layout {

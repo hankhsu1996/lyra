@@ -106,14 +106,19 @@ constexpr DomainSet kScalarsBesideIntegral =
 constexpr DomainSet kLibraryObjects =
     DomainsDeclared([](support::LibraryDecl) { return true; }) |
     DomainSet{Domain::kManagedRef};
-// What a net holds: an integral value, whose positions a connection may name,
-// a value laid out by its type, and a real, a string or a class handle, which
-// no net type resolves and only an input port written with no port kind
-// declares a net of (LRM 6.6.7, 23.2.2.3).
-constexpr DomainSet kUnfoldedNetValues =
+// What no net type resolves: a real, a string or a class handle, which only an
+// input port written with no port kind declares a net of (LRM 6.6.7,
+// 23.2.2.3).
+constexpr DomainSet kValuesNoNetTypeResolves =
     kReals | DomainSet{Domain::kString, Domain::kManagedRef};
-constexpr DomainSet kNetValues =
-    kIntegral | kLaidOutByType | kUnfoldedNetValues;
+// What a net resolving positions holds, and what an unresolved net (LRM 6.6.7)
+// holds; a value laid out by its type may be held by either.
+constexpr DomainSet kResolvedNetValues = kIntegral | kLaidOutByType;
+constexpr DomainSet kUnresolvedNetValues =
+    kLaidOutByType | kValuesNoNetTypeResolves;
+// What a driver gives: the positions it drives, as one integral value, or the
+// whole value of an unresolved net.
+constexpr DomainSet kDriverValues = kIntegral | kUnresolvedNetValues;
 
 // What a variable holds besides an integral value and reads and writes
 // through an entry: an object of the library's, a real and a reference owning
@@ -201,18 +206,16 @@ constexpr std::array kForUnpackedArraysAndQueues{
     RealizedFor{.domains = kLaidOutByType | DomainSet{Domain::kQueue}}};
 // A step into a component of a designated record, and a reference to one, is
 // told the record's type, as any realization for one is. Every member of a
-// union lies at the union's own start, so a step into one is told nothing.
+// tagged union lies at the union's own start, so a step into one is told
+// nothing.
 constexpr std::array kForComponentsSteppedInto{
     RealizedFor{.domains = kLaidOutByType}};
 constexpr std::array kForMembersSteppedInto{
     RealizedFor{.domains = kLaidOutByType}};
 constexpr std::array kForComponentsReferredTo{
     RealizedFor{.domains = kLaidOutByType}};
-constexpr std::array kForJoinedNets{RealizedFor{.domains = kIntegral}};
-// A net attaching a driver, and a variable's cell a reference is built over,
-// keep what they hold where it lies, so neither is told its type.
-constexpr std::array kForNets{
-    RealizedFor{.domains = kNetValues, .told = ToldNothing{}}};
+// A variable's cell a reference is built over keeps what it holds where it
+// lies, so it is told nothing of its type.
 constexpr std::array kForVariables{
     RealizedFor{.domains = kVariableValues, .told = ToldNothing{}}};
 // What the library states a value type of, which a container it holds reads:
@@ -245,15 +248,15 @@ constexpr std::array kForHistories{
         .domains = kIntegral | kLibraryContainers | kReals |
                    DomainSet{Domain::kString, Domain::kManagedRef}},
     RealizedFor{.domains = kLaidOutByType, .told = ToldNothing{}}};
-constexpr std::array kForIntegralNets{RealizedFor{.domains = kIntegral}};
-// A net laying its value out after itself by the value's type was told that
-// type where it was built, and one of a value the library holds whole knows
-// its type.
-constexpr std::array kForAggregateNets{
+// A net was told its type where it was built -- an integral one its width, one
+// laid out by its value's type that type -- and one of a value the library
+// holds whole knows it, so none is told it again where it is installed or,
+// with no resolution function, where its one driver attaches.
+constexpr std::array kForResolvedNets{
+    RealizedFor{.domains = kIntegral},
     RealizedFor{.domains = kLaidOutByType, .told = ToldNothing{}}};
 constexpr std::array kForUnresolvedNets{
-    RealizedFor{.domains = kLaidOutByType, .told = ToldNothing{}},
-    RealizedFor{.domains = kUnfoldedNetValues}};
+    RealizedFor{.domains = kUnresolvedNetValues, .told = ToldNothing{}}};
 
 // A variable is taken over whether reached through its cell or through storage
 // lent for it. A takeover through a reference acts on the variable the
@@ -262,13 +265,19 @@ constexpr std::array kForUnresolvedNets{
 constexpr std::array kTakeovers{
     ThroughWrapper{
         .wrapper = WrapperKind::kCell, .domains = kVariableValuesTakenOver},
-    ThroughWrapper{.wrapper = WrapperKind::kNet, .domains = kNetValues},
+    ThroughWrapper{
+        .wrapper = WrapperKind::kResolvedNet, .domains = kResolvedNetValues},
+    ThroughWrapper{
+        .wrapper = WrapperKind::kUnresolvedNet,
+        .domains = kUnresolvedNetValues},
     ThroughWrapper{
         .wrapper = WrapperKind::kRef,
         .domains = kVariableValuesTakenOver,
         .told = ToldNothing{}}};
 // Beginning one on a value laid out by its type is told how the type takes
-// some of its positions, which the takeover shows what it holds by.
+// some of its positions, which the takeover shows what it holds by, except on
+// a net resolving positions, which was told how to write them where it was
+// built.
 constexpr std::array kTakeoversBegun{
     ThroughWrapper{
         .wrapper = WrapperKind::kCell, .domains = kLibraryValuesTakenOver},
@@ -277,10 +286,12 @@ constexpr std::array kTakeoversBegun{
         .domains = kLaidOutByType,
         .told = ToldTakePositions{}},
     ThroughWrapper{
-        .wrapper = WrapperKind::kNet,
-        .domains = kIntegral | kUnfoldedNetValues},
+        .wrapper = WrapperKind::kResolvedNet, .domains = kResolvedNetValues},
     ThroughWrapper{
-        .wrapper = WrapperKind::kNet,
+        .wrapper = WrapperKind::kUnresolvedNet,
+        .domains = kValuesNoNetTypeResolves},
+    ThroughWrapper{
+        .wrapper = WrapperKind::kUnresolvedNet,
         .domains = kLaidOutByType,
         .told = ToldTakePositions{}},
     ThroughWrapper{
@@ -299,25 +310,35 @@ constexpr std::array kInstalls{
 // A cell holds the bytes of a value no wider than a word where generated code
 // reads them, and the address of any other value of its own laying it out after
 // itself; a net keeps the address of what it shows, whatever that is laid out
-// by. So only the cells and nets of objects the library keeps have an entry
-// reading one. A reference read, or sampled, answers where what it names lies,
-// so it is told nothing of it.
+// by. So only a cell of an object the library keeps has an entry reading one,
+// and so does the one driver of an unresolved net. A reference read, or
+// sampled, answers where what it names lies, so it is told nothing of it.
 constexpr std::array kLoads{
     ThroughWrapper{.wrapper = WrapperKind::kCell, .domains = kBodyObjects},
-    ThroughWrapper{.wrapper = WrapperKind::kDriver, .domains = kNetValues},
+    ThroughWrapper{
+        .wrapper = WrapperKind::kDriver, .domains = kUnresolvedNetValues},
     ThroughWrapper{
         .wrapper = WrapperKind::kRef,
         .domains = kVariableValues,
         .told = ToldNothing{}}};
-// What a driver is told of the object it carries, and asked at its turn.
+// What a net is told of the object its driver carries, and asked at that
+// driver's turn.
 constexpr std::array kDrivesFromAnObject{
-    ThroughWrapper{.wrapper = WrapperKind::kDriver, .domains = kNetValues}};
+    ThroughWrapper{
+        .wrapper = WrapperKind::kResolvedNet, .domains = kResolvedNetValues},
+    ThroughWrapper{
+        .wrapper = WrapperKind::kUnresolvedNet,
+        .domains = kUnresolvedNetValues}};
 // Where a wait on what a wrapper stands for enrols: a variable is where its
 // writes are told, a net keeps the member it shows its value through where its
 // value's type puts it, and a reference names the member it was bound into.
 constexpr std::array kWaitedOn{
     ThroughWrapper{.wrapper = WrapperKind::kCell, .domains = kVariableValues},
-    ThroughWrapper{.wrapper = WrapperKind::kNet, .domains = kNetValues},
+    ThroughWrapper{
+        .wrapper = WrapperKind::kResolvedNet, .domains = kResolvedNetValues},
+    ThroughWrapper{
+        .wrapper = WrapperKind::kUnresolvedNet,
+        .domains = kUnresolvedNetValues},
     ThroughWrapper{
         .wrapper = WrapperKind::kRef,
         .domains = kVariableValues,
@@ -326,7 +347,11 @@ constexpr std::array kWaitedOn{
 // read for the one it took.
 constexpr std::array kSampled{
     ThroughWrapper{.wrapper = WrapperKind::kCell, .domains = kVariableValues},
-    ThroughWrapper{.wrapper = WrapperKind::kNet, .domains = kNetValues},
+    ThroughWrapper{
+        .wrapper = WrapperKind::kResolvedNet, .domains = kResolvedNetValues},
+    ThroughWrapper{
+        .wrapper = WrapperKind::kUnresolvedNet,
+        .domains = kUnresolvedNetValues},
     ThroughWrapper{
         .wrapper = WrapperKind::kRef,
         .domains = kVariableValues,
@@ -349,12 +374,15 @@ constexpr ThroughWrapper kThroughAReferenceToWords{
     .told = ToldWidthMetadata{.after = 0}};
 constexpr std::array kStores{
     ThroughWrapper{.wrapper = WrapperKind::kCell, .domains = kBodyValues},
-    ThroughWrapper{.wrapper = WrapperKind::kDriver, .domains = kNetValues},
+    ThroughWrapper{.wrapper = WrapperKind::kDriver, .domains = kDriverValues},
     kThroughAReferenceToBytesOrAnObject, kThroughAReferenceToWords,
     kThroughAReferenceToALaidOutValue};
+// A driver of a net resolving positions gives the whole of the part it drives,
+// so only the one driver of an unresolved net is written into.
 constexpr std::array kOpenedWrites{
     ThroughWrapper{.wrapper = WrapperKind::kCell, .domains = kBodyValues},
-    ThroughWrapper{.wrapper = WrapperKind::kDriver, .domains = kNetValues},
+    ThroughWrapper{
+        .wrapper = WrapperKind::kDriver, .domains = kUnresolvedNetValues},
     kThroughAReferenceToBytesOrAnObject, kThroughAReferenceToWords,
     kThroughAReferenceToALaidOutValue};
 
@@ -515,7 +543,8 @@ auto ToldThroughTheWrapper(
     const std::optional<Told>& stated) -> Told {
   switch (wrapper) {
     case WrapperKind::kCell:
-    case WrapperKind::kNet:
+    case WrapperKind::kResolvedNet:
+    case WrapperKind::kUnresolvedNet:
     case WrapperKind::kDriver:
       if (support::IsLaidOutByItsType(domain) && !stated.has_value()) {
         return ToldNothing{};
@@ -600,13 +629,22 @@ auto ToldBuilding(support::DeclaredMemberStorage storage) -> Told {
       Overloaded{
           // A net of an integral type is told how many positions the type
           // has, which a layout of a narrower one does not say, and a net of a
-          // value laid out by its type that type and how to fold values of it.
+          // value laid out by its type that type and how its positions are
+          // read and written.
           [](const support::ResolvedNetMember& m) -> Told {
             if (kIntegral.Holds(m.domain)) {
               return ToldWidthMetadataAhead{};
             }
             if (support::IsLaidOutByItsType(m.domain)) {
-              return ToldTypeAndNetFoldsAhead{};
+              return ToldTypeAndNetWitnessesAhead{};
+            }
+            return ToldNothing{};
+          },
+          // An unresolved net is never integral, and one laid out by its type
+          // reads and writes no positions, so it is told only the type.
+          [](const support::UnresolvedNetMember& m) -> Told {
+            if (support::IsLaidOutByItsType(m.domain)) {
+              return ToldTypeMetadataAhead{};
             }
             return ToldNothing{};
           },
@@ -661,6 +699,7 @@ auto RealizationsOf(RuntimeOp op) -> std::span<const RealizedFor> {
     case RuntimeOp::kStreamBuild:
     case RuntimeOp::kRunWrite:
     case RuntimeOp::kRunBuild:
+    case RuntimeOp::kPositionsWrite:
     case RuntimeOp::kInsertBits:
     case RuntimeOp::kElementDefault:
     case RuntimeOp::kDiscardedWrite:
@@ -754,11 +793,8 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kIntegralBitIdentical:
     case support::BuiltinFn::kIntegralHasUnknown:
     case support::BuiltinFn::kIntegralCountBits:
-    case support::BuiltinFn::kIntegralResolveTriState:
-    case support::BuiltinFn::kIntegralResolveWiredAnd:
-    case support::BuiltinFn::kIntegralResolveWiredOr:
-    case support::BuiltinFn::kIntegralDominating:
     case support::BuiltinFn::kIntegralTakePositions:
+    case support::BuiltinFn::kIntegralWithPositions:
     case support::BuiltinFn::kIntegralMergeConditional:
     case support::BuiltinFn::kIntegralFromInt:
     case support::BuiltinFn::kIntegralConvert:
@@ -886,12 +922,9 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     // fixed-size array -- which code compiled for the type answers, and
     // nothing the library holds does; an integral value's is its own entry.
     case support::BuiltinFn::kToBitstream:
-    case support::BuiltinFn::kResolveTriState:
-    case support::BuiltinFn::kResolveWiredAnd:
-    case support::BuiltinFn::kResolveWiredOr:
-    case support::BuiltinFn::kDominating:
-    case support::BuiltinFn::kFilledLike:
     case support::BuiltinFn::kTakePositions:
+    case support::BuiltinFn::kToPositions:
+    case support::BuiltinFn::kWritePositions:
     // A value holding a bounded queue below its outermost dimension, taken
     // into the form of its type with no queue bounded, which the unit's body
     // for the type answers whatever the outer kind.
@@ -903,6 +936,7 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     // generated body answers and nothing the library holds does.
     case support::BuiltinFn::kDeclaredDefault:
     case support::BuiltinFn::kPositionCount:
+    case support::BuiltinFn::kFromPositions:
     // A value built out of the form of its type with no queue bounded, which
     // the unit's body for the type it builds answers.
     case support::BuiltinFn::kFromBoundFree:
@@ -956,39 +990,41 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
       return NamedByWrapper{.realized = kStores};
     case support::BuiltinFn::kOpenForWrite:
       return NamedByWrapper{.realized = kOpenedWrites};
-    // A driver carrying the whole of an object is told so, and asked at its
-    // turn whether its net now shows that object; the driver it acts on names
-    // the entry.
+    // A net whose driver carries the whole of an object of the net's type is
+    // told so, and asked at that driver's turn whether it now shows the
+    // object; the net, of the object's own type, names the entry.
     case support::BuiltinFn::kDriveFromVariable:
     case support::BuiltinFn::kDriveFromNet:
+      return NamedByWrapper{.realized = kDrivesFromAnObject};
+    // What a reference names is told to the net by its address, and whether
+    // the net shows what it was told is the net's own answer, so neither
+    // depends on what the net holds.
     case support::BuiltinFn::kDriveFromReference:
     case support::BuiltinFn::kShowSource:
-      return NamedByWrapper{.realized = kDrivesFromAnObject};
+      return NamedAlone{};
     // Each wrapper answers where a wait on it enrols, so the wrapper names the
     // entry.
     case support::BuiltinFn::kReportsTo:
       return NamedByWrapper{.realized = kWaitedOn};
 
-    // A driver is attached by the net that issues it, a fold is installed on
-    // the net that applies it, and a join takes two nets that resolve in the
-    // same representation, so in each case what names the entry is the
-    // representation those nets resolve in. A history's three operations
+    // A driver of a net resolving positions is attached over positions, and a
+    // join relates positions of two nets, which carry no type, so one
+    // realization of each serves any such net. The one driver of an
+    // unresolved net is attached by that net, and a fold is installed on the
+    // net that applies it, so in each case what names the entry is the
+    // representation that net holds. A history's three operations
     // likewise take the storage they act on and are named by the one domain
     // every value in it is realized in (LRM 16.9.3).
     case support::BuiltinFn::kAttachDriver:
-      return NamedByStorageDomain{.realized = kForNets};
     case support::BuiltinFn::kNetJoin:
-      return NamedByStorageDomain{.realized = kForJoinedNets};
+      return NamedAlone{};
+    case support::BuiltinFn::kAttachWholeDriver:
+      return NamedByStorageDomain{.realized = kForUnresolvedNets};
     case support::BuiltinFn::kNetInitializeTriState:
     case support::BuiltinFn::kNetInitializeWiredAnd:
     case support::BuiltinFn::kNetInitializeWiredOr:
     case support::BuiltinFn::kNetInitializeRetaining:
-      return NamedByStorageDomain{.realized = kForIntegralNets};
-    case support::BuiltinFn::kAggregateNetInitializeTriState:
-    case support::BuiltinFn::kAggregateNetInitializeWiredAnd:
-    case support::BuiltinFn::kAggregateNetInitializeWiredOr:
-    case support::BuiltinFn::kAggregateNetInitializeRetaining:
-      return NamedByStorageDomain{.realized = kForAggregateNets};
+      return NamedByStorageDomain{.realized = kForResolvedNets};
     case support::BuiltinFn::kUnresolvedNetInitialize:
       return NamedByStorageDomain{.realized = kForUnresolvedNets};
     case support::BuiltinFn::kSampledHistoryInstall:

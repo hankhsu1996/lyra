@@ -161,6 +161,7 @@ void RequireOperandTypes(
       case IntegralOperandKind::kText:
       case IntegralOperandKind::kCanonicalBits:
       case IntegralOperandKind::kCanonicalLogic:
+      case IntegralOperandKind::kPositions:
         break;
     }
   }

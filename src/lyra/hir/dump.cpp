@@ -2776,11 +2776,9 @@ class HirDumper {
       for (const NetSide& side : join.sides) {
         if (!sides.empty()) sides += " = ";
         std::string operands;
-        for (const NetPositions& operand : side) {
+        for (const ExprId operand : side) {
           if (!operands.empty()) operands += ", ";
-          operands += std::format(
-              "Expr[{}][{}+:{}]", operand.part.value, operand.offset,
-              operand.width);
+          operands += std::format("Expr[{}]", operand.value);
         }
         sides += std::format("{{{}}}", operands);
       }

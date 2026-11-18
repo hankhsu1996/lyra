@@ -102,7 +102,7 @@ auto ResolutionOf(const hir::StructuralNetDecl& net) -> NetTypeResolution {
   throw InternalError("ResolutionOf: unknown net type");
 }
 
-auto IntegralNetEntry(NetFold fold) -> support::BuiltinFn {
+auto NetEntry(NetFold fold) -> support::BuiltinFn {
   using support::BuiltinFn;
   switch (fold) {
     case NetFold::kTriState:
@@ -114,22 +114,7 @@ auto IntegralNetEntry(NetFold fold) -> support::BuiltinFn {
     case NetFold::kRetaining:
       return BuiltinFn::kNetInitializeRetaining;
   }
-  throw InternalError("IntegralNetEntry: unknown net fold");
-}
-
-auto AggregateNetEntry(NetFold fold) -> support::BuiltinFn {
-  using support::BuiltinFn;
-  switch (fold) {
-    case NetFold::kTriState:
-      return BuiltinFn::kAggregateNetInitializeTriState;
-    case NetFold::kWiredAnd:
-      return BuiltinFn::kAggregateNetInitializeWiredAnd;
-    case NetFold::kWiredOr:
-      return BuiltinFn::kAggregateNetInitializeWiredOr;
-    case NetFold::kRetaining:
-      return BuiltinFn::kAggregateNetInitializeRetaining;
-  }
-  throw InternalError("AggregateNetEntry: unknown net fold");
+  throw InternalError("NetEntry: unknown net fold");
 }
 
 // The contribution the net type makes, as the operands an install carries:
@@ -156,21 +141,12 @@ auto BuildNetInstall(
     mir::TypeId void_type) -> mir::Expr {
   return std::visit(
       Overloaded{
-          [&](const IntegralNetData&) {
+          [&](const ResolvedNetData&) {
             const NetTypeResolution resolution = ResolutionOf(net);
             const auto [fill, strength] =
                 BuildContributionOperands(unit, block, resolution);
             return mir::MakeNetInstallCallExpr(
-                target, {fill, strength}, IntegralNetEntry(resolution.fold),
-                void_type);
-          },
-          [&](const AggregateNetData& aggregate) {
-            const NetTypeResolution resolution = ResolutionOf(net);
-            const auto [fill, strength] =
-                BuildContributionOperands(unit, block, resolution);
-            return mir::MakeNetInstallCallExpr(
-                target, {aggregate.prototype, fill, strength},
-                AggregateNetEntry(resolution.fold), void_type);
+                target, {fill, strength}, NetEntry(resolution.fold), void_type);
           },
           [&](const UnresolvedNetData& unresolved) {
             return mir::MakeNetInstallCallExpr(

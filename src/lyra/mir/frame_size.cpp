@@ -121,19 +121,19 @@ auto LaidOut(const CompilationUnit& unit, TypeId type, const auto& part)
                 .align = alignof(value::ConstantSpan<std::byte>)};
           },
           [&](const TupleType& t) { return Product(part, t.elements); },
-          // A structure's members side by side, a union's each at the start
-          // of one storage, and a tagged union's tag after them.
+          // A structure's members side by side, an untagged union as its one
+          // storage, and a tagged union's members each at the start of one
+          // storage with its tag after them.
           [&](const RecordType& t) {
-            const std::span<const TypeId> members =
+            const std::span<const TypeId> components =
                 RecordElements(unit, t.declaration);
             switch (RecordKindOf(unit, t.declaration)) {
               case RecordKind::kStruct:
-                return Product(part, members);
               case RecordKind::kUnion:
-                return Overlay(part, members);
+                return Product(part, components);
               case RecordKind::kTaggedUnion:
                 return value::TaggedUnionLayoutOf(
-                           Overlay(part, members), members.size())
+                           Overlay(part, components), components.size())
                     .whole;
             }
             throw InternalError("mir: unknown record kind");
@@ -220,6 +220,7 @@ auto LaidOut(const CompilationUnit& unit, TypeId type, const auto& part)
           [](const LibraryType& t) { return LayoutOfLibraryType(t.decl); },
           [&](const ObservableType& t) { return handle(t); },
           [&](const ResolvedType& t) { return handle(t); },
+          [&](const UnresolvedType& t) { return handle(t); },
           // A write in progress and a place designated within one are the
           // library's objects the writer holds for as long as the write lasts.
           [](const OpenWriteType&) {
@@ -320,7 +321,7 @@ auto ValuesAFrameKeeps(const CompilationUnit& unit, const Block& block)
   std::vector<ExprId> kept;
   for (const ExprId id : block.exprs.Ids()) {
     const TypeId type = block.exprs.Get(id).type;
-    if (made.at(id.value) && !ValueLiesInStorage(unit, block, id) &&
+    if (made.at(id.value) && !ValueLiesInStorage(block, id) &&
         (IsTooLargeForAFrame(unit, type) ||
          (!EvaluatesNothing(unit, block, id) &&
           FrameBytesOf(unit, type) > 0))) {

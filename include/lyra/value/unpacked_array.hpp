@@ -14,7 +14,6 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/base/source_location.hpp"
-#include "lyra/value/clear_above_widths.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/element_policy.hpp"
 #include "lyra/value/element_sequence.hpp"
@@ -390,38 +389,6 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>> {
     return detail::SequenceBitIdentical(Run(), other.Run());
   }
 
-  // Net resolution under each of the three truth tables (LRM 6.6), and what a
-  // stronger contribution leaves a weaker one (LRM 28.12.1), element by
-  // element, for an array whose elements a net resolves (LRM 6.7.1).
-  [[nodiscard]] auto ResolveTriState(const UnpackedArray& other) const
-      -> UnpackedArray
-    requires NetResolvable<T>
-  {
-    return Resolved(NetResolution::kTriState, other);
-  }
-  [[nodiscard]] auto ResolveWiredAnd(const UnpackedArray& other) const
-      -> UnpackedArray
-    requires NetResolvable<T>
-  {
-    return Resolved(NetResolution::kWiredAnd, other);
-  }
-  [[nodiscard]] auto ResolveWiredOr(const UnpackedArray& other) const
-      -> UnpackedArray
-    requires NetResolvable<T>
-  {
-    return Resolved(NetResolution::kWiredOr, other);
-  }
-  [[nodiscard]] auto Dominating(const UnpackedArray& weaker) const
-      -> UnpackedArray
-    requires NetResolvable<T>
-  {
-    return Built([&](UnpackedArray& out) {
-      for (std::size_t i = 0; i < N; ++i) {
-        out.Items()[i] = RawAt(i).Dominating(weaker.RawAt(i));
-      }
-    });
-  }
-
   // The bits the array streams as, held as a value of `R`, which is exactly as
   // wide (LRM 6.24.3).
   template <IntegralValue R>
@@ -433,17 +400,6 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>> {
       if (filled != R::kWidth) {
         throw InternalError(
             "an unpacked array streamed as other than its bits");
-      }
-    });
-  }
-
-  // `prototype`'s shape with every bit set to `fill` (LRM 6.7.1).
-  template <IntegralValue Fill>
-  [[nodiscard]] static auto FilledLike(
-      const UnpackedArray& prototype, const Fill& fill) -> UnpackedArray {
-    return Built([&](UnpackedArray& out) {
-      for (std::size_t i = 0; i < N; ++i) {
-        out.Items()[i] = FilledAs(prototype.RawAt(i), fill);
       }
     });
   }
@@ -466,6 +422,60 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>> {
           out.Items()[i] =
               PositionsTaken(RawAt(i), from.RawAt(i), start - at, stop - start);
         }
+      }
+    });
+  }
+
+  // The positions a view reaches of the array, its least significant position
+  // standing at position `start` of the array and `count` of them, replaced
+  // in place by the view's; answers whether any changed. Only the elements the
+  // positions lie in are reached, by where each element's positions begin, so
+  // a run over one element costs that element whatever the array's size.
+  auto WritePositions(
+      const ConstIntegralView& in, std::int64_t start, std::int64_t count)
+      -> bool {
+    const std::int64_t per_element = PositionCountOf<T>();
+    const std::int64_t first = std::max<std::int64_t>(start, 0);
+    const std::int64_t end =
+        std::min<std::int64_t>(start + count, PositionCount());
+    bool changed = false;
+    for (std::int64_t element = first / per_element;
+         element * per_element < end; ++element) {
+      changed = WritePositionsOf(
+                    RawAt(static_cast<std::size_t>(element)), in,
+                    start - (element * per_element), count) ||
+                changed;
+    }
+    return changed;
+  }
+
+  // All of the array's positions as one integral value, element 0's first.
+  [[nodiscard]] auto ToPositions() const {
+    using Element = decltype(ToPositionsOf(std::declval<const T&>()));
+    using Positions = LogicVector<N * Element::kWidth>;
+    return Positions::Built([&](Positions& out) {
+      for (std::size_t i = 0; i < N; ++i) {
+        detail::WriteRun(
+            out.MutableView(), ToPositionsOf(RawAt(i)).View(),
+            static_cast<std::int64_t>(i * Element::kWidth),
+            {.lsb = i * Element::kWidth, .width = Element::kWidth});
+      }
+    });
+  }
+
+  // The array an integral value of its positions holds, element 0's first.
+  template <class Positions>
+  [[nodiscard]] static auto FromPositions(const Positions& positions)
+      -> UnpackedArray {
+    using Element = decltype(ToPositionsOf(std::declval<const T&>()));
+    return Built([&](UnpackedArray& out) {
+      for (std::size_t i = 0; i < N; ++i) {
+        const Element part = Element::Built([&](Element& bits) {
+          Extract(
+              bits.MutableView(), positions.View(),
+              static_cast<std::int64_t>(i * Element::kWidth));
+        });
+        out.RawAt(i) = FromPositionsOf<T>(part);
       }
     });
   }
@@ -562,13 +572,6 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>> {
     return {Items(), N};
   }
 
-  // Each element's positions above its widths made clear.
-  void ClearAboveWidths() {
-    for (T& element : MutableElements()) {
-      lyra::value::ClearAboveWidths(element);
-    }
-  }
-
  private:
   friend class OrdinalArrayMethods<UnpackedArray<T, N>>;
 
@@ -624,15 +627,6 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>> {
     return Built([&](UnpackedArray& out) {
       for (std::size_t i = 0; i < std::min(N, bytes.size()); ++i) {
         out.Items()[i] = T::FromInt(static_cast<unsigned char>(bytes[i]));
-      }
-    });
-  }
-
-  [[nodiscard]] auto Resolved(
-      NetResolution fold, const UnpackedArray& other) const -> UnpackedArray {
-    return Built([&](UnpackedArray& out) {
-      for (std::size_t i = 0; i < N; ++i) {
-        out.Items()[i] = Resolve(fold, RawAt(i), other.RawAt(i));
       }
     });
   }

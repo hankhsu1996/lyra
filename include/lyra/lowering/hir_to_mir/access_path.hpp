@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <expected>
 #include <functional>
 #include <optional>
 #include <variant>
@@ -9,7 +10,6 @@
 #include "lyra/base/component_index.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/hir/case_keyword.hpp"
-#include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -99,20 +99,20 @@ struct StepToComponent {
 };
 
 // A member of an untagged unpacked union, by its declaration-order position
-// (LRM 7.3). Every member lies at the start of the union's storage, so reading
-// it and writing it are the one field step on the place the union lies in, as
-// a component's are; but it has no identity of its own, so a write in progress
-// lands on the union before taking it, and a read of it reads storage another
-// member may have written.
+// (LRM 7.3). It is no storage of its own but a view of the first positions of
+// the union's one storage: a read of it is those positions made into a value
+// of its type, and a write landing on it or below it replaces the positions
+// of the storage the part it lands on takes, so the change is the union's and
+// a read answers what any member last wrote there.
 struct StepToUnionMember {
   base::ComponentIndex position;
 };
 
 // A member of an unpacked tagged union, by its declaration-order position, as
 // rustc's downcast to a variant is a projection of its own beside a field's.
-// It is taken as an untagged member is, and is valid only while the tag names
-// the member (LRM 11.9), which a read or a write taking it checks first; so it
-// never reads what another member wrote.
+// It is taken as a field step on the union, as a structure's component is,
+// and is valid only while the tag names the member (LRM 11.9), which a read or
+// a write taking it checks first; so it never reads what another member wrote.
 struct StepToTaggedMember {
   base::ComponentIndex position;
 };
@@ -409,12 +409,25 @@ struct SettledPath {
     const mir::CompilationUnit& unit, const SettledPath& settled,
     mir::Builder to) -> AccessPath;
 
-// Whether `path` reaches its part through a member of an untagged union, so the
-// part lies where another member's bits may lie (LRM 7.3.2) and is changed in
-// place only by a write that leaves it as its type holds a value. It asks of a
-// path what the place built from it states as its kind, for a caller that has
-// to choose before the place is built.
-[[nodiscard]] auto ReachesOverlaidStorage(const AccessPath& path) -> bool;
+// Whether `path` reaches its part through a member of an untagged union, which
+// is a view of the union's storage rather than storage of its own (LRM 7.3):
+// the part is read as a value, and changed only by a write of the storage's
+// positions, so an operation changing it in place changes a value read out of
+// it, which is then written back.
+[[nodiscard]] auto ReachesUnionMember(const AccessPath& path) -> bool;
+
+// The storage of the untagged union `receiver` is, or names: the one component
+// of the union (LRM 7.3).
+[[nodiscard]] auto UnionStorage(
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId receiver)
+    -> mir::ExprId;
+
+// The packed type of as many positions as a value of `part` has, in the state
+// of the union storage `storage`: the bits of the storage a part lying in it
+// takes.
+[[nodiscard]] auto StorageBitsFor(
+    const mir::CompilationUnit& unit, mir::TypeId storage, mir::TypeId part)
+    -> mir::TypeId;
 
 // An operand a construct reads and then writes: the place the write lands in,
 // and the value it holds going in.
@@ -439,13 +452,43 @@ struct PathPositions {
   std::uint64_t width = 0;
 };
 
-// The bits a path names within its owner (LRM 7.2.1, 11.5.1). Every step into
-// a packed value names some of its bits, so the part starts at the sum of where
-// the steps start, and that sum stays an expression because a step's position
-// may be a value the program or a construction supplies.
-[[nodiscard]] auto BitsWithinOwner(
-    const mir::CompilationUnit& unit, mir::Builder block,
-    const AccessPath& path) -> PathPositions;
+// Positions of a value in a row, numbered as a net and a procedural continuous
+// assignment number them (LRM 6.6.7, 10.6.2): the first, a machine integer
+// because a step's position may be a value a construction supplies, and how
+// many there are; and of those the run the value actually has, which is all of
+// them but where a select's position names a part that is not there -- an
+// index naming no element names none (LRM 7.4.5), and bits partly outside
+// what they select within name only those inside (LRM 11.5.1).
+struct PositionsOfPart {
+  mir::ExprId first;
+  std::uint64_t count = 0;
+  mir::ExprId reached_first;
+  mir::ExprId reached_count;
+};
+
+// What a path may reach that lies at no position of a fixed numbering: a part
+// of a value of a dynamic type, whose size the program changes, and a member
+// of a tagged union, which only the whole value's tag decides is there (LRM
+// 7.3.2).
+enum class UnnumberedPart : std::uint8_t {
+  kOfDynamicValue,
+  kTaggedMember,
+};
+
+// The positions of its owner a path names. A value's type numbers its
+// positions part by part, the first part's first, so each step moves the first
+// position on by what lies before the part it reaches -- the elements before
+// it, the members before it, the bits below it -- and the part it ends on holds
+// as many as its type has. Each select's position is read more than once, so
+// `path` is one that was settled where it was named.
+[[nodiscard]] auto PositionsNamedBy(
+    const mir::CompilationUnit& unit, const WalkFrame& frame,
+    const AccessPath& path) -> std::expected<PositionsOfPart, UnnumberedPart>;
+
+// The same of a path into a net, every part of which a net's type numbers.
+[[nodiscard]] auto PositionsWithinNet(
+    const mir::CompilationUnit& unit, const WalkFrame& frame,
+    const AccessPath& path) -> PositionsOfPart;
 
 // Which part of its owner a path names, as a wait or a report is told of it.
 // A part of an unpacked value is named by the steps that reach it: an element

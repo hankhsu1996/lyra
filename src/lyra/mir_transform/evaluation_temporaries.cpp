@@ -194,7 +194,7 @@ auto CanBeTakenWhole(
     // What a borrow refers to that the evaluation makes is made in a temporary
     // the borrow then refers to, as rustc makes a borrowed value a local.
     case TakenAs::kReferredTo:
-      return !mir::WholeLiesInStorage(unit, block, operand);
+      return !mir::WholeLiesInStorage(block, operand);
     case TakenAs::kSuspendedOn:
     case TakenAs::kApart:
       return false;
@@ -370,14 +370,14 @@ class BodyTemporaries {
   [[nodiscard]] auto MakesAValueItHolds(
       const mir::Block& block, mir::ExprId operand) const -> bool {
     return IsKeptApart(block, operand) &&
-           !mir::ValueLiesInStorage(*unit_, block, operand);
+           !mir::ValueLiesInStorage(block, operand);
   }
 
   // Whether `operand`, a node of `block` a borrow refers to, is part of a value
   // made here rather than of storage that is already there.
   [[nodiscard]] auto PartOfAValueMadeHere(
       const mir::Block& block, mir::ExprId operand) const -> bool {
-    return !mir::WholeLiesInStorage(*unit_, block, operand);
+    return !mir::WholeLiesInStorage(block, operand);
   }
 
   // Whether taking `operand`, a node of `block`, as `taken` takes a step of
@@ -579,7 +579,7 @@ class BodyTemporaries {
   [[nodiscard]] auto TakenFirst(
       BlockRebuild& rebuild, mir::ExprId operand) const -> bool {
     return !MakesAValueItHolds(rebuild.From(), operand) &&
-           !mir::ValueLiesInStorage(*unit_, rebuild.From(), operand) &&
+           !mir::ValueLiesInStorage(rebuild.From(), operand) &&
            !mir::EvaluatesNothing(*unit_, rebuild.From(), operand);
   }
 

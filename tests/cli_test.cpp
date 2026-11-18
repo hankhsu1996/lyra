@@ -1300,8 +1300,8 @@ TEST(LyraRun, AForceOnAnUnpackedVariableHoldsWhatItNames) {
         << run.stderr_text;
   };
   refused(
-      "union { int i; logic [31:0] v; } u;", "u.i",
-      "error: a force on a member of an unpacked union is not yet supported");
+      "union tagged { int i; logic [31:0] v; } u;", "u.i",
+      "error: a force on a member of a tagged union is not yet supported");
   constexpr std::string_view kDynamic =
       "error: a force on part of a string, a queue, a dynamic array or an "
       "associative array is not yet supported";
@@ -3235,7 +3235,7 @@ TEST(LyraRun, ARunWhoseTimeNeverAdvancesNamesTheProcessesKeepingItThere) {
 }
 
 // An input port written with no port kind, of a type no net type resolves, is
-// a net with no resolution function, which one driver decides; a second
+// a net with no resolution function, which one driver gives whole; a second
 // driver -- here an assignment inside the module, which coerces the port to
 // inout -- is the design's error (LRM 6.6.7), reported where that driver is
 // written, on both backends.
@@ -3245,10 +3245,9 @@ TEST(LyraRun, ASecondDriverOfANetNoNetTypeResolvesIsTheDesignsError) {
   auto tmp_or = MakeScratchDir();
   ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
 
-  // A value the library holds whole, one the library declares, one laid out
-  // by a type the design declares, and a structure holding a 2-state member,
-  // which cannot hold the z a driver of another member leaves it at, each
-  // driven by its connection and by an assignment inside the child.
+  // A value the library holds whole, one the library declares, and one laid
+  // out by a type the design declares, each driven by its connection and by an
+  // assignment inside the child.
   struct Design {
     std::string name;
     std::string text;
@@ -3284,15 +3283,6 @@ TEST(LyraRun, ASecondDriverOfANetNoNetTypeResolvesIsTheDesignsError) {
                "  Leaf u (.item(l));\n"
                "endmodule\n",
        .site = "record.sv:3:10"},
-      {.name = "counted.sv",
-       .text = "typedef struct { int count; logic [3:0] flags; } counted_t;\n"
-               "module Leaf (input counted_t c);\n"
-               "  assign c.flags = 4'b0011;\n"
-               "endmodule\n"
-               "module Test;\n"
-               "  Leaf u (.c('{count: 32'h0f0f, flags: 4'b1010}));\n"
-               "endmodule\n",
-       .site = "counted.sv:3:10"},
   };
   for (const Design& design : designs) {
     const auto src = *tmp_or / design.name;
@@ -3313,6 +3303,72 @@ TEST(LyraRun, ASecondDriverOfANetNoNetTypeResolvesIsTheDesignsError) {
       EXPECT_EQ(run.stderr_text.find("internal error"), std::string::npos)
           << backend << run.stderr_text;
     }
+  }
+}
+
+// A net of a type no net type resolves has no positions a resolution reaches,
+// so an alias or a bidirectional connection that would place them in one with
+// another net's is not yet carried out, and says so where it is written, on
+// both backends, rather than reaching either.
+TEST(LyraRun, AJoinOfANetNoNetTypeResolvesIsNotYetSupported) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  const auto src = *tmp_or / "aliased.sv";
+  std::ofstream(src) << "module Mid (input real q, input real z);\n"
+                        "  alias q = z;\n"
+                        "endmodule\n"
+                        "module Test;\n"
+                        "  Mid m (.q(1.5), .z());\n"
+                        "endmodule\n";
+  for (const std::string backend : {"llvm", "cpp"}) {
+    const std::vector<std::string> args = {"run",        "--backend", backend,
+                                           "--no-color", "--top",     "Test",
+                                           src.string()};
+    const auto run = RunChildProcess(lyra, args);
+    EXPECT_THAT(run, ExitedWithCode(Ne(0)))
+        << backend << run.stdout_text << run.stderr_text;
+    EXPECT_NE(
+        run.stderr_text.find(
+            "aliased.sv:2:3: error: a connection or an alias reaching a net "
+            "whose data type no net type resolves is not yet supported"),
+        std::string::npos)
+        << backend << run.stderr_text;
+    EXPECT_EQ(run.stderr_text.find("internal error"), std::string::npos)
+        << backend << run.stderr_text;
+  }
+}
+
+// An inout port may be connected to a net of another width (LRM 23.3.3.3), and
+// joining only the positions both sides have is not yet carried out.
+TEST(LyraRun, AnInoutPortConnectedToANetOfAnotherWidthIsNotYetSupported) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  const auto src = *tmp_or / "widths.sv";
+  std::ofstream(src) << "module Leaf (inout wire [3:0] p);\n"
+                        "endmodule\n"
+                        "module Test;\n"
+                        "  wire [7:0] q;\n"
+                        "  Leaf leaf (.p(q));\n"
+                        "endmodule\n";
+  for (const std::string backend : {"llvm", "cpp"}) {
+    const std::vector<std::string> args = {"run",        "--backend", backend,
+                                           "--no-color", "--top",     "Test",
+                                           src.string()};
+    const auto run = RunChildProcess(lyra, args);
+    EXPECT_THAT(run, ExitedWithCode(Ne(0)))
+        << backend << run.stdout_text << run.stderr_text;
+    EXPECT_NE(
+        run.stderr_text.find(
+            "widths.sv:5:8: error: an inout port connected to a net of a "
+            "different width is not yet supported"),
+        std::string::npos)
+        << backend << run.stderr_text;
+    EXPECT_EQ(run.stderr_text.find("internal error"), std::string::npos)
+        << backend << run.stderr_text;
   }
 }
 

@@ -162,8 +162,8 @@ auto CodeGenFunction::LowerRvalue(
             return LowerProduct(
                 product, result_type, EnsureDestination(destination));
           },
-          [&](const lir::UnionInstr& built) -> Lowered {
-            return LowerUnion(
+          [&](const lir::TaggedUnionInstr& built) -> Lowered {
+            return LowerTaggedUnion(
                 built, result_type, EnsureDestination(destination));
           },
           [&](const lir::ClosureInstr& built) -> Lowered {
@@ -181,10 +181,6 @@ auto CodeGenFunction::LowerRvalue(
           },
           [&](const lir::LoadInstr& load) -> Lowered {
             return LoadPlace(load.place, result_type);
-          },
-          [&](const lir::OverlaidLoadInstr& load) -> Lowered {
-            return LowerOverlaidLoad(
-                load, result_type, EnsureDestination(destination));
           },
           [&](const lir::AddrOfInstr& addr) -> Lowered {
             return LowerAddrOf(
@@ -295,9 +291,15 @@ auto CodeGenFunction::ContentsOf(
         return *held;
       }
       break;
-    case WrapperKind::kNet:
+    case WrapperKind::kResolvedNet:
       if (const std::optional<llvm::Value*> held =
               HeldAt(wrapper, support::ResolvedNetMember{.domain = domain})) {
+        return *held;
+      }
+      break;
+    case WrapperKind::kUnresolvedNet:
+      if (const std::optional<llvm::Value*> held =
+              HeldAt(wrapper, support::UnresolvedNetMember{.domain = domain})) {
         return *held;
       }
       break;
@@ -2012,10 +2014,11 @@ auto CodeGenFunction::LowerVectorGet(const lir::VectorGetInstr& get)
       args);
 }
 
-auto CodeGenFunction::LowerUnion(
-    const lir::UnionInstr& built, lir::TypeId result_type, llvm::Value* out)
-    -> diag::Result<llvm::Value*> {
-  const UnionLayout& layout = module_->Types().LayoutOfUnion(result_type);
+auto CodeGenFunction::LowerTaggedUnion(
+    const lir::TaggedUnionInstr& built, lir::TypeId result_type,
+    llvm::Value* out) -> diag::Result<llvm::Value*> {
+  const TaggedUnionFields& layout =
+      module_->Types().LayoutOfTaggedUnion(result_type);
   auto value = LowerOperand(built.value);
   if (!value) {
     return std::unexpected(std::move(value.error()));
@@ -2027,13 +2030,11 @@ auto CodeGenFunction::LowerUnion(
   if (!copied) {
     return copied;
   }
-  if (layout.tag.has_value()) {
-    llvm::Value* const tag =
-        builder_.getIntN(8 * layout.tag->bytes, built.member.value);
-    builder_.CreateStore(
-        tag, builder_.CreateConstInBoundsGEP1_64(
-                 builder_.getInt8Ty(), out, layout.tag->offset));
-  }
+  llvm::Value* const tag =
+      builder_.getIntN(8 * layout.tag.bytes, built.member.value);
+  builder_.CreateStore(
+      tag, builder_.CreateConstInBoundsGEP1_64(
+               builder_.getInt8Ty(), out, layout.tag.offset));
   return out;
 }
 
@@ -2053,21 +2054,6 @@ auto CodeGenFunction::LowerDiscriminant(
       tag_type, builder_.CreateConstInBoundsGEP1_64(
                     builder_.getInt8Ty(), *address, placed.offset));
   return builder_.CreateZExt(tag, module_->Types().Map(result_type));
-}
-
-auto CodeGenFunction::LowerOverlaidLoad(
-    const lir::OverlaidLoadInstr& load, lir::TypeId result_type,
-    llvm::Value* out) -> diag::Result<llvm::Value*> {
-  auto address = LoadPlace(load.place, result_type);
-  if (!address) {
-    return std::unexpected(std::move(address.error()));
-  }
-  auto copied = CopyValue(result_type, *address, out);
-  if (!copied) {
-    return copied;
-  }
-  module_->EmitClearAboveWidths(builder_, result_type, out);
-  return out;
 }
 
 auto CodeGenFunction::LowerOperand(const lir::Operand& operand)

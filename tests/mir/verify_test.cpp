@@ -314,9 +314,9 @@ TEST(MirVerifyTest, AComputationUnderDifferentArmsIsNotReachedTwice) {
 // it may stand at two places, and what counts is what it reaches: two reads of
 // a place formed over a computation reach that computation at each. A read of
 // any other storage computes, since a write between two of them would make
-// them two values, such as what a pointer owning nothing reaches; and so does
-// a read of a union's member, which makes a value of its type out of the bits
-// there.
+// them two values, such as what a pointer owning nothing reaches. A field step
+// on an untagged union reaches its storage, which is storage of the record's
+// own like a structure's member, so a read of it computes nothing either.
 TEST(MirVerifyTest, ANodeThatComputesNothingMayStandAtSeveralPlaces) {
   EXPECT_NO_THROW(
       Verify(UnitWithBody([](const CompilationUnit& u, Builder body) {
@@ -381,14 +381,18 @@ TEST(MirVerifyTest, ANodeThatComputesNothingMayStandAtSeveralPlaces) {
       read_through_local(PointerOwnership::kBorrowed),
       "one run evaluates it at two of them"));
 
-  const auto member_of_local = [](RecordKind kind) {
-    return UnitWithCode([kind](CompilationUnit& u, CallableCode& code) {
+  const auto member_of_local = [](bool untagged_union) {
+    return UnitWithCode([untagged_union](
+                            CompilationUnit& u, CallableCode& code) {
+      const TypeId held = u.builtins.int_type;
       const RecordId record = u.records.Add(
           RecordDecl{
               .defining_unit = std::nullopt,
               .path = {},
-              .kind = kind,
-              .elements = {u.builtins.int_type}});
+              .shape = untagged_union ? decltype(RecordDecl::shape){UnionRecord{
+                                            .storage = held, .members = {held}}}
+                                      : decltype(RecordDecl::shape){
+                                            StructRecord{.members = {held}}}});
       const TypeId type =
           u.types.Intern(Type{RecordType{.declaration = record}});
       const LocalId local = code.locals.Add(LocalDecl{.type = type});
@@ -406,10 +410,8 @@ TEST(MirVerifyTest, ANodeThatComputesNothingMayStandAtSeveralPlaces) {
       body.AppendStmt(ExprStmt{.expr = AddSum(u, body, read, read)});
     });
   };
-  EXPECT_NO_THROW(Verify(member_of_local(RecordKind::kStruct)));
-  EXPECT_TRUE(RefusedFor(
-      member_of_local(RecordKind::kUnion),
-      "one run evaluates it at two of them"));
+  EXPECT_NO_THROW(Verify(member_of_local(false)));
+  EXPECT_NO_THROW(Verify(member_of_local(true)));
 }
 
 // Two operands that each run code can be run in the other order to another
@@ -2102,10 +2104,7 @@ TEST(MirVerifyTest, AnEntryAnotherUnitDefinesHoldsNothingOfItsOwn) {
       const std::string defining = declared.own_unit ? u.name : "Pkg";
       u.records.Add(
           RecordDecl{
-              .defining_unit = defining,
-              .path = {},
-              .kind = RecordKind::kStruct,
-              .elements = {}});
+              .defining_unit = defining, .path = {}, .shape = StructRecord{}});
       if (declared.record_methods) {
         DeclareEquality(
             u, RecordId{0}, CallableCode::Defined(diag::SourceSpan{}));
@@ -2165,8 +2164,7 @@ TEST(MirVerifyTest, ADefinitionEveryBodyStatesNamesNothingOneBodyHas) {
           RecordDecl{
               .defining_unit = std::nullopt,
               .path = {},
-              .kind = RecordKind::kStruct,
-              .elements = {}});
+              .shape = StructRecord{}});
       DeclareEquality(u, RecordId{0}, std::move(method));
     });
   };
@@ -2271,8 +2269,7 @@ TEST(MirVerifyTest, WhatEveryBodyStatesReachesNoClassOneBodyHas) {
             RecordDecl{
                 .defining_unit = std::nullopt,
                 .path = {},
-                .kind = RecordKind::kStruct,
-                .elements = {}});
+                .shape = StructRecord{}});
         DeclareEquality(u, RecordId{0}, std::move(method));
       }),
       "names a class only one body has");
@@ -2399,8 +2396,7 @@ TEST(MirVerifyTest, TheOwnersOfAUnitsCallablesCohere) {
               RecordDecl{
                   .defining_unit = std::nullopt,
                   .path = {},
-                  .kind = RecordKind::kStruct,
-                  .elements = {}});
+                  .shape = StructRecord{}});
           const support::ValueOperation equality =
               support::ValueOperator::kEquality;
           u.AddRecordMethod(record, equality, member());
@@ -2433,8 +2429,7 @@ TEST(MirVerifyTest, ARecordThisUnitDefinesStatesEveryMethod) {
           RecordDecl{
               .defining_unit = std::nullopt,
               .path = {},
-              .kind = RecordKind::kStruct,
-              .elements = {}});
+              .shape = StructRecord{}});
       CallableCode code = with_body ? CallableCode::Defined(diag::SourceSpan{})
                                     : CallableCode{};
       code.result_type = u.builtins.void_type;
@@ -2550,8 +2545,7 @@ TEST(MirVerifyTest, CodeNamedAsAValueIsAMethodOrANamespaceBody) {
               RecordDecl{
                   .defining_unit = std::nullopt,
                   .path = {},
-                  .kind = RecordKind::kStruct,
-                  .elements = {}});
+                  .shape = StructRecord{}});
           callable = u.AddRecordMethod(
               record, support::ValueOperator::kEquality, std::move(decl));
           break;

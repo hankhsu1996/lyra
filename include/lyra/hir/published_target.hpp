@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cstdint>
-#include <optional>
 #include <variant>
 #include <vector>
 
@@ -70,33 +69,13 @@ using PublishedSelector =
       [](const auto& step) { return step.projected_type; }, selector);
 }
 
-// Which of a member's own positions the part a port stands for covers, counted
-// from the low end. A connection states that positions resolve together (LRM
-// 10.11, 23.3.3.7), and only the declaring unit's source can say which ones
-// its port stands for -- the descent below states them in the coordinates that
-// unit declared, and no other unit can turn those into positions, so what
-// crosses is the answer rather than the question. A member with one indivisible
-// position is covered whole by one position.
-struct PublishedPositions {
-  std::uint32_t position{};
-  std::uint32_t width{};
-
-  auto operator==(const PublishedPositions&) const -> bool = default;
-};
-
 // A published member and the descent that reaches the part of it a port stands
 // for, in owner-to-leaf order. A port naming the whole declaration has an empty
 // path and needs no case of its own, since descending no steps reaches the
 // member.
-//
-// `positions` is absent where the part is not positions of the member's own at
-// all, which is what naming an element of an unpacked declaration is: such a
-// part is reachable and readable, and is not something another name's positions
-// can be laid over.
 struct MemberProjection {
   PublishedMemberId member;
   std::vector<PublishedSelector> path;
-  std::optional<PublishedPositions> positions;
 
   // The type the part has, given the type of the member it descends from.
   [[nodiscard]] auto TypeWithin(TypeId member_type) const -> TypeId {

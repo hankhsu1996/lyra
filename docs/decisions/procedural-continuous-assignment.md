@@ -146,18 +146,20 @@ nothing to preserve and nothing for a read to choose between.
 
    **Every value's positions are numbered by its type** (added 2026-10-18). A caller may ask for a
    member of an unpacked structure or an element of a fixed-size unpacked array as well, so a
-   position is what the type of the whole numbers part by part: an integral value's bits, a
-   structure's members and an array's elements one after another, and one for any other value, which
-   is held whole. The lowering states the first position a place names and how many, counting what
-   lies before the part each step reaches, and the whole is all of them. Showing what a takeover
-   holds at a run of positions is then one question every type answers, its operation of taking
-   those positions from another value of it: the library's for an integral value and for a value
-   held whole, and for a structure and an array a body stated as each of their whole-value
-   operations is
+   position is what the type of the whole numbers part by part: an integral value's bits, a real's
+   IEEE 754 bits, a structure's members and an array's elements one after another, an untagged
+   union's storage, and one for any other value, which is held whole. The lowering states the first
+   position a place names and how many, counting what lies before the part each step reaches, and
+   the whole is all of them. Showing what a takeover holds at a run of positions is then one
+   question every type answers, its operation of taking those positions from another value of it:
+   the library's for an integral value and for a value held whole, and for a structure and an array
+   a body stated as each of their whole-value operations is
    ([a-structures-operations-are-stated-in-mir](a-structures-operations-are-stated-in-mir.md)).
    Verilator's force list numbers the same way, by flattened element and bit within it. A part of a
    value whose parts move -- a string, a queue, a dynamic or an associative array -- and a member of
-   a union lie at no fixed position, so neither is a run of positions.
+   a tagged union, which only its tag says is there, lie at no fixed position, so neither is a run
+   of positions. A member of an untagged union lies at its storage's first positions (revised
+   2026-11-17, when the union became the bits of its widest member).
 
 2. **What a target shows is what its storage holds, so reads are untouched and the cost sits on the
    write path.** What a takeover records under D4 is the value it computed, never a copy of anything
@@ -219,7 +221,7 @@ nothing to preserve and nothing for a read to choose between.
    it writes, once, as the design is built, and the engine keeps that apart from the variables, to
    be asked only as a takeover first covers one.
 
-   **A net its one driver decides keeps that driver's value in the driver's own contribution** while
+   **Positions one driver decides keep that driver's value in the driver's own contribution** while
    a takeover covers it (revised 2026-10-18), where it was kept beneath the takeovers before. The
    net then resolves its contributions under the takeovers as any net does, so the positions no
    takeover holds show what the driver gives, which a value kept apart from the resolution could not

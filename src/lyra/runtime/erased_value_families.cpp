@@ -101,6 +101,7 @@ template class SampledHistory<value::RuntimeAssociativeArray>;
 
 template class ResolvedNet<value::WideLogicVector>;
 template class ResolvedNet<value::LaidOutValue>;
+template class UnresolvedNet<value::LaidOutValue>;
 
 template class Driver<value::WideLogicVector>;
 template class Driver<value::LaidOutValue>;

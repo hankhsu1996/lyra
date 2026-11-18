@@ -51,21 +51,21 @@ struct ArrayLayout {
   support::ObjectLayout storage{};
 };
 
-// How a union is laid out: its members overlaid at its start, as large as the
-// largest and aligned as the strictest, and for a tagged union the tag after
-// them at its own alignment (LRM 7.3, 7.3.2), and nothing for an untagged one.
-// `storage` is what the union takes of whatever holds it.
-struct UnionLayout {
+// How a tagged union is laid out: its members overlaid at its start, as large
+// as the largest and aligned as the strictest, and the tag after them at its
+// own alignment (LRM 7.3.2). `storage` is what the union takes of whatever
+// holds it.
+struct TaggedUnionFields {
   std::vector<lir::TypeId> members;
-  std::optional<value::TagPlacement> tag;
+  value::TagPlacement tag;
   support::ObjectLayout storage{};
 };
 
 // How a value laid out by its type places its parts, as rustc's layout states
 // a type's `FieldsShape`: a product's components side by side, an array's
-// elements in a row, or a union's members overlaid at its start.
-using FieldsShape =
-    std::variant<const ProductLayout*, const ArrayLayout*, const UnionLayout*>;
+// elements in a row, or a tagged union's members overlaid at its start.
+using FieldsShape = std::variant<
+    const ProductLayout*, const ArrayLayout*, const TaggedUnionFields*>;
 
 // The storage a holder gives an object of the library's: the storage stated
 // for it, which every class a backend builds there fits, so a frame holds what
@@ -95,8 +95,8 @@ class CodeGenTypes {
 
   // The storage a value an owner holds occupies. A product's -- a tuple, or
   // a structure -- is composed from its components'; a fixed-size unpacked
-  // array's is its elements'; a union's is its members' overlaid, then a tagged
-  // union's tag; a scalar's is its own bytes, as the machine holds one of its
+  // array's is its elements'; a tagged union's is its members' overlaid, then
+  // its tag; a scalar's is its own bytes, as the machine holds one of its
   // kind; a machine integer's is that integer's; a sequence of machine values
   // is the values, as a C++ `std::array` is; every other owned value is one
   // runtime object, whose storage the library states.
@@ -119,16 +119,13 @@ class CodeGenTypes {
   // other type there is a compiler defect.
   [[nodiscard]] auto RequiredIntegralShapeOf(lir::TypeId type) const
       -> value::IntegralShape;
-  // Whether a value of `type` has positions above an integral's width that
-  // its representation keeps clear, which a read through a member of an
-  // untagged union then has to clear (LRM 7.3.2).
-  [[nodiscard]] auto KeepsAboveWidthsClear(lir::TypeId type) const -> bool;
   // Where each component of a product sits. Asked only of a product.
   auto LayoutOfProduct(lir::TypeId product) -> const ProductLayout&;
   // Where the elements of a fixed-size unpacked array lie. Asked only of one.
   auto LayoutOfArray(lir::TypeId array) -> const ArrayLayout&;
-  // Where a union's members lie. Asked only of a union.
-  auto LayoutOfUnion(lir::TypeId union_type) -> const UnionLayout&;
+  // Where a tagged union's members and tag lie. Asked only of a tagged union.
+  auto LayoutOfTaggedUnion(lir::TypeId tagged_union)
+      -> const TaggedUnionFields&;
   // How a value laid out by its type places its parts. Asked only of one.
   auto FieldsOf(lir::TypeId laid_out) -> FieldsShape;
   // Where a tagged union keeps its tag. Asked only of a tagged union.
@@ -168,7 +165,7 @@ class CodeGenTypes {
   std::unordered_map<lir::TypeId, llvm::Type*> cache_;
   std::unordered_map<lir::TypeId, ProductLayout> products_;
   std::unordered_map<lir::TypeId, ArrayLayout> arrays_;
-  std::unordered_map<lir::TypeId, UnionLayout> unions_;
+  std::unordered_map<lir::TypeId, TaggedUnionFields> tagged_unions_;
 };
 
 }  // namespace lyra::backend::llvm_backend

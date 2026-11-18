@@ -199,18 +199,18 @@ struct RecordMethod {
   FunctionId function;
 };
 
-// Which aggregate a record declares: a structure (LRM 7.2), or a union (LRM
-// 7.3), untagged or tagged.
+// Which aggregate a record is laid out as: a structure (LRM 7.2), which is
+// also what an untagged union is, the structure of its one storage (LRM 7.3),
+// or a tagged union, its members overlaid and then its tag (LRM 7.3.2).
 enum class RecordKind : std::uint8_t {
   kStruct,
-  kUnion,
   kTaggedUnion,
 };
 
 // A structure or a union a unit declares: which declaration of its unit it is,
 // which is what another unit reaches it by, which aggregate it is, its
-// members' types in position order, and the function it answers each
-// operation on a whole value with.
+// components' types in position order (an untagged union's one storage), and
+// the function it answers each operation on a whole value with.
 //
 // The runtime asks the same questions of values it holds, and it was compiled
 // before the type existed, so a target hands it these methods along with the
@@ -290,8 +290,9 @@ struct CompilationUnit {
   std::optional<ClassId> root;
 };
 
-// The members' types of the record `record`, wherever it was declared, in
-// declaration order.
+// The components' types of the record `record`, wherever it was declared, in
+// position order: a structure's members, an untagged union's one storage, a
+// tagged union's members.
 [[nodiscard]] inline auto RecordElements(
     const CompilationUnit& unit, RecordId record) -> std::span<const TypeId> {
   return unit.records.Get(record).elements;
@@ -338,16 +339,15 @@ struct CompilationUnit {
   switch (RecordKindOf(unit, *record)) {
     case RecordKind::kStruct:
       return RecordElements(unit, *record);
-    case RecordKind::kUnion:
     case RecordKind::kTaggedUnion:
       return std::nullopt;
   }
   throw InternalError("lir: unknown record kind");
 }
 
-// The members of the union or the tagged union `type` is, in declaration
-// order, each lying at the start of the union's storage (LRM 7.3, 7.3.2), and
-// nothing for any other type.
+// The members of the tagged union `type` is, in declaration order, each lying
+// at the start of the union's storage (LRM 7.3.2), and nothing for any other
+// type.
 [[nodiscard]] inline auto OverlaidMembers(
     const CompilationUnit& unit, TypeId type)
     -> std::optional<std::span<const TypeId>> {
@@ -358,7 +358,6 @@ struct CompilationUnit {
   switch (RecordKindOf(unit, *record)) {
     case RecordKind::kStruct:
       return std::nullopt;
-    case RecordKind::kUnion:
     case RecordKind::kTaggedUnion:
       return RecordElements(unit, *record);
   }
@@ -369,23 +368,13 @@ struct CompilationUnit {
 // 7.3.2).
 [[nodiscard]] inline auto IsTaggedUnion(
     const CompilationUnit& unit, TypeId type) -> bool {
-  const std::optional<RecordKind> kind = RecordKindOf(unit, type);
-  if (!kind.has_value()) {
-    return false;
-  }
-  switch (*kind) {
-    case RecordKind::kStruct:
-    case RecordKind::kUnion:
-      return false;
-    case RecordKind::kTaggedUnion:
-      return true;
-  }
-  throw InternalError("lir: unknown record kind");
+  return OverlaidMembers(unit, type).has_value();
 }
 
 // The parts a component step reaches in a value of `type`, by position: a
-// structure's or a union's members, or a tuple's components; nothing for any
-// other type.
+// structure's components -- an untagged union's one storage among them -- a
+// tagged union's members, or a tuple's components; nothing for any other
+// type.
 [[nodiscard]] inline auto ComponentTypes(
     const CompilationUnit& unit, TypeId type)
     -> std::optional<std::span<const TypeId>> {

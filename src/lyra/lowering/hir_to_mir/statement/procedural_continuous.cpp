@@ -4,7 +4,6 @@
 #include <cstdint>
 #include <expected>
 #include <optional>
-#include <span>
 #include <string>
 #include <utility>
 #include <variant>
@@ -16,15 +15,12 @@
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
-#include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/deferred_effect.hpp"
 #include "lyra/lowering/hir_to_mir/lvalue.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
-#include "lyra/lowering/hir_to_mir/value_operations.hpp"
-#include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
@@ -74,90 +70,33 @@ auto TakeoverHolder(const AccessPath& place) -> mir::ExprId {
 // 10.6.1 admits only a whole singular variable and 10.6.2 adds a net and a
 // constant part-select of one, and a caller may ask for a whole unpacked
 // variable or any part of a variable as well, run with the rules 10.6.2 gives a
-// whole variable applied to each position. A value's type
-// numbers its positions part by part, so each step moves the first position on
-// by what lies before the part it reaches: the elements before it, the members
-// before it, the bits below it. A part of a value of a dynamic type, and a
-// member of a union, which is one storage its members read differently (LRM
-// 7.3), lie at no position of a fixed numbering.
+// whole variable applied to each position, numbered as the holder's type
+// numbers them.
 auto TakeoverPart(
-    mir::CompilationUnit& unit, mir::Builder block, const AccessPath& place,
+    mir::CompilationUnit& unit, const WalkFrame& frame, const AccessPath& place,
     diag::SourceSpan span) -> diag::Result<TakenPart> {
-  const auto dynamic = [&]() -> diag::Result<mir::ExprId> {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedStatementForm,
-        "a force on part of a string, a queue, a dynamic array or an "
-        "associative array is not yet supported");
-  };
-  const auto union_member = [&]() -> diag::Result<mir::ExprId> {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedStatementForm,
-        "a force on a member of an unpacked union is not yet supported");
-  };
-  const auto elements_from =
-      [&](mir::TypeId within, mir::ExprId start,
-          mir::TypeId element) -> diag::Result<mir::ExprId> {
-    if (!unit.types.Get(within).Is<mir::UnpackedArrayType>()) {
-      return dynamic();
+  const std::expected<PositionsOfPart, UnnumberedPart> named =
+      PositionsNamedBy(unit, frame, place);
+  if (!named) {
+    switch (named.error()) {
+      case UnnumberedPart::kOfDynamicValue:
+        return diag::Fail(
+            span, diag::DiagCode::kUnsupportedStatementForm,
+            "a force on part of a string, a queue, a dynamic array or an "
+            "associative array is not yet supported");
+      case UnnumberedPart::kTaggedMember:
+        return diag::Fail(
+            span, diag::DiagCode::kUnsupportedStatementForm,
+            "a force on a member of a tagged union is not yet supported");
     }
-    const mir::ExprId lhs = BuildToInt64Call(unit, block, start);
-    const mir::ExprId rhs =
-        mir::BuildMachineCount(unit, block, PositionCountOf(unit, element));
-    return mir::BuildMachineIntBinary(
-        unit, block, mir::BinaryOp::kMul, lhs, rhs);
-  };
-  mir::TypeId within = OwnerValueType(unit, block.Body(), place.owner);
-  mir::ExprId first = mir::BuildMachineIntLiteral(unit, block, 0);
-  for (const DescentStep& step : place.descent) {
-    auto before = std::visit(
-        Overloaded{
-            [&](const StepToBits& bits) -> diag::Result<mir::ExprId> {
-              return BuildToInt64Call(unit, block, bits.start);
-            },
-            [&](const StepToElement& element) -> diag::Result<mir::ExprId> {
-              return elements_from(within, element.position, step.part_type);
-            },
-            [&](const StepToElementRun& run) -> diag::Result<mir::ExprId> {
-              const mir::TypeId element =
-                  *unit.types.Get(within).ContainerElementType();
-              return elements_from(within, run.start, element);
-            },
-            [&](const StepToComponent& component) -> diag::Result<mir::ExprId> {
-              const std::span<const mir::TypeId> members =
-                  *mir::ProductElements(unit, within);
-              std::uint64_t at = 0;
-              for (const mir::TypeId member :
-                   members.first(component.position.value)) {
-                at += PositionCountOf(unit, member);
-              }
-              return mir::BuildMachineCount(unit, block, at);
-            },
-            [&](const StepToUnionMember&) -> diag::Result<mir::ExprId> {
-              return union_member();
-            },
-            [&](const StepToTaggedMember&) -> diag::Result<mir::ExprId> {
-              return union_member();
-            },
-            [&](const StepToAssocElement&) -> diag::Result<mir::ExprId> {
-              return dynamic();
-            },
-            [&](const StepToCharacter&) -> diag::Result<mir::ExprId> {
-              return dynamic();
-            },
-            [&](const StepToQueueRun&) -> diag::Result<mir::ExprId> {
-              return dynamic();
-            }},
-        step.to);
-    if (!before) return std::unexpected(std::move(before.error()));
-    first = mir::BuildMachineIntBinary(
-        unit, block, mir::BinaryOp::kAdd, first, *before);
-    within = step.part_type;
+    throw InternalError("TakeoverPart: unknown unnumbered part");
   }
+  // A takeover holds the positions the part has, none where a select names
+  // no part (LRM 7.4.5, 11.5.1).
   return TakenPart{
       .holder = TakeoverHolder(place),
-      .first = first,
-      .count =
-          mir::BuildMachineCount(unit, block, PositionCountOf(unit, within))};
+      .first = named->reached_first,
+      .count = named->reached_count};
 }
 
 // Every part a takeover's target names, in the order the source wrote them: a
@@ -174,7 +113,10 @@ auto TakeoverParts(
   std::vector<TakenPart> parts;
   parts.reserve(named.size());
   for (const AccessPath& place : named) {
-    auto part = TakeoverPart(unit, frame.Builder(), place, target.span);
+    // The positions a place names read its selects' positions more than once,
+    // so what reaching it computes is evaluated here, once.
+    auto part =
+        TakeoverPart(unit, frame, Settled(unit, frame, place), target.span);
     if (!part) return std::unexpected(std::move(part.error()));
     parts.push_back(*part);
   }

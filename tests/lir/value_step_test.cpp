@@ -66,21 +66,17 @@ auto Is(const StepRealization& realized) -> bool {
 }
 
 // A value made only of what ends with nothing to do is its bytes for every
-// step, however it is laid out; an untagged union is too, whatever its members
-// hold, since they are only bits another member may have written.
+// step, however it is laid out.
 TEST(ValueStepTest, AValueWithNothingToEndIsItsBytes) {
   Types t;
   const TypeId plain = t.Record(RecordKind::kStruct, {t.integral, t.integral});
-  const TypeId overlay = t.Record(RecordKind::kUnion, {t.integral, t.string});
   for (const ValueStep step :
        {ValueStep::kCopy, ValueStep::kMove, ValueStep::kAssign,
         ValueStep::kEnd}) {
     EXPECT_TRUE(Is<StepIsBytes>(t.Step(t.integral, step)));
     EXPECT_TRUE(Is<StepIsBytes>(t.Step(plain, step)));
-    EXPECT_TRUE(Is<StepIsBytes>(t.Step(overlay, step)));
   }
   EXPECT_FALSE(NeedsEnd(t.unit, plain));
-  EXPECT_FALSE(NeedsEnd(t.unit, overlay));
 }
 
 // A value the library holds is stepped by the library's entry for what it is

@@ -748,41 +748,6 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .over_integral_values = BuiltinFn::kIntegralHasUnknown};
     case BuiltinFn::kIntegralHasUnknown:
       return IntegralEntry(IntegralOp::kHasUnknown, Method{"HasUnknown"});
-    case BuiltinFn::kResolveTriState:
-      return {
-          .name = "resolve_tri_state",
-          .declaration = Method{"ResolveTriState"},
-          .takes_the_location = false,
-          .over_integral_values = BuiltinFn::kIntegralResolveTriState};
-    case BuiltinFn::kIntegralResolveTriState:
-      return IntegralEntry(
-          IntegralOp::kResolveTriState, Method{"ResolveTriState"});
-    case BuiltinFn::kResolveWiredAnd:
-      return {
-          .name = "resolve_wired_and",
-          .declaration = Method{"ResolveWiredAnd"},
-          .takes_the_location = false,
-          .over_integral_values = BuiltinFn::kIntegralResolveWiredAnd};
-    case BuiltinFn::kIntegralResolveWiredAnd:
-      return IntegralEntry(
-          IntegralOp::kResolveWiredAnd, Method{"ResolveWiredAnd"});
-    case BuiltinFn::kResolveWiredOr:
-      return {
-          .name = "resolve_wired_or",
-          .declaration = Method{"ResolveWiredOr"},
-          .takes_the_location = false,
-          .over_integral_values = BuiltinFn::kIntegralResolveWiredOr};
-    case BuiltinFn::kIntegralResolveWiredOr:
-      return IntegralEntry(
-          IntegralOp::kResolveWiredOr, Method{"ResolveWiredOr"});
-    case BuiltinFn::kDominating:
-      return {
-          .name = "dominating",
-          .declaration = Method{"Dominating"},
-          .takes_the_location = false,
-          .over_integral_values = BuiltinFn::kIntegralDominating};
-    case BuiltinFn::kIntegralDominating:
-      return IntegralEntry(IntegralOp::kDominate, Method{"Dominating"});
     case BuiltinFn::kDeclaredDefault:
       return {
           .name = "declared_default",
@@ -797,12 +762,6 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "from_bound_free",
           .declaration = StaticFactory{"FromBoundFree"}};
-    case BuiltinFn::kFilledLike:
-      return {
-          .name = "filled_like",
-          .declaration = StaticFactory{"FilledLike"},
-          .takes_the_location = false,
-          .operands = {kMachine, kBits}};
     case BuiltinFn::kPositionCount:
       return {
           .name = "position_count",
@@ -817,6 +776,25 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
     case BuiltinFn::kIntegralTakePositions:
       return IntegralEntry(
           IntegralOp::kTakePositions, ValueFunction("TakePositions"));
+    case BuiltinFn::kToPositions:
+      return {
+          .name = "to_positions",
+          .declaration = Method{"ToPositions"},
+          .takes_the_location = false};
+    case BuiltinFn::kWritePositions:
+      return {
+          .name = "write_positions",
+          .declaration = Method{"WritePositions"},
+          .takes_the_location = false};
+    case BuiltinFn::kFromPositions:
+      return {
+          .name = "from_positions",
+          .declaration = StaticFactory{"FromPositions"},
+          .takes_the_location = false,
+          .operands = {kBits}};
+    case BuiltinFn::kIntegralWithPositions:
+      return IntegralEntry(
+          IntegralOp::kWithPositions, ValueFunction("WithPositions"));
     case BuiltinFn::kClog2:
       return IntegralEntry(IntegralOp::kCeilLog2, Method{"Clog2"});
     case BuiltinFn::kLn:
@@ -946,30 +924,6 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "net_initialize_retaining",
           .declaration = Method{"InitializeRetaining"},
           .takes_the_location = false};
-    case BuiltinFn::kAggregateNetInitializeTriState:
-      return {
-          .name = "aggregate_net_initialize_tri_state",
-          .declaration = Method{"InitializeTriState"},
-          .takes_the_location = false,
-          .operands = {kMachine, kHeld}};
-    case BuiltinFn::kAggregateNetInitializeWiredAnd:
-      return {
-          .name = "aggregate_net_initialize_wired_and",
-          .declaration = Method{"InitializeWiredAnd"},
-          .takes_the_location = false,
-          .operands = {kMachine, kHeld}};
-    case BuiltinFn::kAggregateNetInitializeWiredOr:
-      return {
-          .name = "aggregate_net_initialize_wired_or",
-          .declaration = Method{"InitializeWiredOr"},
-          .takes_the_location = false,
-          .operands = {kMachine, kHeld}};
-    case BuiltinFn::kAggregateNetInitializeRetaining:
-      return {
-          .name = "aggregate_net_initialize_retaining",
-          .declaration = Method{"InitializeRetaining"},
-          .takes_the_location = false,
-          .operands = {kMachine, kHeld}};
     case BuiltinFn::kUnresolvedNetInitialize:
       return {
           .name = "unresolved_net_initialize",
@@ -1117,6 +1071,12 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "attach_driver",
           .declaration = Method{"AttachDriver"},
+          .takes_a_type_argument = true,
+          .takes_the_location = true};
+    case BuiltinFn::kAttachWholeDriver:
+      return {
+          .name = "attach_whole_driver",
+          .declaration = Method{"AttachWholeDriver"},
           .takes_the_location = true};
     case BuiltinFn::kDriveFromVariable:
       return {

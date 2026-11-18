@@ -270,13 +270,13 @@ auto CodeGenModule::BuildCallArgs(
             args.push_back(WidthArg(types_.RequiredIntegralShapeOf(held.of)));
             return {};
           },
-          [&](const TypeAndNetFoldsArg& held) -> diag::Result<void> {
+          [&](const TypeAndNetWitnessesArg& held) -> diag::Result<void> {
             auto type_object = value_types_.GetAddrOfElementType(held.of);
             if (!type_object) {
               return std::unexpected(std::move(type_object.error()));
             }
             args.push_back(*type_object);
-            args.push_back(value_types_.GetAddrOfNetFolds(held.of));
+            args.push_back(value_types_.GetAddrOfNetWitnesses(held.of));
             return {};
           },
           [&](const TypeMetadataArg& held) -> diag::Result<void> {
@@ -452,11 +452,6 @@ auto CodeGenModule::EmitDeleteCall(
   llvm::Value* const size = builder.getInt64(layout->size);
   builder.CreateCall(release, {storage, size});
   return {};
-}
-
-void CodeGenModule::EmitClearAboveWidths(
-    llvm::IRBuilderBase& builder, lir::TypeId type, llvm::Value* at) {
-  value_types_.EmitClearAboveWidths(builder, type, at);
 }
 
 auto CodeGenModule::EmitStep(
@@ -1060,6 +1055,9 @@ auto CodeGenModule::HoldsItsBytesInline(
             return held_elsewhere(m);
           },
           [&](const support::ResolvedNetMember& m) {
+            return held_elsewhere(m);
+          },
+          [&](const support::UnresolvedNetMember& m) {
             return held_elsewhere(m);
           },
           [&](const support::SampledHistoryMember& m) {

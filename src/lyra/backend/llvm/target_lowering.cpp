@@ -654,6 +654,7 @@ auto TargetLowering::ConstructionOf(
           // and is reached by address.
           [&](const lir::ObservableType&) -> Built { return no_construct(); },
           [&](const lir::ResolvedType&) -> Built { return no_construct(); },
+          [&](const lir::UnresolvedType&) -> Built { return no_construct(); },
           [&](const lir::DriverType&) -> Built { return no_construct(); },
           // A write is opened by the wrapper it writes through, which is an
           // operation on the wrapper rather than a value anything builds, and

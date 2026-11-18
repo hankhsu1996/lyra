@@ -1,14 +1,11 @@
 #include "lyra/backend/llvm/codegen_value_type.hpp"
 
-#include <algorithm>
 #include <array>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <format>
-#include <functional>
 #include <optional>
-#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -258,6 +255,28 @@ auto CodeGenValueTypes::StreamWriteBody(
   return body;
 }
 
+// A value's positions as a net asks them: the type's function answers them as
+// an integral value, which the library holds while the function makes it and
+// writes into the view the net hands. The function can fail at nothing, so it
+// is handed no place to report at.
+auto CodeGenValueTypes::PositionsWriteBody(
+    lir::TypeId type, std::string_view witness,
+    const support::MachineSignature& stands_in_for, lir::FunctionId method)
+    -> llvm::Constant* {
+  llvm::Function* const body = DeclareBody(type, witness, stands_in_for);
+  llvm::IRBuilder<> b(
+      llvm::BasicBlock::Create(owner_->Module().getContext(), "", body));
+  const value::IntegralShape positions =
+      types_->RequiredIntegralShapeOf(unit_->functions.Get(method).result_type);
+  ForwardToEntry(
+      b, RuntimeOp::kPositionsWrite, b.getVoidTy(),
+      {owner_->UnitFunction(method), body->getArg(1),
+       b.getInt64(positions.width), b.getInt1(positions.IsFourState()),
+       body->getArg(2)});
+  b.CreateRetVoid();
+  return body;
+}
+
 auto CodeGenValueTypes::StreamReadBody(
     lir::TypeId type, std::string_view witness,
     const support::MachineSignature& stands_in_for, lir::FunctionId method)
@@ -342,120 +361,6 @@ auto CodeGenValueTypes::NoLocationBody(
   return body;
 }
 
-void CodeGenValueTypes::EmitClearAboveWidths(
-    llvm::IRBuilderBase& b, lir::TypeId type, llvm::Value* at) {
-  if (!types_->KeepsAboveWidthsClear(type)) {
-    return;
-  }
-  if (const std::optional<value::IntegralShape> shape =
-          types_->IntegralShapeOf(type)) {
-    ClearAboveWidth(b, at, *shape);
-    return;
-  }
-  b.CreateCall(ClearFunction(type), {at});
-}
-
-// A tagged union keeps clear what the member it holds keeps clear, an array
-// what each element does, and a product what each component does. An untagged
-// union keeps none of its own, since its bits are whatever its members' are,
-// so no function is made for one.
-auto CodeGenValueTypes::ClearFunction(lir::TypeId type) -> llvm::Function* {
-  const std::string& key = KeyOf(type);
-  if (const auto found = clear_functions_.find(key);
-      found != clear_functions_.end()) {
-    return found->second;
-  }
-  llvm::Module& module = owner_->Module();
-  llvm::Function* const fn = llvm::Function::Create(
-      llvm::FunctionType::get(
-          llvm::Type::getVoidTy(module.getContext()), {types_->Ptr()}, false),
-      llvm::GlobalValue::InternalLinkage,
-      std::format("lyra.type{}.clear_above_widths", key), module);
-  clear_functions_.emplace(key, fn);
-  llvm::IRBuilder<> b(llvm::BasicBlock::Create(module.getContext(), "", fn));
-  llvm::Value* const value = fn->getArg(0);
-  std::visit(
-      Overloaded{
-          [&](const ProductLayout* product) {
-            for (std::size_t i = 0; i < product->components.size(); ++i) {
-              EmitClearAboveWidths(
-                  b, product->components[i],
-                  b.CreateConstInBoundsGEP1_64(
-                      b.getInt8Ty(), value, product->offsets[i]));
-            }
-          },
-          [&](const ArrayLayout* array) {
-            ForEachElement(
-                b, type, value,
-                [&](llvm::IRBuilderBase& at, llvm::Value* each) {
-                  EmitClearAboveWidths(at, array->element, each);
-                });
-          },
-          [&](const UnionLayout* overlay) {
-            if (overlay->tag.has_value()) {
-              ForHeldMember(
-                  b, overlay->members, *overlay->tag, value,
-                  [&](llvm::IRBuilderBase& at, lir::TypeId member) {
-                    EmitClearAboveWidths(at, member, value);
-                  });
-            }
-          }},
-      types_->FieldsOf(type));
-  b.CreateRetVoid();
-  return fn;
-}
-
-void CodeGenValueTypes::ForEachElement(
-    llvm::IRBuilderBase& b, lir::TypeId array, llvm::Value* value,
-    const std::function<void(llvm::IRBuilderBase&, llvm::Value*)>& each) {
-  const ArrayLayout& laid = types_->LayoutOfArray(array);
-  llvm::Function* const fn = b.GetInsertBlock()->getParent();
-  llvm::LLVMContext& ctx = fn->getContext();
-  llvm::BasicBlock* const before = b.GetInsertBlock();
-  llvm::BasicBlock* const loop = llvm::BasicBlock::Create(ctx, "element", fn);
-  llvm::BasicBlock* const done =
-      llvm::BasicBlock::Create(ctx, "elements_done", fn);
-  // An unpacked array declares at least one element (LRM 7.4.2).
-  b.CreateBr(loop);
-  b.SetInsertPoint(loop);
-  llvm::PHINode* const position = b.CreatePHI(b.getInt64Ty(), 2);
-  position->addIncoming(b.getInt64(0), before);
-  llvm::Type* const byte = b.getInt8Ty();
-  llvm::Value* const offset = b.CreateMul(position, b.getInt64(laid.stride));
-  llvm::Value* const element = b.CreateInBoundsGEP(byte, value, offset);
-  each(b, element);
-  llvm::Value* const next = b.CreateAdd(position, b.getInt64(1));
-  position->addIncoming(next, b.GetInsertBlock());
-  b.CreateCondBr(b.CreateICmpULT(next, b.getInt64(laid.count)), loop, done);
-  b.SetInsertPoint(done);
-}
-
-void CodeGenValueTypes::ForHeldMember(
-    llvm::IRBuilderBase& b, std::span<const lir::TypeId> members,
-    const value::TagPlacement& placed, llvm::Value* value,
-    const std::function<void(llvm::IRBuilderBase&, lir::TypeId)>& held) {
-  llvm::IntegerType* const tag_ty = b.getIntNTy(8 * placed.bytes);
-  llvm::Value* const tag = b.CreateLoad(
-      tag_ty,
-      b.CreateConstInBoundsGEP1_64(b.getInt8Ty(), value, placed.offset));
-  llvm::Function* const fn = b.GetInsertBlock()->getParent();
-  llvm::LLVMContext& ctx = fn->getContext();
-  // A tag naming no member is bits another member of an untagged union
-  // holding this one wrote, and a union held so owns nothing (LRM 7.3).
-  llvm::BasicBlock* const done = llvm::BasicBlock::Create(ctx, "held", fn);
-  llvm::SwitchInst* const choose =
-      b.CreateSwitch(tag, done, static_cast<unsigned>(members.size()));
-  for (std::size_t i = 0; i < members.size(); ++i) {
-    llvm::BasicBlock* const member =
-        llvm::BasicBlock::Create(ctx, "holds", fn, done);
-    choose->addCase(llvm::ConstantInt::get(tag_ty, i), member);
-    b.SetInsertPoint(member);
-    held(b, members[i]);
-    b.CreateBr(done);
-  }
-  b.SetInsertPoint(done);
-}
-
 auto CodeGenValueTypes::OwnOperationOf(
     lir::TypeId type, support::ValueOperation operation) const
     -> std::optional<lir::FunctionId> {
@@ -516,6 +421,9 @@ auto CodeGenValueTypes::WitnessFromOperation(
           },
           [&](AnswerIntoStream) -> llvm::Constant* {
             return StreamWriteBody(type, witness.name, signature, *method);
+          },
+          [&](AnswerIntoView) -> llvm::Constant* {
+            return PositionsWriteBody(type, witness.name, signature, *method);
           },
           [&](StreamOutOfValue) -> llvm::Constant* {
             return StreamReadBody(type, witness.name, signature, *method);
@@ -630,7 +538,7 @@ auto CodeGenValueTypes::GetAddrOfLaidOutType(lir::TypeId type)
   const TypeConstantReferences references = ReferencesOf(*unit_, type);
   return std::visit(
       Overloaded{
-          [&](const UnionLayout* overlay) -> llvm::GlobalVariable* {
+          [&](const TaggedUnionFields* overlay) -> llvm::GlobalVariable* {
             ConstantRecord out(ctx, sizeof(value::ValueType));
             PlaceValueType(
                 out, table, overlay->storage, value::ValueTypeKind::kOther);
@@ -717,30 +625,31 @@ auto CodeGenValueTypes::LinkageOfItsOperations(lir::TypeId type) const
   return llvm::GlobalValue::InternalLinkage;
 }
 
-auto CodeGenValueTypes::GetAddrOfNetFolds(lir::TypeId type) -> llvm::Constant* {
+auto CodeGenValueTypes::GetAddrOfNetWitnesses(lir::TypeId type)
+    -> llvm::Constant* {
   const std::string& key = KeyOf(type);
-  if (const auto found = net_folds_of_.find(key);
-      found != net_folds_of_.end()) {
+  if (const auto found = net_witnesses_of_.find(key);
+      found != net_witnesses_of_.end()) {
     return found->second;
   }
   llvm::Module& module = owner_->Module();
-  const std::string name = std::format("lyra.type{}.net_folds", key);
+  const std::string name = std::format("lyra.type{}.net_witnesses", key);
   const std::optional<llvm::GlobalValue::LinkageTypes> linkage =
       LinkageOfItsOperations(type);
   if (!linkage.has_value()) {
     llvm::Constant* const elsewhere =
         module.getOrInsertGlobal(name, types_->Ptr());
-    net_folds_of_.emplace(key, elsewhere);
+    net_witnesses_of_.emplace(key, elsewhere);
     return elsewhere;
   }
-  ConstantRecord folds(module.getContext(), sizeof(value::NetFoldTable));
-  for (const Witness& witness : NetFoldWitnesses()) {
-    folds.Place(witness.offset, FillWitness(type, witness));
+  ConstantRecord witnesses(module.getContext(), sizeof(value::NetWitnessTable));
+  for (const Witness& witness : NetWitnesses()) {
+    witnesses.Place(witness.offset, FillWitness(type, witness));
   }
   llvm::GlobalVariable* const defined = owner_->DefineConstant(
-      name, std::move(folds).Build(), *linkage,
-      llvm::Align(alignof(value::NetFoldTable)));
-  net_folds_of_.emplace(key, defined);
+      name, std::move(witnesses).Build(), *linkage,
+      llvm::Align(alignof(value::NetWitnessTable)));
+  net_witnesses_of_.emplace(key, defined);
   return defined;
 }
 
@@ -910,10 +819,12 @@ auto CodeGenValueTypes::EmitDeclared() -> void {
         unit_->types.Intern(lir::Type{lir::RecordType{.declaration = id}});
     GetAddrOfLaidOutType(type);
     // Everything another unit hands the library of the record is stated here,
-    // where the record states the operations it is made of. A net of any
-    // record is built holding its folds, and one of a record no net type
-    // resolves asks none of them.
-    GetAddrOfNetFolds(type);
+    // where the record states the operations it is made of. A net of a record
+    // a net type resolves is built holding what it asks of the record's
+    // positions, and only such a record states how they are written.
+    if (OwnOperationOf(type, support::BuiltinFn::kWritePositions).has_value()) {
+      GetAddrOfNetWitnesses(type);
+    }
     if (OwnOperationOf(type, support::BuiltinFn::kTakePositions).has_value()) {
       GetAddrOfTakePositions(type);
     }

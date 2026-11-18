@@ -78,6 +78,8 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "run_write";
     case RuntimeOp::kRunBuild:
       return "run_build";
+    case RuntimeOp::kPositionsWrite:
+      return "positions_write";
     case RuntimeOp::kInsertBits:
       return "insert_bits";
     case RuntimeOp::kInsertDesignatedBits:
@@ -104,8 +106,10 @@ auto WrapperName(WrapperKind wrapper) -> std::string_view {
   switch (wrapper) {
     case WrapperKind::kCell:
       return "cell";
-    case WrapperKind::kNet:
-      return "net";
+    case WrapperKind::kResolvedNet:
+      return "resolved_net";
+    case WrapperKind::kUnresolvedNet:
+      return "unresolved_net";
     case WrapperKind::kDriver:
       return "driver";
     case WrapperKind::kRef:
@@ -234,6 +238,7 @@ auto RuntimeSymbol(support::DeclaredMemberStorage storage, RuntimeOp op)
             return over(m.domain);
           },
           [&](const support::ResolvedNetMember& m) { return over(m.domain); },
+          [&](const support::UnresolvedNetMember& m) { return over(m.domain); },
           [&](const support::SampledHistoryMember& m) {
             return over(m.domain);
           },
@@ -321,8 +326,10 @@ auto OperandReadingsOf(RuntimeOp op) -> support::OperandReadings {
   using enum support::OperandReading;
   switch (op) {
     // The function answering a value's stream, then that value, which crosses
-    // with how wide its stream is and whether the stream holds x or z.
+    // with how wide its stream is and whether the stream holds x or z; and the
+    // same of the function answering a value's positions.
     case RuntimeOp::kStreamWrite:
+    case RuntimeOp::kPositionsWrite:
       return {kMachine, kBits};
     // The function answering a value's run of bits, then that value.
     case RuntimeOp::kRunWrite:
@@ -394,6 +401,7 @@ auto AnswerToldOf(RuntimeOp op) -> support::AnswerTold {
     case RuntimeOp::kStreamWrite:
     case RuntimeOp::kRunWrite:
     case RuntimeOp::kRunBuild:
+    case RuntimeOp::kPositionsWrite:
     case RuntimeOp::kInsertBits:
     case RuntimeOp::kInsertDesignatedBits:
     case RuntimeOp::kFromElements:

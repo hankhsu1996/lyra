@@ -133,8 +133,8 @@ of any element type by one entry told the type's metadata (`swift_arrayInitWithC
 
 ## Consequences
 
-- A value has one address from the moment its holder exists; an aggregate net is named before its
-  declaration installs a value.
+- A value has one address from the moment its holder exists; a net is named before its declaration
+  is installed.
 - Every holder's value is read and written where it lies; only an object of the library's own is
   reached through the library.
 - No speed or memory figure is recorded here; none was taken.

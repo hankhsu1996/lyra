@@ -32,11 +32,6 @@ namespace lyra::backend::cpp {
 // can only suspend by awaiting something.
 [[nodiscard]] auto SuspensionCppType() -> std::string_view;
 
-// What reads a value out of storage another member of an untagged union may
-// have written, `lyra::value::ReadOverlaid(place)`: the value the bits there
-// stand for at the place's type (LRM 7.3.2).
-[[nodiscard]] auto OverlaidReadCppFunction() -> std::string_view;
-
 // A MIR type, written into the output as its C++ type. An enum is written as
 // its base type; there is no C++ enum. It holds a view of the unit, which
 // outlives the writing.
@@ -101,15 +96,15 @@ struct CppConstructorName {
 
 void WriteOne(TargetText& out, const CppConstructorName& constructor);
 
-// What says which member a union is built holding, ahead of that member's
-// value: `std::in_place_index<I>`, the tag a union type takes a constructor by,
-// as `std::variant` does. The constructor places the member at the start of
-// the union's storage with every other byte zero.
-struct CppUnionMemberTag {
+// What says which member a tagged union is built holding, ahead of that
+// member's value: `std::in_place_index<I>`, the tag a union type takes a
+// constructor by, as `std::variant` does. The constructor places the member at
+// the start of the union's storage with every other byte zero.
+struct CppTaggedUnionMemberTag {
   base::ComponentIndex member;
 };
 
-void WriteOne(TargetText& out, const CppUnionMemberTag& tag);
+void WriteOne(TargetText& out, const CppTaggedUnionMemberTag& tag);
 
 // What takes ownership of the storage a `new` allocated for a value, applied
 // to the pointer `new` yields: `std::unique_ptr<T>(new T(init))`.
@@ -147,10 +142,10 @@ struct CppTupleComponents {
 
 void WriteOne(TargetText& out, const CppTupleComponents& components);
 
-// The library type a struct or a union the unit declares is built on, holding
-// its members: the product of a struct's, `Tuple<Ts...>`, or the one storage a
-// union's overlay, `Union<Ts...>`, with the tag a tagged one adds,
-// `TaggedUnion<Ts...>`.
+// The library type a struct or a union the unit declares is built on: the
+// product of its components, `Tuple<Ts...>` -- a struct's members, or an
+// untagged union's one storage (LRM 7.3) -- or a tagged union's members
+// overlaid under its tag, `TaggedUnion<Ts...>` (LRM 7.3.2).
 struct CppRecordBase {
   const mir::CompilationUnit* unit = nullptr;
   const mir::RecordDecl* of = nullptr;

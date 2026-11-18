@@ -37,7 +37,7 @@ constexpr std::string_view kAbiHeader = "include/lyra/runtime/runtime_abi.hpp";
 // What a parameter of a prototype hands the entry: a value, or one of the
 // things an entry is told of a type -- how wide an integral type is, whether
 // it is signed, whether it is four-state, the constant of a type the entry
-// keeps and acts on, how a net folds values of it, the function taking some of
+// keeps and acts on, what a net asks of it, the function taking some of
 // a value's positions, the order an index type imposes, or the operations a
 // value of it is compared and streamed by.
 enum class Hands : std::uint8_t {
@@ -46,7 +46,7 @@ enum class Hands : std::uint8_t {
   kSignedness,
   kFourState,
   kTypeConstant,
-  kNetFolds,
+  kNetWitnesses,
   kTakePositions,
   kIndexOrder,
   kOperations,
@@ -140,8 +140,8 @@ auto ParametersOf(std::span<const Spelled> spelled) -> std::vector<Parameter> {
       hands = Hands::kFourState;
     } else if (pointer && p.name.ends_with("_type")) {
       hands = Hands::kTypeConstant;
-    } else if (pointer && p.name.ends_with("_net_folds")) {
-      hands = Hands::kNetFolds;
+    } else if (pointer && p.name.ends_with("_net_witnesses")) {
+      hands = Hands::kNetWitnesses;
     } else if (pointer && p.name.ends_with("_take_positions")) {
       hands = Hands::kTakePositions;
     } else if (pointer && p.name.ends_with("_index_order")) {
@@ -249,10 +249,10 @@ auto Disagreement(
              "its operands and does not open with it";
     }
   }
-  if (std::holds_alternative<ToldTypeAndNetFoldsAhead>(declared.told) &&
-      !(take(Hands::kTypeConstant) && take(Hands::kNetFolds))) {
+  if (std::holds_alternative<ToldTypeAndNetWitnessesAhead>(declared.told) &&
+      !(take(Hands::kTypeConstant) && take(Hands::kNetWitnesses))) {
     return "is declared told the type of the values it holds and how a net "
-           "folds them ahead of its operands and does not open with both";
+           "asks of them ahead of its operands and does not open with both";
   }
   // A realization for a value laid out by its type is told that type once,
   // after its operands and ahead of what it is told of its answer.
@@ -273,7 +273,7 @@ auto Disagreement(
             [&](const ToldWidthMetadataAhead&) { return read; },
             [&](const ToldTypeMetadataAhead&) { return read; },
             [&](const ToldContainerTypeAhead&) { return read; },
-            [&](const ToldTypeAndNetFoldsAhead&) { return read; },
+            [&](const ToldTypeAndNetWitnessesAhead&) { return read; },
             [&](const ToldWidthMetadata& t) {
               return told_at(t.after, PassWithWidth{.type = lir::TypeId{}});
             },
@@ -296,7 +296,9 @@ auto Disagreement(
               [](const ToldWidthMetadataAhead&) -> std::size_t { return 0; },
               [](const ToldTypeMetadataAhead&) -> std::size_t { return 0; },
               [](const ToldContainerTypeAhead&) -> std::size_t { return 0; },
-              [](const ToldTypeAndNetFoldsAhead&) -> std::size_t { return 0; },
+              [](const ToldTypeAndNetWitnessesAhead&) -> std::size_t {
+                return 0;
+              },
               [](const ToldWidthMetadata& t) { return t.after + 1; },
               [](const ToldLaidOutType&) -> std::size_t { return 0; },
               [](const ToldKeyType& t) { return t.after + 1; },
@@ -345,7 +347,7 @@ auto Disagreement(
       case Hands::kSignedness:
       case Hands::kFourState:
       case Hands::kTypeConstant:
-      case Hands::kNetFolds:
+      case Hands::kNetWitnesses:
       case Hands::kTakePositions:
       case Hands::kIndexOrder:
       case Hands::kOperations:
@@ -646,6 +648,9 @@ auto DeclaredRealizations() -> Realizations {
              return support::ResolvedNetMember{.domain = domain};
            },
            [](support::ValueDomain domain) -> support::DeclaredMemberStorage {
+             return support::UnresolvedNetMember{.domain = domain};
+           },
+           [](support::ValueDomain domain) -> support::DeclaredMemberStorage {
              return support::SampledHistoryMember{.domain = domain};
            },
            [](support::ValueDomain domain) -> support::DeclaredMemberStorage {
@@ -763,7 +768,7 @@ TEST(EntryPrototypeTest, AnUnstatedRealizationIsRefused) {
       InternalError);
   EXPECT_THROW(
       RuntimeSymbol(
-          support::ValueDomain::kString, WrapperKind::kNet,
+          support::ValueDomain::kString, WrapperKind::kResolvedNet,
           support::BuiltinFn::kGet),
       InternalError);
   EXPECT_THROW(
@@ -875,12 +880,13 @@ TEST(EntryPrototypeTest, WhatStorageIsToldAheadOpensItsPrototype) {
   EXPECT_TRUE(disagrees(ToldTypeMetadataAhead{}, kWidthFirst));
   EXPECT_TRUE(disagrees(ToldTypeMetadataAhead{}, kStorageFirst));
   EXPECT_TRUE(disagrees(ToldNothing{}, kTypeFirst));
-  constexpr std::string_view kTypeAndFoldsFirst =
-      "void lyra_rt_probe(const void* held_type, const void* held_net_folds, "
-      "void* storage);";
-  EXPECT_FALSE(disagrees(ToldTypeAndNetFoldsAhead{}, kTypeAndFoldsFirst));
-  EXPECT_TRUE(disagrees(ToldTypeAndNetFoldsAhead{}, kTypeFirst));
-  EXPECT_TRUE(disagrees(ToldTypeMetadataAhead{}, kTypeAndFoldsFirst));
+  constexpr std::string_view kTypeAndNetWitnessesFirst =
+      "void lyra_rt_probe(const void* held_type, "
+      "const void* held_net_witnesses, void* storage);";
+  EXPECT_FALSE(
+      disagrees(ToldTypeAndNetWitnessesAhead{}, kTypeAndNetWitnessesFirst));
+  EXPECT_TRUE(disagrees(ToldTypeAndNetWitnessesAhead{}, kTypeFirst));
+  EXPECT_TRUE(disagrees(ToldTypeMetadataAhead{}, kTypeAndNetWitnessesFirst));
   constexpr std::string_view kOrderAndTypeFirst =
       "void lyra_rt_probe(const void* key_index_order, "
       "const void* element_type, void* storage);";

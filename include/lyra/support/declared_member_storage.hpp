@@ -25,9 +25,14 @@ namespace lyra::support {
 struct ObservableCellMember {
   ValueDomain domain;
 };
-// A net's resolution node, likewise reached only through its address; a value
-// reaches it through a driver rather than by being written (LRM 6.5).
+// A net resolving its drivers, likewise reached only through its address; a
+// value reaches it through a driver rather than by being written (LRM 6.5).
 struct ResolvedNetMember {
+  ValueDomain domain;
+};
+// An unresolved net, which its one driver gives whole (LRM 6.6.7), reached
+// the same way.
+struct UnresolvedNetMember {
   ValueDomain domain;
 };
 // What the ticks of one clocking event settled for one expression (LRM
@@ -71,9 +76,9 @@ struct LibraryObjectMember {
 };
 
 using DeclaredMemberStorage = std::variant<
-    ObservableCellMember, ResolvedNetMember, SampledHistoryMember,
-    ValueCellMember, InlineValueMember, InlineBytesMember, BorrowedHandleMember,
-    LibraryDeclMember, LibraryObjectMember>;
+    ObservableCellMember, ResolvedNetMember, UnresolvedNetMember,
+    SampledHistoryMember, ValueCellMember, InlineValueMember, InlineBytesMember,
+    BorrowedHandleMember, LibraryDeclMember, LibraryObjectMember>;
 
 // The spelling the entries building and ending one member's storage carry,
 // after the domain it holds values of where it holds any.

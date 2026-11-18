@@ -122,26 +122,25 @@ read is a call on the string read, a write a mutating call on the string's place
 
 ### D5. A place carries what kind of storage it is
 
-Ordinary storage has an address. A union's member and everything below it has none of its own (LRM
-13.5.2). An untagged union's member and everything below it is also overlaid: its bits may be
-another member's. A place's kind follows from its node and the kind of the place it is taken on -- a
-field step on a union gives no-address or overlaid and on anything else its operand's kind, a
-dereference gives ordinary -- so it is computed from the node rather than stored beside it, as rustc
-reads such facts off a place's projections. A reference the program holds ends only on ordinary
-storage. A borrow lasts only the full-expression, so it may end on storage with no address of its
-own; overlaid storage is read first, by a borrow and by the object a non-mutating call is entered
-on, and that value is held for the full-expression, so what they see holds what its type requires.
+Ordinary storage has an address. A tagged union's member and everything below it has none of its own
+(LRM 13.5.2). A place's kind follows from its node and the kind of the place it is taken on -- a
+field step on a tagged union gives no-address and on anything else its operand's kind, a dereference
+gives ordinary -- so it is computed from the node rather than stored beside it, as rustc reads such
+facts off a place's projections. A reference the program holds ends only on ordinary storage. A
+borrow lasts only the full-expression, so it may end on storage with no address of its own. An
+untagged union's member is no place at all: it is a value made from the union's storage
+([a-union-is-one-storage-its-members-overlay](a-union-is-one-storage-its-members-overlay.md) D2).
+Revised 2026-11-17: an untagged union's member was a third kind, overlaid, read by a load clearing
+above its width and written by a store of the whole leaf.
 
 ### D6. A read is a node
 
-`read(place)` yields the value the place holds, and how it is realized follows the place's kind: an
-ordinary or no-address place is loaded; an overlaid one is loaded and its positions above each width
-are cleared, so the value read holds what its type's representation requires.
+`read(place)` yields the value the place holds, and how it is realized follows the place's kind:
+each is loaded.
 
 ### D7. A write is an assignment to a place
 
-Its target is a place, which the verifier checks. A store into an overlaid place stores the leaf
-whole, which leaves its positions above its width clear.
+Its target is a place, which the verifier checks.
 
 ### D8. A value where a place is needed is held for the full-expression
 
@@ -212,5 +211,5 @@ holds a value, as rustc's `Operand::Copy` and `Operand::Move` do.
 - An operation over an operand settles how it takes it once it is known which operation it is, as
   clang's Sema settles an operand's conversion after overload resolution: a struct's method borrows
   a place where it lies, a library entry takes its value.
-- A union's member is a field step, overlaid when the union is untagged, so an unpacked union needs
-  nothing of its own to be read.
+- A tagged union's member is a field step and an untagged union's a view of its storage, so an
+  unpacked union needs nothing of its own to be read.

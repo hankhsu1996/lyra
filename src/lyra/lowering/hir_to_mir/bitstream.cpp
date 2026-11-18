@@ -98,7 +98,7 @@ auto HoldsAnywhere(
   }
   if (const mir::RecordId* record = mir::RecordOf(resolved)) {
     return std::ranges::any_of(
-        mir::RecordElements(unit, *record), [&](mir::TypeId element) {
+        mir::MembersOf(unit.GetRecord(*record)), [&](mir::TypeId element) {
           return HoldsAnywhere(unit, element, holds);
         });
   }
@@ -155,7 +155,7 @@ auto FixedStreamShapeOf(const mir::CompilationUnit& unit, mir::TypeId type)
   // member, and a tagged union not at all (LRM 11.4.14.1).
   if (const mir::RecordId* record = mir::RecordOf(resolved)) {
     const std::span<const mir::TypeId> members =
-        mir::RecordElements(unit, *record);
+        mir::MembersOf(unit.GetRecord(*record));
     switch (mir::RecordKindOf(unit, *record)) {
       case mir::RecordKind::kStruct:
         return FixedStreamShapeOfParts(unit, members);
@@ -217,8 +217,19 @@ auto StreamFillOf(const mir::CompilationUnit& unit, mir::TypeId type)
         .first_element = element.first_element,
         .multiplier = element.multiplier};
   }
+  // A structure is read back member by member, and an untagged union as its
+  // first member (LRM 11.4.14.1).
   if (const mir::RecordId* record = mir::RecordOf(resolved)) {
-    return FillOfParts(unit, mir::RecordElements(unit, *record));
+    const std::span<const mir::TypeId> members =
+        mir::MembersOf(unit.GetRecord(*record));
+    switch (mir::RecordKindOf(unit, *record)) {
+      case mir::RecordKind::kStruct:
+      case mir::RecordKind::kTaggedUnion:
+        return FillOfParts(unit, members);
+      case mir::RecordKind::kUnion:
+        return StreamFillOf(unit, members.front());
+    }
+    throw InternalError("StreamFillOf: unknown record kind");
   }
   throw InternalError(
       "StreamFillOf: a stream is read back into a type that holds none, which "

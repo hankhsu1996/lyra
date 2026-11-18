@@ -584,7 +584,7 @@ auto LowerSort(
       DeclaredRangeOf(unit_lowerer, operand.type);
   std::optional<AccessPath> written_back;
   WalkedArray array = [&] {
-    if (!ReachesOverlaidStorage(*target)) {
+    if (!ReachesUnionMember(*target)) {
       return WalkedArrayAt(
           unit_lowerer.Unit(), steps.Frame(), *std::move(target), declared);
     }

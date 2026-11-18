@@ -901,37 +901,44 @@ TEST(IntegralTest, NetContributionsFoldUnderEachTable) {
     }
     return FourStateBit::kUnknown;
   };
+  const auto folded = [](NetResolution fold, const auto& a, const auto& b) {
+    auto out = a;
+    Resolve(out.MutableView(), a.View(), b.View(), fold);
+    return out;
+  };
   for (const NetResolution fold :
        {NetResolution::kTriState, NetResolution::kWiredAnd,
         NetResolution::kWiredOr}) {
     for (const FourStateBit a : kScalars) {
       for (const FourStateBit b : kScalars) {
         const FourStateBit want = expected(fold, a, b);
-        EXPECT_EQ(Resolve(fold, Logic::Filled(a), Logic::Filled(b)).Lsb(), want)
+        EXPECT_EQ(folded(fold, Logic::Filled(a), Logic::Filled(b)).Lsb(), want)
             << static_cast<int>(fold) << ' ' << static_cast<int>(a) << ' '
             << static_cast<int>(b);
-        EXPECT_TRUE(Resolve(fold, Logic100::Filled(a), Logic100::Filled(b))
+        EXPECT_TRUE(folded(fold, Logic100::Filled(a), Logic100::Filled(b))
                         .IsBitIdentical(Logic100::Filled(want)));
       }
     }
   }
   const Logic8 one = Logic8::FromInt(0xff);
   const Logic8 zero = Logic8::FromInt(0);
-  EXPECT_TRUE(one.ResolveTriState(zero).IsBitIdentical(Logic8{}));
-  EXPECT_TRUE(one.ResolveWiredAnd(zero).IsBitIdentical(zero));
-  EXPECT_TRUE(one.ResolveWiredOr(zero).IsBitIdentical(one));
+  EXPECT_TRUE(
+      folded(NetResolution::kTriState, one, zero).IsBitIdentical(Logic8{}));
+  EXPECT_TRUE(folded(NetResolution::kWiredAnd, one, zero).IsBitIdentical(zero));
+  EXPECT_TRUE(folded(NetResolution::kWiredOr, one, zero).IsBitIdentical(one));
 
   // LRM 28.12.1: a stronger contribution determines every position it drives.
   for (const FourStateBit stronger : kScalars) {
     for (const FourStateBit weaker : kScalars) {
+      Logic out = Logic::Filled(stronger);
+      Dominate(
+          out.MutableView(), Logic::Filled(stronger).View(),
+          Logic::Filled(weaker).View());
       EXPECT_EQ(
-          Logic::Filled(stronger).Dominating(Logic::Filled(weaker)).Lsb(),
+          out.Lsb(),
           stronger == FourStateBit::kHighImpedance ? weaker : stronger);
     }
   }
-  EXPECT_TRUE(
-      FilledAs(Logic100{}, Logic::Filled(FourStateBit::kHighImpedance))
-          .IsBitIdentical(Logic100::Filled(FourStateBit::kHighImpedance)));
 }
 
 // LRM 11.4.9: a reduction folds every position of the value and none above

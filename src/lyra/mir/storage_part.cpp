@@ -80,9 +80,9 @@ auto Wider(PlaceKind a, PlaceKind b) -> PlaceKind {
   return std::max(a, b);
 }
 
-// The kind of a part of a value of `aggregate`: a union's member is overlaid,
-// a tagged union's has no address of its own, and any other part is ordinary
-// (LRM 7.3).
+// The kind of a part of a value of `aggregate`: a tagged union's member has no
+// address of its own, and any other part -- an untagged union's one part being
+// its storage -- is ordinary (LRM 7.3).
 auto KindOfAPart(const CompilationUnit& unit, TypeId aggregate) -> PlaceKind {
   const std::optional<RecordKind> kind = RecordKindOf(unit, aggregate);
   if (!kind.has_value()) {
@@ -90,9 +90,8 @@ auto KindOfAPart(const CompilationUnit& unit, TypeId aggregate) -> PlaceKind {
   }
   switch (*kind) {
     case RecordKind::kStruct:
-      return PlaceKind::kOrdinary;
     case RecordKind::kUnion:
-      return PlaceKind::kOverlaid;
+      return PlaceKind::kOrdinary;
     case RecordKind::kTaggedUnion:
       return PlaceKind::kNoAddress;
   }
@@ -177,24 +176,12 @@ auto KindOfPlace(const CompilationUnit& unit, const Block& block, ExprId place)
   return PlaceKind::kOrdinary;
 }
 
-auto ReadIfOverlaid(const CompilationUnit& unit, Builder block, ExprId object)
-    -> ExprId {
-  if (!IsPlace(block.Get(object).data) ||
-      KindOfPlace(unit, block.Body(), object) != PlaceKind::kOverlaid) {
-    return object;
-  }
-  return block.Read(object);
-}
-
 auto Borrow(const CompilationUnit& unit, Builder block, ExprId operand)
     -> ExprId {
   ExprId object = operand;
-  if (const auto* read = std::get_if<CopyExpr>(&block.Get(operand).data);
-      read != nullptr &&
-      KindOfPlace(unit, block.Body(), read->place) != PlaceKind::kOverlaid) {
+  if (const auto* read = std::get_if<CopyExpr>(&block.Get(operand).data)) {
     object = read->place;
   }
-  object = ReadIfOverlaid(unit, block, object);
   return block.Add(
       Expr{
           .data = BorrowExpr{.operand = object},
@@ -246,18 +233,14 @@ auto BaseOfPlace(const TypePool& types, const Block& block, ExprId place)
   return std::nullopt;
 }
 
-auto ValueLiesInStorage(
-    const CompilationUnit& unit, const Block& block, ExprId id) -> bool {
+auto ValueLiesInStorage(const Block& block, ExprId id) -> bool {
   const ExprData& data = block.exprs.Get(id).data;
-  if (const auto* read = std::get_if<CopyExpr>(&data)) {
-    return KindOfPlace(unit, block, read->place) != PlaceKind::kOverlaid;
-  }
-  return IsPlace(data) || std::holds_alternative<AwaitExpr>(data);
+  return std::holds_alternative<CopyExpr>(data) || IsPlace(data) ||
+         std::holds_alternative<AwaitExpr>(data);
 }
 
-auto WholeLiesInStorage(
-    const CompilationUnit& unit, const Block& block, ExprId id) -> bool {
-  return ValueLiesInStorage(unit, block, CompleteObjectOf(block, id));
+auto WholeLiesInStorage(const Block& block, ExprId id) -> bool {
+  return ValueLiesInStorage(block, CompleteObjectOf(block, id));
 }
 
 }  // namespace lyra::mir

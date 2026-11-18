@@ -21,12 +21,12 @@ namespace lyra::backend::llvm_backend {
 // off finished LIR, the role of rustc's `MirUsedCollector`: a value's type (LRM
 // 4.3, Table 6-7), an element's (LRM 7.4.5), what compares and streams a value
 // (LRM 11.4.5, 20.6.2, 20.9, 6.24.3), what takes some of its positions (LRM
-// 10.6.2) and what a net folds it by (LRM 6.6). A table is made whole, as a
-// vtable collects every method of its trait. This walks LIR and asks the
-// target's lowering what each node hands over, the answer emission arranges
-// too; what a table names in turn it follows from the one list emission fills
-// the table from. A node this target refuses uses nothing, and the refusal is
-// left to emission, which says where it stands.
+// 10.6.2) and what a net asks of its positions (LRM 6.6.7). A table is made
+// whole, as a vtable collects every method of its trait. This walks LIR and
+// asks the target's lowering what each node hands over, the answer emission
+// arranges too; what a table names in turn it follows from the one list
+// emission fills the table from. A node this target refuses uses nothing, and
+// the refusal is left to emission, which says where it stands.
 //
 // It reads a unit that grows: each call of `CollectUsed` reads what the unit
 // has gained since the last.
@@ -67,7 +67,7 @@ class TypeOperationCollector {
   void VisitValueTypeUse(lir::TypeId type);
   void VisitElementTypeUse(lir::TypeId type);
   void VisitOperationsUse(lir::TypeId type);
-  void VisitNetFoldsUse(lir::TypeId type);
+  void VisitNetWitnessesUse(lir::TypeId type);
   void VisitTakePositionsUse(lir::TypeId type);
 
   // What a node hands over; a node the target refuses hands nothing.

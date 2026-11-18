@@ -289,6 +289,9 @@ auto DefaultValueOf(
           [&](const mir::ResolvedType&) -> Answer {
             return holds_no_declared_value("a net's resolution");
           },
+          [&](const mir::UnresolvedType&) -> Answer {
+            return holds_no_declared_value("an unresolved net");
+          },
           [&](const mir::DriverType&) -> Answer {
             return holds_no_declared_value("a driver's contribution");
           },

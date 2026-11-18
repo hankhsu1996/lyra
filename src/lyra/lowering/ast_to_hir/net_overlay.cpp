@@ -1,6 +1,5 @@
 #include "lyra/lowering/ast_to_hir/net_overlay.hpp"
 
-#include <cstdint>
 #include <expected>
 #include <utility>
 
@@ -17,12 +16,12 @@ namespace lyra::lowering::ast_to_hir {
 
 namespace {
 
-// The positions one operand of a side names. A concatenation names its own
-// operands' positions in the order written, which is most significant first,
-// so nesting one inside another needs nothing of its own. Anything else is a
-// net or a constant select of one, which is its own longest static prefix (LRM
-// 11.5.3) and names the part of the net whose positions it covers whole.
-auto PositionsOf(
+// The parts one operand of a side names. A concatenation names its own
+// operands' parts in the order written, which is most significant first, so
+// nesting one inside another needs nothing of its own. Anything else is a net
+// or a constant select of one, which is its own longest static prefix (LRM
+// 11.5.3) and names that part of the net whole.
+auto PartsOf(
     StructuralScopeLowerer& scope, slang::ast::EvalContext& eval_context,
     const slang::ast::Expression& expr, diag::SourceSpan span,
     diag::DiagCode code, WalkFrame frame) -> diag::Result<hir::NetSide> {
@@ -30,8 +29,7 @@ auto PositionsOf(
     hir::NetSide operands;
     for (const slang::ast::Expression* operand :
          expr.as<slang::ast::ConcatenationExpression>().operands()) {
-      auto named =
-          PositionsOf(scope, eval_context, *operand, span, code, frame);
+      auto named = PartsOf(scope, eval_context, *operand, span, code, frame);
       if (!named) return std::unexpected(std::move(named.error()));
       operands.insert(operands.end(), named->begin(), named->end());
     }
@@ -48,33 +46,19 @@ auto PositionsOf(
         "yet supported where a connection or an alias names some of a net's "
         "bits");
   }
-  // Positions are counted in the bits of a vector. A net whose data type is an
-  // unpacked aggregate resolves per bit as well (LRM 6.7.1), but it keeps no
-  // positions another net could join, whether the whole of it is named or one
-  // element.
-  if (!root->getType().isIntegral()) {
-    return diag::Fail(
-        span, code,
-        "a net whose data type is an unpacked aggregate is not yet supported "
-        "where a connection or an alias names some of a net's bits");
-  }
   auto part = scope.LowerExpr(expr, frame);
   if (!part) return std::unexpected(std::move(part.error()));
-  return hir::NetSide{hir::NetPositions{
-      .part = frame.Exprs().Add(*std::move(part)),
-      .offset = 0,
-      .width = static_cast<std::uint32_t>(
-          path.lspBounds.second - path.lspBounds.first + 1)}};
+  return hir::NetSide{frame.Exprs().Add(*std::move(part))};
 }
 
 }  // namespace
 
-auto NetPositionsOfLvalue(
+auto NetSideOfLvalue(
     StructuralScopeLowerer& scope, const slang::ast::Symbol& eval_scope,
     const slang::ast::Expression& expr, diag::SourceSpan span,
     diag::DiagCode code, WalkFrame frame) -> diag::Result<hir::NetSide> {
   slang::ast::EvalContext eval_context(eval_scope);
-  return PositionsOf(scope, eval_context, expr, span, code, frame);
+  return PartsOf(scope, eval_context, expr, span, code, frame);
 }
 
 }  // namespace lyra::lowering::ast_to_hir

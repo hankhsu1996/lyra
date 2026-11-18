@@ -55,14 +55,15 @@ below LIR, at LIR-to-LLVM.
   element, and component steps, spelled inside the instruction that consumes it and never held.
   Every load, store, and address-of names a place by logical identity, and address-of is the one
   operation that turns the path into a value the program can retain. An element or component step
-  reaches a part of storage -- an array's element, a structure's member, a union's member, which
-  lies at the union's own start. A union's member has no identity of its own, so nothing the program
-  keeps is the address of one; MIR states that, and an address taken here for a transient access
-  through the step is the union's own. A packed value's bits are no step of a place: they are read
-  by the integral's own operation on the value read, and bits lying at a place are written by a
-  store that names the place and the bits. A string's character is no step either; the string's own
-  operations read and write it. There is no slice step, because a window is several elements rather
-  than one storage, and storage behind an indirection is reached by a dereference step.
+  reaches a part of storage -- an array's element, a structure's member, an untagged union's one
+  storage, a tagged union's member, which lies at the union's own start. A tagged union's member has
+  no identity of its own, so nothing the program keeps is the address of one; MIR states that, and
+  an address taken here for a transient access through the step is the union's own. A packed value's
+  bits are no step of a place: they are read by the integral's own operation on the value read, and
+  bits lying at a place are written by a store that names the place and the bits. A string's
+  character is no step either; the string's own operations read and write it. There is no slice
+  step, because a window is several elements rather than one storage, and storage behind an
+  indirection is reached by a dereference step.
 - When the bytes a frame keeps for a value are in use: from where a slot or a value is made, to a
   point stated on every way out of the extent it belongs to.
 - Whether a write initializes or assigns: a value put into storage holding none -- a slot's first
@@ -374,43 +375,40 @@ the object already there. rustc's place steps index only an array or a slice and
 a `Vec` by a call of `Index::index`; an element of a queue or an associative array is a step here
 because a name may denote it in place, so the place it is reached by is the identity that name
 holds. Value semantics hold because a copy of the aggregate copies its parts, so no two values share
-one and a write through one is seen through no other. A union's member has no identity of its own
-and is still reached in place: a component step on the union, at the union's own start, with a load
-and a store through it as through any step. Where the union is untagged, the member's bits may be
-another member's, so a read of a place reached through that step, an element step after it included,
-is an overlaid load: it reads the bits at the loaded type and clears the positions the type's
-representation keeps clear, as clang's load of a bit-field makes its bits a value of the field's
-type. MIR's place determines which reads those are, and the lowering says so by the instruction it
-emits, so no consumer of LIR works it out from the chain again. A tagged union's tag is read by its
-own instruction over the union's place, rustc's `Discriminant`, and a whole union is built by one
-instruction naming the member and its value, which leaves every other byte zero. A value that lies
-in no storage is held in a local before a part of it is reached, so no layer extracts a part of a
-value or rebuilds a value around one; the one element taken by value is an element of a sequence of
-handles. Bits of a packed value are not parts of that kind either: the integral's own operations
-read them out of a value and write them into one. Bits of a packed value lying at a place are
-written where they lie. The store names the place, each part the bits are reached through, outermost
-first -- where the part starts within the one before it and the type that fixes how many bits it has
--- and the bits. The bits ride on the statement and not on the place, because a place is storage a
-load, a store and an address-of can each name, and some bits of a value are none of those alone. A
-part reaches nothing outside the part it is taken in, and a start that names no position writes
-nothing; both are outcomes of the insertion the store is realized by, never control flow or a test
-stated here. A step's direction is the access's: reading a missing element reads the default, and
-writing one allocates or discards it by the container's own rule, which the library applies when the
-step is realized. A write in progress is not a place but a value: the write itself, which the writer
-owns and ends and which names no place, and each place designated within it -- the whole of what it
-was opened on, and each part reached from there -- which borrows the write. Each step MIR takes
-within a write is one call on a designation answering with the next, and what the step does to the
-write -- an element step tells it what forming the element did -- is the library's, as it is in the
-C++ rendering of the same MIR. Where the write lands is a call on a designation, stated before
-anything is written there, that answers with the part's address; the part is then storage like any
-other. A run of elements written within a write is a call on the container's designation. Bits
-written within one are one call on the designation of the value they lie in, naming the same parts
-and bits a store at a place names; the write keeps what those bits held and hears which of them
-moved. That is how the variable learns whether the write changed it (LRM 4.3). Which library entry
-realizes a step, and whether it is an instruction or a call at all, is a realization question
-answered below LIR; it never decides which node the step is expressed as. A mutating method on a
-receiver -- a container's `delete`, a queue's `push` -- changes the storage the receiver names in
-place.
+one and a write through one is seen through no other. An untagged union is a structure of one
+component, its storage, and a member is no part of it: MIR states a read of one as the storage's
+bits made into the member's type and a write as a store of the member's bits into the storage, so
+nothing here knows a union has members. A tagged union's member has no identity of its own and is
+still reached in place: a component step on the union, at the union's own start, with a load and a
+store through it as through any step. A tagged union's tag is read by its own instruction over the
+union's place, rustc's `Discriminant`, and a whole union is built by one instruction naming the
+member and its value, which leaves every other byte zero. A value that lies in no storage is held in
+a local before a part of it is reached, so no layer extracts a part of a value or rebuilds a value
+around one; the one element taken by value is an element of a sequence of handles. Bits of a packed
+value are not parts of that kind either: the integral's own operations read them out of a value and
+write them into one. Bits of a packed value lying at a place are written where they lie. The store
+names the place, each part the bits are reached through, outermost first -- where the part starts
+within the one before it and the type that fixes how many bits it has -- and the bits. The bits ride
+on the statement and not on the place, because a place is storage a load, a store and an address-of
+can each name, and some bits of a value are none of those alone. A part reaches nothing outside the
+part it is taken in, and a start that names no position writes nothing; both are outcomes of the
+insertion the store is realized by, never control flow or a test stated here. A step's direction is
+the access's: reading a missing element reads the default, and writing one allocates or discards it
+by the container's own rule, which the library applies when the step is realized. A write in
+progress is not a place but a value: the write itself, which the writer owns and ends and which
+names no place, and each place designated within it -- the whole of what it was opened on, and each
+part reached from there -- which borrows the write. Each step MIR takes within a write is one call
+on a designation answering with the next, and what the step does to the write -- an element step
+tells it what forming the element did -- is the library's, as it is in the C++ rendering of the same
+MIR. Where the write lands is a call on a designation, stated before anything is written there, that
+answers with the part's address; the part is then storage like any other. A run of elements written
+within a write is a call on the container's designation. Bits written within one are one call on the
+designation of the value they lie in, naming the same parts and bits a store at a place names; the
+write keeps what those bits held and hears which of them moved. That is how the variable learns
+whether the write changed it (LRM 4.3). Which library entry realizes a step, and whether it is an
+instruction or a call at all, is a realization question answered below LIR; it never decides which
+node the step is expressed as. A mutating method on a receiver -- a container's `delete`, a queue's
+`push` -- changes the storage the receiver names in place.
 
 LIR states an integral type as MIR does: its width, its signedness, and whether it is two-state or
 four-state. It names an operation on one by the language's operator and carries a constant of one as

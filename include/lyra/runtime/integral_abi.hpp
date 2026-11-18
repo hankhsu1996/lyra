@@ -136,6 +136,7 @@ class IntegralEntryArguments {
       case support::IntegralOperandKind::kText:
       case support::IntegralOperandKind::kCanonicalBits:
       case support::IntegralOperandKind::kCanonicalLogic:
+      case support::IntegralOperandKind::kPositions:
         break;
     }
   }
@@ -190,6 +191,7 @@ enum class IntegralEntryMachineType : std::uint8_t {
               case support::IntegralOperandKind::kText:
               case support::IntegralOperandKind::kCanonicalBits:
               case support::IntegralOperandKind::kCanonicalLogic:
+              case support::IntegralOperandKind::kPositions:
                 return IntegralEntryMachineType::kAddress;
               case support::IntegralOperandKind::kMachineInt:
                 return IntegralEntryMachineType::kInt64;

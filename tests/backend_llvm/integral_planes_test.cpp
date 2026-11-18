@@ -201,6 +201,7 @@ auto TypesOf(
     case IntegralOperandKind::kMachineInt:
     case IntegralOperandKind::kMachineBool:
     case IntegralOperandKind::kSvLogic:
+    case IntegralOperandKind::kPositions:
     case IntegralOperandKind::kText:
     case IntegralOperandKind::kCanonicalBits:
     case IntegralOperandKind::kCanonicalLogic:
@@ -209,8 +210,8 @@ auto TypesOf(
   return {};
 }
 
-// Whether this test can make an operand of `kind`. Text and the buffers of a
-// foreign call are no planes.
+// Whether this test can make an operand of `kind`. Text, a view of positions
+// and the buffers of a foreign call are no planes.
 auto CanMake(IntegralOperandKind kind) -> bool {
   switch (kind) {
     case IntegralOperandKind::kBits:
@@ -220,6 +221,7 @@ auto CanMake(IntegralOperandKind kind) -> bool {
     case IntegralOperandKind::kMachineBool:
       return true;
     case IntegralOperandKind::kSvLogic:
+    case IntegralOperandKind::kPositions:
     case IntegralOperandKind::kText:
     case IntegralOperandKind::kCanonicalBits:
     case IntegralOperandKind::kCanonicalLogic:
@@ -248,6 +250,7 @@ auto ValuesOf(
     case IntegralOperandKind::kMachineBool:
       return {MachineSample(0), MachineSample(1)};
     case IntegralOperandKind::kSvLogic:
+    case IntegralOperandKind::kPositions:
     case IntegralOperandKind::kText:
     case IntegralOperandKind::kCanonicalBits:
     case IntegralOperandKind::kCanonicalLogic:
@@ -370,6 +373,7 @@ class Application {
       case IntegralOperandKind::kMachineBool:
         return sample.value.front() != 0;
       case IntegralOperandKind::kSvLogic:
+      case IntegralOperandKind::kPositions:
       case IntegralOperandKind::kText:
       case IntegralOperandKind::kCanonicalBits:
       case IntegralOperandKind::kCanonicalLogic:
@@ -399,6 +403,7 @@ class Application {
         case IntegralOperandKind::kNumber:
         case IntegralOperandKind::kSameType:
         case IntegralOperandKind::kSvLogic:
+        case IntegralOperandKind::kPositions:
         case IntegralOperandKind::kText:
         case IntegralOperandKind::kCanonicalBits:
         case IntegralOperandKind::kCanonicalLogic:
@@ -659,15 +664,16 @@ TEST(IntegralPlanesTest, EveryInlineOperationAnswersAsTheLibraryStatesIt) {
     EXPECT_GT(compared_here, 0U) << operation.name << " was never compared";
     compared += compared_here;
   }
-  // The operations whose work is long at every width, which are calls, and
-  // the positions a procedural continuous assignment shows, which only a
-  // write it overrides asks for.
+  // The operations whose work is long at every width, which are calls, the
+  // positions a procedural continuous assignment shows, which only a write it
+  // overrides asks for, and the positions a net resolved laid into a value,
+  // which only a net showing them asks for.
   EXPECT_EQ(
       without_arm,
       (std::set<std::string_view>{
           "pow", "count_bits", "clog2", "reverse_blocks", "from_text",
           "read_canonical_bits", "read_canonical_logic", "from_sv_logic",
-          "take_positions"}));
+          "take_positions", "with_positions"}));
   EXPECT_GT(compared, 100000U);
 }
 

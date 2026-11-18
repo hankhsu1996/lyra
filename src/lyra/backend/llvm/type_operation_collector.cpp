@@ -148,9 +148,9 @@ void TypeOperationCollector::VisitOperationsUse(lir::TypeId type) {
   }
 }
 
-void TypeOperationCollector::VisitNetFoldsUse(lir::TypeId type) {
+void TypeOperationCollector::VisitNetWitnessesUse(lir::TypeId type) {
   if (lir::RecordOf(unit_->types.Get(type)) == nullptr) {
-    UseTable(type, NetFoldWitnesses());
+    UseTable(type, NetWitnesses());
   }
 }
 
@@ -198,9 +198,9 @@ void TypeOperationCollector::VisitAbi(const FnAbi& abi) {
   std::visit(
       Overloaded{
           [](const NoImplicitArg&) {}, [](const WidthMetadataArg&) {},
-          [&](const TypeAndNetFoldsArg& held) {
+          [&](const TypeAndNetWitnessesArg& held) {
             VisitElementTypeUse(held.of);
-            VisitNetFoldsUse(held.of);
+            VisitNetWitnessesUse(held.of);
           },
           [&](const TypeMetadataArg& held) {
             for (const TypeArg& told : held.args) {
@@ -274,9 +274,6 @@ void TypeOperationCollector::VisitRvalue(
           [&](const lir::LoadInstr& load) {
             VisitPlace(lowering, fn, load.place);
           },
-          [&](const lir::OverlaidLoadInstr& load) {
-            VisitPlace(lowering, fn, load.place);
-          },
           [&](const lir::DiscriminantInstr& read) {
             VisitPlace(lowering, fn, read.place);
           },
@@ -300,7 +297,7 @@ void TypeOperationCollector::VisitRvalue(
             VisitAbi(ArrangeVariableBuild(
                 *unit_, fn.variables.at(begun.position.value)));
           },
-          [](const lir::ProductInstr&) {}, [](const lir::UnionInstr&) {},
+          [](const lir::ProductInstr&) {}, [](const lir::TaggedUnionInstr&) {},
           [](const lir::ClosureInstr&) {}, [](const lir::ArrayInstr&) {},
           [](const lir::VectorGetInstr&) {}, [](const lir::UnaryInstr&) {},
           [](const lir::CastInstr&) {}, [](const lir::LandingInstr&) {},

@@ -292,12 +292,24 @@ struct AdmitsHistory
 // A net is a declared net or an input port of no port kind (LRM 23.2.2.3), so
 // it holds what such a port may be declared as: a value a net holds, but not a
 // value of any type, which no declaration names, nor a reference owning
-// nothing, which no port may be (LRM 6.14, 25.9).
+// nothing, which no port may be (LRM 6.14, 25.9). One resolving positions holds
+// an integral value, whatever its state, or an aggregate of such; an
+// unresolved one holds a value of any other type, or one laid out by its type,
+// which may be either.
 template <typename T>
 struct AdmitsNet : std::bool_constant<
                        AdmitsVariable<T>::value && NetValue<T> &&
                        !std::is_same_v<T, value::Any> &&
                        !std::is_same_v<T, value::UnmanagedRef>> {};
+template <typename T>
+struct AdmitsResolvedNet
+    : std::bool_constant<
+          AdmitsNet<T>::value && (BitAddressed<T> || ResolvedNetValue<T>)> {};
+template <typename T>
+struct AdmitsUnresolvedNet
+    : std::bool_constant<
+          AdmitsNet<T>::value && !BitAddressed<T> &&
+          (value::LaidOutByType<T> || !ResolvedNetValue<T>)> {};
 
 // `Storage` over the value class of `domain`, where `Admits` holds of that
 // class.
@@ -399,8 +411,17 @@ auto LayoutOf(
           },
           [&](const support::ResolvedNetMember& m) {
             return WithValueClass(m.domain, [&]<typename T>() -> ObjectLayout {
-              if constexpr (AdmitsNet<T>::value) {
+              if constexpr (AdmitsResolvedNet<T>::value) {
                 return HolderLayout<ResolvedNet<T>, T>(held);
+              } else {
+                return NotRealized<ObjectLayout>();
+              }
+            });
+          },
+          [&](const support::UnresolvedNetMember& m) {
+            return WithValueClass(m.domain, [&]<typename T>() -> ObjectLayout {
+              if constexpr (AdmitsUnresolvedNet<T>::value) {
+                return HolderLayout<UnresolvedNet<T>, T>(held);
               } else {
                 return NotRealized<ObjectLayout>();
               }
@@ -447,19 +468,31 @@ auto TailThroughOffset(Through through) -> std::uint64_t {
           return std::construct_at(static_cast<value::Bit*>(out));
         },
         scratch);
-    // A net is built holding how it folds values too, which a probe that
-    // folds nothing hands as a table of no functions.
+    // A net resolving positions is built holding what it asks of its type
+    // too, which a probe asking nothing hands as a table of no functions.
     if constexpr (std::constructible_from<
                       Holder, const value::ElementType&,
-                      const value::NetFoldTable&>) {
-      static constexpr value::NetFoldTable kFoldsNothing{};
+                      const value::NetWitnessTable&>) {
+      static constexpr value::NetWitnessTable kAsksNothing{};
       return ThroughOffset<Holder>(
           HeldAs::ValueLayoutFor(held), through, std::cref(held),
-          std::cref(kFoldsNothing));
+          std::cref(kAsksNothing));
     } else {
       return ThroughOffset<Holder>(
           HeldAs::ValueLayoutFor(held), through, std::cref(held));
     }
+  }
+}
+
+// How far into a net of `Net`, holding values of `T`, the address of what it
+// shows lies: its own value, or the object its one driver carries.
+template <class Net, class T>
+auto ShownOffsetOf() -> std::uint64_t {
+  const auto shown = [](const auto& net) { return net.ShownThrough(); };
+  if constexpr (DynamicallySized<T>) {
+    return TailThroughOffset<Net, T>(shown);
+  } else {
+    return ThroughOffset<Net>(support::Layout{.size = 0, .align = 1}, shown);
   }
 }
 
@@ -488,17 +521,19 @@ auto HeldContentsOf(support::DeclaredMemberStorage storage)
           // object its one driver carries.
           [&](const support::ResolvedNetMember& m) {
             return WithValueClass(m.domain, [&]<typename T>() -> Held {
-              const auto shown = [](const auto& net) {
-                return net.ShownThrough();
-              };
-              if constexpr (!AdmitsNet<T>::value) {
-                return NotRealized<Held>();
-              } else if constexpr (DynamicallySized<T>) {
-                return through(TailThroughOffset<ResolvedNet<T>, T>(shown));
+              if constexpr (AdmitsResolvedNet<T>::value) {
+                return through(ShownOffsetOf<ResolvedNet<T>, T>());
               } else {
-                return through(
-                    ThroughOffset<ResolvedNet<T>>(
-                        support::Layout{.size = 0, .align = 1}, shown));
+                return NotRealized<Held>();
+              }
+            });
+          },
+          [&](const support::UnresolvedNetMember& m) {
+            return WithValueClass(m.domain, [&]<typename T>() -> Held {
+              if constexpr (AdmitsUnresolvedNet<T>::value) {
+                return through(ShownOffsetOf<UnresolvedNet<T>, T>());
+              } else {
+                return NotRealized<Held>();
               }
             });
           },

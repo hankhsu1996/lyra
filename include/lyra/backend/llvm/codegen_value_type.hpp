@@ -1,10 +1,8 @@
 #pragma once
 
 #include <cstdint>
-#include <functional>
 #include <map>
 #include <optional>
-#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -45,19 +43,20 @@ class CodeGenModule;
 // operations the design compiles: a product, a value made of several
 // components at once -- an unpacked structure (LRM 7.2), or a tuple a lowering
 // composes, such as a call's answer, its result together with its `output` and
-// `inout` arguments (LRM 13.5) -- a union or a tagged union, one storage its
-// members overlay (LRM 7.3), and a fixed-size unpacked array (LRM 7.4.2). The
+// `inout` arguments (LRM 13.5) -- an untagged union as the structure of its
+// one storage (LRM 7.3), a tagged union, one storage its members overlay and
+// its tag (LRM 7.3.2), and a fixed-size unpacked array (LRM 7.4.2). The
 // type is how the runtime, compiled before any of these types existed, reaches
 // what every holder of a value may ask of it: the steps of its life the unit
 // states for it, and whether a new value differs from the one held. Every
 // other operation the language defines on the whole value -- comparing and
-// streaming it, folding it in a net, taking some of its positions -- is handed
-// to the routine that needs it. Each is a method a record's declaration states
-// or a body a unit states for an array or a tuple. Such a value's bytes state
-// nothing of it, so whatever hands one to the runtime hands the type beside it.
-// It is laid out as the record the library declares for its kind, opening with
-// the address of a table of this module's bodies, one where the table's
-// declaration lays out each function.
+// streaming it, the positions a net reads and writes of it, taking some of its
+// positions -- is handed to the routine that needs it. Each is a method a
+// record's declaration states or a body a unit states for an array or a tuple.
+// Such a value's bytes state nothing of it, so whatever hands one to the
+// runtime hands the type beside it. It is laid out as the record the library
+// declares for its kind, opening with the address of a table of this module's
+// bodies, one where the table's declaration lays out each function.
 //
 // The type of a struct or a union is its declaring unit's, one in the
 // program, which every other module refers to. An array's and an integral
@@ -69,14 +68,6 @@ class CodeGenValueTypes {
       CodeGenModule& module, CodeGenTypes& types,
       const lir::CompilationUnit& unit);
 
-  // At `b`, every position above an integral's width in the value of `type`
-  // lying at `at` made clear: inline for an integral, and otherwise a call of
-  // the function the type has for it, which clears each component, each
-  // element, or the member a tagged union's tag names in turn. A type that
-  // keeps no position clear emits nothing.
-  void EmitClearAboveWidths(
-      llvm::IRBuilderBase& b, lir::TypeId type, llvm::Value* at);
-
   // The constant stating `type` to the runtime, for a type laid out by the
   // design.
   auto GetAddrOfLaidOutType(lir::TypeId type) -> llvm::GlobalVariable*;
@@ -86,11 +77,11 @@ class CodeGenValueTypes {
   // that table's functions read. One integral type is one constant in the
   // program, as one array type is.
   auto GetAddrOfIntegralType(lir::TypeId type) -> llvm::Constant*;
-  // The constant stating how a net folds values of `type`, a type laid out by
-  // the design: the type's own function for each fold, where the library's
-  // declaration lays the fold out. A net of the type is built holding it, and
-  // nothing else asks for it.
-  auto GetAddrOfNetFolds(lir::TypeId type) -> llvm::Constant*;
+  // The constant stating what a net asks of a value of `type`, a type laid
+  // out by the design: the type's own function for each question, where the
+  // library's declaration lays it out. A net of the type is built holding it,
+  // and nothing else asks for it.
+  auto GetAddrOfNetWitnesses(lir::TypeId type) -> llvm::Constant*;
   // The function taking some positions of a value of `type`, a type laid out
   // by the design, from another (LRM 10.6.2), as the library's declaration of
   // it takes them: the type's own function, entered with the type first. A
@@ -122,8 +113,8 @@ class CodeGenValueTypes {
 
   // The type of every struct and union this unit declares, and what another
   // unit hands the library of one -- its operations, how a value of it starts,
-  // how a net folds values of it, how a takeover takes some of its positions --
-  // which another unit may refer to whether or not this one builds a value of
+  // what a net asks of it, how a takeover takes some of its positions -- which
+  // another unit may refer to whether or not this one builds a value of
   // it.
   auto EmitDeclared() -> void;
 
@@ -135,7 +126,7 @@ class CodeGenValueTypes {
       const std::string& key, llvm::GlobalVariable* named,
       llvm::Constant* content, std::size_t align) -> llvm::GlobalVariable*;
   // How what this module states of `type` -- its type, its operations, how a
-  // value of it starts, how a net folds values of it, how a takeover takes some
+  // value of it starts, what a net asks of it, how a takeover takes some
   // of its positions -- is linked. A struct's or a union's is its declaring
   // unit's, linked as its declaration is, since that unit states its methods.
   // An array is its count and its element wherever it is named, so every
@@ -160,14 +151,6 @@ class CodeGenValueTypes {
   [[nodiscard]] auto OwnOperationOf(
       lir::TypeId type, support::ValueOperation operation) const
       -> std::optional<lir::FunctionId>;
-  // At `b`, a branch per one of `members` of a tagged union lying at `value`
-  // with its tag `placed`, each emitting what `held` emits for the member the
-  // tag names, and nothing where it names none; `b` is left after the branches
-  // meet.
-  static void ForHeldMember(
-      llvm::IRBuilderBase& b, std::span<const lir::TypeId> members,
-      const value::TagPlacement& placed, llvm::Value* value,
-      const std::function<void(llvm::IRBuilderBase&, lir::TypeId)>& held);
   // A body for the witness `witness` of signature `stands_in_for`, declared
   // and left for its caller to fill: it takes the type it is handed and then
   // what that witness takes, and answers what it answers.
@@ -211,13 +194,18 @@ class CodeGenValueTypes {
     kAsWhetherItHolds,
   };
   // The body of a witness whose method answers a comparison; of the one whose
-  // method answers the value's stream of bits, and of the one whose method
-  // takes a stream, each at a width the type fixes or as a run of bits.
+  // method answers the value's stream of bits, of the one whose method answers
+  // its positions, and of the one whose method takes a stream, each at a width
+  // the type fixes or as a run of bits.
   auto ScalarAnswerBody(
       lir::TypeId type, std::string_view witness,
       const support::MachineSignature& stands_in_for, lir::FunctionId method,
       ComparisonAnswered answered) -> llvm::Constant*;
   auto StreamWriteBody(
+      lir::TypeId type, std::string_view witness,
+      const support::MachineSignature& stands_in_for, lir::FunctionId method)
+      -> llvm::Constant*;
+  auto PositionsWriteBody(
       lir::TypeId type, std::string_view witness,
       const support::MachineSignature& stands_in_for, lir::FunctionId method)
       -> llvm::Constant*;
@@ -238,15 +226,6 @@ class CodeGenValueTypes {
       lir::TypeId type, std::string_view witness,
       const support::MachineSignature& stands_in_for, lir::FunctionId method)
       -> llvm::Constant*;
-  // The function clearing every position above a width in a value of `type`,
-  // made once per type.
-  auto ClearFunction(lir::TypeId type) -> llvm::Function*;
-  // At `b`, a loop over every element of the array `array` lying at `value`,
-  // in position order, each emitting what `each` emits for the element's
-  // address; `b` is left after the loop.
-  void ForEachElement(
-      llvm::IRBuilderBase& b, lir::TypeId array, llvm::Value* value,
-      const std::function<void(llvm::IRBuilderBase&, llvm::Value*)>& each);
   // A call of the library entry `op` with `args` as they stand, answering a
   // value of `answers`.
   auto ForwardToEntry(
@@ -257,10 +236,9 @@ class CodeGenValueTypes {
   CodeGenTypes* types_;
   const lir::CompilationUnit* unit_;
   std::unordered_map<lir::TypeId, std::string> keys_;
-  std::map<std::string, llvm::Function*> clear_functions_;
   std::map<std::string, llvm::GlobalVariable*> types_of_;
   std::map<std::string, llvm::GlobalVariable*> integral_types_;
-  std::map<std::string, llvm::Constant*> net_folds_of_;
+  std::map<std::string, llvm::Constant*> net_witnesses_of_;
   std::map<std::string, llvm::Constant*> take_positions_of_;
   std::map<std::string, llvm::GlobalVariable*> operation_functions_of_;
   std::map<std::string, llvm::Constant*> operations_of_;

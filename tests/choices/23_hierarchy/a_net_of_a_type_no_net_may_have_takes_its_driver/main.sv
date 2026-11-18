@@ -6,10 +6,10 @@
 // text's. The net types' truth tables are over bits, so a 2-state integral net
 // folds its drivers as a wire does and takes an x or z the fold makes as 0
 // (LRM 6.11.2): two drivers giving 1 and 0 make 0, and nothing driving it
-// reads 0. A structure folds member by member where every member can hold the
-// z a driver leaves where it drives nothing, so a driver of one member leaves
-// the others to the rest. A real, a string, a class handle, or a structure
-// holding one of those or a 2-state member has no fold, which makes it a net
+// reads 0. A structure folds bit by bit where every bit it has is a bit of an
+// integral value, a 2-state member taking an x or z as 0, so a driver of one
+// member leaves the others to the rest. A real, a string, a class handle, or a
+// structure holding one of those has no fold, which makes it a net
 // of a user-defined nettype with no resolution function (LRM 6.6.7): its one
 // driver decides it, where nothing drives it it holds its type's default, and
 // the net type it is declared with contributes nothing, as a nettype has no
@@ -58,11 +58,13 @@ endmodule
 module Contested (
     input int both,
     input int agree,
-    input pins_t members
+    input pins_t members,
+    input counted_t counted
 );
   assign both = 32'h0000_00ff;
   assign agree = 32'h0000_000f;
   assign members.mask = 4'b1100;
+  assign counted.flags = 4'b0011;
 endmodule
 
 module Top;
@@ -83,7 +85,8 @@ module Top;
   Contested contested (
       .both(32'h0000_0f0f),
       .agree(32'h0000_000f),
-      .members('{data: 8'h0f, mask: 4'b1010})
+      .members('{data: 8'h0f, mask: 4'b1010}),
+      .counted('{count: 32'h0f0f, flags: 4'b1010})
   );
 
   initial begin
@@ -115,7 +118,7 @@ module Top;
     if (undriven.fine != 0.0) $fatal(1, "undriven fine was %f", undriven.fine);
     if (undriven.name != "") $fatal(1, "undriven name was '%s'", undriven.name);
     if (undriven.item != null) $fatal(1, "undriven item named an object");
-    if (undriven.counted.count !== 0 || undriven.counted.flags !== 4'bxxxx)
+    if (undriven.counted.count !== 0 || undriven.counted.flags !== 4'bzzzz)
       $fatal(1, "undriven counted was %0d, %b", undriven.counted.count,
              undriven.counted.flags);
     if (undriven.labelled.label != "" || undriven.labelled.weight !== 0)
@@ -152,6 +155,12 @@ module Top;
     if (contested.members.data !== 8'h0f || contested.members.mask !== 4'b1xx0)
       $fatal(1, "contested members were %h, %b", contested.members.data,
              contested.members.mask);
+    // A structure holding a 2-state member resolves the same way: the 2-state
+    // `count` is the connection's alone, and `flags` keeps an x where the two
+    // disagree.
+    if (contested.counted.count !== 32'h0f0f || contested.counted.flags !== 4'bx01x)
+      $fatal(1, "contested counted was %h, %b", contested.counted.count,
+             contested.counted.flags);
     $display("All checks passed");
   end
 endmodule

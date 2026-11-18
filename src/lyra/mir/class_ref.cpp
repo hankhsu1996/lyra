@@ -89,6 +89,7 @@ auto ClassOfObject(const TypePool& types, TypeId object) -> ClassId {
           [&](const TupleType&) { return not_an_object(); },
           [&](const ObservableType&) { return not_an_object(); },
           [&](const ResolvedType&) { return not_an_object(); },
+          [&](const UnresolvedType&) { return not_an_object(); },
           [&](const DriverType&) { return not_an_object(); },
           [&](const OpenWriteType&) { return not_an_object(); },
           [&](const DesignationType&) { return not_an_object(); },

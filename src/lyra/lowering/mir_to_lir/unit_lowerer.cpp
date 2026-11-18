@@ -55,12 +55,15 @@ auto BlockOrdinalOf(std::optional<mir::BlockBodyOrdinal> block)
   return block->value;
 }
 
+// What a record is laid out as below MIR. An untagged union is a structure of
+// its one storage, which every member is read and written through as MIR
+// states (LRM 7.3), so nothing below MIR tells it from one; a tagged union
+// keeps its members overlaid and its tag (LRM 7.3.2).
 auto TranslateRecordKind(mir::RecordKind kind) -> lir::RecordKind {
   switch (kind) {
     case mir::RecordKind::kStruct:
-      return lir::RecordKind::kStruct;
     case mir::RecordKind::kUnion:
-      return lir::RecordKind::kUnion;
+      return lir::RecordKind::kStruct;
     case mir::RecordKind::kTaggedUnion:
       return lir::RecordKind::kTaggedUnion;
   }
@@ -142,8 +145,8 @@ auto UnitLowerer::Populate() -> diag::Result<void> {
         .defining_unit = decl.defining_unit,
         .path = decl.path,
         .linkage = mir::LinkageOf(*mir_, id),
-        .kind = TranslateRecordKind(decl.kind),
-        .elements = TranslateTypes(decl.elements),
+        .kind = TranslateRecordKind(mir::KindOf(decl)),
+        .elements = TranslateTypes(mir::ComponentsOf(decl)),
         .methods = {}};
     if (!decl.defining_unit.has_value()) {
       for (const mir::CallableId method : mir_->RecordMethodsOf(id)) {

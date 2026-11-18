@@ -143,6 +143,11 @@ class EntryOperands {
       const HandedOperand& operand, const svLogicVecVal*& vector) {
     vector = static_cast<const svLogicVecVal*>(operand.address);
   }
+  static void Receive(
+      const HandedOperand& operand,
+      const value::ConstIntegralView*& positions) {
+    positions = static_cast<const value::ConstIntegralView*>(operand.address);
+  }
 
   const Handed* handed_;
   std::array<value::ConstIntegralView, kMostOperands> views_{};
@@ -297,6 +302,7 @@ void Load(
     case IntegralOperandKind::kText:
     case IntegralOperandKind::kCanonicalBits:
     case IntegralOperandKind::kCanonicalLogic:
+    case IntegralOperandKind::kPositions:
       return;
   }
 }

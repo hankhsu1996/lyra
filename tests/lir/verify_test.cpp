@@ -187,11 +187,11 @@ TEST(LirVerifyTest, AValueIsBuiltWhereAParameterPointsOnlyInPlaceOfOne) {
               .place = over, .value = ProductInstr{.components = {y, y}}}}));
 }
 
-// A union is built holding one of its own members, so a position past the last
-// names storage the type does not have.
-TEST(LirVerifyTest, AUnionIsBuiltOnlyHoldingAMemberItHas) {
+// A tagged union is built holding one of its own members, so a position past
+// the last names storage the type does not have.
+TEST(LirVerifyTest, ATaggedUnionIsBuiltOnlyHoldingAMemberItHas) {
   PairBody body;
-  const TypeId union_type = body.RecordOfTwo(RecordKind::kUnion);
+  const TypeId union_type = body.RecordOfTwo(RecordKind::kTaggedUnion);
   ExpectRefused(
       body,
       Instr{
@@ -199,7 +199,7 @@ TEST(LirVerifyTest, AUnionIsBuiltOnlyHoldingAMemberItHas) {
               AssignInstr{
                   .destination = body.Transient(union_type),
                   .value =
-                      UnionInstr{
+                      TaggedUnionInstr{
                           .member = base::ComponentIndex{.value = 2},
                           .value = Use{.value = body.x}}}},
       "a member its type does not have");
@@ -209,9 +209,9 @@ TEST(LirVerifyTest, AUnionIsBuiltOnlyHoldingAMemberItHas) {
 // else reads bytes that hold some other value.
 TEST(LirVerifyTest, ATagIsReadOnlyOfATaggedUnion) {
   PairBody body;
-  const TypeId untagged = body.RecordOfTwo(RecordKind::kUnion);
+  const TypeId structure = body.RecordOfTwo(RecordKind::kStruct);
   const ValueId held = body.fn.values.Add(
-      Local{.name = "u", .type = untagged, .kind = LocalKind::kPlace});
+      Local{.name = "s", .type = structure, .kind = LocalKind::kPlace});
   ExpectRefused(
       body,
       Instr{

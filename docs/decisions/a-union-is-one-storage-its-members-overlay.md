@@ -74,45 +74,66 @@ read as a value of another member type, which is a potential type loophole").
 
 ## Decision
 
-### D1. An untagged union is C's union
+### D1. An untagged union is the bits of its widest member, every member a view of them
 
-Its storage is the largest member's size at the strictest member's alignment, and every member lies
-at offset 0. A member is a field step of the union's place (MIR's field step, overlaid), and within
-a write in progress it is designated by a step of its own, which names no position of a path, so the
-write keeps only what it lands on and reports the change at the union
-([a-write-compares-what-it-reached](a-write-compares-what-it-reached.md)). A write stores the member
-and leaves every other byte as it was. A copy is the whole storage, and an end does nothing.
+Its storage is one integral value of as many positions as its widest member has, 4-state where any
+member has a 4-state bit, as a packed union's is (7.3.1, 7.2.1). A member's positions are numbered
+as everything a net resolves or a procedural continuous assignment takes is numbered -- an integral
+value's bits from its least significant, a real's IEEE 754 bits (6.12), a structure's and an array's
+parts in turn -- and every member's start at the storage's first position. In MIR the union is a
+record of one component, its storage, and keeps its members' types as the views it is read and
+written through; below MIR it is a structure of that one component. A copy is the storage, and an
+end does nothing.
 
-### D2. Reading a member answers the member's type made from the bits there
+### D2. A member is read as the value its positions make, and written as its positions
 
-The read is the overlaid read: the bits where the member lies, with the positions its type's
-representation keeps clear cleared. That is the common initial sequence with no rule of its own, and
-a read of any other member answers what its bits say (7.3.1's "C-compatible").
+Reading a member is the storage's first positions made into the member's type: an integral member's
+bits converted to its declared type, a real's from its IEEE bits, and any other member's by its
+type's from-positions operation. Writing one replaces those positions of the storage, through a
+reference to them, by the member's positions; a write below a member -- a bit of it, a member or an
+element of a structure or array it is -- replaces the positions of the storage that part takes, an
+element index naming no element moving the write past the storage, where it lands on nothing (LRM
+7.4.5). The common initial sequence (7.3) lies at the same positions in every structure that shares
+it, with no rule of its own, and a read through another member answers what its positions hold
+(7.3.2).
 
 ### D3. A union literal names its member and zeroes everything else
 
-As C does, because every byte may be read. The default is the first member at its default.
+As C does, because every bit may be read. The default is the first member at its default.
 
 ### D4. Every whole-value use of an untagged union reads its first member
 
-`%p`, streaming both ways, `%u` / `%z` and `$fread` as the standard says, and equality and net
-resolution, which it does not name, by the same rule. Whether a holder changed is whether a read
-through any of its members would see a change (revised 2026-10-15; it was whether its bytes did,
-which the library compared). Each of these operations is a method the union's declaration states, as
-a structure's are
+`%p`, streaming both ways, `%u` / `%z` and `$fread` as the standard says, and equality, which it
+does not name, by the same rule. Whether a holder changed, and the positions a net resolves or a
+takeover holds, are the storage's, since every member is a view of it. Each of these operations is a
+method the union's declaration states, as a structure's are
 ([a-structures-operations-are-stated-in-mir](a-structures-operations-are-stated-in-mir.md)), and a
 tagged union's answer the same questions through the member its tag names.
+
+Revision 2026-11-17: D1 and D2 were C's union (every member at offset 0 of one byte storage, each
+laid out by its own type, read by an overlaid load clearing above each width). A net resolves bits,
+and members of different widths put the same bit at different bytes (a 4-state value's planes are
+sized by its width), so no numbering of a union's bits wrote back right: a release, a force, or a
+whole transfer of members of one byte size lost bits, measured on both backends. Holding the union
+as its bits, the shape 6.7.1's "a net is composed entirely of 4-state bits" and 7.3.1's soft packed
+union describe, makes a net of one a net of those bits and removes the overlaid place kind, the
+overlaid load and the library union type from every layer. No unpacked union crosses DPI (35.5.6
+admits packed forms only), so no C layout is owed.
 
 ### D5. A member that owns something is refused in an untagged union
 
 The standard admits none. The front end accepts a string, a class handle and an event, and Lyra
 refuses each as unsupported where the type is translated, until the front end refuses it.
 
-### D6. A tagged union is its members overlaid as in D1, then its tag
+### D6. A tagged union is its members overlaid, then its tag
 
-The tag is the smallest unsigned integer that counts the members, after the overlay at its own
-alignment. Every member therefore lies at offset 0 in both kinds of union, so a member is one field
-step whichever kind it is in, and the tag is the only thing a tagged union adds.
+Its storage is the largest member's size at the strictest member's alignment, every member at offset
+0, and after the members the tag, the smallest unsigned integer that counts them, at its own
+alignment. A tagged union may hold what owns something (7.3), so its members are laid out by their
+own types and reached by a field step under the tag check of D7. Held in an untagged union, its
+positions are the member it holds from the first and the tag above its widest member's, as a packed
+tagged union lays them out (7.3.2); positions whose tag names no member make the first member at its
+default.
 
 ### D7. MIR checks the tag before every member read and write
 
@@ -135,12 +156,13 @@ tag.
 
 ## Where Lyra differs, and why
 
-| Point                          | Field                                | Lyra                                       | Reason                                                                                                                               |
-| ------------------------------ | ------------------------------------ | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
-| a read through another member  | undefined (clang, rustc)             | answers the bits, cleared above each width | SystemVerilog defines the read and has no undefined behaviour                                                                        |
-| bytes a literal does not write | zero in C, undefined in C++ and Rust | zero                                       | every byte may be read                                                                                                               |
-| where the tag lies             | first (rustc)                        | after the members                          | an SV member is one value and no member type has a niche, so a tag first buys nothing, and members at 0 keep one rule for both kinds |
-| the tag check                  | a test and a switch (rustc)          | the tag read, then compared with k         | the tag's only reader compares it to one member, and MIR has no multiway switch                                                      |
+| Point                         | Field                                 | Lyra                                | Reason                                                                                                                               |
+| ----------------------------- | ------------------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| a read through another member | undefined (clang, rustc)              | answers the bits its positions hold | SystemVerilog defines the read and has no undefined behaviour                                                                        |
+| bits a literal does not write | zero in C, undefined in C++ and Rust  | zero                                | every bit may be read                                                                                                                |
+| how members share storage     | bytes from offset 0 (C, clang, rustc) | bits from position 0                | a net resolves bits, and members of different widths lay a bit out at different bytes                                                |
+| where the tag lies            | first (rustc)                         | after the members                   | an SV member is one value and no member type has a niche, so a tag first buys nothing, and members at 0 keep one rule for both kinds |
+| the tag check                 | a test and a switch (rustc)           | the tag read, then compared with k  | the tag's only reader compares it to one member, and MIR has no multiway switch                                                      |
 
 ## Rejected
 
@@ -152,23 +174,25 @@ tag.
 - **The tag first, as rustc lays an enum out.** Its reasons -- several fields packed against the
   tag, a niche standing in for it -- do not reach an SV member, and every member at 0 is one rule
   for both kinds.
-- **A cross read answering the raw bytes.** A value whose positions above its width are set compares
-  wrong everywhere storage is compared
-  ([a-packed-value-is-its-words](a-packed-value-is-its-words.md)).
-- **A read operation for unions alone.** The clearing belongs to the read of an overlaid place
-  ([an-expression-names-storage-or-makes-a-value](an-expression-names-storage-or-makes-a-value.md)),
-  where both backends meet it.
+- **C's union, every member at offset 0 of one byte storage** (D1 and D2 until 2026-11-17). A
+  4-state value's planes are sized by its width, so two members keep one bit at two bytes: a net of
+  the union, which resolves bits, could number them only per member, and then every write back of a
+  range -- a release, a force, a whole transfer -- rewrote members nobody drove.
+- **Recording which member an untagged union presents in a net.** It is state per union occurrence
+  that every write back consults, and it still loses what a whole transfer carries outside that
+  member; holding the bits leaves nothing to record.
 
 ## Consequences
 
-- The library's union objects and their entries leave both backends; a union is laid out by its type
-  like a structure, and its whole-value operations are code compiled for its type, on both backends,
-  not a description of the type the library reads.
-- A member access is a load or a store where the member lies, not a library call, and writing a
-  member no longer rebuilds the union.
+- The library's untagged union type, the overlaid place kind, the overlaid load and the clearing of
+  bits above each width leave every layer: below MIR an untagged union is a structure of its one
+  storage, and its whole-value operations are code compiled for its type, on both backends.
+- A member read is a slice of the storage made into the member's type, and a write a store of the
+  member's positions through a reference to them; a net of a union resolves those positions as any
+  net's, so no rule of nets names a union.
 - The common initial sequence, a cross read, `%p` of a union holding another member and streaming an
   untagged union run; a property read before its initializer holds the type's default.
 - A union too large for a frame is held through a box, as every value is: MIR's frame size counts
-  the overlay, and the tag after it for a tagged union.
+  the storage, and a tagged union's overlay and the tag after it.
 - A union of any member count is one shape on both backends; nothing about it is stated as one
   expression over every member, so no compiler's bound on such an expression limits a design.

@@ -186,16 +186,6 @@ cc_test(
 )
 
 cc_test(
-    name = "value_union_test",
-    srcs = ["value/union_test.cpp"],
-    copts = LYRA_COPTS,
-    deps = [
-        "//:value",
-        "@googletest//:gtest_main",
-    ],
-)
-
-cc_test(
     name = "hir_verify_test",
     srcs = ["hir/verify_test.cpp"],
     copts = LYRA_COPTS,
@@ -562,6 +552,19 @@ cc_test(
         ":written_at",
         "//:base",
         "//:runtime",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "runtime_net_resolution_test",
+    srcs = ["runtime/net_resolution_test.cpp"],
+    copts = LYRA_COPTS,
+    deps = [
+        ":written_at",
+        "//:runtime",
+        "//:support",
+        "//:value",
         "@googletest//:gtest_main",
     ],
 )

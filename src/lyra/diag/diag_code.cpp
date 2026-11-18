@@ -115,6 +115,9 @@ constexpr std::array kEntries{
         DiagCodeInfo{
             .kind = DiagKind::kError, .name = "binsof_outside_its_cross"}},
     std::pair{
+        DiagCode::kErrorAliasAcrossTypes,
+        DiagCodeInfo{.kind = DiagKind::kError, .name = "alias_across_types"}},
+    std::pair{
         DiagCode::kErrorNamesWhatAnAssertionLeftOutDeclares,
         DiagCodeInfo{
             .kind = DiagKind::kError,

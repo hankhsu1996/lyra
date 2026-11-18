@@ -172,7 +172,7 @@ auto BuildEmplacedClosure(
   // and storage a delay can write -- a design's variable, a property, what a
   // `ref` binds -- is read by a call that makes its value.
   for (mir::FieldInit& init : effect.field_inits) {
-    if (!mir::ValueLiesInStorage(unit, block.Body(), init.value)) {
+    if (!mir::ValueLiesInStorage(block.Body(), init.value)) {
       const mir::LocalId local = DeclareLocal(frame, init.value);
       init.value = block.ReadLocal(local, block.Get(init.value).type);
     }

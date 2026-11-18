@@ -113,11 +113,10 @@ auto DeclaredStorageOf(
             });
   };
   const auto value_of = [&](const auto&) { return held_value(type); };
-  // Storage the owner holds over values of one domain -- a cell, a net's
-  // resolution node, a history. Each is that storage only where the runtime
-  // realizes values of the domain it holds, for the same reason a value member
-  // is: the storage is built from the domain and there is nothing to build it
-  // from otherwise.
+  // Storage the owner holds over values of one domain -- a cell, a net, a
+  // history. Each is that storage only where the runtime realizes values of
+  // the domain it holds, for the same reason a value member is: the storage is
+  // built from the domain and there is nothing to build it from otherwise.
   const auto over_values =
       [&](lir::TypeId value,
           auto (*storage)(support::ValueDomain)->support::DeclaredMemberStorage)
@@ -142,6 +141,14 @@ auto DeclaredStorageOf(
                 [](support::ValueDomain domain)
                     -> support::DeclaredMemberStorage {
                   return support::ResolvedNetMember{.domain = domain};
+                });
+          },
+          [&](const lir::UnresolvedType& net) {
+            return over_values(
+                net.value,
+                [](support::ValueDomain domain)
+                    -> support::DeclaredMemberStorage {
+                  return support::UnresolvedNetMember{.domain = domain};
                 });
           },
           // A driver is a handle on a contribution the net owns and issues (LRM

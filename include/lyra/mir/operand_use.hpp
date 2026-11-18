@@ -139,7 +139,7 @@ void ForEachOperand(Data& data, const auto& reach) {
               value(part);
             }
           },
-          [&](AsConstAs<Data, UnionExpr>& e) { value(e.value); },
+          [&](AsConstAs<Data, TaggedUnionExpr>& e) { value(e.value); },
           [&](AsConstAs<Data, AwaitExpr>& e) { value(e.execution); },
           [&](AsConstAs<Data, WaitExpr>& e) { value(e.park); },
           [&](AsConstAs<Data, VectorGetExpr>& e) {

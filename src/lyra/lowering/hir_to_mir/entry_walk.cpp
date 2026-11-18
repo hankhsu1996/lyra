@@ -186,12 +186,11 @@ auto WalkedArrayOf(
     mir::ExprId object, std::optional<hir::UnpackedRange> declared)
     -> WalkedArray {
   mir::Builder block = frame.Builder();
-  const mir::ExprId lying = mir::ReadIfOverlaid(unit, block, object);
-  const mir::TypeId type = block.Get(lying).type;
+  const mir::TypeId type = block.Get(object).type;
   const mir::ExprId owner =
-      mir::IsPlace(block.Get(lying).data)
-          ? lying
-          : block.LocalPlace(DeclareLocal(frame, lying), type);
+      mir::IsPlace(block.Get(object).data)
+          ? object
+          : block.LocalPlace(DeclareLocal(frame, object), type);
   return WalkedArrayAt(
       unit, frame, AccessPath{.owner = owner, .descent = {}}, declared);
 }

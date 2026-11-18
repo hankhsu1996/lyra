@@ -201,8 +201,7 @@ TEST(ReferencedDeclarationsTest, WhatIsHeldOrNamedOfAnotherUnitIsReferenced) {
         RecordDecl{
             .defining_unit = "R",
             .path = PathOf("S"),
-            .kind = RecordKind::kStruct,
-            .elements = {}});
+            .shape = StructRecord{}});
     body.AppendStmt(
         ExprStmt{
             .expr = body.Add(

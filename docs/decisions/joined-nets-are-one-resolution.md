@@ -187,6 +187,18 @@ positions belong together because one declaration named them, which the language
 which the byte-swap example is simply the smallest program to disprove. Anything that keeps a whole
 name at one alignment fails the same way, however its coordinates are chosen.
 
+### F10. A driver's ends are positions that stop agreeing, as a connection's are
+
+The rule above was written against connections, and a driver of part of a net meets it from the
+other side. Two adjacent positions that one driver reaches and the next does not resolve over
+different contributions, so they are not "connected identically" either, and the set holding both is
+no longer maximal in the sense F9 derives. Keeping one set over the whole net instead meant each
+driver kept a contribution shaped like the whole net, holding the resolution's identity where it
+does not drive; every change of a one-bit driver then resolved every position of the net, so a net
+of N one-bit drivers cost N positions over N contributions per change and N^3 per clock where each
+bit changes once. A driver's ends therefore cut as a connection's do, and its contribution is the
+positions it drives.
+
 ## The decision
 
 1. **What resolves is the physical net (LRM 10.11, 23.3.3.7): a set of positions that resolve
@@ -248,25 +260,37 @@ name at one alignment fails the same way, however its coordinates are chosen.
    7.6 makes whole-value correspondence positional rather than range-relative -- so below the
    lowering that reads the source, no layer needs the range a net names its own positions by.
 
-8. **Each side of a connection is a sequence of net positions, and what the connection states is the
-   two laid over one another.** LRM 10.11 gives an overlay the bit overlay rules of a packed union,
-   so correspondence goes position-wise from the most significant end; the two sides' operands need
-   not fall at the same boundaries, so the statement is taken in the pieces both sides have whole,
-   each as wide as the shorter of the two it stands between. An actual naming one net is the case
-   where its side has one operand, and needs no path of its own.
+8. **Each side of a connection is a sequence of parts of nets, and what the connection states is the
+   two sides' positions laid over one another.** LRM 10.11 gives an overlay the bit overlay rules of
+   a packed union, so correspondence goes position-wise from the most significant end; the two
+   sides' operands need not fall at the same boundaries, so the statement is taken in the pieces
+   both sides have whole, each as wide as the shorter of the two it stands between. An actual naming
+   one net is the case where its side has one operand, and needs no path of its own.
 
-   Which positions a side names is answered where that side's source is: the connecting unit reads
-   its own actual, and the declaring unit publishes the positions its port stands for, because the
-   descent it publishes is in coordinates only that unit's declarations give meaning to. A consumer
-   that had to turn those into positions would be deriving what the producer already knew.
+   Each side is stated as the parts of nets its source wrote -- the connecting unit's actual as
+   written, and the port as the member and the selector path its declaring unit published
+   ([publishing-part-of-a-member](publishing-part-of-a-member.md) D2) -- and which positions a part
+   covers is counted where the join is lowered, for both sides alike. A part's positions follow from
+   the types along its path, and the signature carries those, just as a crate that uses another's
+   type computes its layout itself rather than reading one from that crate's metadata (rustc's
+   `layout_of` has only a local provider).
+
+   Revised 2026-11-17: this point had the declaring unit publish the positions its port stands for,
+   because the path's coordinates were held to mean something only under that unit's declarations.
+   They mean something under the types, which cross; an `input` or an `output` port was already
+   reached through the same path, and the producer could not answer the question for an unpacked
+   aggregate at all, since only the lowering numbers its positions. The published positions were a
+   second statement of what the path states, and a port standing for an element of an unpacked
+   declaration was refused only because they had no way to say it.
 
 9. **What resolves is a set of adjacent positions every name reaching it covers entirely, and a name
    reaches one per range of its own positions.** A connection cuts the ranges its ends fall inside
    -- on both sides, and for every name already sharing them -- and then makes one resolution of two
-   ranges that now cover the same number of positions. So a name is never at two alignments in one
-   resolution, nothing is ever rebased, and two positions of one name can take part in two
-   resolutions, which is what LRM 23.3.3.7 requires of a name whose bits meet different net types. A
-   name no connection reached is the single range that covers it.
+   ranges that now cover the same number of positions. A driver cuts the ranges its own ends fall
+   inside the same way and contributes to the resolutions between them alone (F10). So a name is
+   never at two alignments in one resolution, nothing is ever rebased, and two positions of one name
+   can take part in two resolutions, which is what LRM 23.3.3.7 requires of a name whose bits meet
+   different net types. A name no connection reached is the single range that covers it.
 
 ## Consequences
 

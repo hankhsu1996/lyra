@@ -67,7 +67,7 @@ auto WatchedPlaceOf(
     const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId place)
     -> mir::ExprId {
   const mir::Type& storage = unit.types.Get(block.Get(place).type);
-  if (!storage.Is<mir::ObservableType>() && !storage.Is<mir::ResolvedType>() &&
+  if (!storage.Is<mir::ObservableType>() && !storage.IsNet() &&
       !storage.IsVariableRef()) {
     throw InternalError(
         "WatchedPlaceOf: a wait names no variable, net or reference, so no "
@@ -355,7 +355,7 @@ auto Reported(
   const mir::ExprId place = copy != nullptr ? copy->place : value;
   const bool names_a_place = mir::IsPlace(block.Get(value).data);
   const bool by_pointer = mir::IsPlace(block.Get(place).data) &&
-                          mir::WholeLiesInStorage(unit, block.Body(), place);
+                          mir::WholeLiesInStorage(block.Body(), place);
   const mir::TypeId type = block.Get(place).type;
   const mir::TypeId held_type =
       by_pointer ? unit.types.Intern(

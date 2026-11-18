@@ -36,15 +36,17 @@ using conformance::framework::RunChildProcess;
 // and without a delay, one whose captures are each small and together large, a
 // parameter left to its default, overridden, and of a structure type, a value
 // named on the command line, a memory loaded from a file as text and as bytes,
-// a change waited on, a value forced and released, its sampled value, one a
-// loop's step discards, and one a dump reads -- each checked against what it
-// must hold. A list of arguments longer than a frame keeps is checked beside
-// them, and so are locals each as large as a frame keeps one and together many
-// times the stack: in a function, which hands one by reference and a value
-// made of them by value, in a method, in a process that is done with them
-// before it first waits, in a branch it forks, and in a process that waits on
-// one and forks a branch reading them; beside a function declaring as many as
-// a frame keeps together and one discarding as many values of that size.
+// a change waited on, a value forced and released, its sampled value, an
+// element of a net of an array forced and released, a net no net type resolves
+// forced whole and released, one a loop's step discards, and one a dump reads
+// -- each checked against what it must hold. A list of arguments longer than a
+// frame keeps is checked beside them, and so are locals each as large as a
+// frame keeps one and together many times the stack: in a function, which hands
+// one by reference and a value made of them by value, in a method, in a process
+// that is done with them before it first waits, in a branch it forks, and in a
+// process that waits on one and forks a branch reading them; beside a function
+// declaring as many as a frame keeps together and one discarding as many values
+// of that size.
 constexpr int kManyArguments = 200;
 constexpr int kManyLocals = 600;
 constexpr int kLocalsAFrameKeeps = 16;
@@ -60,6 +62,14 @@ module Holder #(
   assign p = P[4194303];
   assign q = Q[100];
   assign s = S.w[7];
+endmodule
+
+typedef struct {
+  real level;
+  logic [7:0] data [524288];
+} loose_t;
+
+module Loose (input loose_t port);
 endmodule
 
 module Test;
@@ -233,6 +243,8 @@ module Test;
   wire wide_t wn;
   wire mem_t mn;
   wire u_t un;
+  loose_t loose_source, loose_forced;
+  Loose loose (.port(loose_source));
   assign wn = nb;
   assign wn = nb;
   assign mn = ma;
@@ -261,6 +273,23 @@ module Test;
     if (wn !== 5) $fatal(1, "the wide net");
     if (mn[3] !== 8'h7) $fatal(1, "the array net");
     if (un.w !== 5) $fatal(1, "the union net");
+    force mn[3] = 8'h9;
+    #1;
+    if (mn[3] !== 8'h9) $fatal(1, "the forced element of the array net");
+    release mn[3];
+    #1;
+    if (mn[3] !== 8'h7) $fatal(1, "the released element of the array net");
+    loose_source.data[2] = 8'h1;
+    loose_forced.data[2] = 8'h2;
+    loose_forced.level = 2.5;
+    force loose.port = loose_forced;
+    #1;
+    if (loose.port.data[2] !== 8'h2 || loose.port.level != 2.5)
+      $fatal(1, "the forced net no net type resolves");
+    release loose.port;
+    #1;
+    if (loose.port.data[2] !== 8'h1)
+      $fatal(1, "the released net no net type resolves");
     v = u;
     if (v != u || v.w !== 5) $fatal(1, "the union's copy and comparison");
     if (hp !== 1'b1 || hq !== 1'b1 || hs !== 1'b1) $fatal(1, "the parameters");

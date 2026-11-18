@@ -93,11 +93,12 @@ part tells the write what forming it did.**
   formed for any of them.
 - **A whole-value store compares the new value with the old one before writing it.** It keeps no
   copy, except the old bits a packed variable's waits are passed over by.
-- **A net driver hears which of its positions a write moved.** Its net resolves again only over the
-  positions whose contribution moved (LRM 6.5). A net one driver decides
-  ([net-driver-resolution](net-driver-resolution.md) decision 9) resolves nothing, so its driver is
-  told as a variable is: only where a wait is enrolled on the net, and those waits are told what
-  moved.
+- **A net driver gives the whole of the part it drives.** Its net resolves again only over the
+  positions that driver drives (LRM 6.5, 6.6.7), so a driver of a net resolving positions opens no
+  write. The one driver of an unresolved net is written into as a variable is, and its net's waits
+  are told what moved. Revised 2026-11-17: a driver heard which of its positions a write moved and
+  its net resolved again over those, which was finer than the part it drives only while a driver's
+  contribution held the whole net.
 
 ## Rejected
 

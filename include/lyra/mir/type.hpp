@@ -253,9 +253,10 @@ struct CoroutineType {
 // definition: two declarations with the same members are two types (LRM
 // 6.22.1). The type is the declaration; which aggregate it is and its members'
 // types are the declaration's. A structure's members each hold storage of their
-// own; a union's overlay one storage, read through any member (LRM 7.3); a
-// tagged union's do too, with the position of the member it holds observable
-// as its tag (LRM 7.3.2, 11.9), and a `void` member carries the tuple of no
+// own; an untagged union's are views of one storage of bits, read and written
+// through any member (LRM 7.3); a tagged union's overlay one storage, with the
+// position of the member it holds observable as its tag (LRM 7.3.2, 11.9), and
+// a `void` member carries the tuple of no
 // components. A member is reached by position. A value of one is a value:
 // reference semantics come from the wrapper around it, never from the type.
 struct RecordType {
@@ -452,21 +453,35 @@ struct ObservableType {
 };
 
 // A net's resolved storage: an observable value produced by resolving the
-// contributions of the net's drivers (LRM 6.5, 6.6). Readable and observable
-// like an `ObservableType` cell, but never written directly -- a value reaches
-// it through a driver, or through a procedural continuous assignment that
-// overrides what the drivers resolve to (LRM 10.6.2). The fold those
-// contributions resolve under (LRM 6.6) is installed at construction, so it is
-// the net's state rather than its type.
+// contributions of the net's drivers position by position (LRM 6.5, 6.6,
+// 6.6.7). Readable and observable like an `ObservableType` cell, but never
+// written directly -- a value reaches it through a driver, or through a
+// procedural continuous assignment that overrides what the drivers resolve to
+// (LRM 10.6.2). The fold those contributions resolve under (LRM 6.6) is
+// installed at construction, so it is the net's state rather than its type.
+// Its value is integral, or an unpacked aggregate every bit of which is a bit
+// of an integral value of either state (LRM 6.7.1, 6.11.2).
 struct ResolvedType {
   TypeId value;
 
   auto operator==(const ResolvedType&) const -> bool = default;
 };
 
-// The drive capability for a net: a handle to one of a `ResolvedType` net's
-// contributions. A driver updates only its own contribution and never the
-// resolved value, which is the net's alone to arrive at.
+// A net of a nettype with no resolution function (LRM 6.6.7): its one driver
+// decides it whole, where nothing drives it it shows its type's default, and a
+// second driver is the design's error. A net of a type no net type folds -- a
+// real, a string, a class handle, or an aggregate holding one -- is one,
+// which only an input port written with no port kind declares
+// (LRM 23.2.2.3). Read, observed and driven as a resolved net is.
+struct UnresolvedType {
+  TypeId value;
+
+  auto operator==(const UnresolvedType&) const -> bool = default;
+};
+
+// The drive capability for a net: a handle to one of a net's contributions. A
+// driver updates only its own contribution and never the resolved value, which
+// is the net's alone to arrive at.
 struct DriverType {
   TypeId value;
 
@@ -542,8 +557,9 @@ class Type {
       VoidType, ObjectType, LibraryType, CoroutineType, VariableRefType,
       ReferenceWrapperType, PointerType, ReferenceType, ManagedRefType,
       UnmanagedRefType, VectorType, TupleType, ObservableType, ResolvedType,
-      DriverType, OpenWriteType, DesignationType, BitsReferenceType,
-      ObjectWriteType, RecordType, ClosureType, ErasedCallableType>;
+      UnresolvedType, DriverType, OpenWriteType, DesignationType,
+      BitsReferenceType, ObjectWriteType, RecordType, ClosureType,
+      ErasedCallableType>;
 
  public:
   explicit Type(Data data) : data_(std::move(data)) {
@@ -571,8 +587,14 @@ class Type {
 
   // True for a wrapper that grants an access capability over a value it holds
   // rather than being that value: the observable cell, a procedural reference,
-  // a net's resolved cell, a net driver's handle.
+  // a net, a net driver's handle.
   [[nodiscard]] auto IsCapabilityWrapper() const -> bool;
+
+  // True for a net's storage, of either kind: one resolving its drivers or an
+  // unresolved one (LRM 6.6, 6.6.7).
+  [[nodiscard]] auto IsNet() const -> bool {
+    return Is<ResolvedType>() || Is<UnresolvedType>();
+  }
 
   // True for a reference to storage elsewhere, whether bound as it is created
   // or held and bound later: what is read, written or waited on through either

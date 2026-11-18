@@ -415,9 +415,9 @@ class LirDumper {
             [&](const CastInstr& cast) -> std::string {
               return std::format("cast {}", FormatOperand(cast.operand));
             },
-            [&](const UnionInstr& built) -> std::string {
+            [&](const TaggedUnionInstr& built) -> std::string {
               return std::format(
-                  "union({}: {})", built.member.value,
+                  "tagged_union({}: {})", built.member.value,
                   FormatOperand(built.value));
             },
             [&](const VectorGetInstr& get) -> std::string {
@@ -430,9 +430,6 @@ class LirDumper {
             },
             [&](const LoadInstr& load) -> std::string {
               return std::format("load {}", FormatPlace(load.place));
-            },
-            [&](const OverlaidLoadInstr& load) -> std::string {
-              return std::format("overlaid_load {}", FormatPlace(load.place));
             },
             [&](const UseInstr& use) -> std::string {
               return std::format("use {}", FormatOperand(use.operand));
@@ -687,8 +684,6 @@ class LirDumper {
     switch (kind) {
       case RecordKind::kStruct:
         return "struct";
-      case RecordKind::kUnion:
-        return "union";
       case RecordKind::kTaggedUnion:
         return "tagged union";
     }

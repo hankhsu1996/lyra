@@ -168,6 +168,7 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
           [&](const TupleType& t) { HashIds(seed, t.elements); },
           [&](const ObservableType& t) { HashId(seed, t.value); },
           [&](const ResolvedType& t) { HashId(seed, t.value); },
+          [&](const UnresolvedType& t) { HashId(seed, t.value); },
           [&](const DriverType& t) { HashId(seed, t.value); },
           [&](const OpenWriteType& t) { HashId(seed, t.value); },
           [&](const DesignationType& t) { HashId(seed, t.value); },
@@ -212,8 +213,7 @@ auto Type::RuntimeClassOf() const -> std::optional<support::LibraryDecl> {
 }
 
 auto Type::IsCapabilityWrapper() const -> bool {
-  return Is<ObservableType>() || IsVariableRef() || Is<ResolvedType>() ||
-         Is<DriverType>();
+  return Is<ObservableType>() || IsVariableRef() || IsNet() || Is<DriverType>();
 }
 
 auto Type::IsVariableRef() const -> bool {
@@ -229,6 +229,7 @@ auto Type::IsAddressOnly() const -> bool {
           // Storage the runtime keeps, which is consumed where it lies.
           [](const ObservableType&) { return true; },
           [](const ResolvedType&) { return true; },
+          [](const UnresolvedType&) { return true; },
           [](const ObjectType&) { return true; },
 
           // A value, or something whose value is what it holds.
@@ -294,6 +295,9 @@ auto Type::WrappedValueType() const -> TypeId {
   if (const auto* resolved = As<ResolvedType>()) {
     return resolved->value;
   }
+  if (const auto* unresolved = As<UnresolvedType>()) {
+    return unresolved->value;
+  }
   if (const auto* driver = As<DriverType>()) {
     return driver->value;
   }
@@ -314,7 +318,7 @@ auto Type::IsAggregateOrLibraryValue() const -> bool {
           [](const RealType&) { return false; },
 
           // A value built of other values -- a fixed-size sequence, a product,
-          // the members a union overlays.
+          // a union's storage and the members read through it.
           [](const UnpackedArrayType&) { return true; },
           [](const TupleType&) { return true; },
           [](const RecordType&) { return true; },
@@ -367,6 +371,7 @@ auto Type::IsAggregateOrLibraryValue() const -> bool {
           // so no holder ever has a copy of one to lose.
           [](const ObservableType&) { return false; },
           [](const ResolvedType&) { return false; },
+          [](const UnresolvedType&) { return false; },
           [](const OpenWriteType&) { return false; },
           [](const DesignationType&) { return false; },
           [](const BitsReferenceType&) { return false; },
@@ -457,6 +462,7 @@ auto Type::ValueMovability() const -> support::Movability {
           [](const ClosureType&) { return support::Movability::kImmovable; },
           [](const ObservableType&) { return support::Movability::kImmovable; },
           [](const ResolvedType&) { return support::Movability::kImmovable; },
+          [](const UnresolvedType&) { return support::Movability::kImmovable; },
           [](const OpenWriteType&) { return support::Movability::kImmovable; },
           [](const DesignationType&) {
             return support::Movability::kImmovable;
@@ -499,8 +505,8 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           [](const IntegralType&) -> Element { return std::nullopt; },
           [](const EnumType&) -> Element { return std::nullopt; },
 
-          // Parts side by side, or members overlaid, but never a sequence of
-          // one type.
+          // Parts side by side, or a union's one storage, but never a sequence
+          // of one type.
           [](const TupleType&) -> Element { return std::nullopt; },
           [](const RecordType&) -> Element { return std::nullopt; },
 
@@ -517,6 +523,7 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           // the sequence, where there is one, belongs to the value it keeps.
           [](const ObservableType&) -> Element { return std::nullopt; },
           [](const ResolvedType&) -> Element { return std::nullopt; },
+          [](const UnresolvedType&) -> Element { return std::nullopt; },
           [](const DriverType&) -> Element { return std::nullopt; },
           [](const OpenWriteType&) -> Element { return std::nullopt; },
           [](const DesignationType&) -> Element { return std::nullopt; },
@@ -615,6 +622,7 @@ auto IsDataType(const TypePool& types, TypeId type) -> bool {
           // open on one of them.
           [](const ObservableType&) { return false; },
           [](const ResolvedType&) { return false; },
+          [](const UnresolvedType&) { return false; },
           [](const DriverType&) { return false; },
           [](const OpenWriteType&) { return false; },
           [](const DesignationType&) { return false; },
@@ -706,6 +714,7 @@ auto StructuralOperationsTypeOf(const Type& type)
           [&](const VectorType& t) { return by_a_declaration_or_none(t); },
           [&](const ObservableType& t) { return by_a_declaration_or_none(t); },
           [&](const ResolvedType& t) { return by_a_declaration_or_none(t); },
+          [&](const UnresolvedType& t) { return by_a_declaration_or_none(t); },
           [&](const DriverType& t) { return by_a_declaration_or_none(t); },
           [&](const OpenWriteType& t) { return by_a_declaration_or_none(t); },
           [&](const DesignationType& t) { return by_a_declaration_or_none(t); },

@@ -23,20 +23,22 @@ namespace lyra::backend::llvm_backend {
 
 // How an operation's body takes and answers its integral values. The type the
 // library asks through answers an equality as its scalar and a case equality
-// as whether it holds, and writes a stream into an integral value it is handed
-// and reads one out of one, while a type's own function takes and answers each
-// as a value of the type its own code states -- a stream a run of bits, where
-// the type's is as long as the value makes it.
+// as whether it holds, writes a stream into an integral value it is handed and
+// reads one out of one, and writes its positions into a view a net hands it,
+// while a type's own function takes and answers each as a value of the type
+// its own code states -- a stream a run of bits, where the type's is as long as
+// the value makes it.
 struct TakenAsStated {};
 struct AnswerScalar {};
 struct AnswerWhetherItHolds {};
 struct AnswerIntoStream {};
+struct AnswerIntoView {};
 struct StreamOutOfValue {};
 struct RunIntoStream {};
 struct StreamOutOfRun {};
 using IntegralCrossing = std::variant<
     TakenAsStated, AnswerScalar, AnswerWhetherItHolds, AnswerIntoStream,
-    StreamOutOfValue, RunIntoStream, StreamOutOfRun>;
+    AnswerIntoView, StreamOutOfValue, RunIntoStream, StreamOutOfRun>;
 
 // An operation a type answers with a function of its own, and how that
 // function takes and answers its integral values.
@@ -58,8 +60,8 @@ using WitnessFilling =
 
 // One witness of a table a type is told to the library through: the storage's
 // own lifecycle, the operations the language defines on the whole value (LRM
-// 11.4.5, 20.6.2, 20.9, 6.24.3), how a net folds values of it (LRM 6.6.1,
-// 28.12.1), which a record's declaration states as its methods and a unit
+// 11.4.5, 20.6.2, 20.9, 6.24.3), what a net of it asks of a value's positions
+// (LRM 6.6.7), which a record's declaration states as its methods and a unit
 // states for an array, or one no such type answers. `offset` is where the table
 // lays it out, and a body filling it takes and answers what its declaration
 // does.
@@ -187,33 +189,30 @@ static_assert(
     sizeof(value::OperationFunctions) ==
     std::tuple_size_v<decltype(OperationWitnesses())> * sizeof(void*));
 
-// Every witness of how a net folds values of a type, each the function of the
-// type's own answering that fold.
-inline auto NetFoldWitnesses() {
+// Every witness of what a net of a type asks of a value of it -- its positions
+// read out whole, how many it has, and some of them written in -- each the
+// function of the type's own answering it.
+inline auto NetWitnesses() {
   using support::BuiltinFn;
-  using value::NetFoldTable;
+  using value::NetWitnessTable;
   return std::to_array<Witness>({
       WitnessOf(
-          "resolve_tri_state", &NetFoldTable::tri_state,
-          OwnOperationWitness{.answers = BuiltinFn::kResolveTriState}),
+          "to_positions", &NetWitnessTable::to_positions,
+          OwnOperationWitness{
+              .answers = BuiltinFn::kToPositions,
+              .crossing = AnswerIntoView{}}),
       WitnessOf(
-          "resolve_wired_and", &NetFoldTable::wired_and,
-          OwnOperationWitness{.answers = BuiltinFn::kResolveWiredAnd}),
+          "position_count", &NetWitnessTable::position_count,
+          OwnOperationWitness{.answers = BuiltinFn::kPositionCount}),
       WitnessOf(
-          "resolve_wired_or", &NetFoldTable::wired_or,
-          OwnOperationWitness{.answers = BuiltinFn::kResolveWiredOr}),
-      WitnessOf(
-          "dominating", &NetFoldTable::dominating,
-          OwnOperationWitness{.answers = BuiltinFn::kDominating}),
-      WitnessOf(
-          "filled_like", &NetFoldTable::filled_like,
-          OwnOperationWitness{.answers = BuiltinFn::kFilledLike}),
+          "write_positions", &NetWitnessTable::write_positions,
+          OwnOperationWitness{.answers = BuiltinFn::kWritePositions}),
   });
 }
 
 static_assert(
-    sizeof(value::NetFoldTable) ==
-    std::tuple_size_v<decltype(NetFoldWitnesses())> * sizeof(void*));
+    sizeof(value::NetWitnessTable) ==
+    std::tuple_size_v<decltype(NetWitnesses())> * sizeof(void*));
 
 // What a value's type constant names of other types, the one list the constant
 // and the query for what a unit needs both read: an array how its elements
