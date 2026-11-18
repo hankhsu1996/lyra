@@ -5,9 +5,25 @@
 #include <utility>
 #include <vector>
 
+#include "lyra/support/takeover_level.hpp"
 #include "lyra/value/integral_words.hpp"
 
 namespace lyra::runtime {
+
+auto TakeoverLevelOf(std::int64_t level) -> support::TakeoverLevel {
+  return static_cast<support::TakeoverLevel>(level);
+}
+
+auto TakeoverGenerationOf(std::int64_t generation) -> std::uint32_t {
+  return static_cast<std::uint32_t>(generation);
+}
+
+auto PositionsNamed(std::int64_t first, std::int64_t count)
+    -> value::BitPositions {
+  return {
+      .lsb = static_cast<std::uint64_t>(first),
+      .width = static_cast<std::uint64_t>(count)};
+}
 
 HeldPositions::HeldPositions(value::BitPositions run) : runs_{run} {
 }

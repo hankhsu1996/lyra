@@ -57,6 +57,8 @@
 #include "lyra/stable_hash/fingerprint.hpp"
 #include "lyra/support/assertion_policy.hpp"
 #include "lyra/support/def_path.hpp"
+#include "lyra/support/force_targets.hpp"
+#include "lyra/support/lowering_policy.hpp"
 
 namespace slang::ast {
 class ClockingBlockSymbol;
@@ -640,9 +642,10 @@ using PlacedSpecializations = std::unordered_map<
 
 // What every unit's lowering reads and none of them changes: the shared
 // sensitivity analysis (one cache across the design), whether assertions are
-// elided rather than rejected, what decides the name of every unit, which
-// every party naming one reads, the specializations placed in a unit from a
-// generic declared elsewhere, which only the design as a whole lists, and the
+// elided rather than rejected and what a force takes over, what decides the
+// name of every unit, which every party naming one reads, the specializations
+// placed in a unit from a generic declared elsewhere, which only the design as
+// a whole lists, and the
 // class defining each class of `std` a design names and the coverage library's
 // classes where the design asks for coverage, which only the design as a whole
 // can make. The slang compilation itself is deliberately absent:
@@ -651,13 +654,12 @@ using PlacedSpecializations = std::unordered_map<
 class LoweringFacts {
  public:
   LoweringFacts(
-      SensitivityAnalyzer& sensitivity_analyzer,
-      support::AssertionPolicy assertion_policy, const InstanceNames& names,
-      const ElaboratedInstances& instances, const PlacedSpecializations& placed,
-      const StdDefinitions& std_classes,
+      SensitivityAnalyzer& sensitivity_analyzer, support::LoweringPolicy policy,
+      const InstanceNames& names, const ElaboratedInstances& instances,
+      const PlacedSpecializations& placed, const StdDefinitions& std_classes,
       const std::optional<CoverageLibrary>& coverage)
       : sensitivity_analyzer_(&sensitivity_analyzer),
-        assertion_policy_(assertion_policy),
+        policy_(policy),
         names_(&names),
         instances_(&instances),
         placed_(&placed),
@@ -698,7 +700,11 @@ class LoweringFacts {
   }
 
   [[nodiscard]] auto AssertionPolicy() const -> support::AssertionPolicy {
-    return assertion_policy_;
+    return policy_.assertions;
+  }
+
+  [[nodiscard]] auto ForceTargets() const -> support::ForceTargets {
+    return policy_.force_targets;
   }
 
   [[nodiscard]] auto Names() const -> const InstanceNames& {
@@ -712,7 +718,7 @@ class LoweringFacts {
 
  private:
   SensitivityAnalyzer* sensitivity_analyzer_;
-  support::AssertionPolicy assertion_policy_;
+  support::LoweringPolicy policy_;
   const InstanceNames* names_;
   const ElaboratedInstances* instances_;
   const PlacedSpecializations* placed_;

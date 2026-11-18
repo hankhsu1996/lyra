@@ -37,9 +37,9 @@ auto RunFrontEnd(slang::driver::Driver& driver) -> FrontEndResult {
 }
 
 auto DeclareUnits(
-    std::unique_ptr<slang::ast::Compilation> elaborated, LoweringPolicy policy,
-    diag::DiagnosticSink& sink, const diag::SourceManager& sources)
-    -> std::optional<ElaboratedDesign> {
+    std::unique_ptr<slang::ast::Compilation> elaborated,
+    support::LoweringPolicy policy, diag::DiagnosticSink& sink,
+    const diag::SourceManager& sources) -> std::optional<ElaboratedDesign> {
   // Taking the AST is what hands it to the units, so a run has exactly one of
   // these to make and nothing to fall back on if it is asked for twice.
   if (elaborated == nullptr) {
@@ -48,7 +48,7 @@ auto DeclareUnits(
         "is none left to declare");
   }
   auto units = lowering::ast_to_hir::DeclaredDesign::Declare(
-      std::move(elaborated), policy.assertions, sink);
+      std::move(elaborated), policy, sink);
   if (!units) {
     return std::nullopt;
   }

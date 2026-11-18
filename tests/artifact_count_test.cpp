@@ -61,7 +61,7 @@ auto WithDeclaredDesign(std::string_view source, const Use& use) -> bool {
 
   auto design = lyra::compiler::DeclareUnits(
       std::move(text.front.elaborated->compilation),
-      lyra::compiler::LoweringPolicy{}, sink,
+      lyra::support::LoweringPolicy{}, sink,
       text.front.elaborated->diag_sources);
   EXPECT_TRUE(design.has_value()) << "the probe design did not declare";
   if (!design.has_value()) return false;

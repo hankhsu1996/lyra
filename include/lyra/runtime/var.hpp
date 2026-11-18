@@ -198,18 +198,26 @@ concept OverridableSink =
       sink.ApplyOverriddenWrite(left);
     };
 
-// The path of the one step to what `key` selects in a container. A position
-// names an element by its ordinal (LRM 7.4.5), which is that step, whether it
-// arrives as the position or as the ordinal read out of one; an index of any
-// other type has none (LRM 7.8), so the path stops there, inexact.
-template <typename Key>
+// The ordinal a position names an element at (LRM 7.4.5), whether it arrives
+// as the position or as the ordinal read out of one.
+[[nodiscard]] inline auto OrdinalOf(const value::Position& key)
+    -> std::optional<std::int64_t> {
+  return value::ReadPosition(key);
+}
+[[nodiscard]] inline auto OrdinalOf(std::optional<std::int64_t> key)
+    -> std::optional<std::int64_t> {
+  return key;
+}
+
+// The path a write reports of the one step to what `key` selects in a
+// `Container`: the element at the ordinal the position names, or, in an
+// associative array, the stop there (LRM 7.8), whatever type its index has.
+template <typename Container, typename Key>
 [[nodiscard]] auto StepTo(const Key& key) -> PartPath {
-  if constexpr (std::same_as<Key, value::Position>) {
-    return PartPath::Element(value::ReadPosition(key));
-  } else if constexpr (std::same_as<Key, std::optional<std::int64_t>>) {
-    return PartPath::Element(key);
+  if constexpr (detail::kIsAssociative<Container>) {
+    return PartPath::Written(support::PartStep::kAssocElement, std::nullopt);
   } else {
-    return PartPath::Inexact();
+    return PartPath::Written(support::PartStep::kElement, OrdinalOf(key));
   }
 }
 
@@ -224,7 +232,7 @@ template <typename Container, typename Key>
   if constexpr (ResizableArray<Container>) {
     return PartPath::Inexact();
   } else {
-    return StepTo(key);
+    return StepTo<Container>(key);
   }
 }
 
@@ -245,7 +253,7 @@ template <typename Container, typename Key>
 [[nodiscard]] auto StepCanReshape(const Container& container, const Key& key)
     -> bool {
   if constexpr (detail::kIsQueue<Container>) {
-    return StepTo(key) ==
+    return StepTo<Container>(key) ==
            PartPath::Element(value::ReadPosition(container.Size()));
   } else {
     return detail::kIsAssociative<Container>;
@@ -1325,7 +1333,9 @@ class VariableRef {
     auto& component = Storage().template Component<I>();
     return VariableRef<std::remove_reference_t<decltype(component)>>{
         erased_.Part(
-            &component, value::Formation::kExisting, PartPath::Child(I))};
+            &component, value::Formation::kExisting,
+            PartPath::Written(
+                support::PartStep::kComponent, static_cast<std::int64_t>(I)))};
   }
 
   // The `MutationSink` surface. Storage that belongs to no variable has no
@@ -1877,7 +1887,7 @@ class Designation {
     auto& element = part_->ElementMut(key, formed);
     write_->Formed(formed);
     if (write_->Undecided()) {
-      write_->Stepped(StepTo(key));
+      write_->Stepped(StepTo<Part>(key));
     }
     return Designation<Sink, std::remove_reference_t<decltype(element)>>{
         *write_, element};
@@ -1893,23 +1903,26 @@ class Designation {
   auto DesignateComponent() {
     auto& component = part_->template Component<I>();
     if (write_->Undecided()) {
-      write_->Stepped(PartPath::Child(I));
+      write_->Stepped(
+          PartPath::Written(
+              support::PartStep::kComponent, static_cast<std::int64_t>(I)));
     }
     return Designation<Sink, std::remove_reference_t<decltype(component)>>{
         *write_, component};
   }
 
-  // A member of a union lies where every other member does (LRM 7.3), so no
-  // step of a path stands for it: the path stops at the union, which every
-  // member reads, so the union is what the event's execution keeps from before
-  // its first write, while the write itself keeps only what it lands on below
-  // it.
+  // A member of a union lies where every other member does (LRM 7.3), so the
+  // path a write of it reports stops at the union, which every member reads,
+  // and the union is what the event's execution keeps from before its first
+  // write, while the write itself keeps only what it lands on below it.
   template <std::size_t I>
   auto DesignateMember() {
     auto& member = part_->template Component<I>();
     if (write_->Undecided()) {
       write_->KeepPartOriginal(*part_);
-      write_->Stepped(PartPath::Inexact());
+      write_->Stepped(
+          PartPath::Written(
+              support::PartStep::kUnionMember, static_cast<std::int64_t>(I)));
     }
     return Designation<Sink, std::remove_reference_t<decltype(member)>>{
         *write_, member};

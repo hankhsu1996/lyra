@@ -1,6 +1,6 @@
 // An unpacked union of N members, each read: every member is reached by its
 // position.
-// @each-adds: bytes
+// @each-adds: bytes, mir.constants 1, lir.constants 1
 module Top #(parameter int N = 4);
   typedef union { [[int m{i};| ]] } u_t;
 

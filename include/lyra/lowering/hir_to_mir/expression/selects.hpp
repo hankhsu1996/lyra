@@ -69,6 +69,12 @@ template <ExprLowerer Lowerer>
     UnitLowerer& unit_lowerer, mir::Builder block, const hir::Type& aggregate,
     base::ComponentIndex index, mir::TypeId part_type) -> DescentStep;
 
+// The types of the members of the unpacked structure or union `aggregate`, in
+// declared order, each the type of the part `MemberStep` reaches.
+[[nodiscard]] auto MemberTypesOf(
+    const UnitLowerer& unit_lowerer, const hir::Type& aggregate)
+    -> std::vector<hir::TypeId>;
+
 // LRM 11.4.14.4: the elements a `with` names of an array of `array_type`:
 // where the first of them lies in the array's own numbering, and how many
 // there are, as a machine count, each evaluated once however often it is read.

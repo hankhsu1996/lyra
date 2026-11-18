@@ -33,6 +33,7 @@
 #include "lyra/mir/verify.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/library_decl.hpp"
+#include "lyra/support/part_step.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -166,14 +167,13 @@ auto ComponentStep(StepUse use, base::ComponentIndex position) -> StepTaken {
   throw InternalError("access path: unknown step use");
 }
 
-// A union's member has no identity of its own, so nothing lends it by
-// reference (LRM 13.5.2), and a source text passing one by reference is
-// refused before this layer.
+// A union's member is not among what may be passed by reference (LRM 13.5.2),
+// so nothing lends it, and a source text passing one by reference is refused
+// before this layer.
 [[noreturn]] void RefuseLentMember() {
   throw InternalError(
-      "access path: a union's member has no identity of its own and is "
-      "refused where the source passes one by reference, and this descent "
-      "lends one");
+      "access path: a union's member is refused where the source passes one "
+      "by reference, and this descent lends one");
 }
 
 // A member of an untagged union is a view of the union's storage, so it is
@@ -444,16 +444,7 @@ auto PositionsBeforeComponent(
   return before;
 }
 
-// How far one step moves the first position of what it reaches, counted in the
-// positions of the part `within` it is taken on, which that part's type
-// numbers part by part (LRM 6.7.1); and, where the step's position is one the
-// program computes, whether it names a part at all -- an index naming no
-// element names none (LRM 7.4.5), and neither does a position with an unknown
-// bit (LRM 11.5.1). Each is built once, for one place to read it.
-struct StepPosition {
-  mir::ExprId offset;
-  std::optional<mir::ExprId> names_a_part;
-};
+}  // namespace
 
 auto PositionOfStep(
     const mir::CompilationUnit& unit, mir::Builder block, mir::TypeId within,
@@ -537,6 +528,8 @@ auto PositionOfStep(
           }},
       step.to);
 }
+
+namespace {
 
 // Where in `path` its first step to a part of the kind `Step` names is, if it
 // takes one.
@@ -1010,6 +1003,12 @@ void AppendReadChecks(
     const mir::CompilationUnit& unit, mir::Builder block,
     const AccessPath& path) {
   AppendTagChecks(unit, block, path, CheckedAccess::kRead);
+}
+
+void AppendWriteChecks(
+    const mir::CompilationUnit& unit, mir::Builder block,
+    const AccessPath& path) {
+  AppendTagChecks(unit, block, path, CheckedAccess::kWrite);
 }
 
 auto PathPlace(
@@ -1499,50 +1498,68 @@ auto PositionsNamedBy(
 auto PartNamedBy(
     const mir::CompilationUnit& unit, mir::Builder block,
     const AccessPath& path) -> NamedPart {
+  // A step to one part, as the path a wait watches names it: what kind of part
+  // it selects and the number it selects it by, none for an entry of an
+  // associative array, which has no position (LRM 7.8).
+  struct SelectedPart {
+    support::PartStep kind;
+    std::optional<mir::ExprId> number;
+  };
   NamedPart named;
   auto step = path.descent.begin();
   for (; step != path.descent.end(); ++step) {
-    const std::optional<mir::ExprId> key = std::visit(
+    const std::optional<SelectedPart> selected = std::visit(
         Overloaded{
-            [&](const StepToElement& element) -> std::optional<mir::ExprId> {
-              return BuildToInt64Call(unit, block, element.position);
+            [&](const StepToElement& element) -> std::optional<SelectedPart> {
+              return SelectedPart{
+                  .kind = support::PartStep::kElement,
+                  .number = BuildToInt64Call(unit, block, element.position)};
             },
             [&](const StepToCharacter& character)
-                -> std::optional<mir::ExprId> {
-              return BuildToInt64Call(unit, block, character.position);
+                -> std::optional<SelectedPart> {
+              return SelectedPart{
+                  .kind = support::PartStep::kCharacter,
+                  .number = BuildToInt64Call(unit, block, character.position)};
             },
             [&](const StepToComponent& component)
-                -> std::optional<mir::ExprId> {
-              return mir::BuildMachineIntLiteral(
-                  unit, block, component.position.value);
+                -> std::optional<SelectedPart> {
+              return SelectedPart{
+                  .kind = support::PartStep::kComponent,
+                  .number = mir::BuildMachineIntLiteral(
+                      unit, block, component.position.value)};
             },
             // A member of an untagged union is a view of the whole union's
             // storage, which is what a write through it changes.
-            [](const StepToUnionMember&) -> std::optional<mir::ExprId> {
+            [](const StepToUnionMember&) -> std::optional<SelectedPart> {
               return std::nullopt;
             },
             [&](const StepToTaggedMember& member)
-                -> std::optional<mir::ExprId> {
-              return mir::BuildMachineIntLiteral(
-                  unit, block, member.position.value);
+                -> std::optional<SelectedPart> {
+              return SelectedPart{
+                  .kind = support::PartStep::kUnionMember,
+                  .number = mir::BuildMachineIntLiteral(
+                      unit, block, member.position.value)};
             },
-            [](const StepToBits&) -> std::optional<mir::ExprId> {
+            [](const StepToAssocElement&) -> std::optional<SelectedPart> {
+              return SelectedPart{
+                  .kind = support::PartStep::kAssocElement,
+                  .number = std::nullopt};
+            },
+            [](const StepToBits&) -> std::optional<SelectedPart> {
               return std::nullopt;
             },
-            [](const StepToElementRun&) -> std::optional<mir::ExprId> {
+            [](const StepToElementRun&) -> std::optional<SelectedPart> {
               return std::nullopt;
             },
-            [](const StepToAssocElement&) -> std::optional<mir::ExprId> {
-              return std::nullopt;
-            },
-            [](const StepToQueueRun&) -> std::optional<mir::ExprId> {
+            [](const StepToQueueRun&) -> std::optional<SelectedPart> {
               return std::nullopt;
             }},
         step->to);
-    if (!key.has_value()) {
+    if (!selected.has_value() || !selected->number.has_value() ||
+        !support::FollowingOf(selected->kind).watched) {
       break;
     }
-    named.steps.push_back(*key);
+    named.steps.push_back(*selected->number);
   }
   if (step == path.descent.end()) {
     return named;

@@ -4,7 +4,7 @@
 // its bits: every whole-value operation the language gives a structure runs
 // over every member. The value stays inside what a frame keeps at both sizes.
 // @each-adds: bytes,
-// @each-adds: mir.constants 1, lir.constants 1
+// @each-adds: mir.constants 2, lir.constants 2
 module Top #(parameter int N = 4);
   typedef struct { [[logic [7:0] m{i};| ]] } s_t;
   typedef logic [8*N-1:0] bits_t;

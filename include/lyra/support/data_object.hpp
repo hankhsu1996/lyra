@@ -10,11 +10,11 @@ namespace lyra::support {
 
 // What a declared type is (LRM 37.25): the predefined type it names, or the
 // kind of the type it declares -- a vector of single bits being its bit or
-// logic type, and a packed array of structures, unions or enumerations a
-// packed array (LRM 37.17, 37.18). An unpacked aggregate, a string, a handle
-// and a container are described by none. The front end, which reads the
-// declaration, states it, and every reader that reaches the design by name
-// reads it, so it lives beside both.
+// logic type, a packed array of structures, unions or enumerations a packed
+// array (LRM 37.17, 37.18), and an unpacked array one of the four kinds of
+// array LRM 7.4 to 7.10 declare. The front end, which reads the declaration,
+// states it, and every reader that reaches the design by name reads it, so it
+// lives beside both.
 enum class TypespecKind : std::uint8_t {
   kBit,
   kLogic,
@@ -32,6 +32,16 @@ enum class TypespecKind : std::uint8_t {
   kPackedUnion,
   kPackedArray,
   kEvent,
+  kString,
+  kChandle,
+  kClass,
+  kVirtualInterface,
+  kUnpackedStruct,
+  kUnpackedUnion,
+  kFixedArray,
+  kDynamicArray,
+  kAssociativeArray,
+  kQueue,
 };
 
 // The range a declared type states (LRM 37.25): its left and right bounds as

@@ -78,6 +78,7 @@
 #include "lyra/runtime/weak_reference.hpp"
 #include "lyra/support/callable_bounds.hpp"
 #include "lyra/support/library_decl.hpp"
+#include "lyra/support/random_qualifier.hpp"
 #include "lyra/value/any.hpp"
 #include "lyra/value/any_value.hpp"
 #include "lyra/value/assert.hpp"
@@ -1092,7 +1093,7 @@ auto DesignateElement(const void* designation, const Index& index, void* out)
   void* element = container.ElementMut(index, formed);
   within.write->Formed(formed);
   if (within.write->Undecided()) {
-    within.write->Stepped(StepTo(index));
+    within.write->Stepped(StepTo<Container>(index));
   }
   return std::construct_at(
       static_cast<ErasedDesignation*>(out),
@@ -1153,7 +1154,8 @@ auto DesignateArrayElement(
   void* element = type.ElementMut(within.part, position, formed);
   within.write->Formed(formed);
   if (within.write->Undecided()) {
-    within.write->Stepped(StepTo(position));
+    within.write->Stepped(
+        PartPath::Written(support::PartStep::kElement, position));
   }
   return std::construct_at(
       static_cast<ErasedDesignation*>(out),
@@ -1271,7 +1273,10 @@ auto ReferArrayElement(
   from.AdmitStep();
   value::Formation formed{};
   void* element = type.ElementMut(from.storage, position, formed);
-  return BuildReference(out, from.Part(element, formed, StepTo(position)));
+  return BuildReference(
+      out, from.Part(
+               element, formed,
+               PartPath::Written(support::PartStep::kElement, position)));
 }
 
 // Stores each of a literal's entries under the index it names (LRM 7.9.11). An
@@ -2754,7 +2759,7 @@ void lyra_rt_constraint_rand(
   const lyra::runtime::ErasedReference& variable = ErasedAt(reference);
   lyra::runtime::ConstraintDeclareErased(
       p, variable, value, lyra::runtime::TypeAt(value_type),
-      lyra::runtime::RandomQualifier::kRand,
+      lyra::support::RandomQualifier::kRand,
       lyra::runtime::DeclaredWhole(p, variable));
 }
 
@@ -2765,7 +2770,7 @@ void lyra_rt_constraint_randc(
   const lyra::runtime::ErasedReference& variable = ErasedAt(reference);
   lyra::runtime::ConstraintDeclareErased(
       p, variable, value, lyra::runtime::TypeAt(value_type),
-      lyra::runtime::RandomQualifier::kRandc,
+      lyra::support::RandomQualifier::kRandc,
       lyra::runtime::DeclaredWhole(p, variable));
 }
 
@@ -3748,9 +3753,87 @@ void lyra_rt_shortreal_value_serializer_real(
       ->SerializeReal(*static_cast<const float*>(value));
 }
 
+void lyra_rt_value_serializer_text(void* serializer, const void* text) {
+  static_cast<lyra::runtime::ValueSerializer*>(serializer)
+      ->SerializeText(Read<String>(text));
+}
+
 void lyra_rt_value_serializer_event(void* serializer, const void* event) {
   static_cast<lyra::runtime::ValueSerializer*>(serializer)
       ->SerializeEvent(Read<ObjectRef>(event));
+}
+
+auto lyra_rt_value_serializer_size(void* serializer, std::int64_t size)
+    -> bool {
+  return static_cast<lyra::runtime::ValueSerializer*>(serializer)
+      ->SerializeSize(size);
+}
+
+void lyra_rt_value_serializer_key(
+    void* serializer, const void* key, const void* key_type) {
+  static_cast<lyra::runtime::ValueSerializer*>(serializer)
+      ->SerializeKey(key, lyra::runtime::TypeAt(key_type));
+}
+
+auto lyra_rt_selection_depth(const void* selection) -> std::int64_t {
+  return static_cast<const lyra::runtime::Selection*>(selection)->Depth();
+}
+
+auto lyra_rt_selection_number(const void* selection, std::int64_t depth)
+    -> std::int64_t {
+  return static_cast<const lyra::runtime::Selection*>(selection)->Number(depth);
+}
+
+auto lyra_rt_selection_key(
+    const void* selection, std::int64_t depth, const void* answer_type,
+    void* out) -> void* {
+  const lyra::value::AnyValue key =
+      static_cast<const lyra::runtime::Selection*>(selection)->KeyAt(
+          depth, lyra::runtime::TypeAt(answer_type));
+  key.Type().Copy(key.Bytes(), out);
+  return out;
+}
+
+void lyra_rt_selection_settler_settle_key(
+    void* settler, std::int64_t depth, const void* key, const void* key_type) {
+  static_cast<lyra::runtime::SelectionSettler*>(settler)->SettleKey(
+      depth, key, lyra::runtime::TypeAt(key_type));
+}
+
+void lyra_rt_selection_settler_settle_positions(
+    void* settler, std::int64_t before) {
+  static_cast<lyra::runtime::SelectionSettler*>(settler)->SettlePositions(
+      before);
+}
+
+void lyra_rt_selection_settler_settle_unfixed(void* settler) {
+  static_cast<lyra::runtime::SelectionSettler*>(settler)->SettleUnfixed();
+}
+
+auto lyra_rt_selection_settler_fixed(void* settler) -> bool {
+  return static_cast<lyra::runtime::SelectionSettler*>(settler)->Fixed();
+}
+
+auto lyra_rt_selection_settler_positions(void* settler) -> std::int64_t {
+  return static_cast<lyra::runtime::SelectionSettler*>(settler)->Positions();
+}
+
+auto lyra_rt_value_deserializer_bits(void* deserializer, void* out) -> void* {
+  return Emplace(
+      out,
+      static_cast<lyra::runtime::ValueDeserializer*>(deserializer)->Bits());
+}
+
+auto lyra_rt_value_deserializer_real(void* deserializer, void* out) -> void* {
+  return Emplace(
+      out,
+      static_cast<lyra::runtime::ValueDeserializer*>(deserializer)->Real());
+}
+
+auto lyra_rt_value_deserializer_text(void* deserializer, void* out) -> void* {
+  return Emplace(
+      out,
+      static_cast<lyra::runtime::ValueDeserializer*>(deserializer)->Text());
 }
 
 void lyra_rt_subscriber_subscribe(void* subscriber, const void* trigger) {
@@ -4351,12 +4434,12 @@ auto lyra_rt_laidout_refer_component(
     void* out) -> void* {
   const ErasedReference& from = ErasedAt(reference);
   return BuildReference(
-      out,
-      from.Part(
-          lyra::runtime::TupleTypeAt(tuple_type)
-              .ComponentAt(from.storage, static_cast<std::size_t>(index)),
-          lyra::value::Formation::kExisting,
-          lyra::runtime::PartPath::Child(static_cast<std::uint64_t>(index))));
+      out, from.Part(
+               lyra::runtime::TupleTypeAt(tuple_type)
+                   .ComponentAt(from.storage, static_cast<std::size_t>(index)),
+               lyra::value::Formation::kExisting,
+               lyra::runtime::PartPath::Written(
+                   lyra::support::PartStep::kComponent, index)));
 }
 
 auto lyra_rt_string_ref_get(void* reference) -> const void* {
@@ -5227,8 +5310,14 @@ auto lyra_rt_real_pow(const void* base, const void* exponent, void* out)
   return Emplace(out, Read<Real>(base).Pow(Read<Real>(exponent)));
 }
 
-auto lyra_rt_real_round(const void* value) -> std::int64_t {
-  return Read<Real>(value).Round();
+auto lyra_rt_real_to_integral(
+    const void* value, std::int64_t out_width, bool out_is_four_state,
+    void* out) -> void* {
+  lyra::value::WrittenWords bits(
+      lyra::runtime::BitsShape(out_width, out_is_four_state));
+  Read<Real>(value).RoundInto(bits.MutableView());
+  bits.StoreTo(out);
+  return out;
 }
 
 auto lyra_rt_real_truncate(const void* value) -> std::int64_t {
@@ -5323,8 +5412,14 @@ auto lyra_rt_real_atanh(const void* value, void* out) -> void* {
   return Emplace(out, Read<Real>(value).Atanh());
 }
 
-auto lyra_rt_real_from_int(std::int64_t value, void* out) -> void* {
-  return Emplace(out, Real::FromInt(value));
+auto lyra_rt_real_from_integral(
+    const void* value, std::int64_t value_width, bool value_is_signed,
+    bool value_is_four_state, void* out) -> void* {
+  return Emplace(
+      out,
+      Real::ConvertFromIntegral(
+          NumberAt(value, value_width, value_is_signed, value_is_four_state)
+              .View()));
 }
 
 auto lyra_rt_real_convert_from_shortreal(const void* value, void* out)
@@ -5367,8 +5462,14 @@ auto lyra_rt_shortreal_pow(const void* base, const void* exponent, void* out)
   return Emplace(out, Read<ShortReal>(base).Pow(Read<ShortReal>(exponent)));
 }
 
-auto lyra_rt_shortreal_round(const void* value) -> std::int64_t {
-  return Read<ShortReal>(value).Round();
+auto lyra_rt_shortreal_to_integral(
+    const void* value, std::int64_t out_width, bool out_is_four_state,
+    void* out) -> void* {
+  lyra::value::WrittenWords bits(
+      lyra::runtime::BitsShape(out_width, out_is_four_state));
+  Read<ShortReal>(value).RoundInto(bits.MutableView());
+  bits.StoreTo(out);
+  return out;
 }
 
 auto lyra_rt_shortreal_to_bits(const void* value) -> std::int64_t {
@@ -5379,8 +5480,14 @@ auto lyra_rt_shortreal_from_bits(std::int64_t bits, void* out) -> void* {
   return Emplace(out, ShortReal::FromBits(bits));
 }
 
-auto lyra_rt_shortreal_from_int(std::int64_t value, void* out) -> void* {
-  return Emplace(out, ShortReal::FromInt(value));
+auto lyra_rt_shortreal_from_integral(
+    const void* value, std::int64_t value_width, bool value_is_signed,
+    bool value_is_four_state, void* out) -> void* {
+  return Emplace(
+      out,
+      ShortReal::ConvertFromIntegral(
+          NumberAt(value, value_width, value_is_signed, value_is_four_state)
+              .View()));
 }
 
 auto lyra_rt_shortreal_convert_from_real(const void* value, void* out)
@@ -8198,7 +8305,8 @@ auto lyra_rt_laidout_designate_component(
   const ErasedDesignation& within = DesignationAt(designation);
   if (within.write->Undecided()) {
     within.write->Stepped(
-        lyra::runtime::PartPath::Child(static_cast<std::uint64_t>(index)));
+        lyra::runtime::PartPath::Written(
+            lyra::support::PartStep::kComponent, index));
   }
   return std::construct_at(
       static_cast<ErasedDesignation*>(out),
@@ -8215,7 +8323,9 @@ auto lyra_rt_laidout_designate_member(
   if (within.write->Undecided()) {
     within.write->KeepLaidOutOriginal(
         lyra::runtime::TypeAt(union_type), within.part);
-    within.write->Stepped(lyra::runtime::PartPath::Inexact());
+    within.write->Stepped(
+        lyra::runtime::PartPath::Written(
+            lyra::support::PartStep::kUnionMember, std::nullopt));
   }
   return std::construct_at(static_cast<ErasedDesignation*>(out), within);
 }

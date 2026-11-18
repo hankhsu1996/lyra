@@ -1516,6 +1516,345 @@ TEST(LyraRun, AForceOnPartOfAVariableHoldsOnlyThatPart) {
       << stream.stderr_text;
 }
 
+// A force from foreign code is a procedural force (LRM 38.34), so under the
+// reading that takes a part of a variable it takes one too: a bit, a member of
+// a packed structure, an element of an array, a member of an unpacked
+// structure and a member of an unpacked union, which every member reads (LRM
+// 7.3), each held against the design's own writes as a part the design forced
+// is, and each released with the value it holds after. The standard reading
+// forbids every one of them (LRM 10.6.2), which is a refusal of what the
+// standard forbids and not of something not yet carried out.
+TEST(LyraRun, AForeignForceTakesAPartAsTheBuildReadsTheStandard) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  WriteFile(
+      *tmp_or / "parts.sv",
+      "module Test;\n"
+      "  import \"DPI-C\" context function int force_parts();\n"
+      "  import \"DPI-C\" context function int release_parts();\n"
+      "  typedef struct packed { bit [3:0] hi; bit [3:0] lo; } nibbles_t;\n"
+      "  typedef struct { int a; int b; } pair_t;\n"
+      "  typedef union { int a; int b; } overlay_t;\n"
+      "  logic [7:0] v = 8'h00;\n"
+      "  nibbles_t ps = 8'h35;\n"
+      "  int arr[0:3];\n"
+      "  pair_t us;\n"
+      "  overlay_t un;\n"
+      "  initial begin\n"
+      "    #1 if (force_parts() != 0) $fatal(1, \"a part's force failed\");\n"
+      "    v = 8'h00;\n"
+      "    ps = 8'h00;\n"
+      "    arr[2] = 0;\n"
+      "    arr[1] = 5;\n"
+      "    us = '{1, 0};\n"
+      "    un.b = 0;\n"
+      "    #1;\n"
+      "    if (v !== 8'h08) $fatal(1, \"v reads %h\", v);\n"
+      "    if (ps !== 8'hc0) $fatal(1, \"ps reads %h\", ps);\n"
+      "    if (arr[2] !== 9 || arr[1] !== 5)\n"
+      "      $fatal(1, \"arr reads %0d and %0d\", arr[2], arr[1]);\n"
+      "    if (us.a !== 1 || us.b !== 7)\n"
+      "      $fatal(1, \"us reads %0d and %0d\", us.a, us.b);\n"
+      "    if (un.a !== 4 || un.b !== 4) $fatal(1, \"un reads %0d\", un.b);\n"
+      "    if (release_parts() != 0) $fatal(1, \"a part's release failed\");\n"
+      "    v = 8'h00;\n"
+      "    ps = 8'h00;\n"
+      "    #1;\n"
+      "    if (v !== 8'h00 || ps !== 8'h00)\n"
+      "      $fatal(1, \"a write after the release read %h, %h\", v, ps);\n"
+      "    $display(\"All checks passed\");\n"
+      "  end\n"
+      "endmodule\n");
+  WriteFile(
+      *tmp_or / "foreign.c",
+      "#include <stddef.h>\n"
+      "#include <sv_vpi_user.h>\n"
+      "static int Put(const char* name, PLI_INT32 flags, int value) {\n"
+      "  vpiHandle h = vpi_handle_by_name((PLI_BYTE8*)name, NULL);\n"
+      "  s_vpi_value v = {\n"
+      "      .format = vpiIntVal,\n"
+      "      .value.integer = flags == vpiReleaseFlag ? -1 : value};\n"
+      "  s_vpi_error_info info;\n"
+      "  if (h == NULL) return 1;\n"
+      "  vpi_put_value(h, &v, NULL, flags);\n"
+      "  if (vpi_chk_error(&info) != 0) {\n"
+      "    vpi_printf(\"refused: %s\\n\", info.message);\n"
+      "    return 1;\n"
+      "  }\n"
+      "  return flags == vpiReleaseFlag && v.value.integer != value;\n"
+      "}\n"
+      "int force_parts(void) {\n"
+      "  return Put(\"Test.v[3]\", vpiForceFlag, 1) +\n"
+      "         Put(\"Test.ps.hi\", vpiForceFlag, 12) +\n"
+      "         Put(\"Test.arr[2]\", vpiForceFlag, 9) +\n"
+      "         Put(\"Test.us.b\", vpiForceFlag, 7) +\n"
+      "         Put(\"Test.un.a\", vpiForceFlag, 4);\n"
+      "}\n"
+      "int release_parts(void) {\n"
+      "  return Put(\"Test.v[3]\", vpiReleaseFlag, 1) +\n"
+      "         Put(\"Test.ps.hi\", vpiReleaseFlag, 12) +\n"
+      "         Put(\"Test.arr[2]\", vpiReleaseFlag, 9) +\n"
+      "         Put(\"Test.us.b\", vpiReleaseFlag, 7) +\n"
+      "         Put(\"Test.un.a\", vpiReleaseFlag, 4);\n"
+      "}\n");
+
+  for (const std::string_view backend : {"llvm", "cpp"}) {
+    const auto run = RunLyraFrom(
+        lyra, *tmp_or,
+        std::format(
+            "run --backend {} --mir-verify-each --compat all --dpi-link "
+            "foreign.c --top Test parts.sv",
+            backend));
+    EXPECT_THAT(run, ExitedWithCode(0))
+        << backend << ": " << run.stdout_text << run.stderr_text;
+    EXPECT_NE(run.stdout_text.find("All checks passed"), std::string::npos)
+        << backend << ": " << run.stdout_text;
+
+    const auto strict = RunLyraFrom(
+        lyra, *tmp_or,
+        std::format(
+            "run --backend {} --mir-verify-each --dpi-link foreign.c --top "
+            "Test parts.sv",
+            backend));
+    std::size_t forbidden = 0;
+    for (std::size_t at =
+             strict.stdout_text.find("takes no part of a variable");
+         at != std::string::npos;
+         at = strict.stdout_text.find("takes no part of a variable", at + 1)) {
+      ++forbidden;
+    }
+    EXPECT_EQ(forbidden, 5U) << backend << ": " << strict.stdout_text;
+    EXPECT_EQ(strict.stdout_text.find("not yet supported"), std::string::npos)
+        << backend << ": " << strict.stdout_text;
+  }
+}
+
+// What a routine reaching a variable meets is never raised into foreign code.
+// A read the design cannot do -- a member of a tagged union other than the one
+// its tag names (LRM 7.3.2), here asked for by a string member's size -- is
+// that read's error (LRM 38.2), and the run goes on, foreign code writing the
+// design after it; listing the entries of an associative array with a
+// wildcard index, naming an entry keyed by a class handle and reaching a
+// named event, by name or by listing an array's elements, an element of an
+// associative array among them, are refused as not yet supported.
+TEST(LyraRun, AForeignRoutineRaisesNothingIntoForeignCode) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  WriteFile(
+      *tmp_or / "boundary.sv",
+      "module Test;\n"
+      "  import \"DPI-C\" context function void look();\n"
+      "  class Key; endclass\n"
+      "  typedef union tagged { int a; string s; } either_t;\n"
+      "  either_t either = tagged a 5;\n"
+      "  int by_object[Key];\n"
+      "  int wild[*];\n"
+      "  event flags[2];\n"
+      "  event by_key[int];\n"
+      "  int counter;\n"
+      "  initial begin\n"
+      "    static Key key = new;\n"
+      "    by_object[key] = 3;\n"
+      "    wild[300] = 1;\n"
+      "    look();\n"
+      "    $display(\"the run went on with %0d\", counter);\n"
+      "  end\n"
+      "endmodule\n");
+  WriteFile(
+      *tmp_or / "foreign.c",
+      "#include <stddef.h>\n"
+      "#include <sv_vpi_user.h>\n"
+      "static void Report(void) {\n"
+      "  s_vpi_error_info info;\n"
+      "  if (vpi_chk_error(&info) != 0) vpi_printf(\"refused: %s\\n\",\n"
+      "                                        info.message);\n"
+      "}\n"
+      "void look(void) {\n"
+      "  vpiHandle keyed = vpi_handle_by_name(\"Test.by_object\", NULL);\n"
+      "  vpiHandle entries = vpi_iterate(vpiVarSelect, keyed);\n"
+      "  vpi_get_str(vpiName, vpi_scan(entries));\n"
+      "  Report();\n"
+      "  vpiHandle wild = vpi_handle_by_name(\"Test.wild\", NULL);\n"
+      "  vpi_iterate(vpiVarSelect, wild);\n"
+      "  Report();\n"
+      "  vpi_handle_by_name(\"Test.flags[0]\", NULL);\n"
+      "  Report();\n"
+      "  vpi_iterate(vpiVarSelect, vpi_handle_by_name(\"Test.flags\", NULL));\n"
+      "  Report();\n"
+      "  vpi_handle_by_name(\"Test.by_key[3]\", NULL);\n"
+      "  Report();\n"
+      "  vpiHandle text = vpi_handle_by_name(\"Test.either.s\", NULL);\n"
+      "  vpi_get(vpiSize, text);\n"
+      "  Report();\n"
+      "  char letter[] = \"x\";\n"
+      "  s_vpi_value word = {.format = vpiStringVal, .value.str = letter};\n"
+      "  vpi_put_value(text, &word, NULL, vpiNoDelay);\n"
+      "  Report();\n"
+      "  s_vpi_value one = {.format = vpiIntVal, .value.integer = 1};\n"
+      "  vpi_put_value(vpi_handle_by_name(\"Test.counter\", NULL), &one,\n"
+      "                NULL, vpiNoDelay);\n"
+      "  Report();\n"
+      "}\n");
+
+  for (const std::string_view backend : {"llvm", "cpp"}) {
+    const auto run = RunLyraFrom(
+        lyra, *tmp_or,
+        std::format(
+            "run --backend {} --dpi-link foreign.c --top Test boundary.sv",
+            backend));
+    const std::string output = run.stdout_text + run.stderr_text;
+    EXPECT_THAT(run, ExitedWithCode(0)) << backend << ": " << output;
+    std::size_t refused = 0;
+    for (std::size_t at = output.find("not yet supported");
+         at != std::string::npos;
+         at = output.find("not yet supported", at + 1)) {
+      ++refused;
+    }
+    EXPECT_EQ(refused, 5U) << backend << ": " << output;
+    EXPECT_NE(
+        output.find(
+            "refused: read of a tagged union member inconsistent "
+            "with the current tag"),
+        std::string::npos)
+        << backend << ": " << output;
+    EXPECT_NE(
+        output.find(
+            "refused: write to a tagged union member inconsistent "
+            "with the current tag"),
+        std::string::npos)
+        << backend << ": " << output;
+    EXPECT_NE(output.find("the run went on with 1"), std::string::npos)
+        << backend << ": " << output;
+    EXPECT_EQ(output.find("internal error"), std::string::npos)
+        << backend << ": " << output;
+    EXPECT_EQ(output.find("terminate"), std::string::npos)
+        << backend << ": " << output;
+  }
+}
+
+// Foreign code calling into the design after the process that called it was
+// disabled runs nothing of the design (LRM 35.9): a read through VPI is
+// refused as an export's call would be, while a handle made before it is
+// still named by the key it reached (LRM 7.8.4), and the disable takes the
+// process out of its block as the import returns.
+TEST(LyraRun, AForeignReadAfterItsCallerWasDisabledRunsNothing) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  WriteFile(
+      *tmp_or / "disabled.sv",
+      "module Test;\n"
+      "  import \"DPI-C\" context task look();\n"
+      "  export \"DPI-C\" task stop;\n"
+      "  int counter = 5;\n"
+      "  int by_byte[byte];\n"
+      "  initial by_byte[44] = 1;\n"
+      "  task stop;\n"
+      "    disable blk;\n"
+      "  endtask\n"
+      "  initial begin\n"
+      "    begin : blk\n"
+      "      look();\n"
+      "      $display(\"after the call\");\n"
+      "    end\n"
+      "    $display(\"after the block\");\n"
+      "  end\n"
+      "endmodule\n");
+  WriteFile(
+      *tmp_or / "foreign.c",
+      "#include <stddef.h>\n"
+      "#include <svdpi.h>\n"
+      "#include <sv_vpi_user.h>\n"
+      "extern int stop(void);\n"
+      "int look(void) {\n"
+      "  vpiHandle by_byte = vpi_handle_by_name(\"Test.by_byte\", NULL);\n"
+      "  vpiHandle cast = vpi_handle_by_index(by_byte, 300);\n"
+      "  stop();\n"
+      "  vpi_printf(\"named %s\\n\", vpi_get_str(vpiName, cast));\n"
+      "  s_vpi_value v = {.format = vpiIntVal, .value.integer = -1};\n"
+      "  vpi_get_value(vpi_handle_by_name(\"Test.counter\", NULL), &v);\n"
+      "  s_vpi_error_info info;\n"
+      "  if (vpi_chk_error(&info) != 0)\n"
+      "    vpi_printf(\"refused: %s\\n\", info.message);\n"
+      "  else\n"
+      "    vpi_printf(\"read %d\\n\", v.value.integer);\n"
+      "  svAckDisabledState();\n"
+      "  return 1;\n"
+      "}\n");
+
+  for (const std::string_view backend : {"llvm", "cpp"}) {
+    const auto run = RunLyraFrom(
+        lyra, *tmp_or,
+        std::format(
+            "run --backend {} --dpi-link foreign.c --top Test disabled.sv",
+            backend));
+    EXPECT_THAT(run, ExitedWithCode(0))
+        << backend << ": " << run.stdout_text << run.stderr_text;
+    EXPECT_NE(
+        run.stdout_text.find(
+            "refused: what called into foreign code has ended"),
+        std::string::npos)
+        << backend << ": " << run.stdout_text;
+    EXPECT_NE(run.stdout_text.find("named by_byte[44]"), std::string::npos)
+        << backend << ": " << run.stdout_text;
+    EXPECT_EQ(run.stdout_text.find("after the call"), std::string::npos)
+        << backend << ": " << run.stdout_text;
+    EXPECT_NE(run.stdout_text.find("after the block"), std::string::npos)
+        << backend << ": " << run.stdout_text;
+  }
+}
+
+// An application compiled for no compatibility mode is read in the one the
+// run names as its default (LRM 36.12.2.2), and in the latest where it names
+// none: a one-dimensional array of `reg` is a memory under 1364-1995 (LRM
+// 36.12.1 Table 36-10) and an array variable under 1800-2012 and later.
+TEST(LyraRun, TheRunNamesTheDefaultCompatibilityMode) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  WriteFile(
+      *tmp_or / "memory.sv",
+      "module Test;\n"
+      "  import \"DPI-C\" context function string type_of_mem();\n"
+      "  reg [7:0] mem[0:3];\n"
+      "  initial $display(\"type %s\", type_of_mem());\n"
+      "endmodule\n");
+  WriteFile(
+      *tmp_or / "foreign.c",
+      "#include <stddef.h>\n"
+      "#include <vpi_user.h>\n"
+      "const char* type_of_mem(void) {\n"
+      "  vpiHandle h = vpi_handle_by_name((PLI_BYTE8*)\"Test.mem\", NULL);\n"
+      "  return h == NULL ? \"none\" : vpi_get_str(vpiType, h);\n"
+      "}\n");
+
+  const auto run = [&](std::string_view after) {
+    return RunLyraFrom(
+        lyra, *tmp_or,
+        std::format(
+            "run --backend llvm --dpi-link foreign.c --top Test memory.sv{}",
+            after));
+  };
+  const auto latest = run("");
+  ASSERT_THAT(latest, ExitedWithCode(0)) << latest.stderr_text;
+  EXPECT_NE(latest.stdout_text.find("type vpiArrayVar"), std::string::npos)
+      << latest.stdout_text;
+  const auto old = run(" -- +lyra+vpi+compatibility=1364v1995");
+  ASSERT_THAT(old, ExitedWithCode(0)) << old.stderr_text;
+  EXPECT_NE(old.stdout_text.find("type vpiMemory"), std::string::npos)
+      << old.stdout_text;
+}
+
 // A `ref` formal is allowed only in an automatic subroutine (LRM 13.5.2), and
 // run when the caller asks for it in a static one. A formal bound by reference
 // stands for the actual each call binds and holds no storage of its own, so it

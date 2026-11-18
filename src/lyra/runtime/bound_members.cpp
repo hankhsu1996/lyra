@@ -19,6 +19,10 @@
 #include "lyra/runtime/var.hpp"
 #include "lyra/runtime/wait.hpp"
 #include "lyra/support/takeover_level.hpp"
+#include "lyra/value/object_ref.hpp"
+#include "lyra/value/real.hpp"
+#include "lyra/value/string.hpp"
+#include "lyra/value/unmanaged_ref.hpp"
 
 namespace lyra::runtime {
 
@@ -205,5 +209,13 @@ auto ForcedMember(const ErasedReference& reference, std::int64_t level)
   }
   return *reference.member;
 }
+
+// The reference families `value_families.hpp` says the library has compiled,
+// defined here because a reference's takeover members are.
+template class VariableRef<value::String>;
+template class VariableRef<value::Real>;
+template class VariableRef<value::ShortReal>;
+template class VariableRef<value::UnmanagedRef>;
+template class VariableRef<value::ObjectRef>;
 
 }  // namespace lyra::runtime

@@ -37,6 +37,7 @@
 #include "lyra/mir/constant_id.hpp"
 #include "lyra/mir/constant_value.hpp"
 #include "lyra/mir/dispatch_table.hpp"
+#include "lyra/mir/enum_table.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/library_record_builder.hpp"
 #include "lyra/mir/type.hpp"
@@ -228,7 +229,7 @@ void SetEntries(
   }
 }
 
-//   {"count", &blk, &typespec, kWire, 1}
+//   {"count", &blk, &typespec, kWire, 1, 0, 0}
 auto DataObjectRecordConstant(
     const mir::CompilationUnit& unit, const mir::DescribedDataObject& object)
     -> mir::ConstantId {
@@ -248,6 +249,8 @@ auto DataObjectRecordConstant(
   record.Set(
       &DataObjectRecord::has_net_type,
       Number(object.net_type.has_value() ? 1 : 0));
+  record.Set(&DataObjectRecord::constant, Number(object.constant ? 1 : 0));
+  record.Set(&DataObjectRecord::reference, Number(object.reference ? 1 : 0));
   return std::move(record).Intern();
 }
 
@@ -297,8 +300,8 @@ auto DescribedPortRecords(
 // What a scope states of itself, as the record the library reads it from: the
 // address of the record of its definition, a view of the addresses of the
 // records of the scopes it declares, of each family, of the data objects it
-// declares and of the ports connecting them, and the two bodies reaching the
-// data objects, each as `entry_of` names the code the library enters for it.
+// declares and of the ports connecting them, and the bodies reaching the data
+// objects, each as `entry_of` names the code the library enters for it.
 auto ScopeDeclarationsRecord(
     const mir::CompilationUnit& unit,
     const mir::ScopeDeclarations& scope_declarations, const auto& entry_of)
@@ -346,13 +349,24 @@ auto ScopeDeclarationsRecord(
                          mir::CallableId body, Member ScopeDeclarations::* at) {
     return PointerTo(entry_of(body), mir::LibraryRecordMemberType(unit, at));
   };
+  const mir::DataObjectBodies& bodies = scope_declarations.bodies;
   record.Set(
-      &ScopeDeclarations::read,
-      entry(scope_declarations.bodies.read, &ScopeDeclarations::read));
+      &ScopeDeclarations::settle,
+      entry(bodies.settle, &ScopeDeclarations::settle));
+  record.Set(
+      &ScopeDeclarations::read, entry(bodies.read, &ScopeDeclarations::read));
+  record.Set(
+      &ScopeDeclarations::write,
+      entry(bodies.write, &ScopeDeclarations::write));
+  record.Set(
+      &ScopeDeclarations::force,
+      entry(bodies.force, &ScopeDeclarations::force));
+  record.Set(
+      &ScopeDeclarations::release,
+      entry(bodies.release, &ScopeDeclarations::release));
   record.Set(
       &ScopeDeclarations::subscribe,
-      entry(
-          scope_declarations.bodies.subscribe, &ScopeDeclarations::subscribe));
+      entry(bodies.subscribe, &ScopeDeclarations::subscribe));
   return record;
 }
 
@@ -451,36 +465,477 @@ auto RecordedDefinitionOf(const hir::DefinitionForm& form)
       form);
 }
 
-//   {nullptr, 7, 0, 8, kLogic, 1}
-auto TypespecConstant(
-    const mir::CompilationUnit& unit, support::TypespecKind kind,
-    std::uint32_t width, std::optional<support::Range> range,
-    std::optional<mir::ConstantId> base) -> mir::ConstantId {
+// What one typespec record states beyond its name and its width, whatever kind
+// of type it describes; every field a kind does not state is the record's empty
+// value.
+struct TypespecFields {
+  support::TypespecKind kind = support::TypespecKind::kLogic;
+  bool is_signed = false;
+  std::optional<support::Range> range;
+  std::optional<mir::ConstantId> element;
+  std::optional<mir::ConstantId> index;
+  std::optional<mir::ConstantId> base;
+  std::optional<mir::ConstantId> enumeration;
+  std::vector<mir::ConstantId> members;
+  bool tagged = false;
+  bool soft = false;
+};
+
+// The typedef a typespec is named by, if any, and the typespec of the type it
+// aliases where that is named too (LRM 37.25).
+struct TypespecName {
+  std::optional<std::string_view> name;
+  std::optional<mir::ConstantId> alias;
+};
+
+//   {"byte_t", nullptr, nullptr, &logic, nullptr, nullptr, {}, 7, 0, 8,
+//    kLogic, 1, 0, 0, 0}
+auto TypespecRecord(
+    const mir::CompilationUnit& unit, const TypespecName& named,
+    std::uint32_t width, const TypespecFields& fields) -> mir::ConstantId {
   using abi::Typespec;
+  const auto address = [&](std::optional<mir::ConstantId> to) {
+    return to.has_value() ? AddressOf(unit, *to) : Null();
+  };
   const support::Range bounds =
-      range.value_or(support::Range{.left = 0, .right = 0});
+      fields.range.value_or(support::Range{.left = 0, .right = 0});
+  std::vector<mir::ConstantValue> members;
+  members.reserve(fields.members.size());
+  for (const mir::ConstantId member : fields.members) {
+    members.push_back(AddressOf(unit, member));
+  }
   mir::LibraryRecordBuilder<Typespec> record(unit);
+  record.Set(&Typespec::name, Name(named.name.value_or("")));
+  record.Set(&Typespec::alias, address(named.alias));
+  record.Set(&Typespec::base, address(fields.base));
+  record.Set(&Typespec::element, address(fields.element));
+  record.Set(&Typespec::index, address(fields.index));
+  record.Set(&Typespec::enumeration, address(fields.enumeration));
   record.Set(
-      &Typespec::base, base.has_value() ? AddressOf(unit, *base) : Null());
+      &Typespec::members,
+      mir::ViewOf(
+          unit, RecordPointerType<abi::TypespecMember>(unit),
+          std::move(members)));
   record.Set(&Typespec::left, Number(bounds.left));
   record.Set(&Typespec::right, Number(bounds.right));
   record.Set(&Typespec::width, Number(width));
-  record.Set(&Typespec::kind, Number(static_cast<std::uint8_t>(kind)));
-  record.Set(&Typespec::has_range, Number(range.has_value() ? 1 : 0));
+  record.Set(&Typespec::kind, Number(static_cast<std::uint8_t>(fields.kind)));
+  record.Set(&Typespec::has_range, Number(fields.range.has_value() ? 1 : 0));
+  record.Set(&Typespec::is_signed, Number(fields.is_signed ? 1 : 0));
+  record.Set(&Typespec::tagged, Number(fields.tagged ? 1 : 0));
+  record.Set(&Typespec::soft, Number(fields.soft ? 1 : 0));
   return std::move(record).Intern();
 }
+
+auto TypespecKindOf(hir::IntegerKeyword keyword) -> support::TypespecKind {
+  switch (keyword) {
+    case hir::IntegerKeyword::kInt:
+      return support::TypespecKind::kInt;
+    case hir::IntegerKeyword::kShortInt:
+      return support::TypespecKind::kShortInt;
+    case hir::IntegerKeyword::kLongInt:
+      return support::TypespecKind::kLongInt;
+    case hir::IntegerKeyword::kByte:
+      return support::TypespecKind::kByte;
+    case hir::IntegerKeyword::kInteger:
+      return support::TypespecKind::kInteger;
+    case hir::IntegerKeyword::kTime:
+      return support::TypespecKind::kTime;
+  }
+  throw InternalError("TypespecKindOf: unknown integer keyword");
+}
+
+// How wide a value of a predefined integer type is (LRM 6.11 Table 6-8).
+auto IntegerWidthOf(hir::IntegerKeyword keyword) -> std::uint32_t {
+  switch (keyword) {
+    case hir::IntegerKeyword::kByte:
+      return 8;
+    case hir::IntegerKeyword::kShortInt:
+      return 16;
+    case hir::IntegerKeyword::kInt:
+    case hir::IntegerKeyword::kInteger:
+      return 32;
+    case hir::IntegerKeyword::kLongInt:
+    case hir::IntegerKeyword::kTime:
+      return 64;
+  }
+  throw InternalError("IntegerWidthOf: unknown integer keyword");
+}
+
+auto TypespecKindOf(hir::BitKeyword keyword) -> support::TypespecKind {
+  switch (keyword) {
+    case hir::BitKeyword::kBit:
+      return support::TypespecKind::kBit;
+    case hir::BitKeyword::kLogic:
+      return support::TypespecKind::kLogic;
+  }
+  throw InternalError("TypespecKindOf: unknown bit keyword");
+}
+
+auto TypespecKindOf(hir::PlainKind kind) -> support::TypespecKind {
+  switch (kind) {
+    case hir::PlainKind::kReal:
+      return support::TypespecKind::kReal;
+    case hir::PlainKind::kShortReal:
+      return support::TypespecKind::kShortReal;
+    case hir::PlainKind::kRealtime:
+      return support::TypespecKind::kRealtime;
+    case hir::PlainKind::kEvent:
+      return support::TypespecKind::kEvent;
+    case hir::PlainKind::kString:
+      return support::TypespecKind::kString;
+    case hir::PlainKind::kChandle:
+      return support::TypespecKind::kChandle;
+    case hir::PlainKind::kVirtualInterface:
+      return support::TypespecKind::kVirtualInterface;
+  }
+  throw InternalError("TypespecKindOf: unknown plain kind");
+}
+
+// Builds the records of the typespecs of one unit.
+class TypespecRecords {
+ public:
+  TypespecRecords(
+      const mir::CompilationUnit& unit, const hir::CompilationUnit& hir,
+      const std::function<mir::TypeId(hir::TypeId)>& translate)
+      : unit_(&unit), hir_(&hir), translate_(&translate) {
+  }
+
+  // A typespec reached again -- members of one type -- is the record it was the
+  // first time, so building one costs the typespec's edges, never its parts'
+  // number.
+  auto Of(hir::TypespecId id) -> mir::ConstantId {
+    if (const auto found = built_.find(id); found != built_.end()) {
+      return found->second;
+    }
+    const mir::ConstantId record =
+        TypespecRecord(*unit_, NameOf(id), WidthOf(id), FieldsOf(id));
+    built_.emplace(id, record);
+    return record;
+  }
+
+ private:
+  [[nodiscard]] auto Data(hir::TypespecId id) const
+      -> const hir::TypespecData& {
+    return hir_->typespecs.Get(id).data;
+  }
+
+  // The name a typespec is reported under and the typespec it aliases: a
+  // typedef's (LRM 37.25 details 1, 6) and a class's (LRM 37.32 detail 4).
+  auto NameOf(hir::TypespecId id) -> TypespecName {
+    const auto none = [](const auto&) {
+      return TypespecName{.name = std::nullopt, .alias = std::nullopt};
+    };
+    return std::visit(
+        Overloaded{
+            [&](const hir::TypedefTypespec& named) {
+              return TypespecName{
+                  .name = std::string_view{named.name},
+                  .alias = named.aliases ? std::optional(Of(named.names))
+                                         : std::nullopt};
+            },
+            [](const hir::ClassTypespec& cls) {
+              return TypespecName{
+                  .name = std::string_view{cls.name}, .alias = std::nullopt};
+            },
+            [&](const hir::IntegerTypespec& t) { return none(t); },
+            [&](const hir::BitTypespec& t) { return none(t); },
+            [&](const hir::PackedArrayTypespec& t) { return none(t); },
+            [&](const hir::PackedStructTypespec& t) { return none(t); },
+            [&](const hir::PackedUnionTypespec& t) { return none(t); },
+            [&](const hir::EnumTypespec& t) { return none(t); },
+            [&](const hir::PlainTypespec& t) { return none(t); },
+            [&](const hir::UnpackedAggregateTypespec& t) { return none(t); },
+            [&](const hir::FixedArrayTypespec& t) { return none(t); },
+            [&](const hir::DynamicArrayTypespec& t) { return none(t); },
+            [&](const hir::QueueTypespec& t) { return none(t); },
+            [&](const hir::AssociativeArrayTypespec& t) { return none(t); }},
+        Data(id));
+  }
+
+  // The integral value a packed structure or union, or an enumeration, of type
+  // `type` is.
+  [[nodiscard]] auto IntegralOf(hir::TypeId type) const
+      -> const mir::IntegralType& {
+    return unit_->types.Get((*translate_)(type)).Integral();
+  }
+
+  // How wide a value of a packed typespec is, zero for any other: a predefined
+  // integer type's keyword fixes it, a bit is one, a packed array is its
+  // elements together, a packed structure, a union or an enumeration is as its
+  // type projects it, and a typedef the type it names.
+  [[nodiscard]] auto WidthOf(hir::TypespecId id) const -> std::uint32_t {
+    const auto unpacked = [](const auto&) -> std::uint32_t { return 0; };
+    const auto projected = [&](hir::TypeId type) {
+      return static_cast<std::uint32_t>(IntegralOf(type).bit_width);
+    };
+    return std::visit(
+        Overloaded{
+            [](const hir::IntegerTypespec& integer) {
+              return IntegerWidthOf(integer.keyword);
+            },
+            [](const hir::BitTypespec&) -> std::uint32_t { return 1; },
+            [&](const hir::PackedArrayTypespec& array) {
+              const std::int64_t span = array.range.left - array.range.right;
+              const auto count =
+                  static_cast<std::uint32_t>((span < 0 ? -span : span) + 1);
+              return count * WidthOf(array.element);
+            },
+            [&](const hir::PackedStructTypespec& aggregate) {
+              return projected(aggregate.type);
+            },
+            [&](const hir::PackedUnionTypespec& aggregate) {
+              return projected(aggregate.type);
+            },
+            [&](const hir::EnumTypespec& enumeration) {
+              return projected(enumeration.enumeration);
+            },
+            [&](const hir::TypedefTypespec& named) {
+              return WidthOf(named.names);
+            },
+            [&](const hir::PlainTypespec& t) { return unpacked(t); },
+            [&](const hir::ClassTypespec& t) { return unpacked(t); },
+            [&](const hir::UnpackedAggregateTypespec& t) {
+              return unpacked(t);
+            },
+            [&](const hir::FixedArrayTypespec& t) { return unpacked(t); },
+            [&](const hir::DynamicArrayTypespec& t) { return unpacked(t); },
+            [&](const hir::QueueTypespec& t) { return unpacked(t); },
+            [&](const hir::AssociativeArrayTypespec& t) {
+              return unpacked(t);
+            }},
+        Data(id));
+  }
+
+  // The kind a packed array is reported as (LRM 37.17, 37.18): the bit or
+  // logic type a vector of single bits is built of, through every dimension,
+  // and a packed array where what its dimensions hold is a structure, a union
+  // or an enumeration.
+  [[nodiscard]] auto ArrayKindOf(hir::TypespecId element) const
+      -> support::TypespecKind {
+    const auto other = [](const auto&) {
+      return support::TypespecKind::kPackedArray;
+    };
+    return std::visit(
+        Overloaded{
+            [](const hir::BitTypespec& bit) {
+              return TypespecKindOf(bit.keyword);
+            },
+            [&](const hir::PackedArrayTypespec& array) {
+              return ArrayKindOf(array.element);
+            },
+            [&](const hir::TypedefTypespec& named) {
+              return ArrayKindOf(named.names);
+            },
+            [&](const hir::IntegerTypespec& t) { return other(t); },
+            [&](const hir::PackedStructTypespec& t) { return other(t); },
+            [&](const hir::PackedUnionTypespec& t) { return other(t); },
+            [&](const hir::EnumTypespec& t) { return other(t); },
+            [&](const hir::PlainTypespec& t) { return other(t); },
+            [&](const hir::ClassTypespec& t) { return other(t); },
+            [&](const hir::UnpackedAggregateTypespec& t) { return other(t); },
+            [&](const hir::FixedArrayTypespec& t) { return other(t); },
+            [&](const hir::DynamicArrayTypespec& t) { return other(t); },
+            [&](const hir::QueueTypespec& t) { return other(t); },
+            [&](const hir::AssociativeArrayTypespec& t) { return other(t); }},
+        Data(element));
+  }
+
+  auto Member(
+      std::string_view identifier, hir::TypespecId typespec,
+      support::RandomQualifier random) -> mir::ConstantId {
+    mir::LibraryRecordBuilder<abi::TypespecMember> record(*unit_);
+    record.Set(&abi::TypespecMember::identifier, Name(identifier));
+    record.Set(&abi::TypespecMember::typespec, AddressOf(*unit_, Of(typespec)));
+    record.Set(
+        &abi::TypespecMember::random,
+        Number(static_cast<std::uint8_t>(random)));
+    return std::move(record).Intern();
+  }
+
+  // A member as its type declares it: its identifier, and how it is declared
+  // random, which a member of a packed aggregate never is (LRM 18.4).
+  struct DeclaredMember {
+    std::string_view identifier;
+    support::RandomQualifier random;
+  };
+  static auto DeclaredOf(const std::vector<hir::UnpackedAggregateField>& fields)
+      -> std::vector<DeclaredMember> {
+    std::vector<DeclaredMember> declared;
+    declared.reserve(fields.size());
+    for (const hir::UnpackedAggregateField& field : fields) {
+      declared.push_back({.identifier = field.name, .random = field.random});
+    }
+    return declared;
+  }
+  static auto DeclaredOf(const std::vector<hir::PackedAggregateField>& fields)
+      -> std::vector<DeclaredMember> {
+    std::vector<DeclaredMember> declared;
+    declared.reserve(fields.size());
+    for (const hir::PackedAggregateField& field : fields) {
+      declared.push_back(
+          {.identifier = field.name,
+           .random = support::RandomQualifier::kNone});
+    }
+    return declared;
+  }
+
+  // The members a type declares, each with the typespec the declaration wrote
+  // it with, in the order the type states them.
+  auto MembersOf(
+      const std::vector<DeclaredMember>& declared,
+      const std::vector<hir::TypespecId>& written)
+      -> std::vector<mir::ConstantId> {
+    if (declared.size() != written.size()) {
+      throw InternalError(
+          "TypespecRecords: a structure's or a union's typespec writes another "
+          "number of members than its type declares -- please report this as "
+          "a bug");
+    }
+    std::vector<mir::ConstantId> members;
+    members.reserve(declared.size());
+    for (std::size_t at = 0; at < declared.size(); ++at) {
+      members.push_back(
+          Member(declared[at].identifier, written[at], declared[at].random));
+    }
+    return members;
+  }
+
+  auto FieldsOf(hir::TypespecId id) -> TypespecFields {
+    const auto plain = [](support::TypespecKind kind) {
+      return TypespecFields{
+          .kind = kind,
+          .is_signed = false,
+          .range = std::nullopt,
+          .element = std::nullopt,
+          .index = std::nullopt,
+          .base = std::nullopt,
+          .enumeration = std::nullopt,
+          .members = {},
+          .tagged = false,
+          .soft = false};
+    };
+    return std::visit(
+        Overloaded{
+            [&](const hir::IntegerTypespec& integer) {
+              TypespecFields built = plain(TypespecKindOf(integer.keyword));
+              built.is_signed = integer.is_signed;
+              return built;
+            },
+            [&](const hir::BitTypespec& bit) {
+              TypespecFields built = plain(TypespecKindOf(bit.keyword));
+              built.is_signed = bit.is_signed;
+              return built;
+            },
+            [&](const hir::PackedArrayTypespec& array) {
+              TypespecFields built = plain(ArrayKindOf(array.element));
+              built.is_signed = array.is_signed;
+              built.range = array.range;
+              built.element = Of(array.element);
+              return built;
+            },
+            [&](const hir::PackedStructTypespec& aggregate) {
+              TypespecFields built =
+                  plain(support::TypespecKind::kPackedStruct);
+              built.is_signed = aggregate.is_signed;
+              built.members = MembersOf(
+                  DeclaredOf(hir_->types.Get(aggregate.type)
+                                 .Get<hir::PackedStructType>()
+                                 .fields),
+                  aggregate.members);
+              return built;
+            },
+            [&](const hir::PackedUnionTypespec& aggregate) {
+              const auto& type =
+                  hir_->types.Get(aggregate.type).Get<hir::PackedUnionType>();
+              TypespecFields built = plain(support::TypespecKind::kPackedUnion);
+              built.is_signed = aggregate.is_signed;
+              built.members =
+                  MembersOf(DeclaredOf(type.fields), aggregate.members);
+              built.tagged = type.tagged;
+              built.soft = aggregate.soft;
+              return built;
+            },
+            [&](const hir::EnumTypespec& enumeration) {
+              TypespecFields built = plain(support::TypespecKind::kEnum);
+              built.is_signed =
+                  IntegralOf(enumeration.enumeration).signedness ==
+                  mir::Signedness::kSigned;
+              built.base = Of(enumeration.base);
+              built.enumeration = mir::EnumMemberTableConstant(
+                  *unit_, (*translate_)(enumeration.enumeration));
+              return built;
+            },
+            [&](const hir::PlainTypespec& kind) {
+              return plain(TypespecKindOf(kind.kind));
+            },
+            [&](const hir::ClassTypespec&) {
+              return plain(support::TypespecKind::kClass);
+            },
+            [&](const hir::UnpackedAggregateTypespec& aggregate) {
+              const hir::Type& type = hir_->types.Get(aggregate.type);
+              if (const auto* structure = type.As<hir::UnpackedStructType>()) {
+                TypespecFields built =
+                    plain(support::TypespecKind::kUnpackedStruct);
+                built.members = MembersOf(
+                    DeclaredOf(hir_->DefinitionOf(*structure).fields),
+                    aggregate.members);
+                return built;
+              }
+              const auto& definition =
+                  hir_->DefinitionOf(type.Get<hir::UnpackedUnionType>());
+              TypespecFields built =
+                  plain(support::TypespecKind::kUnpackedUnion);
+              built.members =
+                  MembersOf(DeclaredOf(definition.fields), aggregate.members);
+              built.tagged = definition.tagged;
+              return built;
+            },
+            [&](const hir::FixedArrayTypespec& array) {
+              TypespecFields built = plain(support::TypespecKind::kFixedArray);
+              built.range = array.range;
+              built.element = Of(array.element);
+              return built;
+            },
+            [&](const hir::DynamicArrayTypespec& array) {
+              TypespecFields built =
+                  plain(support::TypespecKind::kDynamicArray);
+              built.element = Of(array.element);
+              return built;
+            },
+            [&](const hir::QueueTypespec& queue) {
+              TypespecFields built = plain(support::TypespecKind::kQueue);
+              built.element = Of(queue.element);
+              return built;
+            },
+            [&](const hir::AssociativeArrayTypespec& array) {
+              TypespecFields built =
+                  plain(support::TypespecKind::kAssociativeArray);
+              built.element = Of(array.element);
+              built.index = array.index.transform(
+                  [&](hir::TypespecId index) { return Of(index); });
+              return built;
+            },
+            [&](const hir::TypedefTypespec& named) {
+              return FieldsOf(named.names);
+            }},
+        Data(id));
+  }
+
+  const mir::CompilationUnit* unit_;
+  const hir::CompilationUnit* hir_;
+  const std::function<mir::TypeId(hir::TypeId)>* translate_;
+  std::map<hir::TypespecId, mir::ConstantId> built_;
+};
 
 }  // namespace
 
 auto TypespecConstant(
-    const mir::CompilationUnit& unit, const hir::Typespec& type)
+    const mir::CompilationUnit& unit, const hir::CompilationUnit& hir,
+    hir::TypespecId id,
+    const std::function<mir::TypeId(hir::TypeId)>& translate)
     -> mir::ConstantId {
-  const std::optional<mir::ConstantId> base =
-      type.base.transform([&](const hir::Typespec::Base& declared) {
-        return TypespecConstant(
-            unit, declared.kind, type.width, declared.range, std::nullopt);
-      });
-  return TypespecConstant(unit, type.kind, type.width, type.range, base);
+  return TypespecRecords(unit, hir, translate).Of(id);
 }
 
 //   {"Top", "work", "Top", -9, -12, 1, kModule, kWire, kNone, 0, 0}
@@ -959,7 +1414,11 @@ struct EntryPrototypes {
         return on_object;
       // The scope's own record names these, each entered at its own
       // prototype.
+      case support::LibraryCallback::kScopeSettleDataObject:
       case support::LibraryCallback::kScopeReadDataObject:
+      case support::LibraryCallback::kScopeWriteDataObject:
+      case support::LibraryCallback::kScopeForceDataObject:
+      case support::LibraryCallback::kScopeReleaseDataObject:
       case support::LibraryCallback::kScopeSubscribeDataObject:
         break;
     }

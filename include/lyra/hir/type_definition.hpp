@@ -11,10 +11,10 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/hir/constant_value.hpp"
 #include "lyra/hir/integral_constant.hpp"
-#include "lyra/hir/random_qualifier.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/type_id.hpp"
 #include "lyra/support/def_path.hpp"
+#include "lyra/support/random_qualifier.hpp"
 
 namespace lyra::hir {
 
@@ -49,7 +49,7 @@ struct UnpackedAggregateField {
   std::string name;
   TypeId type;
   std::optional<ConstantValue> default_init;
-  RandomQualifier random = RandomQualifier::kNone;
+  support::RandomQualifier random = support::RandomQualifier::kNone;
 
   auto operator==(const UnpackedAggregateField&) const -> bool = default;
 };

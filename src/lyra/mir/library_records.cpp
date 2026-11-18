@@ -7,6 +7,7 @@
 
 #include "lyra/abi/library_records.hpp"
 #include "lyra/abi/records.hpp"
+#include "lyra/base/source_location.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/support/library_decl.hpp"
@@ -67,6 +68,8 @@ template <typename Field>
 auto MirTypeOf(const TypePool& types) -> TypeId {
   if constexpr (std::is_void_v<Field>) {
     return types.Intern(Type{VoidType{}});
+  } else if constexpr (std::is_same_v<Field, bool>) {
+    return types.Intern(Type{MachineBoolType{}});
   } else if constexpr (std::integral<Field>) {
     return types.Intern(
         Type{MachineIntType{
@@ -85,6 +88,14 @@ auto MirTypeOf(const TypePool& types) -> TypeId {
     return ScopePointer(types);
   } else if constexpr (std::is_same_v<Field, runtime::ValueSerializer&>) {
     return LibraryTypeOf(types, support::LibraryDecl::kValueSerializer);
+  } else if constexpr (std::is_same_v<Field, runtime::SelectionSettler&>) {
+    return LibraryTypeOf(types, support::LibraryDecl::kSelectionSettler);
+  } else if constexpr (std::is_same_v<Field, runtime::ValueDeserializer&>) {
+    return LibraryTypeOf(types, support::LibraryDecl::kValueDeserializer);
+  } else if constexpr (std::is_same_v<Field, const runtime::Selection&>) {
+    return LibraryTypeOf(types, support::LibraryDecl::kSelection);
+  } else if constexpr (std::is_same_v<Field, base::SourceLocation>) {
+    return LibraryTypeOf(types, support::LibraryDecl::kSourceLocation);
   } else if constexpr (std::is_same_v<Field, runtime::Subscriber&>) {
     return LibraryTypeOf(types, support::LibraryDecl::kSubscriber);
   } else if constexpr (std::is_same_v<Field, const value::ObjectRef&>) {

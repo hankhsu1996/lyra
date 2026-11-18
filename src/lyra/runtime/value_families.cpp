@@ -25,12 +25,6 @@ template class CellRareState<ValueStorageCore<value::Real>>;
 template class CellRareState<ValueStorageCore<value::ShortReal>>;
 template class CellRareState<ValueStorageCore<value::ObjectRef>>;
 
-template class VariableRef<value::String>;
-template class VariableRef<value::Real>;
-template class VariableRef<value::ShortReal>;
-template class VariableRef<value::UnmanagedRef>;
-template class VariableRef<value::ObjectRef>;
-
 template class ScopedMutation<VariableRef<value::String>>;
 template class ScopedMutation<VariableRef<value::Real>>;
 template class ScopedMutation<VariableRef<value::ShortReal>>;
@@ -74,8 +68,5 @@ template class KeptPart<value::Real>;
 template class KeptPart<value::ShortReal>;
 template class KeptPart<value::UnmanagedRef>;
 template class KeptPart<value::ObjectRef>;
-
-template auto StepTo<value::String>(const value::String& key) -> PartPath;
-template auto StepTo<value::ObjectRef>(const value::ObjectRef& key) -> PartPath;
 
 }  // namespace lyra::runtime

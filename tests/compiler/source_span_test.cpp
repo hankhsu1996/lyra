@@ -102,8 +102,8 @@ TEST(
 
   lyra::diag::DiagnosticSink sink;
   auto design = lyra::compiler::DeclareUnits(
-      std::move(front.elaborated->compilation),
-      lyra::compiler::LoweringPolicy{}, sink, front.elaborated->diag_sources);
+      std::move(front.elaborated->compilation), lyra::support::LoweringPolicy{},
+      sink, front.elaborated->diag_sources);
   ASSERT_TRUE(design.has_value());
   std::vector<lyra::lir::CompilationUnit> units;
   const auto executable = lyra::compiler::LowerToExecutable(

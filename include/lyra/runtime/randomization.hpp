@@ -14,10 +14,6 @@
 
 namespace lyra::runtime {
 
-// How the source declared a variable a constraint reads (LRM 18.4): not
-// random, `rand`, or `randc`.
-enum class RandomQualifier : std::uint8_t { kNone, kRand, kRandc };
-
 // Makes a random array `count` elements big, answering how to make it what it
 // was again.
 using ArrayResizer = std::function<std::function<void()>(std::size_t count)>;

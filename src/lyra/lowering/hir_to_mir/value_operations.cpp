@@ -8,6 +8,7 @@
 #include <functional>
 #include <optional>
 #include <span>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -2852,41 +2853,60 @@ auto OneBitAnswerType(
              : unit.builtins.bit1;
 }
 
-auto PositionCountOf(const mir::CompilationUnit& unit, mir::TypeId type)
-    -> std::uint64_t {
+namespace {
+
+// A type reached again -- components of one type -- counts what `counted`
+// holds it counted the first time, so the count costs the type's edges, never
+// its positions' number.
+auto PositionCountOf(
+    const mir::CompilationUnit& unit, mir::TypeId type,
+    std::unordered_map<mir::TypeId, std::uint64_t>& counted) -> std::uint64_t {
+  if (const auto found = counted.find(type); found != counted.end()) {
+    return found->second;
+  }
   const mir::Type& t = unit.types.Get(type);
+  std::uint64_t count = 1;
   if (t.IsIntegral()) {
-    return t.Integral().bit_width;
-  }
-  if (const auto* real = t.As<mir::RealType>()) {
-    return support::BitsOf(real->width);
-  }
-  if (const auto* array = t.As<mir::UnpackedArrayType>()) {
-    return array->count * PositionCountOf(unit, array->element_type);
-  }
-  if (const std::optional<std::span<const mir::TypeId>> components =
+    count = t.Integral().bit_width;
+  } else if (const auto* real = t.As<mir::RealType>()) {
+    count = support::BitsOf(real->width);
+  } else if (const auto* array = t.As<mir::UnpackedArrayType>()) {
+    count = array->count * PositionCountOf(unit, array->element_type, counted);
+  } else if (
+      const std::optional<std::span<const mir::TypeId>> components =
           mir::ProductElements(unit, type)) {
-    std::uint64_t count = 0;
+    count = 0;
     for (const mir::TypeId component : *components) {
-      count += PositionCountOf(unit, component);
+      count += PositionCountOf(unit, component, counted);
     }
-    return count;
-  }
-  // An untagged union's are its storage's, which every member is a view of
-  // from its first position (LRM 7.3).
-  if (const std::optional<mir::TypeId> storage =
+  } else if (
+      // An untagged union's are its storage's, which every member is a view
+      // of from its first position (LRM 7.3).
+      const std::optional<mir::TypeId> storage =
           mir::UnionStorageOf(unit, type)) {
-    return PositionCountOf(unit, *storage);
-  }
-  // A tagged union's are its widest member's, every member's from the first,
-  // and then its tag's, as a packed tagged union lays them out (LRM 7.3.2).
-  if (mir::IsTaggedUnion(unit, type)) {
+    count = PositionCountOf(unit, *storage, counted);
+  } else if (mir::IsTaggedUnion(unit, type)) {
+    // A tagged union's are its widest member's, every member's from the
+    // first, and then its tag's, as a packed tagged union lays them out (LRM
+    // 7.3.2).
     const std::span<const mir::TypeId> members =
         *mir::OverlaidMembers(unit, type);
-    return WidestPositionCountOf(unit, members) +
-           TagPositionsFor(members.size());
+    std::uint64_t widest = 0;
+    for (const mir::TypeId member : members) {
+      widest = std::max(widest, PositionCountOf(unit, member, counted));
+    }
+    count = widest + TagPositionsFor(members.size());
   }
-  return 1;
+  counted.emplace(type, count);
+  return count;
+}
+
+}  // namespace
+
+auto PositionCountOf(const mir::CompilationUnit& unit, mir::TypeId type)
+    -> std::uint64_t {
+  std::unordered_map<mir::TypeId, std::uint64_t> counted;
+  return PositionCountOf(unit, type, counted);
 }
 
 auto WidestPositionCountOf(

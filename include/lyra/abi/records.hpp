@@ -8,6 +8,7 @@
 #include "lyra/base/time.hpp"
 #include "lyra/support/data_object.hpp"
 #include "lyra/support/port_direction.hpp"
+#include "lyra/support/random_qualifier.hpp"
 #include "lyra/support/scope_execution.hpp"
 #include "lyra/support/scope_kind.hpp"
 #include "lyra/value/constant_span.hpp"
@@ -29,7 +30,10 @@
 namespace lyra::runtime {
 class GcObject;
 class Scope;
+class Selection;
+class SelectionSettler;
 class Subscriber;
+class ValueDeserializer;
 class ValueSerializer;
 }  // namespace lyra::runtime
 
@@ -148,18 +152,36 @@ struct ScopeCallable {
 // The body a class of the design hierarchy runs on an instance in one phase.
 using ScopePhase = void (*)(runtime::GcObject*);
 
+struct TypespecMember;
+
 // A data object's type as the source declared it (LRM 37.25), a constant of
-// the unit describing the object: what kind of type it is, how many bits a
-// value of it holds, the outermost packed range a vector declares, and, for an
-// enumeration, its base type (LRM 6.19), none for any other type. Each
-// enumeration is held as the number a constant record writes.
+// the unit describing the object: the typedef that names it, empty text where
+// none does, and the typespec of the type that typedef aliases where that is
+// named too; what kind of type it is, how many bits a value of it holds and
+// whether it is signed where it is packed, its range -- a vector's outermost
+// packed range, a fixed-size unpacked array's -- and what it is built from:
+// the typespec of one element of an array, packed or unpacked, a single bit's
+// for a vector of bits (LRM 37.25 detail 8), an associative array's index
+// (none for a wildcard index), a structure's or a union's members in declared
+// order, and an enumeration's base type (LRM 6.19) and members; and whether a
+// union is tagged and whether it is soft (LRM 7.3). Each enumeration is held
+// as the number a constant record writes.
 struct Typespec {
+  const char* name = nullptr;
+  const Typespec* alias = nullptr;
   const Typespec* base = nullptr;
+  const Typespec* element = nullptr;
+  const Typespec* index = nullptr;
+  const value::Enumeration* enumeration = nullptr;
+  value::ConstantSpan<const TypespecMember*> members;
   std::int64_t left = 0;
   std::int64_t right = 0;
   std::uint32_t width = 0;
   std::uint8_t kind = 0;
   std::uint8_t has_range = 0;
+  std::uint8_t is_signed = 0;
+  std::uint8_t tagged = 0;
+  std::uint8_t soft = 0;
 
   [[nodiscard]] auto Kind() const -> support::TypespecKind {
     return static_cast<support::TypespecKind>(kind);
@@ -170,6 +192,28 @@ struct Typespec {
     }
     return support::Range{.left = left, .right = right};
   }
+  [[nodiscard]] auto IsSigned() const -> bool {
+    return is_signed != 0;
+  }
+  [[nodiscard]] auto Tagged() const -> bool {
+    return tagged != 0;
+  }
+  [[nodiscard]] auto Soft() const -> bool {
+    return soft != 0;
+  }
+};
+
+// A member of a structure or a union a typespec lists (LRM 37.25, 37.26), as a
+// constant of the unit: its identifier, its own typespec, and how it is
+// declared random.
+struct TypespecMember {
+  const char* identifier = nullptr;
+  const Typespec* typespec = nullptr;
+  std::uint8_t random = 0;
+
+  [[nodiscard]] auto Random() const -> support::RandomQualifier {
+    return static_cast<support::RandomQualifier>(random);
+  }
 };
 
 // One data object a scope of the design hierarchy, a package or the
@@ -177,20 +221,30 @@ struct Typespec {
 // finds -- a variable, a net or a named event (LRM 21.7.1.2) -- as a constant
 // of its unit, the same for every instance: its name, the named block, task
 // or function it lies in, if any, the net type it is declared with, none for
-// a variable, and its type. Each enumeration is held as the number a constant
-// record writes.
+// a variable, its type, whether it is a variable declared `const` (LRM 6.20.6),
+// and whether it is the name a `ref` port gives the variable connected to it
+// (LRM 37.15). Each enumeration is held as the number a constant record
+// writes.
 struct DataObjectRecord {
   const char* identifier = nullptr;
   const LexicalScopeRecord* enclosing = nullptr;
   const Typespec* typespec = nullptr;
   std::uint8_t net_type = 0;
   std::uint8_t has_net_type = 0;
+  std::uint8_t constant = 0;
+  std::uint8_t reference = 0;
 
   [[nodiscard]] auto NetType() const -> std::optional<support::NetType> {
     if (has_net_type == 0) {
       return std::nullopt;
     }
     return static_cast<support::NetType>(net_type);
+  }
+  [[nodiscard]] auto Constant() const -> bool {
+    return constant != 0;
+  }
+  [[nodiscard]] auto Reference() const -> bool {
+    return reference != 0;
   }
 };
 
@@ -212,26 +266,50 @@ struct DescribedPort {
 // What a scope of the design hierarchy states of itself (LRM 37.10, 37.12): the
 // definition it comes from, the scopes it declares, the data objects it
 // declares, in the order it declares them, the ports connecting them, in the
-// order the declaration gives the ports (LRM 21.7.4.2), and the two bodies
+// order the declaration gives the ports (LRM 21.7.4.2), and the bodies
 // reaching any of the data objects, compiled where each one's type is known,
 // each handed the object, the data object's position among those listed, and
-// what the reader gave: one hands the serializer the value it holds, the
-// other hands the subscriber the trigger a wait for a change of it would
-// enrol. A class of the hierarchy states it of its instances, and its bodies
-// are entered on the instance; a package and the compilation unit's scope,
-// each one object of the run, state it once, as a constant handed to the
-// library as its storage is installed, have no ports, and have bodies that
-// take an object and leave it unread.
+// what the reader gave: one settles a selection by the types alone, into the
+// key each entry it names is kept by and the positions a takeover counts
+// before the part (LRM 7.8.4, 10.6.2), one hands the serializer the value of
+// the part a selection names, one writes that part what the deserializer holds
+// as the design's own write of it does, one forces the positions of the part a
+// selection names to what the deserializer holds -- the first and how many of
+// them, in the part's own numbering -- and one releases them (LRM 38.34,
+// 10.6.2), each answering what it came to as the build reads the
+// standard, and one hands the subscriber the trigger a wait for a change of it
+// would enrol. Each is handed last where the reader's own call was made, where
+// what fails in it is reported. A class of the hierarchy states it of its
+// instances, and its bodies are entered on the instance; a package and the
+// compilation unit's scope, each one object of the run, state it once, as a
+// constant handed to the library as its storage is installed, have no ports,
+// and have bodies that take an object and leave it unread.
 struct ScopeDeclarations {
   const DefinitionRecord* definition = nullptr;
   value::ConstantSpan<const ElaboratedScopeRecord*> elaborated;
   value::ConstantSpan<const LexicalScopeRecord*> lexical;
   value::ConstantSpan<const DataObjectRecord*> data_objects;
   value::ConstantSpan<const DescribedPort*> ports;
-  void (*read)(runtime::GcObject*, std::int64_t, runtime::ValueSerializer&) =
-      nullptr;
-  void (*subscribe)(runtime::GcObject*, std::int64_t, runtime::Subscriber&) =
-      nullptr;
+  void (*settle)(
+      runtime::GcObject*, std::int64_t, const runtime::Selection&,
+      runtime::SelectionSettler&, base::SourceLocation) = nullptr;
+  void (*read)(
+      runtime::GcObject*, std::int64_t, const runtime::Selection&,
+      runtime::ValueSerializer&, base::SourceLocation) = nullptr;
+  void (*write)(
+      runtime::GcObject*, std::int64_t, const runtime::Selection&,
+      runtime::ValueDeserializer&, base::SourceLocation) = nullptr;
+  std::int64_t (*force)(
+      runtime::GcObject*, std::int64_t, const runtime::Selection&,
+      runtime::SelectionSettler&, std::int64_t, std::int64_t,
+      runtime::ValueDeserializer&, base::SourceLocation) = nullptr;
+  std::int64_t (*release)(
+      runtime::GcObject*, std::int64_t, const runtime::Selection&,
+      runtime::SelectionSettler&, std::int64_t, std::int64_t,
+      base::SourceLocation) = nullptr;
+  void (*subscribe)(
+      runtime::GcObject*, std::int64_t, runtime::Subscriber&,
+      base::SourceLocation) = nullptr;
 };
 
 // What a class of the design hierarchy tells the library about its instances:
@@ -416,38 +494,62 @@ constexpr void ForEachField(
 template <typename Visit>
 constexpr void ForEachField(
     const ScopeDeclarations& record, const Visit& visit) {
-  const auto& [definition, elaborated, lexical, data_objects, ports, read, subscribe] =
+  const auto& [definition, elaborated, lexical, data_objects, ports, settle, read, write, force, release, subscribe] =
       record;
   visit(definition);
   visit(elaborated);
   visit(lexical);
   visit(data_objects);
   visit(ports);
+  visit(settle);
   visit(read);
+  visit(write);
+  visit(force);
+  visit(release);
   visit(subscribe);
 }
 
 template <typename Visit>
 constexpr void ForEachField(const Typespec& record, const Visit& visit) {
-  const auto& [base, left, right, width, kind, has_range] = record;
+  const auto& [name, alias, base, element, index, enumeration, members, left, right, width, kind, has_range, is_signed, tagged, soft] =
+      record;
+  visit(name);
+  visit(alias);
   visit(base);
+  visit(element);
+  visit(index);
+  visit(enumeration);
+  visit(members);
   visit(left);
   visit(right);
   visit(width);
   visit(kind);
   visit(has_range);
+  visit(is_signed);
+  visit(tagged);
+  visit(soft);
+}
+
+template <typename Visit>
+constexpr void ForEachField(const TypespecMember& record, const Visit& visit) {
+  const auto& [identifier, typespec, random] = record;
+  visit(identifier);
+  visit(typespec);
+  visit(random);
 }
 
 template <typename Visit>
 constexpr void ForEachField(
     const DataObjectRecord& record, const Visit& visit) {
-  const auto& [identifier, enclosing, typespec, net_type, has_net_type] =
+  const auto& [identifier, enclosing, typespec, net_type, has_net_type, constant, reference] =
       record;
   visit(identifier);
   visit(enclosing);
   visit(typespec);
   visit(net_type);
   visit(has_net_type);
+  visit(constant);
+  visit(reference);
 }
 
 template <typename Visit>

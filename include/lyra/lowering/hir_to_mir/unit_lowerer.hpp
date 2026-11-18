@@ -27,6 +27,7 @@
 #include "lyra/hir/type_id.hpp"
 #include "lyra/lowering/hir_to_mir/class_shape.hpp"
 #include "lyra/lowering/hir_to_mir/design_root_inputs.hpp"
+#include "lyra/lowering/hir_to_mir/part_bodies.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/callable_ordinal.hpp"
 #include "lyra/mir/class_id.hpp"
@@ -117,7 +118,11 @@ struct RandomizationHooks {
       case support::LibraryCallback::kScopeResolve:
       case support::LibraryCallback::kScopeInitialize:
       case support::LibraryCallback::kScopeCreateProcesses:
+      case support::LibraryCallback::kScopeSettleDataObject:
       case support::LibraryCallback::kScopeReadDataObject:
+      case support::LibraryCallback::kScopeWriteDataObject:
+      case support::LibraryCallback::kScopeForceDataObject:
+      case support::LibraryCallback::kScopeReleaseDataObject:
       case support::LibraryCallback::kScopeSubscribeDataObject:
         break;
     }
@@ -657,6 +662,13 @@ class UnitLowerer {
     return unit_.GetClass(id).base;
   }
 
+  // The bodies reaching a part of a value of each type a description has
+  // reached so far.
+  [[nodiscard]] auto PartBodiesByType()
+      -> std::unordered_map<hir::TypeId, PartBodies>& {
+    return part_bodies_;
+  }
+
   // The function answering the assignment-pattern text of one type (LRM
   // 21.2.1.6). Every such text is settled with this unit's declarations, so a
   // site that has established the type has one finds it here; a site that has
@@ -822,6 +834,7 @@ class UnitLowerer {
   // holds the only authoritative class representation.
   base::SymbolTable<mir::ClassId, ClassShape> declarations_;
   std::unordered_map<hir::TypeId, mir::CallableId> assignment_pattern_texts_;
+  std::unordered_map<hir::TypeId, PartBodies> part_bodies_;
 };
 
 }  // namespace lyra::lowering::hir_to_mir

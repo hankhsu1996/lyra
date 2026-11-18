@@ -692,6 +692,24 @@ auto LowerStreamWindowRun(
       {window->start, window->count}, unit.builtins.bit_vec);
 }
 
+auto MemberTypesOf(const UnitLowerer& unit_lowerer, const hir::Type& aggregate)
+    -> std::vector<hir::TypeId> {
+  std::vector<hir::TypeId> types;
+  const auto of = [&](const auto& fields) {
+    for (const auto& field : fields) types.push_back(field.type);
+  };
+  if (const auto* structure = aggregate.As<hir::UnpackedStructType>()) {
+    of(unit_lowerer.Hir().DefinitionOf(*structure).fields);
+  } else if (const auto* overlay = aggregate.As<hir::UnpackedUnionType>()) {
+    of(unit_lowerer.Hir().DefinitionOf(*overlay).fields);
+  } else {
+    throw InternalError(
+        "MemberTypesOf: asked the members of a type that is no unpacked "
+        "structure or union -- please report this as a bug");
+  }
+  return types;
+}
+
 auto MemberStep(
     UnitLowerer& unit_lowerer, mir::Builder block, const hir::Type& aggregate,
     base::ComponentIndex index, mir::TypeId part_type) -> DescentStep {

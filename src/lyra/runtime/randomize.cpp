@@ -24,6 +24,7 @@
 #include "lyra/runtime/running_state.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/var.hpp"
+#include "lyra/support/random_qualifier.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_value_type.hpp"
 #include "lyra/value/library_value_types.hpp"
@@ -219,12 +220,12 @@ auto CycleOf(
 void DeclareParts(
     ConstraintProblem& problem, RandomizationModes& modes,
     const ErasedReference& variable, const void* value,
-    const value::ValueType& type, RandomQualifier declared,
+    const value::ValueType& type, support::RandomQualifier declared,
     const DeclaredPart& part) {
   const bool chosen = part.enabled && modes.RandEnabled(part.path);
   if (const value::IntegralValueType* integral = type.AsIntegral()) {
     ConstraintCycle* cycle =
-        declared == RandomQualifier::kRandc
+        declared == support::RandomQualifier::kRandc
             ? &CycleOf(modes, part, integral->Shape().width)
             : nullptr;
     problem.Declare(
@@ -256,8 +257,8 @@ void DeclareParts(
 
 void ConstraintDeclareErased(
     const value::ObjectRef& problem, const ErasedReference& variable,
-    const void* value, const value::ValueType& type, RandomQualifier declared,
-    const DeclaredPart& part) {
+    const void* value, const value::ValueType& type,
+    support::RandomQualifier declared, const DeclaredPart& part) {
   DeclareParts(
       ProblemOf(problem), ModesOf(variable), variable, value, type, declared,
       part);

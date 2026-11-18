@@ -164,9 +164,9 @@ struct RootedTree {
 // run beside the instance tree (LRM 37.10), and state of themselves what a
 // class of the design hierarchy states of its instances: the definition they
 // are, the scopes they declare, and the data objects they declare, with the
-// two bodies of the namespace reading and subscribing to them, which the
-// install body hands the library. Absent for a unit that is no such object: a
-// class lowered alone, or a text of the tool's.
+// bodies of the namespace reading, writing, forcing, releasing and
+// subscribing to them, which the install body hands the library. Absent for a
+// unit that is no such object: a class lowered alone, or a text of the tool's.
 struct BroughtUpNamespace {
   CallableId install_storage;
   CallableId initialize_storage;

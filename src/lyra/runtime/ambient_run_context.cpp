@@ -14,6 +14,7 @@
 #include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/scope.hpp"
 #include "lyra/runtime/vpi_object.hpp"
+#include "lyra/runtime/vpi_variable.hpp"
 #include "lyra/value/constant_span.hpp"
 
 namespace lyra::runtime {
@@ -42,7 +43,8 @@ auto FindInCallableTable(
 AmbientRunContext::AmbientRunContext(Scope& root, RuntimeEffects& effects)
     : effects_(&effects),
       scope_handles_(root),
-      object_handles_(std::make_unique<VpiObjectHandles>()) {
+      object_handles_(std::make_unique<VpiObjectHandles>()),
+      stored_variables_(std::make_unique<VariablesByStorage>()) {
   CurrentSlot() = this;
 }
 

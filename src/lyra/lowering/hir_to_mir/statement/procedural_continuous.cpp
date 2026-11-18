@@ -33,22 +33,6 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-auto LevelOperand(
-    const mir::CompilationUnit& unit, mir::Builder block,
-    support::TakeoverLevel level) -> mir::ExprId {
-  return mir::BuildMachineIntLiteral(
-      unit, block, static_cast<std::int64_t>(level));
-}
-
-// One place of a takeover's target as the takeover acts on it: what holds the
-// place, and which positions of what it holds the place is, as a pair of
-// machine integers: the first and how many (LRM 10.6.2).
-struct TakenPart {
-  mir::ExprId holder;
-  mir::ExprId first;
-  mir::ExprId count;
-};
-
 // What holds one place of a takeover's target: a variable, a net, or a
 // reference naming one.
 auto TakeoverHolder(const AccessPath& place) -> mir::ExprId {
@@ -66,12 +50,15 @@ auto TakeoverHolder(const AccessPath& place) -> mir::ExprId {
       place.owner);
 }
 
-// The positions of its holder one place of a takeover's target names. LRM
-// 10.6.1 admits only a whole singular variable and 10.6.2 adds a net and a
-// constant part-select of one, and a caller may ask for a whole unpacked
-// variable or any part of a variable as well, run with the rules 10.6.2 gives a
-// whole variable applied to each position, numbered as the holder's type
-// numbers them.
+}  // namespace
+
+auto LevelOperand(
+    const mir::CompilationUnit& unit, mir::Builder block,
+    support::TakeoverLevel level) -> mir::ExprId {
+  return mir::BuildMachineIntLiteral(
+      unit, block, static_cast<std::int64_t>(level));
+}
+
 auto TakeoverPart(
     mir::CompilationUnit& unit, const WalkFrame& frame, const AccessPath& place,
     diag::SourceSpan span) -> diag::Result<TakenPart> {
@@ -99,6 +86,8 @@ auto TakeoverPart(
       .count = named->reached_count};
 }
 
+namespace {
+
 // Every part a takeover's target names, in the order the source wrote them: a
 // variable or a net, a part of one, or each member of a concatenation of them
 // (LRM 10.6.1, 10.6.2).
@@ -123,33 +112,28 @@ auto TakeoverParts(
   return parts;
 }
 
-// What an evaluation hands the takeover of `share`'s place: a value of the
-// type its holder holds, of which the takeover reads the positions it holds.
-// Where the place is part of that value, the share is written at the part in a
-// value of it built for the purpose, whose other positions nothing reads.
+}  // namespace
+
 auto DrivenValue(
-    mir::CompilationUnit& unit, BlockBuilder& pass, const Share& share)
-    -> mir::ExprId {
-  if (share.place.descent.empty()) {
-    return share.value;
+    mir::CompilationUnit& unit, const WalkFrame& frame, const AccessPath& place,
+    mir::ExprId value) -> mir::ExprId {
+  if (place.descent.empty()) {
+    return value;
   }
-  mir::Builder block = pass.Body();
-  const mir::TypeId held =
-      OwnerValueType(unit, block.Body(), share.place.owner);
-  const mir::LocalId built = pass.DeclareLocal(
-      held, block.Add(BuildDefaultValueExpr(unit, block, held)));
+  mir::Builder block = frame.Builder();
+  const mir::TypeId held = OwnerValueType(unit, block.Body(), place.owner);
+  const mir::LocalId built =
+      DeclareLocal(frame, block.Add(BuildDefaultValueExpr(unit, block, held)));
   block.AppendStmt(
       mir::ExprStmt{
           .expr = block.Add(BuildStoreExpr(
               unit, block,
               AccessPath{
                   .owner = block.LocalPlace(built, held),
-                  .descent = share.place.descent},
-              share.value))});
+                  .descent = place.descent},
+              value))});
   return block.ReadLocal(built, held);
 }
-
-}  // namespace
 
 auto LowerProceduralContinuousAssignStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
@@ -206,7 +190,8 @@ auto LowerProceduralContinuousAssignStmt(
     const mir::ExprId level = LevelOperand(unit, driving, pca.level);
     const mir::ExprId generation =
         driving.ReadLocal(generations[i], builtins.machine_int64);
-    const mir::ExprId value = DrivenValue(unit, pass, share);
+    const mir::ExprId value =
+        DrivenValue(unit, pass.Frame(), share.place, share.value);
     owned.push_back(pass.DeclareLocal(
         builtins.machine_bool,
         driving.Add(

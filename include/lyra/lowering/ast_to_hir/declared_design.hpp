@@ -14,6 +14,7 @@
 #include "lyra/hir/unit_definition.hpp"
 #include "lyra/hir/unit_signatures.hpp"
 #include "lyra/support/assertion_policy.hpp"
+#include "lyra/support/lowering_policy.hpp"
 
 namespace lyra::lowering::ast_to_hir {
 
@@ -107,7 +108,7 @@ class DeclaredDesign {
   // whose HIR comes out equal are one body.
   static auto Declare(
       std::unique_ptr<slang::ast::Compilation> front_end,
-      support::AssertionPolicy assertion_policy, diag::DiagnosticSink& sink)
+      support::LoweringPolicy policy, diag::DiagnosticSink& sink)
       -> std::optional<DeclaredDesign>;
 
   DeclaredDesign(DeclaredDesign&&) noexcept;

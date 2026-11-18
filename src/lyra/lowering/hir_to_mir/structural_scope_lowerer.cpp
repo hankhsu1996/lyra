@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <expected>
 #include <format>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -29,6 +30,7 @@
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
+#include "lyra/lowering/hir_to_mir/bitstream.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
@@ -46,11 +48,14 @@
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/design_root_inputs.hpp"
 #include "lyra/lowering/hir_to_mir/endpoint.hpp"
+#include "lyra/lowering/hir_to_mir/entry_walk.hpp"
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
+#include "lyra/lowering/hir_to_mir/expression/selects.hpp"
 #include "lyra/lowering/hir_to_mir/extern_binding.hpp"
 #include "lyra/lowering/hir_to_mir/kept_piece.hpp"
 #include "lyra/lowering/hir_to_mir/lvalue.hpp"
 #include "lyra/lowering/hir_to_mir/net_declaration.hpp"
+#include "lyra/lowering/hir_to_mir/part_bodies.hpp"
 #include "lyra/lowering/hir_to_mir/path_select.hpp"
 #include "lyra/lowering/hir_to_mir/predicate.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
@@ -60,6 +65,7 @@
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/statement/loops.hpp"
+#include "lyra/lowering/hir_to_mir/statement/procedural_continuous.hpp"
 #include "lyra/lowering/hir_to_mir/static_cell_binding.hpp"
 #include "lyra/lowering/hir_to_mir/static_cell_bring_up.hpp"
 #include "lyra/lowering/hir_to_mir/switch_stmt.hpp"
@@ -79,10 +85,12 @@
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/force_targets.hpp"
 #include "lyra/support/library_callback.hpp"
 #include "lyra/support/library_decl.hpp"
 #include "lyra/support/movability.hpp"
 #include "lyra/support/strength_level.hpp"
+#include "lyra/support/takeover_level.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -2467,36 +2475,32 @@ auto LowerGenerateAsStmt(
       declared.counting);
 }
 
-// The entry handing a reader by name a value of a data object, of type
-// `held`: an integral value's bits, an enumeration's being its base's, a real
-// at the width it is held at, or the object an event variable names.
-auto SerializeEntryOf(const mir::CompilationUnit& unit, mir::TypeId held)
-    -> support::BuiltinFn {
-  const mir::Type& type = unit.types.Get(held);
-  if (type.IsIntegral()) {
-    return support::BuiltinFn::kSerializeBits;
-  }
-  if (type.Is<mir::RealType>()) {
-    return support::BuiltinFn::kSerializeReal;
-  }
-  if (held == unit.builtins.event) {
-    return support::BuiltinFn::kSerializeEvent;
-  }
-  throw InternalError(
-      "hir_to_mir: a described data object holds no integral value, real or "
-      "event -- please report this as a bug");
-}
-
 // What a data object's declaration states of it: the identifier it is declared
-// under, the net type it is declared with, none for a variable, its type as the
-// source declared it, and the block, task or function it is written in, none
-// for one written in the scope itself.
+// under, the net type it is declared with, none for a variable, whether it is
+// the name a `ref` port gives the variable connected to it (LRM 23.3.3.2,
+// 37.15), its type as the source declared it, and the block, task or function
+// it is written in, none for one written in the scope itself.
 struct DeclaredDataObject {
   std::string_view identifier;
   std::optional<support::NetType> net_type;
-  const hir::Typespec* typespec;
+  bool reference;
+  hir::TypespecId typespec;
   std::optional<hir::ProceduralScopeId> lexical_scope;
 };
+
+// Whether a port's internal name bound as `binding` names the variable
+// connected to it, as a `ref` port's does; an input port's stands for what
+// its connection drives, a variable of the port's own.
+auto NamesConnectedVariable(hir::ReferenceBinding binding) -> bool {
+  switch (binding) {
+    case hir::ReferenceBinding::kRef:
+    case hir::ReferenceBinding::kConstRef:
+      return true;
+    case hir::ReferenceBinding::kInput:
+      return false;
+  }
+  throw InternalError("NamesConnectedVariable: unknown binding");
+}
 
 // Refuses a described data object whose declaration is of nothing a reader by
 // name describes, which no front end hands on.
@@ -2506,18 +2510,21 @@ struct DeclaredDataObject {
       "name describes -- please report this as a bug");
 }
 
-// What the declaration `decl`, of `net_type`, states, refused where it states
-// no type a reader by name describes.
+// What the declaration `decl`, of `net_type`, a port's internal name where
+// `binding` says how, states, refused where it states no type a reader by name
+// describes.
 auto DeclaredDescribed(
     const hir::StructuralDataObjectDecl& decl,
-    std::optional<support::NetType> net_type) -> DeclaredDataObject {
+    std::optional<support::NetType> net_type,
+    std::optional<hir::ReferenceBinding> binding) -> DeclaredDataObject {
   if (!decl.typespec.has_value()) {
     RefuseUndescribed();
   }
   return DeclaredDataObject{
       .identifier = decl.name,
       .net_type = net_type,
-      .typespec = &*decl.typespec,
+      .reference = binding.transform(NamesConnectedVariable).value_or(false),
+      .typespec = *decl.typespec,
       .lexical_scope = decl.lexical_scope};
 }
 
@@ -2528,13 +2535,13 @@ auto DeclaredStructuralDataObject(const hir::StructuralDataObjectDecl& decl)
   return std::visit(
       Overloaded{
           [&](const hir::StructuralVariableDecl&) {
-            return DeclaredDescribed(decl, std::nullopt);
+            return DeclaredDescribed(decl, std::nullopt, std::nullopt);
           },
-          [&](const hir::StructuralReferenceDecl&) {
-            return DeclaredDescribed(decl, std::nullopt);
+          [&](const hir::StructuralReferenceDecl& reference) {
+            return DeclaredDescribed(decl, std::nullopt, reference.binding);
           },
           [&](const hir::StructuralNetDecl& net) {
-            return DeclaredDescribed(decl, net.net_type);
+            return DeclaredDescribed(decl, net.net_type, std::nullopt);
           },
           [](const hir::StructuralGenvarDecl&) -> DeclaredDataObject {
             RefuseUndescribed();
@@ -2613,8 +2620,13 @@ auto TakeDataObjectBodies(mir::CompilationUnit& unit, DescribingBodies bodies)
             }},
         bodies);
   };
-  const mir::CallableId read = take();
-  return mir::DataObjectBodies{.read = read, .subscribe = take()};
+  return mir::DataObjectBodies{
+      .settle = take(),
+      .read = take(),
+      .write = take(),
+      .force = take(),
+      .release = take(),
+      .subscribe = take()};
 }
 
 auto DescribeDataObjects(
@@ -2630,7 +2642,13 @@ auto DescribeDataObjects(
         mir::DescribedDataObject{
             .identifier = std::string{declared.identifier},
             .net_type = declared.net_type,
-            .typespec = TypespecConstant(unit, *declared.typespec),
+            .constant = object.constant,
+            .reference = declared.reference,
+            .typespec = TypespecConstant(
+                unit, lowerer.Owner().Hir(), declared.typespec,
+                [&](hir::TypeId type) {
+                  return lowerer.Owner().TranslateType(type);
+                }),
             .ports = object.ports,
             .enclosing = declared.lexical_scope.transform(
                 [&](hir::ProceduralScopeId lexical_scope) {
@@ -2639,8 +2657,12 @@ auto DescribeDataObjects(
   }
   // The body `id`, taking the object, the position of the data object it is
   // asked for among those described, and what the reader gave, of `handed`,
-  // whose case for each data object is the one statement `statement` builds.
-  const auto state = [&](mir::CallableId id, mir::TypeId handed,
+  // whose case for each data object `statement` appends; a data object it
+  // appends nothing for is one the body is never asked about. A body answering
+  // what a takeover came to answers it as a machine integer, `otherwise`
+  // wherever its case answers nothing.
+  const auto state = [&](mir::CallableId id, std::vector<mir::TypeId> handed,
+                         std::optional<support::TakeoverAnswer> otherwise,
                          const auto& statement) -> diag::Result<void> {
     mir::CallableCode code = mir::CallableCode::Defined(diag::SourceSpan{});
     CallableBindings bindings(unit, code);
@@ -2656,7 +2678,19 @@ auto DescribeDataObjects(
         bodies);
     const mir::LocalId position =
         bindings.DeclareAnonymous(unit.builtins.machine_int64);
-    const mir::LocalId given = bindings.DeclareAnonymous(handed);
+    std::vector<Handed> given;
+    given.reserve(handed.size());
+    for (const mir::TypeId type : handed) {
+      given.push_back(
+          Handed{.local = bindings.DeclareAnonymous(type), .type = type});
+    }
+    // No statement of the design makes what the reader asks for, so what fails
+    // in it is reported where the reader's own call was made.
+    const mir::LocalId location =
+        bindings.DeclareAnonymous(unit.builtins.source_location);
+    std::vector<Handed> handed_with_location = given;
+    handed_with_location.push_back(
+        Handed{.local = location, .type = unit.builtins.source_location});
     mir::Builder block(code.Body(), scope_frame.span);
     mir::SwitchStmt chosen{
         .discriminant = block.ReadLocal(position, unit.builtins.machine_int64),
@@ -2665,58 +2699,376 @@ auto DescribeDataObjects(
     chosen.cases.reserve(described.size());
     for (std::size_t at = 0; at < described.size(); ++at) {
       mir::Block taken;
-      mir::Builder inside = block.Into(taken);
       const WalkFrame frame =
           scope_frame.WithBlock(&taken).WithBindings(&bindings);
-      auto call = statement(
-          described[at], inside, frame, inside.LocalPlace(given, handed));
-      if (!call) return std::unexpected(std::move(call.error()));
-      inside.AppendStmt(mir::ExprStmt{.expr = *call});
+      auto stated = statement(
+          described[at], frame, std::span<const Handed>(handed_with_location));
+      if (!stated) return std::unexpected(std::move(stated.error()));
       chosen.cases.push_back(
           mir::SwitchCase{
               .values = {static_cast<std::int64_t>(at)},
               .body = block.AddScope(std::move(taken))});
     }
     block.AppendStmt(std::move(chosen));
-    code.params = {object, position, given};
-    code.result_type = unit.builtins.void_type;
+    if (otherwise.has_value()) {
+      block.AppendStmt(
+          mir::ReturnStmt{
+              .value = mir::BuildMachineIntLiteral(
+                  unit, block, static_cast<std::int64_t>(*otherwise))});
+    }
+    code.params = {object, position};
+    for (const Handed& param : given) {
+      code.params.push_back(param.local);
+    }
+    code.params.push_back(location);
+    code.caller_location = location;
+    code.result_type = otherwise.has_value() ? unit.builtins.machine_int64
+                                             : unit.builtins.void_type;
     unit.StateCallable(id, std::move(code));
     return {};
   };
+  const mir::TypeId selection_type =
+      mir::LibraryTypeOf(unit.types, support::LibraryDecl::kSelection);
+  const mir::TypeId settler_type =
+      mir::LibraryTypeOf(unit.types, support::LibraryDecl::kSelectionSettler);
+  const mir::TypeId serializer_type =
+      mir::LibraryTypeOf(unit.types, support::LibraryDecl::kValueSerializer);
+  const mir::TypeId deserializer_type =
+      mir::LibraryTypeOf(unit.types, support::LibraryDecl::kValueDeserializer);
+  const mir::TypeId machine_int = unit.builtins.machine_int64;
+  // Whether a data object is a net, which foreign code reads through what it
+  // shows (LRM 37.16) and reaches no other way here.
+  const auto is_net = [&](const hir::DescribedDataObject& object) {
+    return DeclaredCellOf(lowerer, object.cell).net_type.has_value();
+  };
+  // The place a variable's data object is, as the design's own write of it
+  // names it, built where `frame` stands.
+  const auto root_path =
+      [&](const hir::DescribedDataObject& object,
+          const WalkFrame& frame) -> diag::Result<AccessPath> {
+    auto lvalue = LowerLvalue(
+        lowerer,
+        hir::MakeValueTargetRefExpr(object.cell, object.type, scope_frame.span),
+        frame);
+    if (!lvalue) return std::unexpected(std::move(lvalue.error()));
+    return std::get<AccessPath>(std::move(lvalue->form));
+  };
+  // The call of the body `body` of a data object's type, handed `arguments`.
+  const auto call = [&](mir::Builder block, mir::CallableId body,
+                        std::vector<mir::ExprId> arguments) {
+    block.AppendStmt(
+        mir::ExprStmt{
+            .expr = block.Add(
+                mir::MakeCallExpr(
+                    mir::Direct{
+                        .target = mir::CallableTarget{.callable = body}},
+                    std::move(arguments), unit.builtins.void_type))});
+  };
+  const auto zero = [&](mir::Builder block) {
+    return mir::BuildMachineIntLiteral(unit, block, 0);
+  };
+  // What every body of a data object's type is handed besides the part: the
+  // reader's selection, from its first step, and the sink.
+  const auto handed_on = [&](mir::Builder block, const Handed& selection,
+                             const Handed& sink) {
+    return std::vector<mir::ExprId>{
+        selection.ReadIn(block), zero(block), sink.ReadIn(block)};
+  };
+  const auto settle_into = [&](const hir::DescribedDataObject& object,
+                               mir::Builder block, const Handed& selection,
+                               const Handed& settler) {
+    call(
+        block, PartBodiesOf(lowerer.Owner(), object.type).settle,
+        handed_on(block, selection, settler));
+  };
+  auto settle = state(
+      declarations.bodies.settle, {selection_type, settler_type}, std::nullopt,
+      [&](const hir::DescribedDataObject& object, const WalkFrame& frame,
+          std::span<const Handed> given) -> diag::Result<void> {
+        if (is_net(object)) return {};
+        settle_into(object, frame.Builder(), given[0], given[1]);
+        return {};
+      });
+  if (!settle) return std::unexpected(std::move(settle.error()));
+  // A net is read as what it shows, and a variable where it lies; either is
+  // handed to the reading body of its type as a reference.
   auto read = state(
-      declarations.bodies.read,
-      mir::LibraryTypeOf(unit.types, support::LibraryDecl::kValueSerializer),
-      [&](const hir::DescribedDataObject& object, mir::Builder block,
-          const WalkFrame& frame,
-          mir::ExprId serializer) -> diag::Result<mir::ExprId> {
-        auto value = lowerer.LowerExpr(
-            hir::MakeValueTargetRefExpr(
-                object.cell, object.type, scope_frame.span),
-            frame);
-        if (!value) return std::unexpected(std::move(value.error()));
-        const support::BuiltinFn entry = SerializeEntryOf(unit, value->type);
-        const mir::ExprId read_value = block.Add(*std::move(value));
-        return block.Add(
-            mir::MakeCallExpr(
-                mir::Direct{.target = entry, .receiver = serializer},
-                {read_value}, unit.builtins.void_type));
+      declarations.bodies.read, {selection_type, serializer_type}, std::nullopt,
+      [&](const hir::DescribedDataObject& object, const WalkFrame& frame,
+          std::span<const Handed> given) -> diag::Result<void> {
+        mir::Builder block = frame.Builder();
+        mir::ExprId shown{};
+        if (is_net(object)) {
+          auto value = lowerer.LowerExpr(
+              hir::MakeValueTargetRefExpr(
+                  object.cell, object.type, scope_frame.span),
+              frame);
+          if (!value) return std::unexpected(std::move(value.error()));
+          // What a net shows is a value of its own, held for the reference.
+          const mir::LocalId held =
+              DeclareLocal(frame, block.Add(*std::move(value)));
+          shown = block.LocalPlace(
+              held, lowerer.Owner().TranslateType(object.type));
+        } else {
+          auto whole = root_path(object, frame);
+          if (!whole) return std::unexpected(std::move(whole.error()));
+          shown = PathAsPlace(unit, block, *whole);
+        }
+        const mir::ExprId borrowed = block.Add(
+            mir::Expr{
+                .data = mir::BorrowExpr{.operand = shown},
+                .type = unit.types.Intern(
+                    mir::Type{mir::ReferenceType{
+                        .referent = lowerer.Owner().TranslateType(object.type),
+                        .mutability = mir::Mutability::kReadOnly}})});
+        std::vector<mir::ExprId> arguments{borrowed};
+        for (mir::ExprId handed : handed_on(block, given[0], given[1])) {
+          arguments.push_back(handed);
+        }
+        call(
+            block, PartBodiesOf(lowerer.Owner(), object.type).read,
+            std::move(arguments));
+        return {};
       });
   if (!read) return std::unexpected(std::move(read.error()));
+  auto write = state(
+      declarations.bodies.write, {selection_type, deserializer_type},
+      std::nullopt,
+      [&](const hir::DescribedDataObject& object, const WalkFrame& frame,
+          std::span<const Handed> given) -> diag::Result<void> {
+        if (is_net(object)) return {};
+        mir::Builder block = frame.Builder();
+        auto whole = root_path(object, frame);
+        if (!whole) return std::unexpected(std::move(whole.error()));
+        // A `ref` port's name holds the reference it is bound to, which lends
+        // the one it holds (LRM 13.5.2).
+        std::vector<mir::ExprId> arguments{ConvertToType(
+            unit, block, PathReference(unit, block, *whole),
+            unit.types.Intern(
+                mir::Type{mir::VariableRefType{
+                    .pointee = lowerer.Owner().TranslateType(object.type),
+                    .mutability = mir::Mutability::kMutable}}))};
+        for (mir::ExprId handed : handed_on(block, given[0], given[1])) {
+          arguments.push_back(handed);
+        }
+        call(
+            block, PartBodiesOf(lowerer.Owner(), object.type).write,
+            std::move(arguments));
+        return {};
+      });
+  if (!write) return std::unexpected(std::move(write.error()));
+  // A force from foreign code is a procedural force (LRM 38.34, 10.6.2): it
+  // takes over, at the force's level, the positions of the part a selection
+  // names that the reader handed -- counted from the first of that part, in
+  // the part's own numbering -- and drives them the value handed, once; a
+  // release ends that takeover there. Each answers what it came to as the
+  // reading the unit was built under has it. Under the standard's, only a
+  // whole variable is taken, and anything less is forbidden. Under the reading
+  // that takes a part of a variable, a part lying at a fixed position is taken
+  // there, and one lying at none answers that it is not yet carried out.
+  const bool takes_parts =
+      support::TakesParts(lowerer.Owner().Hir().force_targets);
+  const auto answer = [&](mir::Builder block, support::TakeoverAnswer what) {
+    block.AppendStmt(
+        mir::ReturnStmt{
+            .value = mir::BuildMachineIntLiteral(
+                unit, block, static_cast<std::int64_t>(what))});
+  };
+  // Appends to `frame`'s block `taken` where the reading the unit was built
+  // under takes the part the selection names, handed where its positions start
+  // and how many are asked for, and an answer of why not otherwise; the
+  // selection is settled into `settler` first. A block names only its own
+  // expressions, so the positions are built in the block that takes them.
+  const auto where_taken =
+      [&](const hir::DescribedDataObject& object, const WalkFrame& frame,
+          std::span<const Handed> given,
+          const std::function<void(const WalkFrame&, const TakenPart&)>& taken)
+      -> diag::Result<void> {
+    if (is_net(object)) return {};
+    // Under the standard's reading only a whole variable holding a value is
+    // taken; under the one taking parts, any variable something of which
+    // holds one.
+    if (!takes_parts && !TakesAWrittenValue(lowerer.Owner(), object.type)) {
+      answer(frame.Builder(), support::TakeoverAnswer::kForbidden);
+      return {};
+    }
+    if (!HasWrittenPart(lowerer.Owner(), object.type)) return {};
+    const Handed& selection = given[0];
+    const Handed& settler = given[1];
+    const Handed& within = given[2];
+    const Handed& count = given[3];
+    // The whole variable's takeover, built where `at` stands.
+    const auto held_at =
+        [&](const WalkFrame& at) -> diag::Result<std::optional<TakenPart>> {
+      auto whole = root_path(object, at);
+      if (!whole) return std::unexpected(std::move(whole.error()));
+      auto held = TakeoverPart(unit, at, *whole, scope_frame.span);
+      if (!held) return std::nullopt;
+      return *held;
+    };
+    mir::Builder block = frame.Builder();
+    auto held = held_at(frame);
+    if (!held) return std::unexpected(std::move(held.error()));
+    if (!held->has_value()) return {};
+    settle_into(object, block, selection, settler);
+    // Each test is kept in a local of this block, which the nested tests
+    // read, since a block names only its own expressions.
+    const auto holds = [&](mir::ExprId test) {
+      return DeclareLocal(frame, test);
+    };
+    std::vector<mir::LocalId> tests;
+    if (takes_parts) {
+      tests.push_back(holds(block.Add(
+          mir::MakeCallExpr(
+              mir::Direct{
+                  .target = support::BuiltinFn::kSettledFixed,
+                  .receiver = settler.PlaceIn(block)},
+              {}, unit.builtins.machine_bool))));
+    } else {
+      const auto equal = [&](mir::ExprId lhs, mir::ExprId rhs) {
+        return holds(
+            mir::BuildMachineIntComparison(
+                unit, block, mir::BinaryOp::kEquality, lhs, rhs));
+      };
+      tests.push_back(equal(
+          block.Add(
+              mir::MakeCallExpr(
+                  mir::Direct{
+                      .target = support::BuiltinFn::kSelectionDepth,
+                      .receiver = selection.PlaceIn(block)},
+                  {}, machine_int)),
+          zero(block)));
+      tests.push_back(equal(within.ReadIn(block), zero(block)));
+      tests.push_back(equal(count.ReadIn(block), (*held)->count));
+    }
+    mir::Block innermost;
+    const WalkFrame at = frame.WithBlock(&innermost);
+    mir::Builder taking = at.Builder();
+    auto whole = held_at(at);
+    if (!whole) return std::unexpected(std::move(whole.error()));
+    taken(
+        at, TakenPart{
+                .holder = (*whole)->holder,
+                .first = mir::BuildMachineIntBinary(
+                    unit, taking, mir::BinaryOp::kAdd,
+                    taking.Add(
+                        mir::MakeCallExpr(
+                            mir::Direct{
+                                .target = support::BuiltinFn::kSettledPositions,
+                                .receiver = settler.PlaceIn(taking)},
+                            {}, machine_int)),
+                    within.ReadIn(taking)),
+                .count = count.ReadIn(taking)});
+    answer(taking, support::TakeoverAnswer::kTaken);
+    // The tests, innermost first, each the whole of the block the one around
+    // it takes.
+    mir::Block then = std::move(innermost);
+    for (auto test = tests.rbegin(); test != tests.rend(); ++test) {
+      mir::Block tested;
+      mir::Builder inner = frame.WithBlock(&tested).Builder();
+      inner.AppendStmt(
+          mir::IfStmt{
+              .condition = inner.ReadLocal(*test, unit.builtins.machine_bool),
+              .then_scope = inner.AddScope(std::move(then)),
+              .else_scope = std::nullopt});
+      then = std::move(tested);
+    }
+    block.AppendStmt(mir::BlockStmt{.scope = block.AddScope(std::move(then))});
+    answer(
+        block, takes_parts ? support::TakeoverAnswer::kNotCarriedOut
+                           : support::TakeoverAnswer::kForbidden);
+    return {};
+  };
+  // The value driven is one of the variable's type holding the value handed
+  // where the part lies, written there by the writing body of that type into a
+  // copy of what the variable holds, as the design's own force of a part drives
+  // the whole with the part written into it; the takeover reads none of the
+  // copy's other positions.
+  auto force = state(
+      declarations.bodies.force,
+      {selection_type, settler_type, machine_int, machine_int,
+       deserializer_type},
+      support::TakeoverAnswer::kNotCarriedOut,
+      [&](const hir::DescribedDataObject& object, const WalkFrame& frame,
+          std::span<const Handed> given) -> diag::Result<void> {
+        return where_taken(
+            object, frame, given,
+            [&](const WalkFrame& at, const TakenPart& part) {
+              mir::Builder block = at.Builder();
+              const mir::TypeId held =
+                  lowerer.Owner().TranslateType(object.type);
+              const mir::LocalId driven = DeclareLocal(
+                  at, PathValue(
+                          unit, block,
+                          AccessPath{.owner = part.holder, .descent = {}}));
+              std::vector<mir::ExprId> arguments{PathReference(
+                  unit, block,
+                  AccessPath{
+                      .owner = block.LocalPlace(driven, held), .descent = {}})};
+              for (mir::ExprId handed : handed_on(block, given[0], given[4])) {
+                arguments.push_back(handed);
+              }
+              call(
+                  block, PartBodiesOf(lowerer.Owner(), object.type).write,
+                  std::move(arguments));
+              const mir::ExprId generation = block.Add(
+                  mir::MakeBeginTakeoverCallExpr(
+                      part.holder,
+                      LevelOperand(unit, block, support::TakeoverLevel::kForce),
+                      part.first, part.count, machine_int));
+              block.AppendStmt(
+                  mir::ExprStmt{
+                      .expr = block.Add(
+                          mir::MakeDriveTakeoverCallExpr(
+                              part.holder,
+                              LevelOperand(
+                                  unit, block, support::TakeoverLevel::kForce),
+                              generation, block.ReadLocal(driven, held),
+                              unit.builtins.machine_bool))});
+            });
+      });
+  if (!force) return std::unexpected(std::move(force.error()));
+  auto release = state(
+      declarations.bodies.release,
+      {selection_type, settler_type, machine_int, machine_int},
+      support::TakeoverAnswer::kNotCarriedOut,
+      [&](const hir::DescribedDataObject& object, const WalkFrame& frame,
+          std::span<const Handed> given) -> diag::Result<void> {
+        return where_taken(
+            object, frame, given,
+            [&](const WalkFrame& at, const TakenPart& part) {
+              mir::Builder block = at.Builder();
+              block.AppendStmt(
+                  mir::ExprStmt{
+                      .expr = block.Add(
+                          mir::MakeEndTakeoverCallExpr(
+                              part.holder,
+                              LevelOperand(
+                                  unit, block, support::TakeoverLevel::kForce),
+                              part.first, part.count,
+                              unit.builtins.void_type))});
+            });
+      });
+  if (!release) return std::unexpected(std::move(release.error()));
   return state(
       declarations.bodies.subscribe,
-      mir::LibraryTypeOf(unit.types, support::LibraryDecl::kSubscriber),
-      [&](const hir::DescribedDataObject& object, mir::Builder block,
-          const WalkFrame& frame,
-          mir::ExprId subscriber) -> diag::Result<mir::ExprId> {
+      {mir::LibraryTypeOf(unit.types, support::LibraryDecl::kSubscriber)},
+      std::nullopt,
+      [&](const hir::DescribedDataObject& object, const WalkFrame& frame,
+          std::span<const Handed> given) -> diag::Result<void> {
+        mir::Builder block = frame.Builder();
         auto trigger = BuildValueChangeTrigger(
             block, frame, lowerer, hir::WatchedStorage{object.cell});
         if (!trigger) return std::unexpected(std::move(trigger.error()));
-        return block.Add(
-            mir::MakeCallExpr(
-                mir::Direct{
-                    .target = support::BuiltinFn::kSubscribe,
-                    .receiver = subscriber},
-                {*trigger}, unit.builtins.void_type));
+        block.AppendStmt(
+            mir::ExprStmt{
+                .expr = block.Add(
+                    mir::MakeCallExpr(
+                        mir::Direct{
+                            .target = support::BuiltinFn::kSubscribe,
+                            .receiver = given[0].PlaceIn(block)},
+                        {*trigger}, unit.builtins.void_type))});
+        return {};
       });
 }
 

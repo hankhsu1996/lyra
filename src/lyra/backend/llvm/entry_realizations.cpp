@@ -205,14 +205,11 @@ constexpr std::array kForUnpackedArrays{RealizedFor{.domains = kLaidOutByType}};
 constexpr std::array kForUnpackedArraysAndQueues{
     RealizedFor{.domains = kLaidOutByType | DomainSet{Domain::kQueue}}};
 // A step into a component of a designated record, and a reference to one, is
-// told the record's type, as any realization for one is. Every member of a
-// tagged union lies at the union's own start, so a step into one is told
-// nothing.
+// told the record's type, as any realization for one is; so is a step into a
+// member of a union, whose write keeps the union whole from before it.
 constexpr std::array kForComponentsSteppedInto{
     RealizedFor{.domains = kLaidOutByType}};
 constexpr std::array kForMembersSteppedInto{
-    RealizedFor{.domains = kLaidOutByType}};
-constexpr std::array kForComponentsReferredTo{
     RealizedFor{.domains = kLaidOutByType}};
 // A variable's cell a reference is built over keeps what it holds where it
 // lies, so it is told nothing of its type.
@@ -872,7 +869,7 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kAtanh:
     case support::BuiltinFn::kTruncate:
       return NamedByValue{.realized = kForReal};
-    case support::BuiltinFn::kRound:
+    case support::BuiltinFn::kToIntegral:
     case support::BuiltinFn::kToBits:
     case support::BuiltinFn::kPow:
       return NamedByValue{.realized = kForReals};
@@ -954,7 +951,7 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kFromBitVec:
       return NamedByResult{.realized = kForDynamicArraysAndQueuesByOperations};
     case support::BuiltinFn::kFromBits:
-    case support::BuiltinFn::kFromInt:
+    case support::BuiltinFn::kFromIntegral:
       return NamedByResult{.realized = kForReals};
 
     // LRM 6.12.1: a real of one precision as a real of the other, whose
@@ -1049,7 +1046,7 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kDesignateMember:
       return NamedByStorageDomain{.realized = kForMembersSteppedInto};
     case support::BuiltinFn::kReferComponent:
-      return NamedByStorageDomain{.realized = kForComponentsReferredTo};
+      return NamedByStorageDomain{.realized = kForComponentsSteppedInto};
 
     // A body that leaves by branching reaches the gate as the pair of questions
     // the lowering already asks wherever this execution regains control -- and
@@ -1111,8 +1108,22 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kEvaluationAttemptsCommit:
     case support::BuiltinFn::kAssertionControlDescribe:
     case support::BuiltinFn::kSerializeBits:
+    case support::BuiltinFn::kSerializeText:
     case support::BuiltinFn::kSerializeEvent:
+    case support::BuiltinFn::kSerializeSize:
+    case support::BuiltinFn::kSerializeKey:
     case support::BuiltinFn::kSubscribe:
+    case support::BuiltinFn::kSelectionDepth:
+    case support::BuiltinFn::kSelectionNumber:
+    case support::BuiltinFn::kSelectionKey:
+    case support::BuiltinFn::kSettleKey:
+    case support::BuiltinFn::kSettlePositions:
+    case support::BuiltinFn::kSettleUnfixed:
+    case support::BuiltinFn::kSettledFixed:
+    case support::BuiltinFn::kSettledPositions:
+    case support::BuiltinFn::kDeserializeBits:
+    case support::BuiltinFn::kDeserializeReal:
+    case support::BuiltinFn::kDeserializeText:
     case support::BuiltinFn::kAssertionControlRegisterIn:
     case support::BuiltinFn::kAssertionControlRegister:
     case support::BuiltinFn::kAssertionControlRegisterWithin:

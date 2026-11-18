@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -40,6 +42,39 @@ class BitVec {
   [[nodiscard]] static auto Of(const T& bits) -> BitVec {
     return Of(bits.View());
   }
+  // A decimal number as `width` bits, kept to that width as a number carried
+  // into an integral type keeps its low bits, a leading `-` or `+` giving its
+  // sign and an underscore after its first digit ignored (LRM 5.7.1, 11.6.1);
+  // none for text that is no decimal number.
+  [[nodiscard]] static auto OfDecimal(
+      std::string_view text, std::uint64_t width) -> std::optional<BitVec> {
+    const bool negative = !text.empty() && text.front() == '-';
+    if (negative || (!text.empty() && text.front() == '+')) {
+      text.remove_prefix(1);
+    }
+    if (text.empty() || text.front() == '_') return std::nullopt;
+    BitVec bits(width);
+    const IntegralView view = bits.MutableView();
+    for (const char c : text) {
+      if (c == '_') continue;
+      if (c < '0' || c > '9') return std::nullopt;
+      // The number so far times ten, plus the digit, a half word at a time so
+      // no product overflows.
+      auto carry = static_cast<std::uint64_t>(c - '0');
+      for (std::uint64_t& word : view.value) {
+        const std::uint64_t low = ((word & 0xFFFFFFFFU) * 10U) + carry;
+        const std::uint64_t high = ((word >> 32U) * 10U) + (low >> 32U);
+        word = (high << 32U) | (low & 0xFFFFFFFFU);
+        carry = high >> 32U;
+      }
+    }
+    ClearAboveWidth(view.value, view.width);
+    if (negative) {
+      detail::SubWords(kEmptyPlane, view.value, view.value, view.width);
+    }
+    return bits;
+  }
+
   // The bits of `bits` from `at` positions below its most significant end up
   // to `until`, as a run of their own.
   [[nodiscard]] static auto Of(

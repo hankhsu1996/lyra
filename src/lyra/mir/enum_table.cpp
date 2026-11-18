@@ -10,7 +10,6 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/library_record_builder.hpp"
 #include "lyra/mir/type.hpp"
-#include "lyra/mir/type_builders.hpp"
 #include "lyra/value/enumeration.hpp"
 #include "lyra/value/integral_words.hpp"
 
@@ -25,8 +24,8 @@ auto ViewedElement(const CompilationUnit& unit, TypeId member) -> TypeId {
 
 }  // namespace
 
-auto BuildEnumMemberTable(
-    const CompilationUnit& unit, Builder block, TypeId enumeration) -> ExprId {
+auto EnumMemberTableConstant(const CompilationUnit& unit, TypeId enumeration)
+    -> ConstantId {
   using lyra::value::Enumeration;
   const auto* declared = unit.types.Get(enumeration).As<EnumType>();
   if (declared == nullptr) {
@@ -70,10 +69,19 @@ auto BuildEnumMemberTable(
   table.Set(
       &Enumeration::four_state,
       ConstantValue{MachineIntValue{.value = four_state ? 1 : 0}});
-  const ConstantId held = std::move(table).Intern();
+  return std::move(table).Intern();
+}
+
+auto BuildEnumMemberTable(
+    const CompilationUnit& unit, Builder block, TypeId enumeration) -> ExprId {
   return block.Add(
       Expr{
-          .data = ReferenceExpr{.target = ConstantRef{.constant = held}},
+          .data =
+              ReferenceExpr{
+                  .target =
+                      ConstantRef{
+                          .constant =
+                              EnumMemberTableConstant(unit, enumeration)}},
           .type = unit.builtins.enumeration});
 }
 

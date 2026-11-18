@@ -18,32 +18,28 @@
 
 namespace lyra::runtime {
 
+// These three are defined in the library: every unit with a variable a reader
+// by name may force reaches them, and a definition written here would be
+// compiled again by each.
+
 // Which level a takeover entry acts on. It arrives as a machine integer, the
 // way every runtime scalar crosses into a runtime entry.
-[[nodiscard]] inline auto TakeoverLevelOf(std::int64_t level)
-    -> support::TakeoverLevel {
-  return static_cast<support::TakeoverLevel>(level);
-}
+[[nodiscard]] auto TakeoverLevelOf(std::int64_t level)
+    -> support::TakeoverLevel;
 
 // A takeover's generation is a counter the evaluation carries and hands back,
 // never a value the design can see, so it crosses a runtime entry in both
 // directions as the machine integer every runtime scalar is.
-[[nodiscard]] inline auto TakeoverGenerationOf(std::int64_t generation)
-    -> std::uint32_t {
-  return static_cast<std::uint32_t>(generation);
-}
+[[nodiscard]] auto TakeoverGenerationOf(std::int64_t generation)
+    -> std::uint32_t;
 
 // The positions a takeover entry names of a value: `count` of them from
 // `first`, numbered as the value's type numbers them (LRM 10.6.2) -- an
 // integral value's bits from its least significant, a real's IEEE 754 bits, an
 // aggregate's parts' one part after another, and the one position of any other
 // value.
-[[nodiscard]] inline auto PositionsNamed(std::int64_t first, std::int64_t count)
-    -> value::BitPositions {
-  return {
-      .lsb = static_cast<std::uint64_t>(first),
-      .width = static_cast<std::uint64_t>(count)};
-}
+[[nodiscard]] auto PositionsNamed(std::int64_t first, std::int64_t count)
+    -> value::BitPositions;
 
 // A value a takeover may hold some of the bits of in place (LRM 10.6.2): one
 // written position by position.

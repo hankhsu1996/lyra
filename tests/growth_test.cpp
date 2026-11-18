@@ -118,9 +118,9 @@ struct GrowthCase {
   std::filesystem::path design;
   std::uint64_t size = 0;
   Counted counted = Counted::kRepetitions;
-  // What the design's own file says a step adds. A kind it does not name is
-  // one a step adds none of.
-  Adds each_adds;
+  // What the design's own file says a step adds, along each path. A kind it
+  // does not name is one a step adds none of.
+  std::map<Path, Adds> each_adds;
   // How the larger run is recorded as departing from that today, along every
   // path.
   std::map<Path, std::set<std::string>> recorded;
@@ -365,8 +365,9 @@ auto LeftOf(const Reading& reading, const std::string& kind) -> std::uint64_t {
 // statement nothing answers to would otherwise stand after the compiler
 // stopped making, or stopped reporting, what it speaks of.
 auto DepartedInWhatWasLeft(
-    const GrowthCase& growth, const Reading& small, const Reading& large)
-    -> Departed {
+    const GrowthCase& growth, Path path, const Reading& small,
+    const Reading& large) -> Departed {
+  const Adds& each_adds = growth.each_adds.at(path);
   std::set<std::string> kinds;
   for (const auto& [kind, count] : small) {
     kinds.insert(kind);
@@ -381,7 +382,7 @@ auto DepartedInWhatWasLeft(
   for (const std::string& kind : kinds) {
     forms.insert(FormOf(kind));
   }
-  for (const auto& [kind, added] : growth.each_adds) {
+  for (const auto& [kind, added] : each_adds) {
     if (forms.contains(FormOf(kind))) {
       kinds.insert(kind);
     }
@@ -391,8 +392,8 @@ auto DepartedInWhatWasLeft(
   for (const std::string& kind : kinds) {
     const std::uint64_t before = LeftOf(small, kind);
     const std::uint64_t after = LeftOf(large, kind);
-    const auto said = growth.each_adds.find(kind);
-    if (said == growth.each_adds.end()) {
+    const auto said = each_adds.find(kind);
+    if (said == each_adds.end()) {
       const bool followed =
           kind == kBytes
               ? after > before &&
@@ -453,7 +454,7 @@ auto CheckGrowth(
     return large.error();
   }
   const Departed departed =
-      DepartedInWhatWasLeft(growth, small->reading, large->reading);
+      DepartedInWhatWasLeft(growth, path, small->reading, large->reading);
 
   // The numbers behind a kind, so whoever edits the record reads what moved
   // rather than a verdict; for bytes, how much a step against the least a step
@@ -523,16 +524,18 @@ auto Trimmed(std::string_view text) -> std::string_view {
   return text.substr(first, text.find_last_not_of(kBlank) - first + 1);
 }
 
-// What a design's file says one more step of its size adds: the kinds on its
-// `// @each-adds:` lines, separated by commas, each followed by how many where
-// the source shows how many. A design with no such line says a step adds
-// nothing. A line that names nothing is reported into `problems`, since it
-// would read as that.
+// What a design's file says one more step of its size adds, along each path:
+// the kinds on its `// @each-adds:` lines, separated by commas, each followed
+// by how many where the source shows how many, and each added along every path
+// unless it ends `along <path>`, which one path makes and the other does not --
+// a file the C++ path writes for each type a design names. A design with no
+// such line says a step adds nothing. A line that names nothing is reported
+// into `problems`, since it would read as that.
 auto EachAddsOf(
     std::span<const std::string> lines, std::string_view design,
-    std::vector<std::string>& problems) -> Adds {
+    std::vector<std::string>& problems) -> std::map<Path, Adds> {
   constexpr std::string_view kKey = "// @each-adds:";
-  Adds adds;
+  std::map<Path, Adds> adds{{Path::kCpp, {}}, {Path::kLlvm, {}}};
   for (const std::string& line : lines) {
     if (!line.starts_with(kKey)) {
       continue;
@@ -541,7 +544,15 @@ auto EachAddsOf(
     bool named = false;
     while (true) {
       const std::size_t comma = rest.find(',');
-      const std::string_view item = Trimmed(rest.substr(0, comma));
+      std::string_view item = Trimmed(rest.substr(0, comma));
+      std::optional<Path> along;
+      for (const Path path : kPaths) {
+        const std::string suffix = std::format(" along {}", NameOf(path));
+        if (item.ends_with(suffix)) {
+          along = path;
+          item = Trimmed(item.substr(0, item.size() - suffix.size()));
+        }
+      }
       const std::size_t last_word = item.find_last_of(' ');
       std::uint64_t count = 0;
       const std::string_view number = last_word == std::string_view::npos
@@ -554,8 +565,12 @@ auto EachAddsOf(
       const std::string_view kind =
           counted ? Trimmed(item.substr(0, last_word)) : item;
       if (!kind.empty()) {
-        adds[std::string(kind)] =
-            counted ? Added{ThisMany{.count = count}} : Added{SomeAmount{}};
+        for (const Path path : kPaths) {
+          if (!along.has_value() || *along == path) {
+            adds.at(path)[std::string(kind)] =
+                counted ? Added{ThisMany{.count = count}} : Added{SomeAmount{}};
+          }
+        }
         named = true;
       }
       if (comma == std::string_view::npos) {

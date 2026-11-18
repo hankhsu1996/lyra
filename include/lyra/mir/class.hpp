@@ -25,12 +25,16 @@ namespace lyra::mir {
 
 // One data object a scope describes (LRM 21.7.1.2): what its declaration
 // states -- the identifier it is declared under, the net type it is declared
-// with, none for a variable, and its type as the source declared it, a
-// constant of the unit -- each port of the scope connecting it, and the record
-// of the block, task or function enclosing it.
+// with, none for a variable, whether it is a variable declared `const`,
+// whether it is the name a `ref` port gives the variable connected to it, and
+// its type as the source declared it, a constant of the unit -- each port of
+// the scope connecting it, and the record of the block, task or function
+// enclosing it.
 struct DescribedDataObject {
   std::string identifier;
   std::optional<support::NetType> net_type;
+  bool constant = false;
+  bool reference = false;
   ConstantId typespec;
   std::vector<support::DescribedPort> ports;
   std::optional<ConstantId> enclosing;
@@ -38,15 +42,24 @@ struct DescribedDataObject {
   auto operator==(const DescribedDataObject&) const -> bool = default;
 };
 
-// The two bodies through which a reader reaching the design by name reaches
-// every data object a scope describes, each handed the object, the position of
-// the data object among those the scope describes, and what the reader gave:
-// one hands the serializer the value it holds, the other hands the subscriber
-// the trigger a wait for a change of it enrols. They are methods of the
-// scope's class, or bodies of a namespace's unit, as serde's generated code is
-// one serialize function per type handling every field.
+// The bodies through which a reader reaching the design by name reaches every
+// data object a scope describes, each handed the object, the position of the
+// data object among those the scope describes, and what the reader gave: one
+// settles the selection by the types alone, one hands the serializer the
+// value of the part a selection names, one writes that part what the
+// deserializer holds as the design's own write of it does, one forces
+// positions of that part to what the deserializer holds and one releases them
+// (LRM 38.34, 10.6.2), each answering what it came to, and one hands the
+// subscriber the trigger a wait for a change of it enrols. They are methods of
+// the scope's class, or bodies of a namespace's unit, each finding the data
+// object and handing it to the bodies of its type, which reach a part one step
+// at a time.
 struct DataObjectBodies {
+  CallableId settle;
   CallableId read;
+  CallableId write;
+  CallableId force;
+  CallableId release;
   CallableId subscribe;
 
   auto operator==(const DataObjectBodies&) const -> bool = default;
@@ -56,7 +69,7 @@ struct DataObjectBodies {
 // the record of the definition it comes from, the record of each scope it
 // declares that the run builds and of each it builds nothing for, each a
 // constant of the unit, each data object it declares, in the order it lists
-// them, and the two bodies reaching those.
+// them, and the bodies reaching those.
 struct ScopeDeclarations {
   ConstantId definition;
   std::vector<ConstantId> elaborated;
@@ -67,15 +80,28 @@ struct ScopeDeclarations {
   auto operator==(const ScopeDeclarations&) const -> bool = default;
 };
 
-// The callback of the runtime library the body `body` answers among the two
-// reaching what `declarations` describes, none where it is neither.
+// The callback of the runtime library the body `body` answers among those
+// reaching what `declarations` describes, none where it is none of them.
 [[nodiscard]] inline auto DataObjectCallbackOf(
     const ScopeDeclarations& declarations, CallableId body)
     -> std::optional<support::LibraryCallback> {
-  if (body == declarations.bodies.read) {
+  const DataObjectBodies& bodies = declarations.bodies;
+  if (body == bodies.settle) {
+    return support::LibraryCallback::kScopeSettleDataObject;
+  }
+  if (body == bodies.read) {
     return support::LibraryCallback::kScopeReadDataObject;
   }
-  if (body == declarations.bodies.subscribe) {
+  if (body == bodies.write) {
+    return support::LibraryCallback::kScopeWriteDataObject;
+  }
+  if (body == bodies.force) {
+    return support::LibraryCallback::kScopeForceDataObject;
+  }
+  if (body == bodies.release) {
+    return support::LibraryCallback::kScopeReleaseDataObject;
+  }
+  if (body == bodies.subscribe) {
     return support::LibraryCallback::kScopeSubscribeDataObject;
   }
   return std::nullopt;

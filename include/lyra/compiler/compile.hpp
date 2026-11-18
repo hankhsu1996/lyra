@@ -11,7 +11,7 @@
 #include "lyra/diag/source_manager.hpp"
 #include "lyra/frontend/load.hpp"
 #include "lyra/lowering/ast_to_hir/declared_design.hpp"
-#include "lyra/support/assertion_policy.hpp"
+#include "lyra/support/lowering_policy.hpp"
 
 namespace lyra::compiler {
 
@@ -34,11 +34,6 @@ struct ElaboratedDesign {
 struct FrontEndResult {
   std::optional<frontend::ParseResult> elaborated;
   std::string diagnostics;
-};
-
-// Choices about how to lower that the design does not make for itself.
-struct LoweringPolicy {
-  support::AssertionPolicy assertions = support::AssertionPolicy::kCheck;
 };
 
 // Reads everything the driver was pointed at and elaborates it, rendering
@@ -65,8 +60,8 @@ auto RunFrontEnd(slang::driver::Driver& driver) -> FrontEndResult;
 // belongs to whoever consumes it, so it is driven separately over what comes
 // back here.
 auto DeclareUnits(
-    std::unique_ptr<slang::ast::Compilation> elaborated, LoweringPolicy policy,
-    diag::DiagnosticSink& sink, const diag::SourceManager& sources)
-    -> std::optional<ElaboratedDesign>;
+    std::unique_ptr<slang::ast::Compilation> elaborated,
+    support::LoweringPolicy policy, diag::DiagnosticSink& sink,
+    const diag::SourceManager& sources) -> std::optional<ElaboratedDesign>;
 
 }  // namespace lyra::compiler

@@ -18,39 +18,21 @@
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/scope.hpp"
 #include "lyra/runtime/vpi_time.hpp"
+#include "lyra/runtime/vpi_variable.hpp"
 #include "lyra/support/scope_kind.hpp"
 #include "sv_vpi_user.h"
 #include "vpi_user.h"
 
 namespace lyra::runtime {
 
-namespace {
-
-using support::ElaboratedScopeKind;
-using support::LexicalScopeKind;
-
-auto NotYet(std::string_view what) -> std::unexpected<std::string> {
+auto VpiNotYet(std::string_view what) -> std::unexpected<std::string> {
   return std::unexpected(std::string(what) + " is not yet supported");
 }
 
-auto NotAProperty() -> std::unexpected<std::string> {
+auto VpiNotAProperty() -> std::unexpected<std::string> {
   return std::unexpected<std::string>("the object has no such property");
 }
 
-// What holds `object`'s declaration: a constructed scope or a namespace holds
-// itself.
-auto HolderOf(const VpiObject& object) -> ScopeHolder {
-  return std::visit(
-      Overloaded{
-          [](Scope* scope) -> ScopeHolder { return scope; },
-          [](const NamespaceObject& ns) -> ScopeHolder { return ns; },
-          [](const ScopeArray& array) -> ScopeHolder { return array.holder; },
-          [](const LexicalScope& scope) { return scope.holder; }},
-      object);
-}
-
-// What `holder` states of itself: the definition it comes from and the scopes
-// it declares.
 auto ScopeDeclarationsOf(const ScopeHolder& holder)
     -> const abi::ScopeDeclarations& {
   return std::visit(
@@ -62,6 +44,51 @@ auto ScopeDeclarationsOf(const ScopeHolder& holder)
             return *ns.scope_declarations;
           }},
       holder);
+}
+
+namespace {
+
+using support::ElaboratedScopeKind;
+using support::LexicalScopeKind;
+
+// What holds `object`'s declaration: a constructed scope or a namespace holds
+// itself. A typespec, and what a relation from one answers, is a constant of
+// no scope.
+auto HolderOf(const VpiObject& object) -> std::optional<ScopeHolder> {
+  using Held = std::optional<ScopeHolder>;
+  return std::visit(
+      Overloaded{
+          [](Scope* scope) -> Held { return ScopeHolder{scope}; },
+          [](const NamespaceObject& ns) -> Held { return ScopeHolder{ns}; },
+          [](const ScopeArray& array) -> Held {
+            return ScopeHolder{array.holder};
+          },
+          [](const LexicalScope& scope) -> Held { return scope.holder; },
+          [](const VariableObject& variable) -> Held {
+            return variable.holder;
+          },
+          [](const TypespecObject&) -> Held { return std::nullopt; },
+          [](const TypespecMemberObject&) -> Held { return std::nullopt; },
+          [](const RangeObject&) -> Held { return std::nullopt; },
+          [](const ConstantObject&) -> Held { return std::nullopt; },
+          [](const EnumConstantObject&) -> Held { return std::nullopt; }},
+      object);
+}
+
+// Whether names are spelled as a version of 1364 spelled them, which named a
+// logic variable a `reg` (LRM 37.17 detail 19).
+auto SpellsVerilogNames(VpiMode mode) -> bool {
+  switch (mode) {
+    case VpiMode::k1364v1995:
+    case VpiMode::k1364v2001:
+    case VpiMode::k1364v2005:
+      return true;
+    case VpiMode::k1800v2005:
+    case VpiMode::k1800v2009:
+    case VpiMode::k1800v2012:
+      return false;
+  }
+  throw InternalError("SpellsVerilogNames: unknown VPI mode");
 }
 
 // The constructed scopes `scope` holds, in the order they were attached.
@@ -229,8 +256,9 @@ auto ArraysIn(Scope& scope) -> std::vector<VpiObject> {
 
 auto OfType(std::vector<VpiObject> objects, PLI_INT32 type)
     -> std::vector<VpiObject> {
-  std::erase_if(
-      objects, [&](const VpiObject& object) { return TypeOf(object) != type; });
+  std::erase_if(objects, [&](const VpiObject& object) {
+    return TypeOf(object, VpiMode::k1800v2012) != type;
+  });
   return objects;
 }
 
@@ -250,7 +278,7 @@ auto FromDesign(RuntimeEffects& run, PLI_INT32 relation)
       }
       return tops;
     default:
-      return NotYet("this relation from no object");
+      return VpiNotYet("this relation from no object");
   }
 }
 
@@ -265,19 +293,23 @@ auto DeclaredAtLevel(
   switch (relation) {
     case vpiTaskFunc:
       std::erase_if(declared, [](const VpiObject& object) {
-        const PLI_INT32 type = TypeOf(object);
+        const PLI_INT32 type = TypeOf(object, VpiMode::k1800v2012);
         return type != vpiTask && type != vpiFunction;
       });
       return declared;
     case vpiClassDefn:
       return OfType(std::move(declared), vpiClassDefn);
     default:
-      return NotYet(std::string("this relation from ").append(from));
+      return VpiNotYet(std::string("this relation from ").append(from));
   }
 }
 
-auto FromScope(Scope& scope, PLI_INT32 relation)
+auto FromScope(Scope& scope, PLI_INT32 relation, VpiMode mode)
     -> VpiAnswer<std::vector<VpiObject>> {
+  if (std::optional<std::vector<VpiObject>> variables =
+          VariablesDeclaredIn(&scope, nullptr, relation, mode)) {
+    return *std::move(variables);
+  }
   std::vector<VpiObject> children;
   for (Scope* child : ChildrenOf(scope)) children.emplace_back(child);
   switch (relation) {
@@ -303,29 +335,42 @@ auto FromScope(Scope& scope, PLI_INT32 relation)
 auto FromArray(const ScopeArray& array, PLI_INT32 relation)
     -> VpiAnswer<std::vector<VpiObject>> {
   if (relation != TypesOf(array).element) {
-    return NotYet("this relation from an array");
+    return VpiNotYet("this relation from an array");
   }
   std::vector<VpiObject> elements;
   for (Scope* scope : ElementsOf(array)) elements.emplace_back(scope);
   return elements;
 }
 
-auto FromLexicalScope(const LexicalScope& scope, PLI_INT32 relation)
+auto FromLexicalScope(
+    const LexicalScope& scope, PLI_INT32 relation, VpiMode mode)
     -> VpiAnswer<std::vector<VpiObject>> {
+  if (std::optional<std::vector<VpiObject>> variables = VariablesDeclaredIn(
+          scope.holder, scope.declaration, relation, mode)) {
+    return *std::move(variables);
+  }
   if (relation != vpiInternalScope) {
-    return NotYet(
+    return VpiNotYet(
         "this relation from a block, a subroutine, a class or a clocking "
         "block");
   }
   return LexicalScopesIn(scope.holder, scope.declaration);
 }
 
-auto RelatedToObject(PLI_INT32 relation, const VpiObject& from)
+auto RelatedToObject(PLI_INT32 relation, const VpiObject& from, VpiMode mode)
     -> VpiAnswer<std::vector<VpiObject>> {
+  using Answer = VpiAnswer<std::vector<VpiObject>>;
+  const auto of_variable = [&]() -> Answer {
+    return RelatedToVariablePart(relation, from, mode);
+  };
   return std::visit(
       Overloaded{
-          [&](Scope* scope) { return FromScope(*scope, relation); },
-          [&](const NamespaceObject& ns) -> VpiAnswer<std::vector<VpiObject>> {
+          [&](Scope* scope) { return FromScope(*scope, relation, mode); },
+          [&](const NamespaceObject& ns) -> Answer {
+            if (std::optional<std::vector<VpiObject>> variables =
+                    VariablesDeclaredIn(ns, nullptr, relation, mode)) {
+              return *std::move(variables);
+            }
             if (relation == vpiInternalScope) {
               return LexicalScopesIn(ns, nullptr);
             }
@@ -333,8 +378,14 @@ auto RelatedToObject(PLI_INT32 relation, const VpiObject& from)
           },
           [&](const ScopeArray& array) { return FromArray(array, relation); },
           [&](const LexicalScope& scope) {
-            return FromLexicalScope(scope, relation);
-          }},
+            return FromLexicalScope(scope, relation, mode);
+          },
+          [&](const VariableObject&) { return of_variable(); },
+          [&](const TypespecObject&) { return of_variable(); },
+          [&](const TypespecMemberObject&) { return of_variable(); },
+          [&](const RangeObject&) { return of_variable(); },
+          [&](const ConstantObject&) { return of_variable(); },
+          [&](const EnumConstantObject&) { return of_variable(); }},
       from);
 }
 
@@ -358,14 +409,16 @@ auto InstanceAroundObject(const VpiObject& object, bool (*is)(PLI_INT32 type))
   if (Scope* const* scope = std::get_if<Scope*>(&object)) {
     return InstanceAround((*scope)->Parent(), is);
   }
+  const std::optional<ScopeHolder> holder = HolderOf(object);
+  if (!holder.has_value()) return std::nullopt;
   return std::visit(
       Overloaded{
-          [&](Scope* holder) { return InstanceAround(holder, is); },
+          [&](Scope* held) { return InstanceAround(held, is); },
           [&](const NamespaceObject& ns) -> std::optional<VpiObject> {
             if (!is(vpiPackage)) return std::nullopt;
             return VpiObject{ns};
           }},
-      HolderOf(object));
+      *holder);
 }
 
 auto IsModule(PLI_INT32 type) -> bool {
@@ -405,30 +458,69 @@ auto LexicalScopeNamed(
 }
 
 // What `part` names inside `at`. An instance or a block the scope built is a
-// child, and one it did not build is not there.
+// child, and one it did not build is not there; a variable a scope or a block
+// declares is named in it, and a member in a structure or a union variable.
 auto Step(const VpiObject& at, const NamePart& part)
-    -> std::optional<VpiObject> {
+    -> VpiAnswer<std::optional<VpiObject>> {
+  using Answer = VpiAnswer<std::optional<VpiObject>>;
+  const Answer none = std::optional<VpiObject>{};
   return std::visit(
       Overloaded{
-          [&](Scope* scope) -> std::optional<VpiObject> {
-            if (Scope* child = ChildNamed(*scope, part)) return child;
-            if (!part.indices.empty()) return std::nullopt;
-            if (auto array = ArrayNamed(*scope, part.identifier)) return array;
-            return LexicalScopeNamed(scope, nullptr, part.identifier);
+          [&](Scope* scope) -> Answer {
+            if (Scope* child = ChildNamed(*scope, part)) {
+              return std::optional<VpiObject>{child};
+            }
+            if (part.indices.empty()) {
+              if (auto array = ArrayNamed(*scope, part.identifier)) {
+                return array;
+              }
+              if (auto lexical =
+                      LexicalScopeNamed(scope, nullptr, part.identifier)) {
+                return lexical;
+              }
+            }
+            return VariableNamed(scope, nullptr, part);
           },
-          [&](const NamespaceObject& ns) -> std::optional<VpiObject> {
-            if (!part.indices.empty()) return std::nullopt;
-            return LexicalScopeNamed(ns, nullptr, part.identifier);
+          [&](const NamespaceObject& ns) -> Answer {
+            if (part.indices.empty()) {
+              if (auto lexical =
+                      LexicalScopeNamed(ns, nullptr, part.identifier)) {
+                return lexical;
+              }
+            }
+            return VariableNamed(ns, nullptr, part);
           },
-          [](const ScopeArray&) -> std::optional<VpiObject> {
-            return std::nullopt;
+          [&](const ScopeArray&) { return none; },
+          [&](const LexicalScope& scope) -> Answer {
+            if (part.indices.empty()) {
+              if (auto lexical = LexicalScopeNamed(
+                      scope.holder, scope.declaration, part.identifier)) {
+                return lexical;
+              }
+            }
+            return VariableNamed(scope.holder, scope.declaration, part);
           },
-          [&](const LexicalScope& scope) -> std::optional<VpiObject> {
-            if (!part.indices.empty()) return std::nullopt;
-            return LexicalScopeNamed(
-                scope.holder, scope.declaration, part.identifier);
-          }},
+          [&](const VariableObject& variable) {
+            return MemberNamed(variable, part);
+          },
+          [&](const TypespecObject&) { return none; },
+          [&](const TypespecMemberObject&) { return none; },
+          [&](const RangeObject&) { return none; },
+          [&](const ConstantObject&) { return none; },
+          [&](const EnumConstantObject&) { return none; }},
       at);
+}
+
+// What `parts` name in turn from `at`.
+auto Walk(std::optional<VpiObject> at, std::span<const NamePart> parts)
+    -> VpiAnswer<std::optional<VpiObject>> {
+  for (const NamePart& part : parts) {
+    if (!at.has_value()) return at;
+    VpiAnswer<std::optional<VpiObject>> stepped = Step(*at, part);
+    if (!stepped.has_value()) return stepped;
+    at = *std::move(stepped);
+  }
+  return at;
 }
 
 // The package named `identifier`.
@@ -444,8 +536,9 @@ auto PackageObjectNamed(RuntimeEffects& run, std::string_view identifier)
 
 // Whether `object` is a compilation unit's scope or lies within one.
 auto InCompilationUnit(const VpiObject& object) -> bool {
-  const ScopeHolder holder = HolderOf(object);
-  const auto* ns = std::get_if<NamespaceObject>(&holder);
+  const std::optional<ScopeHolder> holder = HolderOf(object);
+  if (!holder.has_value()) return false;
+  const auto* ns = std::get_if<NamespaceObject>(&*holder);
   return ns != nullptr &&
          support::IsCompilationUnit(ns->scope_declarations->definition->Kind());
 }
@@ -453,14 +546,9 @@ auto InCompilationUnit(const VpiObject& object) -> bool {
 // The object `parts` name from the design's tops, or a package's name alone
 // where no top-level instance has that name.
 auto NamedFromDesign(RuntimeEffects& run, const HierarchicalName& name)
-    -> std::optional<VpiObject> {
+    -> VpiAnswer<std::optional<VpiObject>> {
   if (name.package.has_value()) {
-    std::optional<VpiObject> at = PackageObjectNamed(run, *name.package);
-    for (const NamePart& part : name.parts) {
-      if (!at.has_value()) return std::nullopt;
-      at = Step(*at, part);
-    }
-    return at;
+    return Walk(PackageObjectNamed(run, *name.package), name.parts);
   }
   std::span<const NamePart> parts = name.parts;
   std::optional<VpiObject> at;
@@ -472,26 +560,17 @@ auto NamedFromDesign(RuntimeEffects& run, const HierarchicalName& name)
   } else if (parts.size() == 1 && parts.front().indices.empty()) {
     return PackageObjectNamed(run, parts.front().identifier);
   }
-  for (const NamePart& part : parts) {
-    if (!at.has_value()) return std::nullopt;
-    at = Step(*at, part);
-  }
-  return at;
+  return Walk(at, parts);
 }
 
 // The object `name` names within `within` and nowhere else (LRM 38.21), so
 // one naming a package from there names nothing.
 auto NamedWithin(const VpiObject& within, const HierarchicalName& name)
-    -> std::optional<VpiObject> {
+    -> VpiAnswer<std::optional<VpiObject>> {
   if (name.package.has_value() || InCompilationUnit(within)) {
-    return std::nullopt;
+    return std::optional<VpiObject>{};
   }
-  std::optional<VpiObject> at = within;
-  for (const NamePart& part : name.parts) {
-    if (!at.has_value()) return std::nullopt;
-    at = Step(*at, part);
-  }
-  return at;
+  return Walk(within, name.parts);
 }
 
 auto NamespaceFullName(const NamespaceObject& ns) -> std::string {
@@ -668,32 +747,49 @@ auto AsksWhereWritten(PLI_INT32 property) -> bool {
   }
 }
 
-auto ObjectIntegerProperty(PLI_INT32 property, const VpiObject& object)
+auto ObjectIntegerProperty(
+    PLI_INT32 property, const VpiObject& object, VpiMode mode)
     -> VpiAnswer<PLI_INT64> {
-  if (property == vpiType) return TypeOf(object);
-  if (AsksWhereWritten(property)) return NotYet("where an object was written");
-  const std::optional<PLI_INT64> answer = std::visit(
+  using Answer = VpiAnswer<PLI_INT64>;
+  if (property == vpiType) return TypeOf(object, mode);
+  if (AsksWhereWritten(property)) {
+    return VpiNotYet("where an object was written");
+  }
+  const auto answered = [](std::optional<PLI_INT64> answer) -> Answer {
+    if (!answer.has_value()) return VpiNotAProperty();
+    return *answer;
+  };
+  const auto of_variable = [&]() {
+    return VariablePartIntegerProperty(property, object, mode);
+  };
+  return std::visit(
       Overloaded{
-          [&](Scope* scope) { return ScopeProperty(property, *scope); },
-          [&](const NamespaceObject& ns) -> std::optional<PLI_INT64> {
+          [&](Scope* scope) {
+            return answered(ScopeProperty(property, *scope));
+          },
+          [&](const NamespaceObject& ns) -> Answer {
             const abi::DefinitionRecord& definition =
                 *ns.scope_declarations->definition;
             if (property == vpiUnit) {
               return support::IsCompilationUnit(definition.Kind()) ? 1 : 0;
             }
-            return DefinitionIntegerProperty(property, definition);
+            return answered(DefinitionIntegerProperty(property, definition));
           },
-          [&](const ScopeArray& array) -> std::optional<PLI_INT64> {
-            if (property != vpiSize) return std::nullopt;
+          [&](const ScopeArray& array) -> Answer {
+            if (property != vpiSize) return VpiNotAProperty();
             return static_cast<PLI_INT64>(ElementsOf(array).size());
           },
-          [&](const LexicalScope& scope) -> std::optional<PLI_INT64> {
-            if (property != vpiJoinType) return std::nullopt;
-            return JoinType(scope.declaration->Kind());
-          }},
+          [&](const LexicalScope& scope) -> Answer {
+            if (property != vpiJoinType) return VpiNotAProperty();
+            return answered(JoinType(scope.declaration->Kind()));
+          },
+          [&](const VariableObject&) { return of_variable(); },
+          [&](const TypespecObject&) { return of_variable(); },
+          [&](const TypespecMemberObject&) { return of_variable(); },
+          [&](const RangeObject&) { return of_variable(); },
+          [&](const ConstantObject&) { return of_variable(); },
+          [&](const EnumConstantObject&) { return of_variable(); }},
       object);
-  if (!answer.has_value()) return NotAProperty();
-  return *answer;
 }
 
 // What every instance and namespace answers of the definition it comes from
@@ -713,18 +809,25 @@ auto DefinitionStringProperty(
     case vpiConfig:
       return std::optional<std::string>{};
     default:
-      return NotAProperty();
+      return VpiNotAProperty();
   }
 }
 
-auto ObjectStringProperty(PLI_INT32 property, const VpiObject& object)
+auto ObjectStringProperty(
+    PLI_INT32 property, const VpiObject& object, VpiMode mode)
     -> VpiAnswer<std::optional<std::string>> {
   if (property == vpiType) {
-    const std::optional<std::string_view> name = TypeName(TypeOf(object));
-    if (!name.has_value()) return NotAProperty();
+    const std::optional<std::string_view> name =
+        TypeName(TypeOf(object, mode), mode);
+    if (!name.has_value()) return VpiNotAProperty();
     return std::string(*name);
   }
-  if (AsksWhereWritten(property)) return NotYet("where an object was written");
+  if (AsksWhereWritten(property)) {
+    return VpiNotYet("where an object was written");
+  }
+  const auto of_variable = [&]() {
+    return VariablePartStringProperty(property, object, mode);
+  };
   return std::visit(
       Overloaded{
           [&](Scope* scope) -> VpiAnswer<std::optional<std::string>> {
@@ -734,7 +837,7 @@ auto ObjectStringProperty(PLI_INT32 property, const VpiObject& object)
               case vpiFullName:
                 return std::string(scope->HierarchicalPath().View());
               default:
-                if (IsGenerateScope(*scope)) return NotAProperty();
+                if (IsGenerateScope(*scope)) return VpiNotAProperty();
                 return DefinitionStringProperty(property, scope->Definition());
             }
           },
@@ -758,7 +861,7 @@ auto ObjectStringProperty(PLI_INT32 property, const VpiObject& object)
               case vpiFullName:
                 return HolderFullName(array.holder) + array.declaration->name;
               default:
-                return NotAProperty();
+                return VpiNotAProperty();
             }
           },
           [&](const LexicalScope& scope)
@@ -772,13 +875,30 @@ auto ObjectStringProperty(PLI_INT32 property, const VpiObject& object)
               case vpiFullName:
                 return LexicalScopeFullName(scope);
               default:
-                return NotAProperty();
+                return VpiNotAProperty();
             }
-          }},
+          },
+          [&](const VariableObject&) { return of_variable(); },
+          [&](const TypespecObject&) { return of_variable(); },
+          [&](const TypespecMemberObject&) { return of_variable(); },
+          [&](const RangeObject&) { return of_variable(); },
+          [&](const ConstantObject&) { return of_variable(); },
+          [&](const EnumConstantObject&) { return of_variable(); }},
       object);
 }
 
 }  // namespace
+
+auto DeclarationPrefix(
+    const ScopeHolder& holder, const abi::LexicalScopeRecord* enclosing)
+    -> std::string {
+  std::string prefix = HolderFullName(holder);
+  if (enclosing == nullptr) return prefix;
+  for (const abi::LexicalScopeRecord* named : NamedEnclosingScopes(enclosing)) {
+    prefix.append(named->name).append(".");
+  }
+  return prefix;
+}
 
 auto VpiObjectHandles::Issue(Target target) -> vpiHandle {
   PLI_UINT32 number = 0;
@@ -809,7 +929,8 @@ auto VpiObjectHandles::Release(const PLI_UINT32* handle) -> bool {
   return true;
 }
 
-auto TypeOf(const VpiObject& object) -> PLI_INT32 {
+auto TypeOf(const VpiObject& object, VpiMode mode) -> PLI_INT32 {
+  const auto of_variable = [&]() { return TypeOfVariablePart(object, mode); };
   return std::visit(
       Overloaded{
           [](Scope* scope) { return ScopeType(*scope); },
@@ -817,12 +938,113 @@ auto TypeOf(const VpiObject& object) -> PLI_INT32 {
           [](const ScopeArray& array) { return TypesOf(array).array; },
           [](const LexicalScope& scope) {
             return LexicalScopeType(*scope.declaration);
-          }},
+          },
+          [&](const VariableObject&) { return of_variable(); },
+          [&](const TypespecObject&) { return of_variable(); },
+          [&](const TypespecMemberObject&) { return of_variable(); },
+          [&](const RangeObject&) { return of_variable(); },
+          [&](const ConstantObject&) { return of_variable(); },
+          [&](const EnumConstantObject&) { return of_variable(); }},
       object);
 }
 
-auto TypeName(PLI_INT32 type) -> std::optional<std::string_view> {
+auto TypeName(PLI_INT32 type, VpiMode mode) -> std::optional<std::string_view> {
+  const bool verilog = SpellsVerilogNames(mode);
   switch (type) {
+    case vpiLogicVar:
+      return verilog ? "vpiReg" : "vpiLogicVar";
+    case vpiArrayVar:
+      return verilog ? "vpiRegArray" : "vpiArrayVar";
+    case vpiVarBit:
+      return verilog ? "vpiRegBit" : "vpiVarBit";
+    case vpiMemory:
+      return "vpiMemory";
+    case vpiMemoryWord:
+      return "vpiMemoryWord";
+    case vpiBitVar:
+      return "vpiBitVar";
+    case vpiIntVar:
+      return "vpiIntVar";
+    case vpiShortIntVar:
+      return "vpiShortIntVar";
+    case vpiLongIntVar:
+      return "vpiLongIntVar";
+    case vpiByteVar:
+      return "vpiByteVar";
+    case vpiIntegerVar:
+      return "vpiIntegerVar";
+    case vpiTimeVar:
+      return "vpiTimeVar";
+    case vpiRealVar:
+      return "vpiRealVar";
+    case vpiShortRealVar:
+      return "vpiShortRealVar";
+    case vpiEnumVar:
+      return "vpiEnumVar";
+    case vpiStructVar:
+      return "vpiStructVar";
+    case vpiUnionVar:
+      return "vpiUnionVar";
+    case vpiPackedArrayVar:
+      return "vpiPackedArrayVar";
+    case vpiStringVar:
+      return "vpiStringVar";
+    case vpiChandleVar:
+      return "vpiChandleVar";
+    case vpiClassVar:
+      return "vpiClassVar";
+    case vpiVirtualInterfaceVar:
+      return "vpiVirtualInterfaceVar";
+    case vpiRefObj:
+      return "vpiRefObj";
+    case vpiBitTypespec:
+      return "vpiBitTypespec";
+    case vpiLogicTypespec:
+      return "vpiLogicTypespec";
+    case vpiIntTypespec:
+      return "vpiIntTypespec";
+    case vpiShortIntTypespec:
+      return "vpiShortIntTypespec";
+    case vpiLongIntTypespec:
+      return "vpiLongIntTypespec";
+    case vpiByteTypespec:
+      return "vpiByteTypespec";
+    case vpiIntegerTypespec:
+      return "vpiIntegerTypespec";
+    case vpiTimeTypespec:
+      return "vpiTimeTypespec";
+    case vpiRealTypespec:
+      return "vpiRealTypespec";
+    case vpiShortRealTypespec:
+      return "vpiShortRealTypespec";
+    case vpiEnumTypespec:
+      return "vpiEnumTypespec";
+    case vpiStructTypespec:
+      return "vpiStructTypespec";
+    case vpiUnionTypespec:
+      return "vpiUnionTypespec";
+    case vpiPackedArrayTypespec:
+      return "vpiPackedArrayTypespec";
+    case vpiEventTypespec:
+      return "vpiEventTypespec";
+    case vpiStringTypespec:
+      return "vpiStringTypespec";
+    case vpiChandleTypespec:
+      return "vpiChandleTypespec";
+    case vpiClassTypespec:
+      return "vpiClassTypespec";
+    case vpiInterfaceTypespec:
+      return "vpiInterfaceTypespec";
+    case vpiArrayTypespec:
+      return "vpiArrayTypespec";
+    case vpiTypespecMember:
+      return "vpiTypespecMember";
+    case vpiEnumConst:
+      return "vpiEnumConst";
+    case vpiRange:
+      return "vpiRange";
+    case vpiConstant:
+      return "vpiConstant";
     case vpiModule:
       return "vpiModule";
     case vpiInterface:
@@ -868,13 +1090,14 @@ auto TypeName(PLI_INT32 type) -> std::optional<std::string_view> {
   }
 }
 
-auto Related(RuntimeEffects& run, PLI_INT32 relation, const Referent& from)
+auto Related(
+    RuntimeEffects& run, PLI_INT32 relation, const Referent& from, VpiMode mode)
     -> VpiAnswer<std::vector<VpiObject>> {
   return std::visit(
       Overloaded{
           [&](const Simulation&) { return FromDesign(run, relation); },
           [&](const VpiObject& object) {
-            return RelatedToObject(relation, object);
+            return RelatedToObject(relation, object, mode);
           },
           [](const VpiIteration*) -> VpiAnswer<std::vector<VpiObject>> {
             return std::unexpected<std::string>(
@@ -883,7 +1106,7 @@ auto Related(RuntimeEffects& run, PLI_INT32 relation, const Referent& from)
       from);
 }
 
-auto RelatedOne(PLI_INT32 relation, const Referent& from)
+auto RelatedOne(RuntimeEffects& run, PLI_INT32 relation, const Referent& from)
     -> VpiAnswer<std::optional<VpiObject>> {
   using Answer = VpiAnswer<std::optional<VpiObject>>;
   const auto* iteration = std::get_if<const VpiIteration*>(&from);
@@ -895,7 +1118,10 @@ auto RelatedOne(PLI_INT32 relation, const Referent& from)
     return (*iteration)->use;
   }
   const auto* object = std::get_if<VpiObject>(&from);
-  if (object == nullptr) return NotYet("this relation from no object");
+  if (object == nullptr) return VpiNotYet("this relation from no object");
+  const auto of_variable = [&]() {
+    return OneRelatedToVariablePart(run, relation, *object);
+  };
   switch (relation) {
     case vpiModule:
       return Answer{InstanceAroundObject(*object, IsModule)};
@@ -907,26 +1133,33 @@ auto RelatedOne(PLI_INT32 relation, const Referent& from)
           Overloaded{
               [](Scope* scope) -> Answer {
                 if (scope->Segment().Indices().empty()) {
-                  return NotYet("the parent of a scope that is no element");
+                  return VpiNotYet("the parent of a scope that is no element");
                 }
                 return VpiObject{ScopeArray{
                     .holder = scope->Parent(),
                     .declaration = &scope->Segment().Declaration()}};
               },
               [](const NamespaceObject&) -> Answer {
-                return NotYet("the parent of a package");
+                return VpiNotYet("the parent of a package");
               },
               [](const ScopeArray&) -> Answer {
-                return NotYet("the parent of an array");
+                return VpiNotYet("the parent of an array");
               },
               [](const LexicalScope&) -> Answer {
-                return NotYet(
+                return VpiNotYet(
                     "the parent of a block, a subroutine, a class or a "
                     "clocking block");
-              }},
+              },
+              [&](const VariableObject&) { return of_variable(); },
+              [&](const TypespecObject&) { return of_variable(); },
+              [&](const TypespecMemberObject&) { return of_variable(); },
+              [&](const RangeObject&) { return of_variable(); },
+              [&](const ConstantObject&) { return of_variable(); },
+              [&](const EnumConstantObject&) { return of_variable(); }},
           *object);
     default:
-      return NotYet("this relation");
+      if (IsVariablePart(*object)) return of_variable();
+      return VpiNotYet("this relation");
   }
 }
 
@@ -952,8 +1185,11 @@ auto ObjectNamed(
 
 auto ElementAt(const VpiObject& of, std::span<const std::int64_t> indices)
     -> VpiAnswer<std::optional<VpiObject>> {
+  if (const auto* variable = std::get_if<VariableObject>(&of)) {
+    return VariableElementAt(*variable, indices);
+  }
   const auto* array = std::get_if<ScopeArray>(&of);
-  if (array == nullptr) return NotYet("an element of this object");
+  if (array == nullptr) return VpiNotYet("an element of this object");
   for (Scope* scope : ElementsOf(*array)) {
     if (std::ranges::equal(scope->Segment().Indices(), indices)) {
       return VpiObject{scope};
@@ -963,7 +1199,7 @@ auto ElementAt(const VpiObject& of, std::span<const std::int64_t> indices)
 }
 
 auto IntegerProperty(
-    RuntimeEffects& run, PLI_INT32 property, const Referent& of)
+    RuntimeEffects& run, PLI_INT32 property, const Referent& of, VpiMode mode)
     -> VpiAnswer<PLI_INT64> {
   return std::visit(
       Overloaded{
@@ -977,11 +1213,11 @@ auto IntegerProperty(
               case vpiTimePrecision:
                 return resolution.precision_power;
               default:
-                return NotAProperty();
+                return VpiNotAProperty();
             }
           },
           [&](const VpiObject& object) {
-            return ObjectIntegerProperty(property, object);
+            return ObjectIntegerProperty(property, object, mode);
           },
           // An iterator answers its own type and the type it iterates (LRM
           // 37.84).
@@ -999,22 +1235,22 @@ auto IntegerProperty(
       of);
 }
 
-auto StringProperty(PLI_INT32 property, const Referent& of)
+auto StringProperty(PLI_INT32 property, const Referent& of, VpiMode mode)
     -> VpiAnswer<std::optional<std::string>> {
   return std::visit(
       Overloaded{
           [](const Simulation&) -> VpiAnswer<std::optional<std::string>> {
-            return NotAProperty();
+            return VpiNotAProperty();
           },
           [&](const VpiObject& object) {
-            return ObjectStringProperty(property, object);
+            return ObjectStringProperty(property, object, mode);
           },
           [&](const VpiIteration*) -> VpiAnswer<std::optional<std::string>> {
             if (property != vpiType) {
               return std::unexpected<std::string>(
                   "an iterator has no such property");
             }
-            return std::string(*TypeName(vpiIterator));
+            return std::string(*TypeName(vpiIterator, mode));
           }},
       of);
 }
@@ -1027,8 +1263,11 @@ auto TimeUnitOf(RuntimeEffects& run, const Referent& of)
             return TimeResolutionOf(run, nullptr).unit_power;
           },
           [&](const VpiObject& object) -> VpiAnswer<std::int8_t> {
+            const std::optional<ScopeHolder> holder = HolderOf(object);
             return TimeResolutionOf(
-                       run, ScopeDeclarationsOf(HolderOf(object)).definition)
+                       run, holder.has_value()
+                                ? ScopeDeclarationsOf(*holder).definition
+                                : nullptr)
                 .unit_power;
           },
           [](const VpiIteration*) -> VpiAnswer<std::int8_t> {

@@ -28,6 +28,7 @@
 #include "lyra/runtime/rng.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/var.hpp"
+#include "lyra/support/random_qualifier.hpp"
 #include "lyra/value/integral_value_type.hpp"
 #include "lyra/value/integral_words.hpp"
 #include "lyra/value/value_type.hpp"
@@ -210,7 +211,8 @@ auto ConstraintProblem::Truth(std::int64_t term) -> CircuitLiteral {
 }
 
 auto ConstraintProblem::Chosen(
-    RandomQualifier declared, bool enabled, const void* storage) const -> bool {
+    support::RandomQualifier declared, bool enabled, const void* storage) const
+    -> bool {
   if (settled_.contains(storage)) {
     return false;
   }
@@ -218,10 +220,10 @@ auto ConstraintProblem::Chosen(
     return listed_->contains(storage);
   }
   switch (declared) {
-    case RandomQualifier::kNone:
+    case support::RandomQualifier::kNone:
       return false;
-    case RandomQualifier::kRand:
-    case RandomQualifier::kRandc:
+    case support::RandomQualifier::kRand:
+    case support::RandomQualifier::kRandc:
       return enabled;
   }
   throw InternalError("ConstraintProblem: unknown declaration of a variable");
@@ -310,15 +312,15 @@ auto ConstraintProblem::MembersOf(const ErasedReference& lent) const
 
 void ConstraintProblem::Declare(
     const ErasedReference& lent, const void* value,
-    const value::ValueType& type, RandomQualifier declared, bool enabled,
-    ConstraintCycle* cycle, const value::Enumeration* members,
+    const value::ValueType& type, support::RandomQualifier declared,
+    bool enabled, ConstraintCycle* cycle, const value::Enumeration* members,
     std::optional<std::int64_t> within) {
   if (const auto it = variable_at_.find(lent.storage);
       it != variable_at_.end()) {
     Variable& variable = variables_[it->second];
     // A listed variable keeps its cyclic mode (LRM 18.11), which only its
     // declaration knows.
-    if (variable.random && declared == RandomQualifier::kRandc &&
+    if (variable.random && declared == support::RandomQualifier::kRandc &&
         variable.cycle == nullptr) {
       variable.cycle = cycle;
     }
@@ -327,7 +329,7 @@ void ConstraintProblem::Declare(
   const std::size_t index = variables_.size();
   AddVariable(
       lent, value, type, Chosen(declared, enabled, lent.storage),
-      declared == RandomQualifier::kRandc ? cycle : nullptr, members);
+      declared == support::RandomQualifier::kRandc ? cycle : nullptr, members);
   if (within.has_value()) {
     arrays_.at(static_cast<std::size_t>(*within)).elements.push_back(index);
   }
@@ -342,7 +344,8 @@ auto ConstraintProblem::DeclareArray(
   // A size the sizes were settled to is held from then on, and so is one a
   // listing call does not name (LRM 18.11).
   const bool chosen =
-      !settled_first_ && Chosen(RandomQualifier::kRand, enabled, whole.storage);
+      !settled_first_ &&
+      Chosen(support::RandomQualifier::kRand, enabled, whole.storage);
   array_at_.emplace(whole.storage, arrays_.size());
   arrays_.push_back(
       RandomArray{
@@ -611,8 +614,9 @@ auto ConstraintProblem::Named(
     return variables_[it->second].term;
   }
   return AddVariable(
-      lent, value, type, Chosen(RandomQualifier::kNone, false, lent.storage),
-      nullptr, MembersOf(lent));
+      lent, value, type,
+      Chosen(support::RandomQualifier::kNone, false, lent.storage), nullptr,
+      MembersOf(lent));
 }
 
 auto ConstraintProblem::Constant(

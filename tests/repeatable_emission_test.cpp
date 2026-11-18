@@ -85,7 +85,7 @@ auto Emit(
   lyra::diag::DiagnosticSink sink;
   auto design = lyra::compiler::DeclareUnits(
       std::move(compilation.front.elaborated->compilation),
-      lyra::compiler::LoweringPolicy{}, sink,
+      lyra::support::LoweringPolicy{}, sink,
       compilation.front.elaborated->diag_sources);
   if (!design.has_value()) {
     return {};

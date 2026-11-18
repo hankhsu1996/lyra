@@ -9,18 +9,22 @@ namespace lyra::support {
 // classes, which it finds through the object's definition: the three phases
 // the runtime drives every scope through, in the order it enters them -- every
 // route and alias is bound, then every cell takes the value its declaration
-// gives it (LRM 10.5), then every process is created (LRM 9.2); the two a
-// reader reaching the design by name reads a data object of the scope through
-// and subscribes to one through (LRM 21.7.1.2), which a package and the
-// compilation unit's scope answer too; and what `randomize()` asks of every
-// source class (LRM 18.6): the random variables it declares, the constraints
-// it states, the random objects its handles reach, and the hooks before and
-// after (LRM 18.6.2).
+// gives it (LRM 10.5), then every process is created (LRM 9.2); those a
+// reader reaching the design by name reads, writes, forces, releases and
+// subscribes to a data object of the scope through (LRM 21.7.1.2, 38.15,
+// 38.34), which a package and the compilation unit's scope answer too; and
+// what `randomize()` asks of every source class (LRM 18.6): the random
+// variables it declares, the constraints it states, the random objects its
+// handles reach, and the hooks before and after (LRM 18.6.2).
 enum class LibraryCallback : std::uint8_t {
   kScopeResolve,
   kScopeInitialize,
   kScopeCreateProcesses,
+  kScopeSettleDataObject,
   kScopeReadDataObject,
+  kScopeWriteDataObject,
+  kScopeForceDataObject,
+  kScopeReleaseDataObject,
   kScopeSubscribeDataObject,
   kClassRandVariables,
   kClassConstrain,

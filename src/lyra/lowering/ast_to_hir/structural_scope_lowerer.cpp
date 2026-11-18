@@ -80,14 +80,10 @@ namespace lyra::lowering::ast_to_hir {
 
 namespace {
 
-// Whether a reader reaching the design by name finds `value` among what this
-// scope stores (LRM 21.7.1.2): a variable of static lifetime, since one of
-// automatic lifetime lives in a frame, or a net of a net type a keyword names,
-// either of a type such a reader describes.
-auto IsDescribed(const slang::ast::ValueSymbol& value) -> bool {
-  if (!TypespecOf(value.getType()).has_value()) {
-    return false;
-  }
+// Whether `value` is among what this scope stores (LRM 21.7.1.2, 37.17): a
+// variable of static lifetime, since one of automatic lifetime lives in a
+// frame, or a net of a net type a keyword names.
+auto IsStoredObject(const slang::ast::ValueSymbol& value) -> bool {
   if (const auto* net = value.as_if<slang::ast::NetSymbol>()) {
     switch (net->netType.netKind) {
       case slang::ast::NetType::Wire:
@@ -576,13 +572,12 @@ auto StructuralScopeLowerer::DeclareSettledValue(
       value.getType(), frontend::PointSpanOf(value.location));
   if (!type_or) return std::unexpected(std::move(type_or.error()));
   scope.structural_data_objects.Define(
-      owner_->ReservedDataObject(value),
-      hir::StructuralDataObjectDecl{
-          .name = std::string{value.name},
-          .type = *type_or,
-          .kind = std::move(kind),
-          .lexical_scope = std::nullopt,
-          .typespec = TypespecOf(value.getType())});
+      owner_->ReservedDataObject(value), hir::StructuralDataObjectDecl{
+                                             .name = std::string{value.name},
+                                             .type = *type_or,
+                                             .kind = std::move(kind),
+                                             .lexical_scope = std::nullopt,
+                                             .typespec = std::nullopt});
   return {};
 }
 
@@ -857,14 +852,16 @@ auto StructuralScopeLowerer::PopulateVariableMember(
     kind = hir::StructuralVariableDecl{
         .initializer = frame.Exprs().Add(*std::move(init_or))};
   }
+  auto typespec =
+      TypespecOf(*owner_, var.getType(), frontend::PointSpanOf(var.location));
+  if (!typespec) return std::unexpected(std::move(typespec.error()));
   frame.current_structural_scope->structural_data_objects.Define(
-      owner_->ReservedDataObject(var),
-      hir::StructuralDataObjectDecl{
-          .name = std::string{var.name},
-          .type = *type_id_or,
-          .kind = std::move(kind),
-          .lexical_scope = std::nullopt,
-          .typespec = TypespecOf(var.getType())});
+      owner_->ReservedDataObject(var), hir::StructuralDataObjectDecl{
+                                           .name = std::string{var.name},
+                                           .type = *type_id_or,
+                                           .kind = std::move(kind),
+                                           .lexical_scope = std::nullopt,
+                                           .typespec = *typespec});
   return {};
 }
 
@@ -930,6 +927,8 @@ auto StructuralScopeLowerer::PopulateNetMember(
         "'input var' declares the variable port");
   }
 
+  auto typespec = TypespecOf(*owner_, net.getType(), span);
+  if (!typespec) return std::unexpected(std::move(typespec.error()));
   frame.current_structural_scope->structural_data_objects.Define(
       owner_->ReservedDataObject(net),
       hir::StructuralDataObjectDecl{
@@ -941,7 +940,7 @@ auto StructuralScopeLowerer::PopulateNetMember(
                   .charge_strength =
                       TranslateChargeStrength(net.getChargeStrength())},
           .lexical_scope = std::nullopt,
-          .typespec = TypespecOf(net.getType())});
+          .typespec = *typespec});
 
   // A net-declaration assignment (`wire w = expr;`, LRM 6.5) is a single
   // continuous driver of the net. slang carries it as the net's initializer
@@ -1520,8 +1519,11 @@ auto StructuralScopeLowerer::PopulateNetAliasMember(
 auto StructuralScopeLowerer::DescribedEntryOf(
     const slang::ast::ValueSymbol& value, const DescribedPorts& ports,
     WalkFrame frame) -> diag::Result<std::optional<hir::DescribedDataObject>> {
-  if (!IsDescribed(value)) return std::nullopt;
+  if (!IsStoredObject(value)) return std::nullopt;
   const auto span = frontend::PointSpanOf(value.location);
+  auto typespec = TypespecOf(*owner_, value.getType(), span);
+  if (!typespec) return std::unexpected(std::move(typespec.error()));
+  if (!typespec->has_value()) return std::nullopt;
   auto type = owner_->InternType(value.getType(), span);
   if (!type) return std::unexpected(std::move(type.error()));
   // A namespace's variables are named by the namespace wherever they are read
@@ -1537,12 +1539,15 @@ auto StructuralScopeLowerer::DescribedEntryOf(
                 });
   if (!cell) return std::unexpected(std::move(cell.error()));
   const auto connecting = ports.find(&value);
+  const auto* variable = value.as_if<slang::ast::VariableSymbol>();
   return hir::DescribedDataObject{
       .cell = *std::move(cell),
       .type = *type,
       .ports = connecting != ports.end()
                    ? connecting->second
-                   : std::vector<support::DescribedPort>{}};
+                   : std::vector<support::DescribedPort>{},
+      .constant = variable != nullptr &&
+                  variable->flags.has(slang::ast::VariableFlags::Const)};
 }
 
 auto StructuralScopeLowerer::CollectDescribed(
@@ -1588,13 +1593,15 @@ auto StructuralScopeLowerer::DefineWrittenStatics(
     }
     const hir::ProceduralScopeId scope =
         owner_->LookupProceduralScope(*written.lexical_scope);
+    auto typespec = TypespecOf(*owner_, value.getType(), span);
+    if (!typespec) return std::unexpected(std::move(typespec.error()));
     frame.current_structural_scope->structural_data_objects.Define(
         written.id, hir::StructuralDataObjectDecl{
                         .name = std::string{value.name},
                         .type = *type,
                         .kind = std::move(kind),
                         .lexical_scope = scope,
-                        .typespec = TypespecOf(value.getType())});
+                        .typespec = *typespec});
     auto entry = DescribedEntryOf(value, {}, frame);
     if (!entry) return std::unexpected(std::move(entry.error()));
     if (entry->has_value()) described.push_back(**std::move(entry));

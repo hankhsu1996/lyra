@@ -5,10 +5,13 @@
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <span>
+#include <string>
 #include <string_view>
 #include <system_error>
+#include <variant>
 #include <vector>
 
 #include "lyra/runtime/hierarchy_segment.hpp"
@@ -77,27 +80,131 @@ class NameReader {
     }
     if (part.identifier.empty()) return std::nullopt;
     while (at_ < text_.size() && text_[at_] == '[') {
-      std::optional<std::int64_t> index = ReadIndex();
+      std::optional<NameIndex> index = ReadIndex();
       if (!index.has_value()) return std::nullopt;
-      part.indices.push_back(*index);
+      part.indices.push_back(*std::move(index));
     }
     return part;
   }
 
-  // `[`, a decimal integer, `]`, white space allowed around the integer.
-  auto ReadIndex() -> std::optional<std::int64_t> {
+  // `[`, a decimal integer or a string literal, `]`, white space allowed
+  // around what it selects by. A decimal no 64-bit integer holds is its bits
+  // as a signed number, four to a digit and one for the sign being room enough
+  // for any.
+  auto ReadIndex() -> std::optional<NameIndex> {
     ++at_;
     SkipWhiteSpace();
-    std::int64_t index = 0;
-    const char* first = text_.data() + at_;
-    const char* last = text_.data() + text_.size();
-    const auto [stopped, error] = std::from_chars(first, last, index);
-    if (error != std::errc{}) return std::nullopt;
-    at_ += static_cast<std::size_t>(stopped - first);
+    std::optional<NameIndex> index;
+    if (at_ < text_.size() && text_[at_] == '"') {
+      index = ReadStringLiteral();
+    } else {
+      const std::string_view digits = ReadDecimal();
+      std::int64_t number = 0;
+      const char* const begin = std::to_address(digits.begin());
+      const char* const end = std::to_address(digits.end());
+      const auto [stopped, error] = std::from_chars(begin, end, number);
+      if (error == std::errc::result_out_of_range) {
+        index = value::BitVec::OfDecimal(digits, (digits.size() * 4) + 1);
+      } else if (error == std::errc{} && stopped == end) {
+        index = number;
+      }
+    }
+    if (!index.has_value()) return std::nullopt;
     SkipWhiteSpace();
     if (at_ == text_.size() || text_[at_] != ']') return std::nullopt;
     ++at_;
     return index;
+  }
+
+  // A decimal number's text, a sign and the digits after it, read past.
+  auto ReadDecimal() -> std::string_view {
+    const std::size_t from = at_;
+    if (at_ < text_.size() && text_[at_] == '-') ++at_;
+    while (at_ < text_.size() && text_[at_] >= '0' && text_[at_] <= '9') {
+      ++at_;
+    }
+    return text_.substr(from, at_ - from);
+  }
+
+  // A string literal's text, its escape sequences read as LRM 5.9 Table 5-1
+  // has them; any other escaped character is that character, and an octal
+  // code above \377 names no character.
+  auto ReadStringLiteral() -> std::optional<std::string> {
+    ++at_;
+    std::string text;
+    while (at_ < text_.size()) {
+      const char next = text_[at_++];
+      if (next == '"') return text;
+      if (next != '\\') {
+        text += next;
+        continue;
+      }
+      if (at_ == text_.size()) return std::nullopt;
+      const char escaped = text_[at_++];
+      switch (escaped) {
+        case 'n':
+          text += '\n';
+          break;
+        case 't':
+          text += '\t';
+          break;
+        case 'v':
+          text += '\v';
+          break;
+        case 'f':
+          text += '\f';
+          break;
+        case 'a':
+          text += '\a';
+          break;
+        case '\\':
+        case '"':
+          text += escaped;
+          break;
+        case 'x': {
+          const std::optional<char> code = ReadDigits(16, 2);
+          if (!code.has_value()) return std::nullopt;
+          text += *code;
+          break;
+        }
+        default: {
+          if (DigitValue(escaped) < 0 || DigitValue(escaped) >= 8) {
+            text += escaped;
+            break;
+          }
+          --at_;
+          const std::optional<char> code = ReadDigits(8, 3);
+          if (!code.has_value()) return std::nullopt;
+          text += *code;
+          break;
+        }
+      }
+    }
+    return std::nullopt;
+  }
+
+  // The character coded by one to `most` digits of `base`, none where no
+  // digit follows or the code is more than a byte holds.
+  auto ReadDigits(int base, std::size_t most) -> std::optional<char> {
+    unsigned code = 0;
+    std::size_t read = 0;
+    while (read < most && at_ < text_.size()) {
+      const int digit = DigitValue(text_[at_]);
+      if (digit < 0 || digit >= base) break;
+      code =
+          (code * static_cast<unsigned>(base)) + static_cast<unsigned>(digit);
+      ++at_;
+      ++read;
+    }
+    if (read == 0 || code > 0xFFU) return std::nullopt;
+    return static_cast<char>(code);
+  }
+
+  static auto DigitValue(char digit) -> int {
+    if (digit >= '0' && digit <= '9') return digit - '0';
+    if (digit >= 'a' && digit <= 'f') return digit - 'a' + 10;
+    if (digit >= 'A' && digit <= 'F') return digit - 'A' + 10;
+    return -1;
   }
 
   void SkipWhiteSpace() {
@@ -111,10 +218,50 @@ class NameReader {
 // Whether `part` names the scope standing at `segment`.
 auto IsNamedBy(const HierarchySegment& segment, const NamePart& part) -> bool {
   return IdentifierOf(segment.Declaration().name) == part.identifier &&
-         std::ranges::equal(segment.Indices(), part.indices);
+         std::ranges::equal(
+             segment.Indices(), part.indices,
+             [](std::int64_t index, const NameIndex& named) {
+               const auto* number = std::get_if<std::int64_t>(&named);
+               return number != nullptr && *number == index;
+             });
 }
 
 }  // namespace
+
+auto StringLiteralOf(std::string_view text) -> std::string {
+  std::string literal = "\"";
+  for (const char character : text) {
+    switch (character) {
+      case '\\':
+        literal += "\\\\";
+        break;
+      case '"':
+        literal += "\\\"";
+        break;
+      case '\n':
+        literal += "\\n";
+        break;
+      case '\t':
+        literal += "\\t";
+        break;
+      default: {
+        const auto code = static_cast<unsigned char>(character);
+        if (code < 0x20U || code >= 0x7fU) {
+          // Three digits always, so a digit after it is no part of it.
+          literal += '\\';
+          literal += static_cast<char>('0' + ((code >> 6U) & 7U));
+          literal += static_cast<char>('0' + ((code >> 3U) & 7U));
+          literal += static_cast<char>('0' + (code & 7U));
+        } else {
+          literal += character;
+        }
+        break;
+      }
+    }
+  }
+  literal += '"';
+  return literal;
+}
 
 auto ReadHierarchicalName(std::string_view text)
     -> std::optional<HierarchicalName> {

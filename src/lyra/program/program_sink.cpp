@@ -285,8 +285,26 @@ void BindEngineEntries(const auto& add) {
       &lyra_rt_real_value_serializer_real);
   add("lyra_rt_shortreal_value_serializer_real",
       &lyra_rt_shortreal_value_serializer_real);
+  add("lyra_rt_value_serializer_text", &lyra_rt_value_serializer_text);
   add("lyra_rt_value_serializer_event", &lyra_rt_value_serializer_event);
+  add("lyra_rt_value_serializer_size", &lyra_rt_value_serializer_size);
+  add("lyra_rt_value_serializer_key", &lyra_rt_value_serializer_key);
   add("lyra_rt_subscriber_subscribe", &lyra_rt_subscriber_subscribe);
+  add("lyra_rt_selection_depth", &lyra_rt_selection_depth);
+  add("lyra_rt_selection_number", &lyra_rt_selection_number);
+  add("lyra_rt_selection_key", &lyra_rt_selection_key);
+  add("lyra_rt_selection_settler_settle_key",
+      &lyra_rt_selection_settler_settle_key);
+  add("lyra_rt_selection_settler_settle_positions",
+      &lyra_rt_selection_settler_settle_positions);
+  add("lyra_rt_selection_settler_settle_unfixed",
+      &lyra_rt_selection_settler_settle_unfixed);
+  add("lyra_rt_selection_settler_fixed", &lyra_rt_selection_settler_fixed);
+  add("lyra_rt_selection_settler_positions",
+      &lyra_rt_selection_settler_positions);
+  add("lyra_rt_value_deserializer_bits", &lyra_rt_value_deserializer_bits);
+  add("lyra_rt_value_deserializer_real", &lyra_rt_value_deserializer_real);
+  add("lyra_rt_value_deserializer_text", &lyra_rt_value_deserializer_text);
   add("lyra_rt_integral_value_plusargs", &lyra_rt_integral_value_plusargs);
   add("lyra_rt_string_value_plusargs", &lyra_rt_string_value_plusargs);
   add("lyra_rt_urandom", &lyra_rt_urandom);
@@ -885,7 +903,7 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_weak_reference_move", &lyra_rt_weak_reference_move);
   add("lyra_rt_real_case_equal", &lyra_rt_real_case_equal);
   add("lyra_rt_real_pow", &lyra_rt_real_pow);
-  add("lyra_rt_real_round", &lyra_rt_real_round);
+  add("lyra_rt_real_to_integral", &lyra_rt_real_to_integral);
   add("lyra_rt_real_truncate", &lyra_rt_real_truncate);
   add("lyra_rt_real_to_bits", &lyra_rt_real_to_bits);
   add("lyra_rt_real_from_bits", &lyra_rt_real_from_bits);
@@ -909,7 +927,7 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_real_asinh", &lyra_rt_real_asinh);
   add("lyra_rt_real_acosh", &lyra_rt_real_acosh);
   add("lyra_rt_real_atanh", &lyra_rt_real_atanh);
-  add("lyra_rt_real_from_int", &lyra_rt_real_from_int);
+  add("lyra_rt_real_from_integral", &lyra_rt_real_from_integral);
   add("lyra_rt_real_convert_from_shortreal",
       &lyra_rt_real_convert_from_shortreal);
   add("lyra_rt_real_convert_from_real", &lyra_rt_real_convert_from_real);
@@ -920,10 +938,10 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_real_format_arg_make", &lyra_rt_real_format_arg_make);
   add("lyra_rt_shortreal_case_equal", &lyra_rt_shortreal_case_equal);
   add("lyra_rt_shortreal_pow", &lyra_rt_shortreal_pow);
-  add("lyra_rt_shortreal_round", &lyra_rt_shortreal_round);
+  add("lyra_rt_shortreal_to_integral", &lyra_rt_shortreal_to_integral);
   add("lyra_rt_shortreal_to_bits", &lyra_rt_shortreal_to_bits);
   add("lyra_rt_shortreal_from_bits", &lyra_rt_shortreal_from_bits);
-  add("lyra_rt_shortreal_from_int", &lyra_rt_shortreal_from_int);
+  add("lyra_rt_shortreal_from_integral", &lyra_rt_shortreal_from_integral);
   add("lyra_rt_shortreal_convert_from_real",
       &lyra_rt_shortreal_convert_from_real);
   add("lyra_rt_shortreal_value_cell_alloc",

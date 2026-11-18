@@ -2,9 +2,11 @@
 
 #include <algorithm>
 #include <bit>
+#include <cmath>
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <span>
 #include <string_view>
@@ -823,6 +825,45 @@ constexpr void FromInt(
   detail::Fill(out.unknown, 0U);
 }
 
+// The whole part of `whole` -- a floating value rounded or truncated first --
+// as `out`'s bits: its two's complement, kept to `out`'s width as a number
+// carried into an integral type keeps its low bits (LRM 6.12.1, 10.7), at
+// any width. A NaN or an infinity holds no number, and is 0.
+template <
+    std::floating_point F, PlaneWord WrittenWord,
+    std::size_t kWrittenValueWords, std::size_t kWrittenUnknownWords>
+void FromFloating(
+    IntegralViewOf<WrittenWord, kWrittenValueWords, kWrittenUnknownWords> out,
+    F whole) {
+  detail::Fill(out.value, 0U);
+  detail::Fill(out.unknown, 0U);
+  if (!std::isfinite(whole)) return;
+  int exponent = 0;
+  const F fraction = std::frexp(std::fabs(whole), &exponent);
+  constexpr int kDigits = std::numeric_limits<F>::digits;
+  static_assert(kDigits <= 64, "a mantissa is read as one 64-bit word");
+  // The magnitude is `mantissa` times two to `shift`; below a whole number of
+  // it, the digits are a fraction, which is dropped.
+  auto mantissa = static_cast<std::uint64_t>(std::ldexp(fraction, kDigits));
+  int shift = exponent - kDigits;
+  if (shift < 0) {
+    mantissa = -shift >= 64 ? 0U : mantissa >> static_cast<unsigned>(-shift);
+    shift = 0;
+  }
+  const auto word = static_cast<std::size_t>(shift) / 64;
+  const auto bit = static_cast<unsigned>(shift) % 64;
+  if (word < out.value.size()) {
+    SetWord(out.value, word, mantissa << bit);
+  }
+  if (bit != 0U && word + 1 < out.value.size()) {
+    SetWord(out.value, word + 1, mantissa >> (64U - bit));
+  }
+  ClearAboveWidth(out.value, out.width);
+  if (whole < 0) {
+    detail::SubWords(kEmptyPlane, out.value, out.value, out.width);
+  }
+}
+
 // The low 64 bits as a signed integer, sign-extended from the width when the
 // value is signed. An x or z bit reads as 0 (LRM 6.12.1).
 [[nodiscard]] constexpr auto ToInt64(AnyConstIntegralView auto a)
@@ -832,6 +873,56 @@ constexpr void FromInt(
     return static_cast<std::int64_t>(raw);
   }
   return detail::SignExtended(raw, a.width);
+}
+
+// The number the value is as the floating type `F` holds it (LRM 6.12.1): an x
+// or z bit read as 0, a signed value below zero where its top bit is set, and
+// rounded once to the nearest `F`, whatever the width.
+template <std::floating_point F>
+[[nodiscard]] auto ToFloating(AnyConstIntegralView auto a) -> F {
+  if (a.width <= 64U) {
+    const std::int64_t number = ToInt64(a);
+    if (a.signedness == Signedness::kSigned) return static_cast<F>(number);
+    return static_cast<F>(static_cast<std::uint64_t>(number));
+  }
+  std::vector<std::uint64_t> known(a.value.size());
+  for (std::size_t word = 0; word < known.size(); ++word) {
+    known[word] = WordAt(a.value, word) & ~WordOrZero(a.unknown, word);
+  }
+  const std::uint64_t top = a.width - 1;
+  const bool negative = a.signedness == Signedness::kSigned &&
+                        ((known[top / 64] >> (top % 64)) & 1U) != 0U;
+  // A negative value's magnitude is its two's complement within its width.
+  if (negative) {
+    detail::SubWords(
+        kEmptyPlane, std::span<const std::uint64_t>(known), std::span(known),
+        a.width);
+  }
+  // The 64 bits from the highest set bit down, the lowest of them set where
+  // any bit below is, convert as the whole magnitude would.
+  std::size_t highest = 0;
+  for (std::size_t word = known.size(); word-- > 0;) {
+    if (known[word] != 0U) {
+      highest = (word * 64) + 63 -
+                static_cast<std::size_t>(std::countl_zero(known[word]));
+      break;
+    }
+  }
+  F magnitude = static_cast<F>(known[0]);
+  if (highest >= 64) {
+    const std::size_t shift = highest - 63;
+    const std::size_t word = shift / 64;
+    const std::size_t bit = shift % 64;
+    std::uint64_t kept = known[word] >> bit;
+    bool below = (known[word] & ((std::uint64_t{1} << bit) - 1U)) != 0U;
+    if (bit != 0U) kept |= known[word + 1] << (64 - bit);
+    for (std::size_t lower = 0; lower < word; ++lower) {
+      below = below || known[lower] != 0U;
+    }
+    if (below) kept |= 1U;
+    magnitude = std::ldexp(static_cast<F>(kept), static_cast<int>(shift));
+  }
+  return negative ? -magnitude : magnitude;
 }
 
 [[nodiscard]] constexpr auto Truth(AnyConstIntegralView auto a) -> Truthiness {

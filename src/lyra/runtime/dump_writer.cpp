@@ -31,9 +31,21 @@ DumpWriter::~DumpWriter() = default;
 namespace {
 
 // The keyword a variable of `type` is declared by (LRM 21.7.5 Table 21-11),
-// an enumeration's being its base's.
-auto VariableKeyword(const abi::Typespec& type) -> DumpVarKind {
+// an enumeration's being its base's; none for a type a dump records nothing of
+// (LRM 21.7.2.1) -- an unpacked aggregate, a string, a handle, a container.
+auto VariableKeyword(const abi::Typespec& type) -> std::optional<DumpVarKind> {
   switch (type.Kind()) {
+    case support::TypespecKind::kString:
+    case support::TypespecKind::kChandle:
+    case support::TypespecKind::kClass:
+    case support::TypespecKind::kVirtualInterface:
+    case support::TypespecKind::kUnpackedStruct:
+    case support::TypespecKind::kUnpackedUnion:
+    case support::TypespecKind::kFixedArray:
+    case support::TypespecKind::kDynamicArray:
+    case support::TypespecKind::kAssociativeArray:
+    case support::TypespecKind::kQueue:
+      return std::nullopt;
     case support::TypespecKind::kEvent:
       return DumpVarKind::kEvent;
     case support::TypespecKind::kReal:
@@ -96,13 +108,24 @@ auto NetKeyword(support::NetType net_type) -> DumpVarKind {
   throw InternalError("dump: unknown net type");
 }
 
-auto KeywordOf(const abi::DataObjectRecord& object) -> DumpVarKind {
+auto KeywordOf(const abi::DataObjectRecord& object)
+    -> std::optional<DumpVarKind> {
   const abi::Typespec& type = *object.typespec;
   switch (type.Kind()) {
     case support::TypespecKind::kEvent:
     case support::TypespecKind::kReal:
     case support::TypespecKind::kShortReal:
     case support::TypespecKind::kRealtime:
+    case support::TypespecKind::kString:
+    case support::TypespecKind::kChandle:
+    case support::TypespecKind::kClass:
+    case support::TypespecKind::kVirtualInterface:
+    case support::TypespecKind::kUnpackedStruct:
+    case support::TypespecKind::kUnpackedUnion:
+    case support::TypespecKind::kFixedArray:
+    case support::TypespecKind::kDynamicArray:
+    case support::TypespecKind::kAssociativeArray:
+    case support::TypespecKind::kQueue:
       return VariableKeyword(type);
     case support::TypespecKind::kBit:
     case support::TypespecKind::kLogic:
@@ -183,6 +206,16 @@ auto DumpedRangeOf(const abi::Typespec& type) -> std::optional<support::Range> {
     case support::TypespecKind::kEvent:
     case support::TypespecKind::kPackedStruct:
     case support::TypespecKind::kPackedUnion:
+    case support::TypespecKind::kString:
+    case support::TypespecKind::kChandle:
+    case support::TypespecKind::kClass:
+    case support::TypespecKind::kVirtualInterface:
+    case support::TypespecKind::kUnpackedStruct:
+    case support::TypespecKind::kUnpackedUnion:
+    case support::TypespecKind::kFixedArray:
+    case support::TypespecKind::kDynamicArray:
+    case support::TypespecKind::kAssociativeArray:
+    case support::TypespecKind::kQueue:
       return type.Range();
   }
   throw InternalError("dump: unknown type kind");
@@ -191,8 +224,12 @@ auto DumpedRangeOf(const abi::Typespec& type) -> std::optional<support::Range> {
 }  // namespace
 
 auto DumpVarDeclarationOf(const abi::DataObjectRecord& object)
-    -> DumpVarDeclaration {
-  const DumpVarKind kind = KeywordOf(object);
+    -> std::optional<DumpVarDeclaration> {
+  const std::optional<DumpVarKind> keyword = KeywordOf(object);
+  if (!keyword.has_value()) {
+    return std::nullopt;
+  }
+  const DumpVarKind kind = *keyword;
   const auto width = [&]() -> std::uint32_t {
     switch (DumpValueFormOf(kind)) {
       case DumpValueForm::kTriggered:
@@ -215,7 +252,11 @@ auto DumpVarDeclarationOf(const abi::DataObjectRecord& object)
 auto DumpPortDeclarationOf(
     const abi::DataObjectRecord& connects, const abi::DescribedPort& port,
     std::uint32_t position) -> std::optional<DumpVarDeclaration> {
-  DumpVarDeclaration declared = DumpVarDeclarationOf(connects);
+  std::optional<DumpVarDeclaration> recorded = DumpVarDeclarationOf(connects);
+  if (!recorded.has_value()) {
+    return std::nullopt;
+  }
+  DumpVarDeclaration declared = *std::move(recorded);
   switch (DumpValueFormOf(declared.kind)) {
     case DumpValueForm::kTriggered:
       return std::nullopt;

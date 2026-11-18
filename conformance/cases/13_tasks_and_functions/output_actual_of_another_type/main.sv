@@ -2,7 +2,7 @@
 // call passes an inout actual's value to the formal (LRM 13.5). Where the two
 // are of different types each of those is an assignment between them, so the
 // value is truncated, extended by the sign of where it comes from, rounded, or
-// loses its unknown bits as an assignment would have it (LRM 10.7, 6.12.2,
+// loses its unknown bits as an assignment would have it (LRM 10.7, 6.12.1,
 // 6.11.2), whatever kind of subroutine is called and whatever the actual names.
 // An array passes to one of another kind (LRM 7.6), an enumeration to an
 // integer, and a handle to one of a class it extends (LRM 8.15).
