@@ -144,8 +144,8 @@ D9. A force from foreign code is a procedural force (LRM 38.34) and takes over w
     what it came to. Under the standard's, only a whole singular variable is taken, asked for
     whole, and anything less answers that it is forbidden (LRM 10.6.2); under the tolerant reading
     of a forced part (`language_conformance.md`), any part is taken as a procedural force of it
-    would be, and a part no takeover holds at a fixed position -- a union's member, a part of a
-    dynamic container -- answers that it is not yet supported. Only a unit built under the
+    would be, and a part no takeover holds at a fixed position -- a tagged union's member, a part
+    of a dynamic container -- answers that it is not yet supported. Only a unit built under the
     tolerant reading carries a case for each part. A release hands back the value the object holds
     after it.
 

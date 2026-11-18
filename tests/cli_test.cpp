@@ -1518,11 +1518,12 @@ TEST(LyraRun, AForceOnPartOfAVariableHoldsOnlyThatPart) {
 
 // A force from foreign code is a procedural force (LRM 38.34), so under the
 // reading that takes a part of a variable it takes one too: a bit, a member of
-// a packed structure, an element of an array and a member of an unpacked
-// structure, each held against the design's own writes as a part the design
-// forced is, and each released with the value it holds after. The standard
-// reading forbids every one of them (LRM 10.6.2), which is a refusal of what
-// the standard forbids and not of something not yet carried out.
+// a packed structure, an element of an array, a member of an unpacked
+// structure and a member of an unpacked union, which every member reads (LRM
+// 7.3), each held against the design's own writes as a part the design forced
+// is, and each released with the value it holds after. The standard reading
+// forbids every one of them (LRM 10.6.2), which is a refusal of what the
+// standard forbids and not of something not yet carried out.
 TEST(LyraRun, AForeignForceTakesAPartAsTheBuildReadsTheStandard) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
@@ -1536,10 +1537,12 @@ TEST(LyraRun, AForeignForceTakesAPartAsTheBuildReadsTheStandard) {
       "  import \"DPI-C\" context function int release_parts();\n"
       "  typedef struct packed { bit [3:0] hi; bit [3:0] lo; } nibbles_t;\n"
       "  typedef struct { int a; int b; } pair_t;\n"
+      "  typedef union { int a; int b; } overlay_t;\n"
       "  logic [7:0] v = 8'h00;\n"
       "  nibbles_t ps = 8'h35;\n"
       "  int arr[0:3];\n"
       "  pair_t us;\n"
+      "  overlay_t un;\n"
       "  initial begin\n"
       "    #1 if (force_parts() != 0) $fatal(1, \"a part's force failed\");\n"
       "    v = 8'h00;\n"
@@ -1547,6 +1550,7 @@ TEST(LyraRun, AForeignForceTakesAPartAsTheBuildReadsTheStandard) {
       "    arr[2] = 0;\n"
       "    arr[1] = 5;\n"
       "    us = '{1, 0};\n"
+      "    un.b = 0;\n"
       "    #1;\n"
       "    if (v !== 8'h08) $fatal(1, \"v reads %h\", v);\n"
       "    if (ps !== 8'hc0) $fatal(1, \"ps reads %h\", ps);\n"
@@ -1554,6 +1558,7 @@ TEST(LyraRun, AForeignForceTakesAPartAsTheBuildReadsTheStandard) {
       "      $fatal(1, \"arr reads %0d and %0d\", arr[2], arr[1]);\n"
       "    if (us.a !== 1 || us.b !== 7)\n"
       "      $fatal(1, \"us reads %0d and %0d\", us.a, us.b);\n"
+      "    if (un.a !== 4 || un.b !== 4) $fatal(1, \"un reads %0d\", un.b);\n"
       "    if (release_parts() != 0) $fatal(1, \"a part's release failed\");\n"
       "    v = 8'h00;\n"
       "    ps = 8'h00;\n"
@@ -1585,13 +1590,15 @@ TEST(LyraRun, AForeignForceTakesAPartAsTheBuildReadsTheStandard) {
       "  return Put(\"Test.v[3]\", vpiForceFlag, 1) +\n"
       "         Put(\"Test.ps.hi\", vpiForceFlag, 12) +\n"
       "         Put(\"Test.arr[2]\", vpiForceFlag, 9) +\n"
-      "         Put(\"Test.us.b\", vpiForceFlag, 7);\n"
+      "         Put(\"Test.us.b\", vpiForceFlag, 7) +\n"
+      "         Put(\"Test.un.a\", vpiForceFlag, 4);\n"
       "}\n"
       "int release_parts(void) {\n"
       "  return Put(\"Test.v[3]\", vpiReleaseFlag, 1) +\n"
       "         Put(\"Test.ps.hi\", vpiReleaseFlag, 12) +\n"
       "         Put(\"Test.arr[2]\", vpiReleaseFlag, 9) +\n"
-      "         Put(\"Test.us.b\", vpiReleaseFlag, 7);\n"
+      "         Put(\"Test.us.b\", vpiReleaseFlag, 7) +\n"
+      "         Put(\"Test.un.a\", vpiReleaseFlag, 4);\n"
       "}\n");
 
   for (const std::string_view backend : {"llvm", "cpp"}) {
@@ -1619,7 +1626,7 @@ TEST(LyraRun, AForeignForceTakesAPartAsTheBuildReadsTheStandard) {
          at = strict.stdout_text.find("takes no part of a variable", at + 1)) {
       ++forbidden;
     }
-    EXPECT_EQ(forbidden, 4U) << backend << ": " << strict.stdout_text;
+    EXPECT_EQ(forbidden, 5U) << backend << ": " << strict.stdout_text;
     EXPECT_EQ(strict.stdout_text.find("not yet supported"), std::string::npos)
         << backend << ": " << strict.stdout_text;
   }
