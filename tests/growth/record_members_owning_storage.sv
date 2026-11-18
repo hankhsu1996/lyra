@@ -1,6 +1,6 @@
 // A structure of N members, each a string, so building, copying, comparing
 // and ending it runs once per member.
-// @each-adds: bytes
+// @each-adds: bytes, mir.constants 1, lir.constants 1
 module Top #(parameter int N = 4);
   typedef struct { [[string m{i};| ]] } s_t;
 

@@ -2981,8 +2981,9 @@ auto DescribeDataObjects(
   };
   // The value driven is one of the variable's type holding the value handed
   // where the part lies, written there by the writing body of that type into a
-  // value of its own, as the design's own force of a part drives the whole
-  // with the part written into it.
+  // copy of what the variable holds, as the design's own force of a part drives
+  // the whole with the part written into it; the takeover reads none of the
+  // copy's other positions.
   auto force = state(
       declarations.bodies.force,
       {selection_type, settler_type, machine_int, machine_int,
@@ -2997,7 +2998,9 @@ auto DescribeDataObjects(
               const mir::TypeId held =
                   lowerer.Owner().TranslateType(object.type);
               const mir::LocalId driven = DeclareLocal(
-                  at, block.Add(BuildDefaultValueExpr(unit, block, held)));
+                  at, PathValue(
+                          unit, block,
+                          AccessPath{.owner = part.holder, .descent = {}}));
               std::vector<mir::ExprId> arguments{PathReference(
                   unit, block,
                   AccessPath{

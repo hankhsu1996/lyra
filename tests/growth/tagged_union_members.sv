@@ -2,7 +2,7 @@
 // written and read: every member is reached by its position, and copying the
 // union follows the member its tag names.
 // @each-adds: bytes,
-// @each-adds: mir.constants 2, lir.constants 2
+// @each-adds: mir.constants 3, lir.constants 3
 module Top #(parameter int N = 4);
   typedef union tagged { [[int m{i};| ]] string text; } u_t;
 
