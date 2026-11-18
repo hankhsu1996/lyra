@@ -89,8 +89,11 @@ Consequences:
 5. **What goes upstream is decided by evidence, not by severity.** A suspected analysis error, a
    missing diagnostic, or a meaning that contradicts the standard is fixed in the version Lyra pins
    and reported with the clause and a reduction. A text the front end accepts deliberately as an
-   extension is not a defect for being nonstandard. For a text the standard does not settle, Lyra's
-   position in that discussion is the stricter reading.
+   extension is not a defect for being nonstandard, and neither is a meaning its author keeps
+   against the clause once the conforming one is offered: the version Lyra pins would otherwise
+   carry a change upstream will not take at every move to a release, so Lyra carries out that
+   meaning, and the ruling below says where it departs. For a text the standard does not settle,
+   Lyra's position in that discussion is the stricter reading.
 6. **A caller may select a named compatibility mode or front end option** (`--compat`, or an option
    for a single reading, such as `--allow-hierarchical-const`). Lyra applies the corresponding
    analysis rules and stands behind the mode as it does the default. It does not promise to behave
@@ -946,7 +949,7 @@ question would answer it, `$display` included, and the descriptor argument would
 `$ferror` asks and is no operation, so asking twice answers the same, as C's `ferror` leaves a
 stream's error indicator as it found it.
 
-#### An array query returning an index the integer cannot hold
+#### An array query returning an index of an associative dimension
 
 ```systemverilog
 int wide[longint];
@@ -965,12 +968,16 @@ to 32 bits and of an unsigned one of up to 31, and there the two sentences agree
 type, or an unsigned 32-bit one, the integer cannot hold every index, so the type and the value the
 clause gives cannot both be had.
 
-The front end types `$low`, `$high` and `$right` of such a dimension at the index type, and of an
-array whose dimension the program computes at the index type where it is wider than 32 bits, and
-every other array query as `integer`. Lyra carries out that typing, so the index keeps its value. An
-index type holding no x answers its default, 0, for an array holding none, as any answer of a type
-holding no x reads the 'x a query names. The other dimensions of such an array, and `$left`,
-`$increment` and `$size`, return an integer as the clause says.
+The front end types `$left`, `$right`, `$low` and `$high` of an associative dimension at its index
+type forced to 4-state, whatever the index's width, and of an array whose dimension the program
+computes at that type where the index is wider than 32 bits. Every other array query is `integer`,
+as the clause says. Of a wide index this keeps both the index's value and the 'x of an array holding
+none. Of a narrow one it departs from the clause where the clause is not torn: `$bits($high(a))` of
+a `bit [3:0]` index is 4 where `integer` gives 32, and the answer takes part in an expression at
+that width. Its author keeps this so that `a[$low(a)]` indexes the array with no conversion, having
+been offered `integer` wherever that holds every index, so Lyra carries out its typing (consequence
+5). A 2-state enumeration index has no 4-state form, and answers the 4-state vector of its base
+type.
 
 #### The end event of a block left by `return`, `break` or `continue`
 

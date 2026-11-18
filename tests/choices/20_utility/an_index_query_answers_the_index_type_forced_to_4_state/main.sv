@@ -1,16 +1,19 @@
-// LRM 20.7 types an array query as integer and has $low, $high and $right
-// return an index, which an integer cannot hold where the index type is wider
-// than 32 bits or is an unsigned 32-bit one. Lyra returns those three at the
-// index type there, so the index keeps its value, and an index type that holds
-// no x answers its default, 0, for an array holding none. Every other query of
-// such an array is still an integer. This case holds Lyra to that.
+// LRM 20.7 types an array query as integer and has $left, $right, $low and
+// $high of an associative dimension return an index, which an integer cannot
+// hold where the index type is wider than 32 bits or is an unsigned 32-bit one.
+// Lyra returns those four at the index type forced to 4-state, whatever the
+// index's width, so the index keeps its value, an array holding none answers
+// 'x, and a narrow index's answer has the index's width rather than 32 bits.
+// Every other query of such an array is still an integer. This case holds Lyra
+// to that.
 module Top;
   int wide[longint];
   int unsigned_keys[bit [31:0]];
+  int narrow[bit [3:0]];
   int dimension;
 
   longint wide_low;
-  longint wide_low_empty;
+  logic signed [63:0] wide_low_empty;
   logic [31:0] unsigned_right;
   logic [31:0] unsigned_high;
   integer wide_size;
@@ -30,16 +33,22 @@ module Top;
     unsigned_keys[32'hFFFF_FFF0] = 1;
     unsigned_right = $right(unsigned_keys);
     unsigned_high = $high(unsigned_keys);
+
+    narrow[4'hF] = 1;
   end
 
   final begin
     if ($bits($low(wide)) != 64 || $bits($size(wide)) != 32)
       $fatal(1, "$low and $size of a longint index were %0d and %0d bits",
              $bits($low(wide)), $bits($size(wide)));
+    if ($bits($high(narrow)) != 4)
+      $fatal(1, "$high of a four-bit index was %0d bits, expected 4",
+             $bits($high(narrow)));
     if (wide_low !== -64'sh2_0000_0000)
       $fatal(1, "$low of a longint index was %0d", wide_low);
-    if (wide_low_empty !== 0)
-      $fatal(1, "$low of a longint index holding none was %0d", wide_low_empty);
+    if (wide_low_empty !== 'x)
+      $fatal(1, "$low of a longint index holding none was %0d, expected 'x",
+             wide_low_empty);
     if (wide_size !== 2)
       $fatal(1, "$size was %0d, expected 2", wide_size);
     if (wide_increment !== -1)

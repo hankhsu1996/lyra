@@ -141,8 +141,9 @@ auto DimensionCount(const slang::ast::Type& operand, bool unpacked_only)
 }
 
 // A value of the type slang gave the call, so the literal carries that type's
-// state domain: LRM 20.7 types a dimension function's result as `integer`, a
-// 4-state type, and LRM 20.6.1 types `$typename`'s as `string`.
+// state domain: a dimension function's result is 4-state, `integer` as LRM
+// 20.7 types it or an associative dimension's index type forced to 4-state,
+// and LRM 20.6.1 types `$typename`'s as `string`.
 auto MakeQueryConstant(
     UnitLowerer& unit_lowerer, WalkFrame frame,
     const slang::ast::CallExpression& call, const slang::ConstantValue& value,

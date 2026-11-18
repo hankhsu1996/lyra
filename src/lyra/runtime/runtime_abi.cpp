@@ -1543,7 +1543,7 @@ auto EmplaceVisited(
 // The least or greatest index an array holds (LRM 20.7), built in `out` as a
 // value of `answer_type`, the integral type the query answers at, which need
 // not be the index type; where the array holds none, that type's default,
-// which is x in every position of the `integer` LRM 20.7 states.
+// which is the 'x LRM 20.7 requires, since the query answers a 4-state type.
 auto IndexInto(void* out, const value::AnyValue* index, const void* answer_type)
     -> void* {
   const value::IntegralValueType* answered = TypeAt(answer_type).AsIntegral();
