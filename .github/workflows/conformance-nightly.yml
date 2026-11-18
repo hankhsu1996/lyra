@@ -97,7 +97,7 @@ jobs:
   # a run once no event remains, which most cases rely on.
   verilator:
     name: Run the Suite on Verilator
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 360
     steps:
       - name: Checkout code
@@ -151,7 +151,7 @@ jobs:
   publish:
     name: Publish the Night
     needs: [lyra, verilator]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       pages: write

@@ -5,8 +5,8 @@ description: >
   Every workflow needing a specific LLVM comes through here, so the release is
   written once and a job that would have silently used the runner's own
   toolchain fails at setup instead. apt.llvm.org publishes for each Ubuntu
-  release by its codename and reaches a new one late, so a job using this
-  names its Ubuntu release rather than ubuntu-latest.
+  release by its codename and reaches a new one late, so this works only on a
+  release it has published for.
 
 inputs:
   tools:

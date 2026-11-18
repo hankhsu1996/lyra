@@ -21,7 +21,7 @@ jobs:
   # rather than a list being kept here in step with it.
   cases:
     name: List the cases
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       cases: ${{ steps.list.outputs.cases }}
     steps:
