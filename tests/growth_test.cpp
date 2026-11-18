@@ -544,7 +544,15 @@ auto EachAddsOf(
     bool named = false;
     while (true) {
       const std::size_t comma = rest.find(',');
-      const std::string_view item = Trimmed(rest.substr(0, comma));
+      std::string_view item = Trimmed(rest.substr(0, comma));
+      std::optional<Path> along;
+      for (const Path path : kPaths) {
+        const std::string suffix = std::format(" along {}", NameOf(path));
+        if (item.ends_with(suffix)) {
+          along = path;
+          item = Trimmed(item.substr(0, item.size() - suffix.size()));
+        }
+      }
       const std::size_t last_word = item.find_last_of(' ');
       std::uint64_t count = 0;
       const std::string_view number = last_word == std::string_view::npos
@@ -554,16 +562,8 @@ auto EachAddsOf(
           !number.empty() &&
           std::from_chars(number.data(), number.data() + number.size(), count)
                   .ptr == number.data() + number.size();
-      std::string_view kind =
+      const std::string_view kind =
           counted ? Trimmed(item.substr(0, last_word)) : item;
-      std::optional<Path> along;
-      for (const Path path : kPaths) {
-        const std::string suffix = std::format(" along {}", NameOf(path));
-        if (kind.ends_with(suffix)) {
-          along = path;
-          kind = Trimmed(kind.substr(0, kind.size() - suffix.size()));
-        }
-      }
       if (!kind.empty()) {
         for (const Path path : kPaths) {
           if (!along.has_value() || *along == path) {
