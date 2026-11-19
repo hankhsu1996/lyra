@@ -8,7 +8,6 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/runtime/cancellation.hpp"
 #include "lyra/runtime/intrusive_list.hpp"
-#include "lyra/runtime/running_state.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/wait.hpp"
 
@@ -23,15 +22,6 @@ FrameActivation::FrameActivation() = default;
 FrameActivation::~FrameActivation() = default;
 
 void Activation::RunAtTheOccurrence(RuntimeEffects& effects) {
-  // This is the one way an execution runs inside another's. A combinational
-  // procedure never does, so an interval is never opened inside another, and
-  // the places an open interval modified keep the originals of that one
-  // interval alone.
-  if (Context().combinational_updates.has_value()) {
-    throw InternalError(
-        "Activation::RunAtTheOccurrence: a combinational procedure runs inside "
-        "another execution -- please report this as a bug");
-  }
   if (!Run(effects) || effects.TryRunning() == nullptr) {
     return;
   }
