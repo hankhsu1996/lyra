@@ -1,6 +1,7 @@
 # `lyra.toml` declares a library and what is run of it, and the command line selects within it
 
-Date: 2026-09-01, revised 2026-10-09 (what the declared object is). Status: accepted.
+Date: 2026-09-01, revised 2026-10-09 (what the declared object is) and 2026-11-18 (the foreign
+code's macros and include directories). Status: accepted.
 
 ## The question this settles
 
@@ -195,7 +196,8 @@ a cell it names     searched for in its own library, then in each library it dec
                     it wrote them, and nowhere else
 a cell no file of   searched for by name in its own searchdir, read as its other text is, and in its
 its lists holds     library
-its dpi files       compiled where a source, and linked into the program
+its dpi files       compiled where a source, under its dpi_defines and dpi_incdir alone, and
+                    linked into the program
 ```
 
 Two things differ by where a library stands. The one being built is also read under what its
@@ -337,6 +339,8 @@ undefines = ["VENDOR_HACK"]                          # material
 searchdir = ["vendor/prim"]                          # material
 searchext = [".v"]                                   # material
 dpi       = ["rtl/model.c"]                          # material, the foreign half
+dpi_defines = ["MODEL_TRACE"]                        # material, the foreign half's macros
+dpi_incdir  = ["rtl/c_include"]                      # material, the foreign half's headers
 
 [design]
 top       = ["soc_tb"]                               # selection
@@ -355,11 +359,19 @@ single_unit = true                                   # selection
 assertions  = "check"                                # selection: "check" or "skip"
 ```
 
-The seven keys from `files` to `dpi` are one thing, a source set: source text and what reading it
-needs. `[library]` holds one beside its name and `[design]` holds one beside its roots, with the
-same keys meaning the same in both. `[design]` is optional; without it the roots are the standard's,
-every cell nothing instantiates (LRM 23.3.1). `params` is the design's alone, because a parameter
-override is applied to a root.
+The nine keys from `files` to `dpi_incdir` are one thing, a source set: source text and what reading
+it needs, both the SystemVerilog and the foreign code its imports call. `[library]` holds one beside
+its name and `[design]` holds one beside its roots, with the same keys meaning the same in both.
+`[design]` is optional; without it the roots are the standard's, every cell nothing instantiates
+(LRM 23.3.1). `params` is the design's alone, because a parameter override is applied to a root.
+
+The foreign half's macros and include directories are its own. Its preprocessor is another program
+with another name space of macros, and every SystemVerilog tool keeps a `` `define `` apart from
+what its C compiler is told. They are also the part of a C build D2 admits: a C build states its
+definitions and include paths apart from its compiler's options (Bazel's `defines` and `includes`
+beside `copts`, CMake's compile definitions and include directories beside its compile options), and
+a macro the code needs to build at all is true for everyone who builds it, where `-O2` is the
+invocation's. So there is a key for each of the two and none for a flag.
 
 `name` is what makes this a declaration rather than a bag of options, and it is the field a reader
 of A would leave out. It is **required**, because an optional identity is not one: a file that
@@ -441,6 +453,7 @@ families spelled identically are not evidence for unifying them; three consumers
 | ---------------------------------- | --------- | ---------------- | ------------------- | ----------- |
 | `defines`, `incdir`, `searchdir`   | material  | `TRACE`          | `-D DEBUG`          | both        |
 | `files`, `dpi`                     | material  | the source list  | (D7: none)          | the file's  |
+| `dpi_defines`, `dpi_incdir`        | material  | `MODEL_TRACE`    | (none)              | the file's  |
 | `top`                              | selection | `soc_tb`         | `--top alu`         | `alu` alone |
 | `std`, `single_unit`, `assertions` | selection | `check`          | `--assertions skip` | `skip`      |
 

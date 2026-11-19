@@ -1,6 +1,7 @@
 # The DPI and VPI routines are defined against the standard's own headers
 
-Date: 2026-11-07 Status: accepted. Revised 2026-11-09: the DPI routines too.
+Date: 2026-11-07 Status: accepted. Revised 2026-11-09: the DPI routines too. Revised 2026-11-18: the
+header of the TF routines, and a null string handed back.
 
 ## Why this decision matters
 
@@ -65,6 +66,20 @@ D8. `svGetCallerInfo` answers where the design wrote the context import whose ca
     `svDpiVersion` answers "1800-2005", the string Annex H.10.1.3 gives the VPI-based canonical
     representation that "DPI-C" passes packed values in. The SV3.1a routines Annex H.14 leaves
     out of what an IEEE 1800 tool owes are not defined (D2).
+
+D9. `veriuser.h`, the header of the TF routines, is written beside the standard's headers declaring
+    nothing. IEEE 1364-2005 deprecated those routines and IEEE 1800 does not include them (LRM 36.1
+    NOTE, C.2.1), so no listing of the standard is its source; foreign code written for older tools
+    still includes it and calls nothing from it -- the UVM library's C does -- and a call of a TF
+    routine then fails to compile or to link, and the error names it, as D2 wants.
+
+D10. A string foreign code hands over -- an import's result, an output or inout formal, an
+    argument of an export it calls (LRM 35.5.6), a `vpiStringVal` written through VPI -- that is
+    a null pointer reads as the empty string. Annex H.8.10 asks the foreign side for a
+    null-terminated C string and gives a null pointer no meaning; the UVM library returns one to
+    say "none" and reads it back as the empty string, so a reading that refused it, or that let
+    the host library's string throw, would stop every program built on UVM. The rule is the value
+    library's, where a string is built from C text, so every crossing reads it alike.
 ```
 
 ## Rejected alternatives
@@ -91,7 +106,8 @@ D8. `svGetCallerInfo` answers where the design wrote the context import whose ca
 - [foreign-code-is-linked-not-loaded](foreign-code-is-linked-not-loaded.md) -- why an undefined
   routine is a link failure of the program, named by the linker.
 - [dpi-foreign-boundary](dpi-foreign-boundary.md) -- the context import a VPI call is made from.
-- IEEE 1800-2023: 35.4 (foreign code), 36.2 (the VPI library), 36.12.2.1 (compatibility modes), 38.2
-  (`vpi_chk_error`), 38.4 (`vpi_control`), 38.36.3 (what a tool may lack), Annex H.9.3 (context
-  utilities), H.10.1 (the header), H.11.5 (canonical utilities), H.14 (SV3.1a compatibility),
-  Annexes I, K, L and M.
+- IEEE 1800-2023: 35.4 (foreign code), 35.5.6 (argument types), 36.1 (the deprecated TF and ACC
+  routines), 36.2 (the VPI library), 36.12.2.1 (compatibility modes), 38.2 (`vpi_chk_error`), 38.4
+  (`vpi_control`), 38.36.3 (what a tool may lack), Annex C.2.1 (the TF and ACC libraries), H.8.10
+  (string arguments), H.9.3 (context utilities), H.10.1 (the header), H.11.5 (canonical utilities),
+  H.14 (SV3.1a compatibility), Annexes I, K, L and M.

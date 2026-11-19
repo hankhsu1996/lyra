@@ -1,11 +1,11 @@
 #include "lyra/runtime/vpi_value.hpp"
 
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
 #include <optional>
 #include <span>
 #include <string>
@@ -33,21 +33,25 @@ namespace {
 // Figure 38-7): the format says which member foreign code reads or wrote.
 // Each member begins at the union's first byte, so a member is read and
 // written as those bytes, which is defined whichever member was written last.
+// A member pointing at a structure is read and written as an untyped address,
+// which has the same bytes, and converted where it is used.
 using ValueUnion = decltype(s_vpi_value::value);
 
 template <typename Member>
 auto MemberOf(const ValueUnion& held) -> Member {
   const auto bytes =
       std::bit_cast<std::array<std::byte, sizeof(ValueUnion)>>(held);
-  Member member{};
-  std::memcpy(&member, bytes.data(), sizeof(Member));
-  return member;
+  std::array<std::byte, sizeof(Member)> leading{};
+  std::ranges::copy_n(bytes.begin(), sizeof(Member), leading.begin());
+  return std::bit_cast<Member>(leading);
 }
 
 template <typename Member>
 void SetMember(ValueUnion& held, Member member) {
   std::array<std::byte, sizeof(ValueUnion)> bytes{};
-  std::memcpy(bytes.data(), &member, sizeof(Member));
+  std::ranges::copy(
+      std::bit_cast<std::array<std::byte, sizeof(Member)>>(member),
+      bytes.begin());
   held = std::bit_cast<ValueUnion>(bytes);
 }
 
@@ -157,7 +161,7 @@ auto FillIntegral(
           .high = static_cast<PLI_UINT32>(number >> 32U),
           .low = static_cast<PLI_UINT32>(number),
           .real = 0.0};
-      SetMember<p_vpi_time>(value.value, &store.time);
+      SetMember<void*>(value.value, &store.time);
       return {};
     }
     case vpiVectorVal: {
@@ -168,7 +172,7 @@ auto FillIntegral(
             .aval = Chunk(view.value, at * 32),
             .bval = Chunk(view.unknown, at * 32)};
       }
-      SetMember<p_vpi_vecval>(value.value, store.vector.data());
+      SetMember<void*>(value.value, store.vector.data());
       return {};
     }
     // A variable's every bit is of strong strength (LRM 38.15).
@@ -180,7 +184,7 @@ auto FillIntegral(
             .s0 = vpiStrongDrive,
             .s1 = vpiStrongDrive};
       }
-      SetMember<p_vpi_strengthval>(value.value, store.strength.data());
+      SetMember<void*>(value.value, store.strength.data());
       return {};
     }
     default:
@@ -282,8 +286,7 @@ auto IntegralToWrite(const IntegralShape& shape, const s_vpi_value& value)
     return held(*std::move(bits));
   };
   const auto text = [&]() -> std::string_view {
-    const PLI_BYTE8* written = MemberOf<PLI_BYTE8*>(value.value);
-    return written != nullptr ? std::string_view(written) : std::string_view();
+    return value::CStringText(MemberOf<PLI_BYTE8*>(value.value));
   };
   switch (value.format) {
     case vpiBinStrVal:
@@ -317,7 +320,8 @@ auto IntegralToWrite(const IntegralShape& shape, const s_vpi_value& value)
       return held(std::move(bits));
     }
     case vpiTimeVal: {
-      const p_vpi_time time = MemberOf<p_vpi_time>(value.value);
+      const auto* time =
+          static_cast<const s_vpi_time*>(MemberOf<void*>(value.value));
       if (time == nullptr) {
         return std::unexpected<std::string>("no time value was given");
       }
@@ -330,7 +334,8 @@ auto IntegralToWrite(const IntegralShape& shape, const s_vpi_value& value)
     }
     // The array foreign code hands holds one entry per 32 bits (LRM 38.15).
     case vpiVectorVal: {
-      const p_vpi_vecval vector = MemberOf<p_vpi_vecval>(value.value);
+      const auto* vector =
+          static_cast<const s_vpi_vecval*>(MemberOf<void*>(value.value));
       if (vector == nullptr) {
         return std::unexpected<std::string>("no vector value was given");
       }
@@ -357,8 +362,8 @@ auto IntegralToWrite(const IntegralShape& shape, const s_vpi_value& value)
         return std::unexpected<std::string>(
             "a value with strength is put to no vector");
       }
-      const p_vpi_strengthval strength =
-          MemberOf<p_vpi_strengthval>(value.value);
+      const auto* strength =
+          static_cast<const s_vpi_strengthval*>(MemberOf<void*>(value.value));
       if (strength == nullptr) {
         return std::unexpected<std::string>("no strength value was given");
       }
@@ -416,10 +421,7 @@ auto ValueToWrite(const ValueShape& shape, const s_vpi_value& value)
           },
           [&](const TextShape&) -> VpiAnswer<HeldValue> {
             if (value.format != vpiStringVal) return FormatDoesNotApply();
-            return HeldValue{value::String(
-                MemberOf<PLI_BYTE8*>(value.value) != nullptr
-                    ? std::string_view(MemberOf<PLI_BYTE8*>(value.value))
-                    : std::string_view())};
+            return HeldValue{value::String(MemberOf<PLI_BYTE8*>(value.value))};
           }},
       shape.held);
 }

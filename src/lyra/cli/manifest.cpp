@@ -309,14 +309,20 @@ struct SourceSetField {
   std::vector<std::string> SourceSet::* member;
 };
 
-constexpr std::array<SourceSetField, 7> kSourceSetFields = {
+constexpr std::array<SourceSetField, 9> kSourceSetFields = {
     {{.key = "files", .read = ReadPaths, .member = &SourceSet::files},
      {.key = "incdir", .read = ReadPaths, .member = &SourceSet::incdir},
      {.key = "defines", .read = ReadStrings, .member = &SourceSet::defines},
      {.key = "undefines", .read = ReadStrings, .member = &SourceSet::undefines},
      {.key = "searchdir", .read = ReadPaths, .member = &SourceSet::searchdir},
      {.key = "searchext", .read = ReadStrings, .member = &SourceSet::searchext},
-     {.key = "dpi", .read = ReadPaths, .member = &SourceSet::dpi}}};
+     {.key = "dpi", .read = ReadPaths, .member = &SourceSet::dpi},
+     {.key = "dpi_defines",
+      .read = ReadStrings,
+      .member = &SourceSet::dpi_defines},
+     {.key = "dpi_incdir",
+      .read = ReadPaths,
+      .member = &SourceSet::dpi_incdir}}};
 
 // A table that holds a source set takes the set's keys beside its own.
 auto ReadSourceSet(

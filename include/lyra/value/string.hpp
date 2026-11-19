@@ -23,6 +23,14 @@
 
 namespace lyra::value {
 
+// The text a C string holds. Foreign code hands a string across as a
+// `const char*` (LRM Annex H.8.10), and a null pointer, to which the standard
+// gives no meaning and which the UVM library hands back to say "none", holds
+// none.
+[[nodiscard]] inline auto CStringText(const char* s) -> std::string_view {
+  return s != nullptr ? std::string_view(s) : std::string_view();
+}
+
 // Runtime representation of the SystemVerilog `string` type (LRM 6.16). The
 // SV semantics -- equality on contents, lexicographic compare, and the method
 // family in LRM 6.16.1 through 6.16.15 -- are exposed as member operators and
@@ -32,7 +40,7 @@ namespace lyra::value {
 class String {
  public:
   String() = default;
-  explicit String(const char* s) : impl_(s) {
+  explicit String(const char* s) : impl_(CStringText(s)) {
   }
   explicit String(std::string s) : impl_(std::move(s)) {
   }
