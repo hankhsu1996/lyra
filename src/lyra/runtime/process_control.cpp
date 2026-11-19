@@ -74,7 +74,7 @@ class ProcessTerminationAwaiter final : public StateAwaiter {
 }  // namespace
 
 auto ProcessSelf(RuntimeEffects& runtime) -> value::ObjectRef {
-  RuntimeProcess* const running = runtime.TryCurrentProcess();
+  RuntimeProcess* const running = runtime.RunningProcess();
   if (running == nullptr) {
     return value::ObjectRef{};
   }
@@ -126,7 +126,7 @@ auto ProcessAwait(
   const base::SourceLocationScope bound(at);
   // The checks are here at the call, symmetric with `suspend`, so the wait
   // itself is pure readiness.
-  if (&ControlledProcessOf(self, "await") == runtime.TryCurrentProcess()) {
+  if (&ControlledProcessOf(self, "await") == runtime.RunningProcessIfMade()) {
     // LRM 9.7.
     throw SimulationError(
         "'process::await' on the calling process is not allowed");
@@ -141,7 +141,7 @@ void ProcessSuspend(
   // The activation layer does the state transition and the detach; nothing
   // here schedules.
   RuntimeProcess& target = ControlledProcessOf(self, "suspend");
-  if (&target == runtime.TryCurrentProcess()) {
+  if (&target == runtime.RunningProcessIfMade()) {
     // LRM 9.7.
     throw SimulationError(
         "'process::suspend' on the calling process is not allowed");

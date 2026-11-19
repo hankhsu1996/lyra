@@ -1,19 +1,20 @@
 # Scheduling
 
-A lyra simulation runs as a set of coroutines coordinated by a stratified event scheduler. Each
-SystemVerilog process -- `initial`, `always*` -- runs as a coroutine. The scheduler pulls coroutines
-from time-slot region queues and resumes them; a coroutine runs until it suspends, and lands on
-whichever queue its own `await_suspend` chose. Deferred effects (`<=` writes, `$strobe` prints) are
-not yields: the coroutine makes a closure of its inputs in the run's storage for effects, keeps it
-in the region it is due in, and continues running. The engine invokes those closures when their
-owning region runs, and where the slot to run in is not yet knowable, what is handed over is an
-execution that finds it.
+A lyra simulation runs as a set of executions coordinated by a stratified event scheduler. Each
+SystemVerilog process -- `initial`, `always*`, a continuous assignment -- runs as a coroutine, or,
+where its body runs to its end each time it is triggered, as a reaction the run calls. The scheduler
+pulls executions from time-slot region queues and runs each; it runs until it stops, and lands on
+whichever queue its own wait chose. Deferred effects (`<=` writes, `$strobe` prints) are not yields:
+the execution makes a closure of its inputs in the run's storage for effects, keeps it in the region
+it is due in, and continues running. The engine invokes those closures when their owning region
+runs, and where the slot to run in is not yet knowable, what is handed over is an execution that
+finds it.
 
 This doc covers the decisions behind the engine itself: process model, suspension protocol, region
 structure, deferred work, how a run ends, and the MIR boundary. Sensitivity tracking, change
 detection, and edge detection are separate runtime subsystems.
 
-## Processes and tasks are coroutines
+## Processes and tasks are coroutines, or reactions
 
 The execution instance a process or task runs as -- its identity, completion outcome, ownership, and
 cancellation -- is the activation, defined in `activation.md`. This doc owns the engine that parks
@@ -24,10 +25,15 @@ A process body -- and a task body, which may consume time -- runs as a `Coroutin
 holds the activation token and resumes the body; a `co_await` in the body suspends it again. Process
 state -- procedural locals, the implicit program counter -- lives in the coroutine frame, which the
 engine does not introspect. A body that stops only at the head of its loop is not compiled as one:
-it is a setup and a pass, plain bodies that one coroutine of the runtime calls, and that coroutine
-is what the scheduler resumes, holding the wait between passes. A body that never stops is a plain
-function that a coroutine of the runtime calls once. The engine sees one kind of execution either
-way.
+it is a setup and a pass, plain bodies the run calls on the object they belong to, and it runs as a
+reaction -- an activation that is no frame, holding the wait between passes, and the thing the
+scheduler queues. A body that never stops is its setup alone. The engine runs either through the
+activation's own entry -- a frame resumed, a reaction's part called -- and tells them apart nowhere.
+Such a process is still one (Annex P): its object, which `process::self()` returns and process
+control acts on, is made the first time the language asks for it, and its generator is drawn as it
+is created (LRM 18.14.1). The runtime holds one thing as running at a time -- a thread of frames, a
+reaction, or code on no thread. The code running reads what is in force from it, and a stop parks
+it.
 
 Every wait is part of that state too. It enrols on what it watches for its whole life, which is as
 short as its use allows: outside the innermost loop around its stop for a wait on storage that stays
@@ -61,9 +67,10 @@ every statement that might suspend, defeating the structured form MIR is designe
 
 ## The engine is a mechanism, not a semantics holder
 
-The engine does three things: it holds queues of runnable coroutine handles, it resumes them, and it
-parks each one on whichever queue the code it just ran asked for. It never inspects what a coroutine
-represents, why it suspended, or what it waits for. A coroutine frame is opaque to it.
+The engine does three things: it holds queues of runnable executions, it runs them, and it parks
+each one on whichever queue the code it just ran asked for. It never inspects what an execution
+represents, why it stopped, or what it waits for. A coroutine frame is opaque to it, and so is a
+reaction.
 
 Construct semantics live entirely in what an execution waits for. Each suspending construct builds
 one of those for the body to stop at, and the wait answers how a stop there carries on -- at once,
@@ -91,9 +98,9 @@ for, which schedules through the existing verbs; a process-spawning construct ma
 construct-neutral verb (adopt a coroutine and schedule it). Either way the engine gains no
 per-construct branch.
 
-**Invariant:** the engine branches only on queue and region, never on the kind of construct a
-coroutine came from, because what a construct means lives in what it waits for. A per-construct case
-inside the engine's resume or dispatch path fails that, and so does a note a coroutine leaves for
+**Invariant:** the engine branches only on queue and region, never on the kind of construct an
+execution came from, because what a construct means lives in what it waits for. A per-construct case
+inside the engine's resume or dispatch path fails that, and so does a note an execution leaves for
 the scheduler to read in place of a placement. When a construct seems to require the engine to ask
 "is this an X?", the neutral verb set is missing a primitive -- add the primitive, do not teach the
 engine the construct. Which region set a thread runs in is not such a note: the standard places a

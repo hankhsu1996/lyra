@@ -1124,7 +1124,6 @@ void VerifyEntryDeclarations(
         typed_as_reference(false);
         break;
       case support::EntryAnswer::kNewValue:
-      case support::EntryAnswer::kExecution:
         break;
     }
     // An operation over integral values states what it takes in its own
@@ -3449,7 +3448,6 @@ class HandedClosures {
                 case support::EntryAnswer::kReferenceToSampledContents:
                   return first();
                 case support::EntryAnswer::kNewValue:
-                case support::EntryAnswer::kExecution:
                   RefuseUnfollowed(id);
               }
               throw InternalError("mir verify: unknown EntryAnswer");

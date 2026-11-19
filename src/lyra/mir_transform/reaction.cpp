@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <iterator>
 #include <optional>
@@ -11,6 +12,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/abi/records.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/base/registry.hpp"
@@ -22,7 +24,9 @@
 #include "lyra/mir/code_source.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/expr_id.hpp"
+#include "lyra/mir/library_record_builder.hpp"
 #include "lyra/mir/linkage.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -32,17 +36,27 @@
 #include "lyra/mir_transform/block_rebuild.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/linkage.hpp"
+#include "lyra/support/start_kind.hpp"
 
 namespace lyra::mir_transform {
 
 namespace {
 
-// The order the loop's body does its two things in. Running its statements
-// and then stopping, the setup is followed by a pass at once (a continuous
-// assignment, LRM 10.3); stopping and then running them, the setup goes on to
-// the first stop (an `always` whose event control opens its statement, LRM
-// 9.4.2).
+// The order the loop of a process that stops only at its head does its two
+// things in: running its statements and then stopping, or stopping and then
+// running them.
 enum class LoopOrder : std::uint8_t { kRunThenStop, kStopThenRun };
+
+// How the run calls the parts a loop of `order` is split into.
+auto FormOf(LoopOrder order) -> support::ReactionForm {
+  switch (order) {
+    case LoopOrder::kRunThenStop:
+      return support::ReactionForm::kRunThenStop;
+    case LoopOrder::kStopThenRun:
+      return support::ReactionForm::kStopThenRun;
+  }
+  throw InternalError("mir_transform: a loop of no order");
+}
 
 // Where a body that fits the rule keeps what the split takes apart: the
 // statements before its loop; the loop's block, and the path from it through
@@ -331,30 +345,9 @@ auto MatchReaction(
       .wait_local = *wait_local};
 }
 
-// What a process split around its loop adds beside its own callable, which its
-// pass keeps: the callable of its setup, a member of the same class, and the
-// runtime's entry that runs the two, which says what the setup answers.
-struct SplitParts {
-  mir::CallableId setup;
-  support::BuiltinFn entry;
-};
-
-// A process that never stops, whose callable holds an ordinary function.
-struct RunsToCompletion {};
-
-using RewrittenProcess = std::variant<SplitParts, RunsToCompletion>;
-using RewrittenProcesses =
-    std::unordered_map<mir::CallableId, RewrittenProcess>;
-
-auto EntryFor(LoopOrder order) -> support::BuiltinFn {
-  switch (order) {
-    case LoopOrder::kRunThenStop:
-      return support::BuiltinFn::kEnterReactionRunningFirst;
-    case LoopOrder::kStopThenRun:
-      return support::BuiltinFn::kEnterReactionStoppingFirst;
-  }
-  throw InternalError("mir_transform: unknown loop order");
-}
+// Each rewritten process, by its callable, and the unit's record of how it was
+// compiled.
+using RewrittenProcesses = std::unordered_map<mir::CallableId, mir::ConstantId>;
 
 // The machine function type both parts have: the object and the wait, each
 // erased, in; whether the process goes on, out.
@@ -366,8 +359,8 @@ auto PartType(const mir::CompilationUnit& unit) -> mir::TypeId {
 }
 
 // A part's signature and locals, without its body: the process's locals but
-// for the wait, which the part reaches through a pointer, and the object and
-// the wait it is handed erased.
+// for the wait where it has one, which the part reaches through a pointer, and
+// the object and the wait it is handed erased.
 struct PartCode {
   mir::CallableCode code;
   mir::LocalId object;
@@ -376,7 +369,7 @@ struct PartCode {
 
 auto PartCodeOf(
     const mir::CompilationUnit& unit, const mir::CallableCode& process,
-    mir::LocalId wait_local) -> PartCode {
+    std::optional<mir::LocalId> wait_local) -> PartCode {
   mir::CallableCode code;
   for (const mir::LocalId id : process.locals.Ids()) {
     code.locals.Add(
@@ -450,6 +443,18 @@ auto MachineBool(const mir::CompilationUnit& unit, bool value) -> mir::Expr {
       .type = unit.builtins.machine_bool};
 }
 
+// A bare return in a setup, where the body returns before its loop, answers
+// that no pass follows.
+auto AnswerAtBareReturn(
+    const mir::CompilationUnit& unit, BlockRebuild& rebuild,
+    const mir::Stmt& stmt) -> std::optional<mir::StmtData> {
+  const auto* ret = std::get_if<mir::ReturnStmt>(&stmt.data);
+  if (ret == nullptr || ret->value.has_value()) {
+    return std::nullopt;
+  }
+  return mir::ReturnStmt{.value = rebuild.Add(MachineBool(unit, false))};
+}
+
 // The block whose statements the loop of `body` runs.
 auto LoopBody(const mir::Block& body, const ReactionShape& shape)
     -> const mir::Block& {
@@ -494,10 +499,9 @@ auto SetupOf(
       .expr = ReachWaitThroughPointer(unit, shape.wait_local),
       .stmt = [&](BlockRebuild& rebuild,
                   const mir::Stmt& stmt) -> std::optional<mir::StmtData> {
-        if (const auto* ret = std::get_if<mir::ReturnStmt>(&stmt.data);
-            ret != nullptr && !ret->value.has_value()) {
-          return mir::ReturnStmt{
-              .value = rebuild.Add(MachineBool(unit, false))};
+        if (std::optional<mir::StmtData> answered =
+                AnswerAtBareReturn(unit, rebuild, stmt)) {
+          return answered;
         }
         const auto* decl = std::get_if<mir::LocalDeclStmt>(&stmt.data);
         if (decl == nullptr || decl->target != shape.wait_local) {
@@ -564,129 +568,166 @@ auto PassOf(
   return std::move(part.code);
 }
 
-// A body that never stops as an ordinary function: handed its object erased, it
-// runs its statements and returns, and a bare return in them means what it did.
-auto RunToCompletionOf(
+// A body that never stops as its reaction's setup: handed its object and a wait
+// it never builds, both erased, it runs its statements once, and its answer
+// is not read.
+auto OnlySetupOf(
     const mir::CompilationUnit& unit, const mir::CallableCode& process)
     -> mir::CallableCode {
-  mir::CallableCode code;
-  for (const mir::LocalId id : process.locals.Ids()) {
-    code.locals.Add(process.locals.Get(id));
-  }
-  const mir::LocalId object = code.AddLocal(mir::ErasedPointer(unit.types));
-  code.params = {object};
-  code.result_type = unit.builtins.void_type;
-  code.named_locals = process.named_locals;
-  code.span = process.span;
-
+  PartCode part = PartCodeOf(unit, process, std::nullopt);
   const mir::Block& body = process.Body();
-  const RebuildRules rules;
+  const RebuildRules rules{
+      .stmt = [&](BlockRebuild& rebuild, const mir::Stmt& stmt) {
+        return AnswerAtBareReturn(unit, rebuild, stmt);
+      }};
   BlockRebuild rebuild(body, rules, process.span);
   const mir::LocalId self = *process.receiver;
   std::vector<mir::StmtId> stmts{RestoreErased(
-      unit, rebuild, object, self, process.locals.Get(self).type)};
+      unit, rebuild, part.object, self, process.locals.Get(self).type)};
   std::ranges::copy(rebuild.Stmts(body.root_stmts), std::back_inserter(stmts));
-  code.body = std::move(rebuild).Finish(std::move(stmts));
-  return code;
+  stmts.push_back(rebuild.Add(
+      mir::ReturnStmt{.value = rebuild.Add(MachineBool(unit, false))}));
+  part.code.body = std::move(rebuild).Finish(std::move(stmts));
+  return std::move(part.code);
 }
 
-// The machine function type of a body that runs to completion.
-auto CompletingBodyType(const mir::CompilationUnit& unit) -> mir::TypeId {
-  return unit.types.Intern(
-      mir::Type{mir::MachineFunctionType{
-          .params = {mir::ErasedPointer(unit.types)},
-          .result = unit.builtins.void_type}});
-}
+// A registration of a process that was rewritten: the call, how its entry
+// hands the run a body, the started call that body is, and what that call
+// names.
+struct RewrittenRegistration {
+  const mir::CallExpr* registration;
+  support::HandsTheRunABody hands;
+  const mir::CallExpr* started;
+  const mir::Direct* started_direct;
+  mir::CallableId process;
+};
 
-// The rewritten process `data` starts, where it is a call starting one.
-auto RewrittenProcessStarted(
-    const mir::ExprData& data, const RewrittenProcesses& rewritten)
-    -> const mir::CallableTarget* {
+// The registration `data` is, where it registers a process that was rewritten.
+auto RewrittenRegistrationOf(
+    const mir::Block& block, const mir::ExprData& data,
+    const RewrittenProcesses& rewritten)
+    -> std::optional<RewrittenRegistration> {
   const auto* call = std::get_if<mir::CallExpr>(&data);
   const auto* direct =
       call != nullptr ? std::get_if<mir::Direct>(&call->callee) : nullptr;
-  const auto* target = direct != nullptr
-                           ? std::get_if<mir::CallableTarget>(&direct->target)
-                           : nullptr;
-  return target != nullptr && rewritten.contains(target->callable) ? target
-                                                                   : nullptr;
+  const auto* entry = direct != nullptr
+                          ? std::get_if<support::BuiltinFn>(&direct->target)
+                          : nullptr;
+  const std::optional<support::HandsTheRunABody> hands =
+      entry != nullptr ? support::RuntimeEntryOf(*entry).hands_the_run_a_body
+                       : std::nullopt;
+  if (!hands.has_value()) {
+    return std::nullopt;
+  }
+  if (hands->body_at + 1 != call->arguments.size()) {
+    throw InternalError(
+        "mir_transform: a registration's body is not its last operand -- "
+        "please report this as a bug");
+  }
+  const auto* started = std::get_if<mir::CallExpr>(
+      &block.exprs.Get(call->arguments.at(hands->body_at)).data);
+  const auto* started_direct =
+      started != nullptr ? std::get_if<mir::Direct>(&started->callee) : nullptr;
+  const auto* target =
+      started_direct != nullptr
+          ? std::get_if<mir::CallableTarget>(&started_direct->target)
+          : nullptr;
+  if (target == nullptr || !rewritten.contains(target->callable)) {
+    return std::nullopt;
+  }
+  if (!started_direct->receiver.has_value() || !started->arguments.empty()) {
+    throw InternalError(
+        "mir_transform: a process body is started other than on its object "
+        "alone -- please report this as a bug");
+  }
+  return RewrittenRegistration{
+      .registration = call,
+      .hands = *hands,
+      .started = started,
+      .started_direct = started_direct,
+      .process = target->callable};
 }
 
-// Whether `block`, at any depth, starts a process that was rewritten.
-auto StartsRewrittenProcess(
+// Whether `block`, at any depth, registers a process that was rewritten.
+auto RegistersRewrittenProcess(
     const mir::Block& block, const RewrittenProcesses& rewritten) -> bool {
   return std::ranges::any_of(
              block.exprs,
              [&](const mir::Expr& expr) {
-               return RewrittenProcessStarted(expr.data, rewritten) != nullptr;
+               return RewrittenRegistrationOf(block, expr.data, rewritten)
+                   .has_value();
              }) ||
          std::ranges::any_of(block.child_scopes, [&](const mir::Block& child) {
-           return StartsRewrittenProcess(child, rewritten);
+           return RegistersRewrittenProcess(child, rewritten);
          });
 }
 
-// `body(*object)` becomes `enter_reaction_running_first((void*)&*object, setup,
-// pass)`, or `enter_run_to_completion((void*)&*object, body)`: the same
-// execution, run by a coroutine of the runtime's.
-auto RewriteStarts(
+// The unit's record of how a process was compiled as a reaction: its setup,
+// its pass where it has one, and its form.
+auto InternReactionDefinition(
+    const mir::CompilationUnit& unit, mir::CallableId setup,
+    std::optional<mir::CallableId> pass, support::ReactionForm form)
+    -> mir::ConstantId {
+  using Record = abi::ReactionDefinition;
+  const auto code = [&](mir::CallableId callable) {
+    return mir::ConstantValue{mir::PointerValue{
+        .to = mir::FunctionRef{.callable = callable}, .type = PartType(unit)}};
+  };
+  mir::LibraryRecordBuilder<Record> record(unit);
+  record.Set(&Record::setup, code(setup));
+  record.Set(
+      &Record::pass,
+      pass.has_value() ? code(*pass) : mir::ConstantValue{mir::NullValue{}});
+  record.Set(
+      &Record::form, mir::ConstantValue{mir::MachineIntValue{
+                         .value = static_cast<std::int64_t>(form)}});
+  return std::move(record).Intern();
+}
+
+// `register_coroutine(scope, instance, runs_as, &definition, body(*object))`
+// becomes `register_reaction(scope, instance, runs_as, &definition, &reaction,
+// (void*)&*object)`: the same process, handed to the run as the parts its body
+// was split into.
+auto RewriteRegistrations(
     const mir::CompilationUnit& unit, const mir::CallableCode& code,
     const RewrittenProcesses& rewritten) -> mir::CallableCode {
   const RebuildRules rules{
       .expr = [&](BlockRebuild& rebuild,
                   mir::ExprId id) -> std::optional<mir::Expr> {
-        const mir::Expr& expr = rebuild.From().exprs.Get(id);
-        const mir::CallableTarget* target =
-            RewrittenProcessStarted(expr.data, rewritten);
-        if (target == nullptr) {
+        const mir::Block& from = rebuild.From();
+        const mir::Expr& expr = from.exprs.Get(id);
+        const std::optional<RewrittenRegistration> registration =
+            RewrittenRegistrationOf(from, expr.data, rewritten);
+        if (!registration.has_value()) {
           return std::nullopt;
         }
-        const auto& call = std::get<mir::CallExpr>(expr.data);
-        const auto& direct = std::get<mir::Direct>(call.callee);
-        if (!direct.receiver.has_value() || !call.arguments.empty()) {
-          throw InternalError(
-              "mir_transform: a process body is started other than on its "
-              "object alone -- please report this as a bug");
-        }
-        const mir::TypeId object_type =
-            rebuild.From().exprs.Get(*direct.receiver).type;
-        const mir::ExprId address = rebuild.Add(
-            mir::MakeAddressOfExpr(
-                rebuild.Expr(*direct.receiver),
-                unit.types.Intern(
-                    mir::Type{mir::PointerType{
-                        .pointee = object_type,
-                        .ownership = mir::PointerOwnership::kBorrowed}})));
-        const mir::ExprId erased = rebuild.Add(
+        const mir::ExprId receiver = *registration->started_direct->receiver;
+        const mir::TypeId object_type = from.exprs.Get(receiver).type;
+        const mir::ExprId object = rebuild.Add(
             mir::Expr{
-                .data = mir::CastExpr{.operand = address},
+                .data =
+                    mir::CastExpr{
+                        .operand = rebuild.Add(
+                            mir::MakeAddressOfExpr(
+                                rebuild.Expr(receiver),
+                                unit.types.Intern(
+                                    mir::Type{mir::PointerType{
+                                        .pointee = object_type,
+                                        .ownership = mir::PointerOwnership::
+                                            kBorrowed}})))},
                 .type = mir::ErasedPointer(unit.types)});
-        const auto code = [&](mir::CallableId callable, mir::TypeId type) {
-          return rebuild.Add(
-              mir::Expr{
-                  .data =
-                      mir::ReferenceExpr{
-                          .target = mir::FunctionRef{.callable = callable}},
-                  .type = type});
-        };
-        return std::visit(
-            Overloaded{
-                [&](const SplitParts& parts) {
-                  const mir::TypeId part = PartType(unit);
-                  return mir::MakeCallExpr(
-                      mir::Direct{.target = parts.entry},
-                      {erased, code(parts.setup, part),
-                       code(target->callable, part)},
-                      expr.type);
-                },
-                [&](const RunsToCompletion&) {
-                  return mir::MakeCallExpr(
-                      mir::Direct{
-                          .target = support::BuiltinFn::kEnterRunToCompletion},
-                      {erased,
-                       code(target->callable, CompletingBodyType(unit))},
-                      expr.type);
-                }},
-            rewritten.at(target->callable));
+        const mir::ExprId reaction_address = mir::BuildConstantAddress(
+            unit, rewritten.at(registration->process), rebuild);
+        std::vector<mir::ExprId> operands;
+        for (std::size_t i = 0; i < registration->hands.body_at; ++i) {
+          operands.push_back(
+              rebuild.Expr(registration->registration->arguments.at(i)));
+        }
+        operands.push_back(reaction_address);
+        operands.push_back(object);
+        return mir::MakeCallExpr(
+            mir::Direct{.target = registration->hands.as_a_reaction},
+            std::move(operands), expr.type);
       }};
   return RebuildCode(code, rules);
 }
@@ -719,7 +760,10 @@ auto SplitReactions(mir::CompilationUnit unit) -> mir::CompilationUnit {
         setups.emplace(callable, SetupOf(unit, process.code, *shape));
         shapes.emplace(callable, *std::move(shape));
       } else if (!StopsWithin(*process.code.body, std::nullopt)) {
-        rewritten.emplace(callable, RunsToCompletion{});
+        rewritten.emplace(
+            callable, InternReactionDefinition(
+                          unit, callable, std::nullopt,
+                          support::ReactionForm::kRunsOnce));
       }
     }
   }
@@ -734,19 +778,18 @@ auto SplitReactions(mir::CompilationUnit unit) -> mir::CompilationUnit {
         unit.CallablesOf(owner).callables;
     for (const mir::CallableId callable : declared) {
       if (const auto shape = shapes.find(callable); shape != shapes.end()) {
+        const mir::CallableId setup = unit.AddClassCallable(
+            owner, std::nullopt, std::move(setups.at(callable)));
         rewritten.emplace(
-            callable,
-            SplitParts{
-                .setup = unit.AddClassCallable(
-                    owner, std::nullopt, std::move(setups.at(callable))),
-                .entry = EntryFor(shape->second.order)});
+            callable, InternReactionDefinition(
+                          unit, setup, callable, FormOf(shape->second.order)));
       }
     }
   }
 
   // Each process split around its loop becomes its pass, one that never stops
-  // an ordinary function, and every other code starting either starts it
-  // through the runtime.
+  // its own setup, and every code registering either hands it to the run as a
+  // reaction.
   return mir::RewriteEachCode(
       std::move(unit),
       [&](const mir::CompilationUnit& unit, const mir::CodeSource& at,
@@ -757,14 +800,14 @@ auto SplitReactions(mir::CompilationUnit unit) -> mir::CompilationUnit {
             return PassOf(unit, code, shape->second);
           }
           if (rewritten.contains(method->callable)) {
-            return RunToCompletionOf(unit, code);
+            return OnlySetupOf(unit, code);
           }
         }
         if (!code.body.has_value() ||
-            !StartsRewrittenProcess(*code.body, rewritten)) {
+            !RegistersRewrittenProcess(*code.body, rewritten)) {
           return std::nullopt;
         }
-        return RewriteStarts(unit, code, rewritten);
+        return RewriteRegistrations(unit, code, rewritten);
       });
 }
 

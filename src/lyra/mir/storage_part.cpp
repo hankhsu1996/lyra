@@ -44,7 +44,6 @@ auto AnswersReferenceIntoReceiver(const CallExpr& call) -> bool {
     case support::EntryAnswer::kNewValue:
     case support::EntryAnswer::kReferenceToContents:
     case support::EntryAnswer::kReferenceToSampledContents:
-    case support::EntryAnswer::kExecution:
       return false;
   }
   throw InternalError("mir: unknown entry answer");
@@ -62,7 +61,6 @@ auto AnswersMutableReferenceIntoReceiver(const CallExpr& call) -> bool {
     case support::EntryAnswer::kNewValue:
     case support::EntryAnswer::kReferenceToContents:
     case support::EntryAnswer::kReferenceToSampledContents:
-    case support::EntryAnswer::kExecution:
       return false;
   }
   throw InternalError("mir: unknown entry answer");

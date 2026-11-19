@@ -250,11 +250,11 @@ class StateAwaiter : public Awaiter {
   [[nodiscard]] auto Holds() const -> bool override = 0;
 };
 
-// What a body holds in its frame for one timing control: the awaiter its
-// construct needs, at an address that does not move however the frame moves
-// the holder. It is built before the execution first stops at it and ends
-// with the scope that holds it, and ending it ends every membership the
-// awaiter made, on every way out of that scope.
+// What a body holds for one timing control -- in its frame, or a reaction in
+// itself: the awaiter its construct needs, at an address that does not move
+// however the frame moves the holder. It is built before the execution first
+// stops at it and ends with the scope that holds it, and ending it ends every
+// membership the awaiter made, on every way out of that scope.
 class Wait {
  public:
   // A wait not yet built: storage an activation holds for one, which the
@@ -282,17 +282,17 @@ template <class Kind, class... Arguments>
   return Wait{std::make_unique<Kind>(std::forward<Arguments>(arguments)...)};
 }
 
-// Stops the frame carrying the running process's thread at `wait`, answering
-// whether the caller must give up control. This is the one way a body stops
-// to wait.
+// Parks what is running -- a thread's innermost frame, or a reaction -- at
+// `wait`, answering whether the caller must give up control. This is the one
+// way a body stops to wait.
 auto ParkAt(RuntimeEffects& services, Wait* wait) -> bool;
 
 // The dual of parking: `activation` is runnable now, so it is parked on no
 // awaiter and sits in no queue until its body stops again, and nothing it was
 // waiting on can wake it a second time. A wait the LRM counts as a violation
-// report flush point clears its process's report queue on the way out (LRM
-// 12.4.2.1); the activation cannot run between here and its resume, so
-// discarding at either point is the same discard.
+// report flush point clears its process's report queue, where its process has
+// been made, on the way out (LRM 12.4.2.1); the activation cannot run between
+// here and its resume, so discarding at either point is the same discard.
 void ConsumeWait(Activation* activation);
 
 }  // namespace lyra::runtime

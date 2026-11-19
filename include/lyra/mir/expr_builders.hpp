@@ -130,26 +130,36 @@ template <std::ranges::sized_range Ranges>
     const CompilationUnit& unit, const diag::SourcePosition& position)
     -> ConstantId;
 
+// The address of `constant`, a constant of the unit, through which it is only
+// read, each step added to `into`, a builder or a rebuild.
+template <typename Into>
+[[nodiscard]] auto BuildConstantAddress(
+    const CompilationUnit& unit, ConstantId constant, Into& into) -> ExprId {
+  const TypeId type = unit.constants.Get(constant).type;
+  const ExprId named = into.Add(
+      Expr{
+          .data = ReferenceExpr{.target = ConstantRef{.constant = constant}},
+          .type = type});
+  return into.Add(MakeAddressOfExpr(
+      named, unit.types.Intern(
+                 Type{PointerType{
+                     .pointee = type,
+                     .ownership = PointerOwnership::kBorrowed,
+                     .mutability = Mutability::kReadOnly}})));
+}
+
 // The unit's constant for `position`, as the value of the library's location
 // type that names it, each step added to `into`, a builder or a rebuild.
 template <typename Into>
 [[nodiscard]] auto BuildSourceLocation(
     const CompilationUnit& unit, const diag::SourcePosition& position,
     Into& into) -> ExprId {
-  const ExprId record = into.Add(
-      Expr{
-          .data =
-              ReferenceExpr{
-                  .target =
-                      ConstantRef{
-                          .constant = InternSourceLocation(unit, position)}},
-          .type = unit.builtins.source_location_record});
   return into.Add(
       Expr{
           .data =
               CastExpr{
-                  .operand = into.Add(MakeAddressOfExpr(
-                      record, unit.builtins.source_location_record_ptr))},
+                  .operand = BuildConstantAddress(
+                      unit, InternSourceLocation(unit, position), into)},
           .type = unit.builtins.source_location});
 }
 

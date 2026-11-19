@@ -52,9 +52,9 @@ the awaiter consumes, not of the scheduler.
   activation held before it was suspended.
 - **What the activation is waiting for**: for a `Blocked` (or `Suspended`-from-blocked) one, the
   wait it is parked on, which can arrange that wait and report whether what it waits for has already
-  happened. The body's frame holds every wait, built around its stop, or outside the loop that
-  repeats it; the activation names the one it is parked on for as long as it waits, so it is never a
-  taxonomy the scheduler branches on.
+  happened. What runs the body holds every wait -- its frame, or the reaction holding its one --
+  built around its stop, or outside the loop that repeats it; the activation names the one it is
+  parked on for as long as it waits, so it is never a taxonomy the scheduler branches on.
 - The **active leaf**: the relation from a process to the one activation currently carrying its
   thread. A process is a single thread (a task or function call runs in the caller's thread, LRM
   9.5), so when it is not executing exactly one leaf activation -- the innermost frame -- is
@@ -242,8 +242,8 @@ the awaiter consumes, not of the scheduler.
 
 - **A second authoritative copy of the wait's state** -- a blocked-operation object that duplicates
   the deadline / observable / target the suspending construct already holds, kept in sync with it.
-  The wait's state has one home, which is the wait the frame holds; nothing mirrors it. Two copies
-  is the membership double-encoding forbidden by invariant 4, one level up.
+  The wait's state has one home, which is the wait the body's frame or its reaction holds; nothing
+  mirrors it. Two copies is the membership double-encoding forbidden by invariant 4, one level up.
 
 - **Scheduling placement folded into the disposition** -- a `Runnable(region)` that pins which
   region or queue a runnable activation must be restored to. `Runnable` is the semantic entitlement
@@ -308,15 +308,22 @@ Ownership and cancellation membership ride the same lineage edge here; continuat
 That the first two coincide for a branch is not a collapse of the relations -- what invariant 3
 forbids is one edge that also carries the consumer.
 
-The C++ backend realizes an activation as a coroutine frame. Its activation token is the coroutine
-promise's non-templated base (the scheduler holds a pointer to it); its completion slot is the typed
-result the promise carries, which keeps a value too large for a frame in storage of its own; a task
-enable is `co_await` of the activation, with symmetric transfer realizing the continuation and
-`await_resume` consuming the terminal outcome. Each timing control is a wait the frame holds as a
-local, carrying what its construct needs to answer a stop there again -- a delay its absolute
-deadline, an event control its observables and edges -- and the activation names the one it is
-parked on for as long as it waits. The promise base, the `coroutine_handle`, and symmetric transfer
-are this realization's mechanics; the activation, completion slot, memberships, disposition, and
-what it waits for are the model they realize. The LIR / LLVM backend realizes the same model with
-coroutine intrinsics and explicit control edges instead, reaching the same object rather than
-re-entering the suspended body.
+A reaction is an activation that is no frame: a process whose body runs to its end each time it is
+triggered, held by the run with the object its parts run on and the wait its setup builds. It runs a
+static process, which has no lineage parent; it ends once its body returns, and its
+scheduler-visible core -- disposition, wait, queue place -- is the same as a frame's; only the
+resume entry differs, calling a part rather than resuming a frame. Its process identity is answered
+by a process object made the first time the language asks for one.
+
+The C++ backend realizes a frame's activation as a coroutine frame. Its activation token is a
+non-templated member of the coroutine promise (the scheduler holds a pointer to it); its completion
+slot is the typed result the promise carries, which keeps a value too large for a frame in storage
+of its own; a task enable is `co_await` of the activation, with symmetric transfer realizing the
+continuation and `await_resume` consuming the terminal outcome. Each timing control is a wait the
+frame holds as a local, carrying what its construct needs to answer a stop there again -- a delay
+its absolute deadline, an event control its observables and edges -- and the activation names the
+one it is parked on for as long as it waits. The promise base, the `coroutine_handle`, and symmetric
+transfer are this realization's mechanics; the activation, completion slot, memberships,
+disposition, and what it waits for are the model they realize. The LIR / LLVM backend realizes the
+same model with coroutine intrinsics and explicit control edges instead, reaching the same object
+rather than re-entering the suspended body.

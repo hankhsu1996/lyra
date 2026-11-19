@@ -1,75 +1,196 @@
 #include "lyra/runtime/reaction.hpp"
 
-#include <coroutine>
-#include <cstdint>
+#include <expected>
+#include <memory>
+#include <variant>
 
+#include "lyra/base/internal_error.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/runtime/cancellation.hpp"
-#include "lyra/runtime/coroutine.hpp"
-#include "lyra/runtime/generated_call_scope.hpp"
+#include "lyra/runtime/runtime.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
-#include "lyra/runtime/wait.hpp"
+#include "lyra/runtime/runtime_process.hpp"
+#include "lyra/support/start_kind.hpp"
 
 namespace lyra::runtime {
 
-namespace {
+Reaction::Reaction(
+    const abi::ReactionDefinition& definition, void* object,
+    const ExecutionContext& context, DrawRng generator)
+    : definition_(&definition),
+      object_(object),
+      context_(context),
+      process_(NotAskedFor{.seeded = generator}) {
+}
 
-// What a setup's answer says, which is all the two entries differ in.
-enum class SetupAnswers : std::uint8_t { kWhetherAPassFollows, kWhetherToStop };
+Reaction::~Reaction() = default;
 
-// The setup and every pass run in a scope of their own, as each stretch of a
-// generated body does, and none of them stops: this is the one place the
-// process stops. A departure leaving either leaves this execution as it would
-// have left the body.
-auto RunReaction(
-    void* receiver, ReactionPart setup, ReactionPart pass, SetupAnswers answers)
-    -> Coroutine<void> {
-  ActivationValueStore values;
-  Wait wait;
-  const auto in_scope = [&](ReactionPart part) {
-    const GeneratedCallScope scope(values, nullptr);
-    return part(receiver, &wait);
-  };
-  const bool answer = in_scope(setup);
-  bool must_stop = false;
-  switch (answers) {
-    case SetupAnswers::kWhetherAPassFollows:
-      if (!answer) {
-        co_return;
-      }
-      break;
-    case SetupAnswers::kWhetherToStop:
-      must_stop = answer;
-      break;
+auto Reaction::Run(RuntimeEffects& effects) -> bool {
+  if (state_ != nullptr) {
+    throw InternalError(
+        "Reaction::Run: a reaction runs again while it runs -- please report "
+        "this as a bug");
   }
-  for (;;) {
-    if (must_stop) {
-      co_await std::suspend_always{};
-      // Resuming is a point where this execution regains control, so a target
-      // it is inside may have been disabled while it was away.
-      TakeDepartureIfDue(current_runtime());
+  RunningState state(Generator(), nullptr, nullptr);
+  state_ = &state;
+  bool left = false;
+  {
+    const RunnerGuard running(effects, *this);
+    const std::expected<bool, Unwound> returned = CallParts();
+    if (!returned.has_value()) {
+      Land(effects, returned.error());
+      left = true;
+    } else if (*returned) {
+      End(effects, false);
     }
-    must_stop = in_scope(pass);
+  }
+  state_ = nullptr;
+  return left;
+}
+
+auto Reaction::Context() const noexcept -> const ExecutionContext& {
+  return context_;
+}
+
+auto Reaction::ProcessIfMade() -> RuntimeProcess* {
+  const Made* made = std::get_if<Made>(&process_);
+  return made != nullptr ? made->process : nullptr;
+}
+
+auto Reaction::State() -> RunningState& {
+  if (state_ == nullptr) {
+    throw InternalError(
+        "Reaction::State: a reaction holds what is in force only while a part "
+        "of it runs -- please report this as a bug");
+  }
+  return *state_;
+}
+
+auto Reaction::Leaf() -> Activation* {
+  return this;
+}
+
+auto Reaction::Generator() -> DrawRng& {
+  return std::visit(
+      Overloaded{
+          [](NotAskedFor& asked) -> DrawRng& { return asked.seeded; },
+          [](const Made& made) -> DrawRng& {
+            return made.process->Generator();
+          },
+          [](const Ended&) -> DrawRng& {
+            throw InternalError(
+                "Reaction::Generator: a reaction that ended draws nothing -- "
+                "please report this as a bug");
+          }},
+      process_);
+}
+
+auto Reaction::MakeProcess() -> std::shared_ptr<RuntimeProcess> {
+  auto* asked = std::get_if<NotAskedFor>(&process_);
+  if (asked == nullptr) {
+    throw InternalError(
+        "Reaction::MakeProcess: a reaction's process is made once, and before "
+        "it ends -- please report this as a bug");
+  }
+  std::shared_ptr<RuntimeProcess> made =
+      RuntimeProcess::Create(*this, asked->seeded);
+  process_ = Made{.process = made.get()};
+  // From here on what it draws comes from the generator its process holds,
+  // including the rest of a run that is going on now.
+  if (state_ != nullptr) {
+    state_->generator = &made->Generator();
+  }
+  return made;
+}
+
+auto Reaction::Process() -> RuntimeProcess* {
+  if (std::holds_alternative<NotAskedFor>(process_)) {
+    AsRuntime(current_runtime()).AdoptProcess(MakeProcess());
+  }
+  RuntimeProcess* const made = ProcessIfMade();
+  if (made == nullptr) {
+    throw InternalError(
+        "Reaction::Process: a reaction that ended is asked for its process -- "
+        "please report this as a bug");
+  }
+  return made;
+}
+
+auto Reaction::CallParts() -> std::expected<bool, Unwound> {
+  bool must_stop = false;
+  if (!set_up_) {
+    set_up_ = true;
+    const std::expected<bool, Unwound> answer =
+        CatchUnwind(definition_->setup, object_, &wait_);
+    if (!answer.has_value()) {
+      return std::unexpected(answer.error());
+    }
+    switch (definition_->Form()) {
+      case support::ReactionForm::kRunsOnce:
+        return true;
+      case support::ReactionForm::kRunThenStop:
+        // A setup answering that no pass follows is a body that returned
+        // before its loop.
+        if (!*answer) {
+          return true;
+        }
+        break;
+      case support::ReactionForm::kStopThenRun:
+        must_stop = *answer;
+        break;
+    }
+  }
+  while (!must_stop) {
+    const std::expected<bool, Unwound> answer =
+        CatchUnwind(definition_->pass, object_, &wait_);
+    if (!answer.has_value()) {
+      return std::unexpected(answer.error());
+    }
+    must_stop = *answer;
+  }
+  return false;
+}
+
+void Reaction::End(RuntimeEffects& effects, bool killed) {
+  RuntimeProcess* const made = ProcessIfMade();
+  if (made == nullptr) {
+    ReleaseExecution();
+    return;
+  }
+  made->SettleTerminated(
+      killed ? ProcessTerminationCause::kKilled
+             : ProcessTerminationCause::kCompleted,
+      effects);
+  RuntimeProcess::ReleaseTerminatedLineage(*made);
+}
+
+void Reaction::Land(RuntimeEffects& effects, const Unwound& unwound) {
+  End(effects, true);
+  if (!unwound.control_effect) {
+    ReportRaisedError(effects, unwound.raised);
   }
 }
 
-}  // namespace
-
-auto EnterReactionRunningFirst(
-    void* receiver, ReactionPart setup, ReactionPart pass) -> Coroutine<void> {
-  return RunReaction(receiver, setup, pass, SetupAnswers::kWhetherAPassFollows);
+void Reaction::ReleaseExecution() {
+  Withdraw();
+  wait_ = Wait{};
+  process_ = Ended{};
 }
 
-auto EnterReactionStoppingFirst(
-    void* receiver, ReactionPart setup, ReactionPart pass) -> Coroutine<void> {
-  return RunReaction(receiver, setup, pass, SetupAnswers::kWhetherToStop);
+auto Reaction::HasLiveForeignCall() const -> bool {
+  return false;
 }
 
-auto EnterRunToCompletion(void* receiver, CompletingBody body)
-    -> Coroutine<void> {
-  ActivationValueStore values;
-  const GeneratedCallScope scope(values, nullptr);
-  body(receiver);
-  co_return;
+auto Reaction::HeldState() const -> const RunningState* {
+  return state_;
+}
+
+auto Reaction::Activity() const -> ProcessExecutionState {
+  if (!set_up_) {
+    return ProcessExecutionState::kCreated;
+  }
+  return state_ != nullptr ? ProcessExecutionState::kRunning
+                           : ProcessExecutionState::kWaiting;
 }
 
 }  // namespace lyra::runtime

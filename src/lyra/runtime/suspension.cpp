@@ -21,7 +21,7 @@ void Suspension::await_suspend(std::coroutine_handle<>) const noexcept {
 
 void Suspension::await_resume() const {
   if (parked_) {
-    TakeDepartureIfDue(current_runtime().CurrentProcess());
+    TakeDepartureIfDue(current_runtime());
   }
 }
 

@@ -15,6 +15,7 @@
 #include "lyra/runtime/generated_call_scope.hpp"
 #include "lyra/runtime/object_ref.hpp"
 #include "lyra/runtime/region.hpp"
+#include "lyra/runtime/runtime.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/wait.hpp"
 
@@ -27,11 +28,15 @@ namespace {
 // extending nothing that declares none of them has (LRM 9.7, 18.6.2).
 constexpr abi::ClassObjectInfo kProcessRandomization{};
 
-const abi::ObjectDefinition kProcessDefinition{
+// The definition of a process, ended as the class `T` it was made as: one
+// holding the thread that executes it, or one made for an execution held
+// elsewhere.
+template <typename T>
+constexpr abi::ObjectDefinition kProcessObjectDefinition{
     .base = nullptr,
     .scope = nullptr,
     .class_object = &kProcessRandomization,
-    .end = &EndObjectOf<RuntimeProcess>,
+    .end = &EndObjectOf<T>,
     .interfaces = {},
     .methods = nullptr,
     .declaring_instance = nullptr,
@@ -39,11 +44,21 @@ const abi::ObjectDefinition kProcessDefinition{
 
 }  // namespace
 
-auto RuntimeProcess::Create(
-    ExecutionContext context, Coroutine<void> coroutine, DrawRng generator)
+ProcessExecution::ProcessExecution() = default;
+ProcessExecution::~ProcessExecution() = default;
+
+RuntimeProcess::RuntimeProcess(
+    const abi::ObjectDefinition& definition, ProcessExecution& execution,
+    DrawRng generator)
+    : ClassObject(definition, generator), execution_(&execution) {
+}
+
+RuntimeProcess::~RuntimeProcess() = default;
+
+auto RuntimeProcess::Create(ProcessExecution& execution, DrawRng generator)
     -> std::shared_ptr<RuntimeProcess> {
-  std::unique_ptr<RuntimeProcess> created(
-      new RuntimeProcess(context, std::move(coroutine), generator));
+  std::unique_ptr<RuntimeProcess> created(new RuntimeProcess(
+      kProcessObjectDefinition<RuntimeProcess>, execution, generator));
   // The process ends through the reference from here, which every holder of
   // it shares.
   return std::static_pointer_cast<RuntimeProcess>(
@@ -54,28 +69,61 @@ auto RuntimeProcess::Shared() -> std::shared_ptr<RuntimeProcess> {
   return std::static_pointer_cast<RuntimeProcess>(shared_from_this());
 }
 
-RuntimeProcess::RuntimeProcess(
-    ExecutionContext context, Coroutine<void> coroutine, DrawRng generator)
-    : ClassObject(kProcessDefinition, generator),
-      context_(context),
-      coroutine_(std::move(coroutine)),
-      running_(Generator(), nullptr, this),
-      // Before the body runs, the top frame is the active leaf (what the engine
-      // schedules to start the process); a wait moves the leaf inward.
-      current_leaf_(coroutine_.Token()) {
-  // Wire the promise's back-pointer so a frame can recover the RuntimeProcess
-  // identity from itself, which is what a wait reads to find the process the
-  // frame it parks belongs to.
-  coroutine_.BindProcess(*this);
+auto RuntimeProcess::EndedTheRun() const -> bool {
+  const RunningState* const held = execution_->HeldState();
+  return held != nullptr && held->ended_the_run;
 }
 
-RuntimeProcess::~RuntimeProcess() {
+auto RuntimeProcess::DepartureIsDue() const -> bool {
+  const RunningState* const held = execution_->HeldState();
+  return TerminationIsDue() ||
+         (held != nullptr && (held->ended_the_run ||
+                              held->targets.OutermostInvalidated() != nullptr));
+}
+
+auto CoroutineProcess::Create(
+    ExecutionContext context, Coroutine<void> coroutine, DrawRng generator)
+    -> std::shared_ptr<CoroutineProcess> {
+  std::unique_ptr<CoroutineProcess> created(
+      new CoroutineProcess(context, std::move(coroutine), generator));
+  return std::static_pointer_cast<CoroutineProcess>(
+      created.release()->TakeCreatorsShare());
+}
+
+// The thread is constructed after the process part, which only records where
+// it will be.
+CoroutineProcess::CoroutineProcess(
+    ExecutionContext context, Coroutine<void> coroutine, DrawRng generator)
+    : RuntimeProcess(
+          kProcessObjectDefinition<CoroutineProcess>, thread_, generator),
+      thread_(*this, context, std::move(coroutine)) {
+}
+
+CoroutineProcess::~CoroutineProcess() = default;
+
+CoroutineThread::CoroutineThread(
+    RuntimeProcess& process, ExecutionContext context,
+    Coroutine<void> coroutine)
+    : process_(&process),
+      context_(context),
+      coroutine_(std::move(coroutine)),
+      running_(process.Generator(), nullptr, &process),
+      // Before the body runs, the top frame is the active leaf (what the engine
+      // schedules to start the thread); a wait moves the leaf inward.
+      current_leaf_(coroutine_.Token()) {
+  // Wire the promise's back-pointer so a frame can recover its thread from
+  // itself, which is what a wait reads to find the thread the frame it parks
+  // belongs to.
+  coroutine_.BindThread(*this);
+}
+
+CoroutineThread::~CoroutineThread() {
   while (!foreign_calls_.empty()) {
     foreign_calls_.pop_back();
   }
 }
 
-auto RuntimeProcess::TopActivation() const -> Activation* {
+auto CoroutineThread::TopActivation() const -> FrameActivation* {
   return coroutine_.Token();
 }
 
@@ -83,15 +131,10 @@ auto RuntimeProcess::Parent() const -> RuntimeProcess* {
   return owned_by_ != nullptr ? owned_by_->Parent() : nullptr;
 }
 
-auto RuntimeProcess::ParkAt(RuntimeEffects& services, Awaiter& awaiter)
-    -> bool {
-  return Arrange(services, current_leaf_, awaiter, awaiter.Begin());
-}
-
 auto RuntimeProcess::Arrange(
     RuntimeEffects& services, Activation* leaf, Awaiter& awaiter,
     const Resumption& resumption) -> bool {
-  const RegionSet& regions = leaf->Process().Context().regions;
+  const RegionSet& regions = leaf->Context().regions;
   return std::visit(
       Overloaded{
           [](const WithoutStopping&) { return false; },
@@ -121,55 +164,69 @@ auto RuntimeProcess::Arrange(
       resumption);
 }
 
-auto RuntimeProcess::BlockedLeaf() const -> Activation* {
-  if (execution_state_ != ProcessExecutionState::kWaiting ||
-      current_leaf_->awaiter == nullptr) {
+auto RuntimeProcess::BlockedLeaf() -> Activation* {
+  Activation* const leaf = execution_->Leaf();
+  if (ExecutionState() != ProcessExecutionState::kWaiting ||
+      leaf->awaiter == nullptr) {
     return nullptr;
   }
-  return current_leaf_;
+  return leaf;
 }
 
-auto RuntimeProcess::PushActivation(Coroutine<void> nested) -> Activation* {
+auto CoroutineThread::PushActivation(Coroutine<void> nested)
+    -> FrameActivation* {
   nested_activations_.push_back(std::move(nested));
-  Activation* const leaf = nested_activations_.back().Token();
+  FrameActivation* const leaf = nested_activations_.back().Token();
   // A called task runs in its caller's thread (LRM 9.5), so it reaches the same
   // identity, lineage and disable membership as the body that called it.
-  leaf->process = this;
+  leaf->thread = this;
   EnterLeaf(leaf);
   return leaf;
 }
 
-void RuntimeProcess::PopActivation() {
+void CoroutineThread::PopActivation() {
   LeaveLeaf();
   nested_activations_.pop_back();
 }
 
-void RuntimeProcess::EnterLeaf(Activation* leaf) {
+void CoroutineThread::EnterLeaf(FrameActivation* leaf) {
   outer_leaves_.push_back(current_leaf_);
   current_leaf_ = leaf;
 }
 
-void RuntimeProcess::LeaveLeaf() {
+void CoroutineThread::LeaveLeaf() {
   current_leaf_ = outer_leaves_.back();
   outer_leaves_.pop_back();
 }
 
-void EnterActivation(Activation& leaf) {
-  leaf.Process().EnterLeaf(&leaf);
+auto FrameActivation::Run(RuntimeEffects& effects) -> bool {
+  return CoroutineThread::Run(effects, this);
 }
 
-void LeaveActivation(Activation& leaf) {
-  leaf.Process().LeaveLeaf();
+auto FrameActivation::Context() const -> const ExecutionContext& {
+  return Thread().Context();
+}
+
+auto FrameActivation::ProcessIfMade() -> RuntimeProcess* {
+  return Thread().Process();
+}
+
+void EnterActivation(FrameActivation& leaf) {
+  leaf.Thread().EnterLeaf(&leaf);
+}
+
+void LeaveActivation(FrameActivation& leaf) {
+  leaf.Thread().LeaveLeaf();
 }
 
 void EnterNestedActivation(
-    Activation& nested, std::coroutine_handle<> continuation) {
+    FrameActivation& nested, std::coroutine_handle<> continuation) {
   nested.continuation = continuation;
-  nested.process = current_runtime().TryCurrentProcess();
+  nested.thread = &current_runtime().RunningThread();
   EnterActivation(nested);
 }
 
-auto RuntimeProcess::TakeInnermostRaisedError() -> std::exception_ptr {
+auto CoroutineThread::TakeInnermostRaisedError() -> std::exception_ptr {
   return nested_activations_.back().Handle().promise().TakeRaisedError();
 }
 
@@ -178,24 +235,22 @@ void RuntimeProcess::Suspend() {
   // finish leaving; stopping it there would leave it never terminated. One that
   // ended the run runs nothing of the design again, so there is nothing to
   // stop.
-  if (execution_state_ == ProcessExecutionState::kSuspended ||
-      execution_state_ == ProcessExecutionState::kTerminated ||
-      termination_requested_ || running_.ended_the_run) {
+  if (suspended_ || terminated_ || termination_requested_ || EndedTheRun()) {
     return;
   }
   // Take the leaf off whatever could resume it -- the awaiter it is parked on
   // or the queue it sits in. The awaiter itself stays, because starting the
   // process again waits for that same thing.
-  current_leaf_->Withdraw();
-  execution_state_ = ProcessExecutionState::kSuspended;
+  execution_->Leaf()->Withdraw();
+  suspended_ = true;
 }
 
 void RuntimeProcess::Resume(RuntimeEffects& effects) {
-  if (execution_state_ != ProcessExecutionState::kSuspended) {
+  if (!suspended_) {
     return;
   }
-  execution_state_ = ProcessExecutionState::kWaiting;
-  Activation* const leaf = current_leaf_;
+  suspended_ = false;
+  Activation* const leaf = execution_->Leaf();
   // An activation names an awaiter exactly while it is blocked, so naming none
   // is how a process stopped while already runnable -- woken, but not yet run
   // -- says that it has nothing left to wait for. One owed a departure has
@@ -220,7 +275,7 @@ void RuntimeProcess::Dismantle(RuntimeEffects& services) {
 }
 
 void RuntimeProcess::SettleOrRequestKilled(RuntimeEffects& services) {
-  if (execution_state_ == ProcessExecutionState::kTerminated) {
+  if (terminated_) {
     return;
   }
   // An execution with a foreign call still to return cannot be torn down where
@@ -229,9 +284,9 @@ void RuntimeProcess::SettleOrRequestKilled(RuntimeEffects& services) {
   // control once more instead -- it leaves at the gate its own body passes, its
   // foreign frames return of their own accord (LRM 35.9), and the terminal
   // state is published when the body finally settles.
-  if (HasLiveForeignCall()) {
+  if (execution_->HasLiveForeignCall()) {
     RequestTermination(ProcessTerminationCause::kKilled);
-    services.Wake(current_leaf_);
+    services.Wake(execution_->Leaf());
     return;
   }
   SettleTerminated(ProcessTerminationCause::kKilled, services);
@@ -267,8 +322,7 @@ auto RuntimeProcess::IsSelfOrAncestorOf(const RuntimeProcess& other) const
 }
 
 auto RuntimeProcess::IsReleasable() const -> bool {
-  return execution_state_ == ProcessExecutionState::kTerminated &&
-         children_.Empty();
+  return terminated_ && children_.Empty();
 }
 
 void RuntimeProcess::Release() {
@@ -278,7 +332,7 @@ void RuntimeProcess::Release() {
 }
 
 void RuntimeProcess::Kill(RuntimeProcess& process, RuntimeEffects& services) {
-  RuntimeProcess* const caller = services.TryCurrentProcess();
+  RuntimeProcess* const caller = services.RunningProcessIfMade();
   if (caller != nullptr && process.IsSelfOrAncestorOf(*caller)) {
     process.TerminateSubtreeDeferringRunning(*caller, services);
     return;
@@ -297,8 +351,8 @@ void RuntimeProcess::ReleaseTerminatedLineage(RuntimeProcess& process) {
   }
 }
 
-auto RuntimeProcess::DriveForeignVehicle(ForeignExecution& fe) -> bool {
-  const ForeignProcessGuard guard(*this);
+auto CoroutineThread::DriveForeignVehicle(ForeignExecution& fe) -> bool {
+  const ForeignThreadGuard guard(*this);
   // Foreign code reached from here may call back into generated code (LRM
   // 35.7) that keeps values across a park, so each stretch of the call names
   // the call's own store. The scope is one stretch of the call rather than the
@@ -311,8 +365,8 @@ auto RuntimeProcess::DriveForeignVehicle(ForeignExecution& fe) -> bool {
   return fe.IsDone();
 }
 
-auto RuntimeProcess::EnterForeignExecution(std::unique_ptr<ForeignExecution> fe)
-    -> bool {
+auto CoroutineThread::EnterForeignExecution(
+    std::unique_ptr<ForeignExecution> fe) -> bool {
   ForeignExecution& entered = *foreign_calls_.emplace_back(std::move(fe));
   if (DriveForeignVehicle(entered)) {
     foreign_calls_.pop_back();
@@ -322,8 +376,7 @@ auto RuntimeProcess::EnterForeignExecution(std::unique_ptr<ForeignExecution> fe)
 }
 
 void RuntimeProcess::RequestTermination(ProcessTerminationCause cause) {
-  if (execution_state_ == ProcessExecutionState::kTerminated ||
-      termination_requested_) {
+  if (terminated_ || termination_requested_) {
     return;
   }
   termination_requested_ = true;
@@ -332,35 +385,14 @@ void RuntimeProcess::RequestTermination(ProcessTerminationCause cause) {
   // explicitly. The frame is not destroyed here (it is still going to unwind),
   // so nothing would do it implicitly, and doing it now is what keeps a
   // settled-later frame un-nameable in between.
-  current_leaf_->Withdraw();
+  execution_->Leaf()->Withdraw();
 }
 
 void RuntimeProcess::SettleTerminated(
     ProcessTerminationCause cause, RuntimeEffects& services) {
-  execution_state_ = ProcessExecutionState::kTerminated;
+  terminated_ = true;
   termination_cause_ = cause;
-  {
-    // The frame is parked at its final suspend point (normal completion) or at
-    // some blocking point (a kill), and holds the only copies of this
-    // activation's automatic storage, so it is released with the terminal
-    // state rather than pinned for as long as the node lives. Releasing it
-    // destroys the frame, and with it every wait the frame held and its place
-    // in any queue -- so a killed process, parked anywhere, is left unable to
-    // resume. A branch this body spawned may still be running, which is why
-    // the node itself stays (LRM 9.6.3).
-    //
-    // A thread that had handed itself to a called activation holds that frame
-    // too, and it is the innermost one -- so it, not the body below it, is
-    // what a wait target can still name.
-    //
-    // Releasing a frame runs the cleanups it holds open, leaving the disable
-    // targets it is inside among them, and those are this process's to leave
-    // whoever is running when it is killed.
-    const ProcessExecutionGuard releasing(services, *this);
-    nested_activations_.clear();
-    coroutine_ = Coroutine<void>{};
-    current_leaf_ = nullptr;
-  }
+  execution_->ReleaseExecution();
   services.WakeParkedOn(termination_, Change::Whole());
   if (owned_by_ == nullptr) {
     throw InternalError(
@@ -370,55 +402,60 @@ void RuntimeProcess::SettleTerminated(
   owned_by_->Ended(*this, services);
 }
 
-auto RuntimeProcess::Run(RuntimeEffects& effects, Activation* activation)
+void CoroutineThread::ReleaseExecution() {
+  // The frame is parked at its final suspend point (normal completion) or at
+  // some blocking point (a kill), and holds the only copies of this
+  // activation's automatic storage, so it is released with the terminal state
+  // rather than pinned for as long as the node lives. Releasing it destroys the
+  // frame, and with it every wait the frame held and its place in any queue --
+  // so a killed process, parked anywhere, is left unable to resume. A branch
+  // this body spawned may still be running, which is why the node itself stays
+  // (LRM 9.6.3).
+  //
+  // A thread that had handed itself to a called activation holds that frame
+  // too, and it is the innermost one -- so it, not the body below it, is what a
+  // wait target can still name.
+  //
+  // Releasing a frame runs the cleanups it holds open, leaving the disable
+  // targets it is inside among them, and those are this process's to leave
+  // whoever is running when it is killed.
+  const RunnerGuard releasing(current_runtime(), *this);
+  nested_activations_.clear();
+  coroutine_ = Coroutine<void>{};
+  current_leaf_ = nullptr;
+}
+
+auto CoroutineThread::Run(RuntimeEffects& effects, FrameActivation* activation)
     -> bool {
   // Taken before the resume, since `activation` may be an enabled task's frame
   // that is destroyed as control returns up the enable chain.
-  const std::shared_ptr<RuntimeProcess> process =
-      activation->Process().Shared();
-  if (!process->ResumeWith(effects, activation)) {
+  CoroutineThread& thread = activation->Thread();
+  const std::shared_ptr<RuntimeProcess> process = thread.process_->Shared();
+  if (!thread.ResumeWith(effects, activation)) {
     return false;
   }
-  ReleaseTerminatedLineage(*process);
-  return true;
+  const bool left =
+      process->TerminationCause() == ProcessTerminationCause::kKilled;
+  RuntimeProcess::ReleaseTerminatedLineage(*process);
+  return left;
 }
 
-void RuntimeProcess::RunUndispatched(
-    RuntimeEffects& effects, Activation* activation) {
-  const std::shared_ptr<RuntimeProcess> process =
-      activation->Process().Shared();
-  if (!Run(effects, activation) ||
-      process->TerminationCause() != ProcessTerminationCause::kKilled) {
-    return;
-  }
-  // Nothing outside it names an execution run this way, so what ended it is an
-  // error it met, already reported where it was received, which ended the run.
-  // It was met where what is running stands -- a process, or code on no thread
-  // -- so that ended the run and leaves the same way; an occurrence the
-  // scheduler itself carries out, with nothing running, stops nothing more.
-  if (effects.TryRunning() == nullptr) return;
-  RecordRunningEndedTheRun(effects);
-  RaiseUnclaimableEffect();
-}
-
-auto RuntimeProcess::ResumeWith(RuntimeEffects& effects, Activation* activation)
-    -> bool {
-  if (execution_state_ == ProcessExecutionState::kTerminated) {
+auto CoroutineThread::ResumeWith(
+    RuntimeEffects& effects, FrameActivation* activation) -> bool {
+  if (process_->ExecutionState() == ProcessExecutionState::kTerminated) {
     throw InternalError(
-        "RuntimeProcess::ResumeWith: cannot resume terminated process");
+        "CoroutineThread::ResumeWith: cannot resume terminated process");
   }
-  if (execution_state_ == ProcessExecutionState::kRunning) {
-    throw InternalError("RuntimeProcess::ResumeWith: reentrant resume");
+  if (activity_ == ProcessExecutionState::kRunning) {
+    throw InternalError("CoroutineThread::ResumeWith: reentrant resume");
   }
-  execution_state_ = ProcessExecutionState::kRunning;
+  activity_ = ProcessExecutionState::kRunning;
   {
-    // Install the process and its owning scope as the ambient execution
-    // identity for this resume. `ProcessExecutionGuard` publishes both
-    // atomically -- LRM 9.5 process identity + LRM 21.2.1.5 `%m` scope
-    // attribution -- and stacks via save-and-restore so a nested foreign
-    // call that re-enters generated code cannot lose either identity on
-    // the way back.
-    const ProcessExecutionGuard resume_guard(effects, *this);
+    // This thread is what runs for the extent of the resume -- its process
+    // (LRM 9.5) and the scope a `%m` names (LRM 21.2.1.5) -- in place of
+    // whatever ran before, which a nested foreign call that re-enters
+    // generated code gets back on its way out.
+    const RunnerGuard resume_guard(effects, *this);
     // A leaf that blocked under a foreign call is resumed by driving the
     // innermost call its thread has entered, which re-enters the native stack
     // and continues the coroutine from within; a leaf blocked on the runtime's
@@ -440,8 +477,8 @@ auto RuntimeProcess::ResumeWith(RuntimeEffects& effects, Activation* activation)
       activation->coroutine.resume();
     }
   }
+  activity_ = ProcessExecutionState::kWaiting;
   if (!coroutine_.Done()) {
-    execution_state_ = ProcessExecutionState::kWaiting;
     return false;
   }
   // The body has settled and its completion slot says how. This frame is the
@@ -459,7 +496,7 @@ auto RuntimeProcess::ResumeWith(RuntimeEffects& effects, Activation* activation)
   auto& promise = coroutine_.Handle().promise();
   const bool cancelled = promise.WasCancelled();
   std::exception_ptr raised = promise.TakeRaisedError();
-  SettleTerminated(
+  process_->SettleTerminated(
       (cancelled || raised) ? ProcessTerminationCause::kKilled
                             : ProcessTerminationCause::kCompleted,
       effects);
@@ -467,7 +504,7 @@ auto RuntimeProcess::ResumeWith(RuntimeEffects& effects, Activation* activation)
     // The report is about this process, so it is made under this process's
     // identity even though its body has stopped: what a report says about where
     // in the design it was made is the scope the raising body belonged to.
-    const ProcessExecutionGuard reporting(effects, *this);
+    const RunnerGuard reporting(effects, *this);
     ReportRaisedError(effects, raised);
   }
   return true;

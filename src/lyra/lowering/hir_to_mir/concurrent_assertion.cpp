@@ -982,9 +982,8 @@ auto LowerActionStartInto(
   const mir::ExprId started = block.Add(body.BuildCallOnce());
   block.AppendStmt(
       mir::ExprStmt{
-          .expr = BuildExecutionStart(
-              action.Owner(), frame, started,
-              support::BuiltinFn::kRunAssertionAction, written_at)});
+          .expr = BuildAssertionActionStart(
+              action.Owner(), frame, started, written_at)});
   return {};
 }
 

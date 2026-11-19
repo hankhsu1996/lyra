@@ -111,13 +111,13 @@ void SpawnAll(RuntimeEffects& runtime, std::span<Coroutine<void>> branches) {
 }
 
 auto WaitFork(RuntimeEffects& runtime) -> Wait {
-  return MakeWait<WaitForkAwaiter>(runtime.CurrentProcess());
+  return MakeWait<WaitForkAwaiter>(*runtime.RunningThread().Process());
 }
 
 void DisableFork(RuntimeEffects& runtime) {
   // LRM 9.6.3: the descendants of the calling process. Code that runs on no
   // thread has none.
-  if (RuntimeProcess* process = runtime.TryCurrentProcess();
+  if (RuntimeProcess* process = runtime.RunningProcessIfMade();
       process != nullptr) {
     process->DisableDescendants(runtime);
   }

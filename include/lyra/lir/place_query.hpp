@@ -70,8 +70,8 @@ auto MakesValue(const Rvalue& value) -> bool;
 auto CallMakesValue(const CallTarget& target) -> bool;
 
 // Whether a call builds an execution the engine drives -- entering a body's
-// frame, or a library entry answering with one -- which it does in storage its
-// caller gives, and which whoever drives it takes from there.
+// frame -- which it does in storage its caller gives, and which whoever drives
+// it takes from there.
 auto CallBuildsExecution(const CallTarget& target) -> bool;
 
 }  // namespace lyra::lir

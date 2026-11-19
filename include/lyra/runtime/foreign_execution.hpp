@@ -71,28 +71,28 @@ void YieldForeignExecution();
 // task's call is and an imported function's is not, so that it can wait there.
 [[nodiscard]] auto ForeignExecutionIsRunning() -> bool;
 
-// The process whose foreign call is running on this thread right now -- the one
-// that entered the current foreign execution. The exported-task driver, reached
-// from foreign C with no engine handle, uses it to run the exported body as
-// that process's thread (LRM 9.5). It is an error to call this outside a
-// foreign call.
-auto CurrentForeignProcess() -> RuntimeProcess&;
+// The thread whose foreign call is running on this host thread right now --
+// the one that entered the current foreign execution. The exported-task
+// driver, reached from foreign C with no engine handle, uses it to run the
+// exported body in that thread (LRM 9.5). It is an error to call this outside
+// a foreign call.
+auto CurrentForeignThread() -> CoroutineThread&;
 
-// Installs `process` as the one whose foreign call is running, for the dynamic
+// Installs `thread` as the one whose foreign call is running, for the dynamic
 // extent of a scope. The exported-task driver, given no engine handle by
-// foreign C, reads it to run its body as that process's thread. The one it
-// replaces is restored, so a nested foreign call unwinds to its caller's.
-class ForeignProcessGuard {
+// foreign C, reads it to run its body in that thread. The one it replaces is
+// restored, so a nested foreign call unwinds to its caller's.
+class ForeignThreadGuard {
  public:
-  explicit ForeignProcessGuard(RuntimeProcess& process);
-  ForeignProcessGuard(const ForeignProcessGuard&) = delete;
-  auto operator=(const ForeignProcessGuard&) -> ForeignProcessGuard& = delete;
-  ForeignProcessGuard(ForeignProcessGuard&&) = delete;
-  auto operator=(ForeignProcessGuard&&) -> ForeignProcessGuard& = delete;
-  ~ForeignProcessGuard();
+  explicit ForeignThreadGuard(CoroutineThread& thread);
+  ForeignThreadGuard(const ForeignThreadGuard&) = delete;
+  auto operator=(const ForeignThreadGuard&) -> ForeignThreadGuard& = delete;
+  ForeignThreadGuard(ForeignThreadGuard&&) = delete;
+  auto operator=(ForeignThreadGuard&&) -> ForeignThreadGuard& = delete;
+  ~ForeignThreadGuard();
 
  private:
-  RuntimeProcess* previous_process_;
+  CoroutineThread* previous_thread_;
 };
 
 // Runs the execution `frame` names to its end on the stack the current foreign
@@ -102,7 +102,7 @@ class ForeignProcessGuard {
 // scheduler drives it again the thread goes on where it stopped -- its
 // innermost frame, which may be a task the body called. A body that consumes
 // no simulation time is done on the first resume.
-void DriveOnForeignStack(Activation& frame);
+void DriveOnForeignStack(FrameActivation& frame);
 
 // A DPI import task's foreign-call step (LRM 35.5.2): runs `foreign_call` on a
 // fiber so an exported task the call reaches can suspend across the boundary,

@@ -2,10 +2,12 @@
 
 #include <cstdint>
 #include <exception>
+#include <expected>
 #include <list>
 #include <utility>
 #include <vector>
 
+#include "lyra/abi/records.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/runtime/intrusive_list.hpp"
 
@@ -123,9 +125,9 @@ struct CapturedTarget {
 // The disable targets what is running is inside, outermost first (LRM 9.6.2):
 // those it was started inside, then those its own frames entered. A process is
 // found through each by a membership the target holds, so that a `disable`
-// from elsewhere wakes or ends it; code that runs on no thread holds none,
-// since nothing else runs while it does, so only it can disable a target it is
-// inside.
+// from elsewhere wakes or ends it; a reaction's run and code that runs on no
+// thread hold none, since neither stops while inside one, so only what they
+// run can disable a target they are inside.
 class EnclosingTargets {
  public:
   // `owner` is the process inside them, or null for code on no thread.
@@ -288,6 +290,14 @@ struct Unwound {
 // place it settles without having returned.
 [[nodiscard]] auto ClassifyUnwind() -> Unwound;
 
+// Calls `part(receiver, wait)`, a part of a body that runs to its end each
+// time it is triggered, as a body is run: what the part answers, or, where it
+// was left by unwinding, what left it, received there as a frame's promise
+// receives what leaves the body it drives.
+[[nodiscard]] auto CatchUnwind(
+    abi::ReactionPart part, void* receiver, void* wait)
+    -> std::expected<bool, Unwound>;
+
 // Makes a raised error the ending it is (LRM 20.10): reports it, ends the run,
 // and records that what is running ended it. A design's error is the fatal
 // report and the run ends as `$fatal` ends it; a failure of the tool ends the
@@ -338,19 +348,13 @@ void EnterCancellationTarget(
 void LeaveCancellationTarget(
     RuntimeEffects& effects, CancellationTarget* target);
 
-// LRM 9.6.2, 9.7, 20.2: raises the departure owed here, if one is. Reached
-// where an execution can next run a user statement -- a leaf wait resuming, a
-// foreign call returning, and the `disable` statement itself -- so no
-// execution runs a statement it has been told not to. The outermost
-// invalidated target wins, because leaving it also leaves everything nested in
-// it; a termination, and the run's end, name no target, because nothing may
-// continue past either.
-void TakeDepartureIfDue(RuntimeProcess& process);
-
-// The same question where the body itself states it, because nothing else runs
-// at that point: a foreign call returns without having suspended anything when
-// the foreign side consumes no simulation time, so this execution regains
-// control with no resumption to ask on its behalf (LRM 35.9).
+// LRM 9.6.2, 9.7, 20.2: raises the departure owed to what is running, if one
+// is. Reached where an execution can next run a user statement -- a leaf wait
+// resuming, a foreign call returning (LRM 35.9), and the `disable` statement
+// itself -- so no execution runs a statement it has been told not to. The
+// outermost invalidated target wins, because leaving it also leaves
+// everything nested in it; a termination, and the run's end, name no target,
+// because nothing may continue past either.
 void TakeDepartureIfDue(RuntimeEffects& effects);
 
 // LRM 9.6.2, 9.7: whether a departure is owed to what is running -- it is

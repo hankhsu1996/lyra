@@ -170,6 +170,8 @@ enum class LibraryDecl : std::uint8_t {
   kLexicalScopeRecord,
   kScopeDeclarations,
   kScopeCallable,
+  kProcessDefinition,
+  kReactionDefinition,
   kClassObjectInfo,
   kInterfaceRow,
   kInterfaceReach,
@@ -985,6 +987,16 @@ constexpr auto FindDeclaration(LibraryDecl decl) -> const LibraryDeclData* {
       static constexpr LibraryDeclData kScopeCallable =
           kNamedByAddress("scope callable", "lyra::abi::ScopeCallable");
       return &kScopeCallable;
+    }
+    case LibraryDecl::kProcessDefinition: {
+      static constexpr LibraryDeclData kProcessDefinition =
+          kNamedByAddress("process definition", "lyra::abi::ProcessDefinition");
+      return &kProcessDefinition;
+    }
+    case LibraryDecl::kReactionDefinition: {
+      static constexpr LibraryDeclData kReactionDefinition = kNamedByAddress(
+          "reaction definition", "lyra::abi::ReactionDefinition");
+      return &kReactionDefinition;
     }
     case LibraryDecl::kClassObjectInfo: {
       static constexpr LibraryDeclData kClassObjectInfo =

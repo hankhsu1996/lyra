@@ -102,18 +102,19 @@ class StandingAwaiter final : public Awaiter {
 // ends the run.
 class ContinuousAwaiter final : public Awaiter {
  public:
-  // `process` is the one that waits on it, which builds it before its first
-  // evaluation.
-  ContinuousAwaiter(RuntimeProcess& process, std::span<const Trigger> triggers)
-      : Awaiter(triggers.size()), process_(&process) {
+  // `waiting` is the execution that waits on it, which builds it before its
+  // first evaluation.
+  ContinuousAwaiter(
+      const Activation* waiting, std::span<const Trigger> triggers)
+      : Awaiter(triggers.size()), waiting_(waiting) {
     for (const Trigger& trigger : triggers) {
       EnrolOnLeaf(trigger);
     }
   }
 
   ContinuousAwaiter(
-      RuntimeProcess& process, std::span<const Trigger* const> triggers)
-      : Awaiter(triggers.size()), process_(&process) {
+      const Activation* waiting, std::span<const Trigger* const> triggers)
+      : Awaiter(triggers.size()), waiting_(waiting) {
     for (const Trigger* trigger : triggers) {
       EnrolOnLeaf(*trigger);
     }
@@ -136,12 +137,12 @@ class ContinuousAwaiter final : public Awaiter {
 
  private:
   void ReachedWhileUnparked() override {
-    if (current_runtime().TryCurrentProcess() == process_) {
+    if (current_runtime().RunningActivation() == waiting_) {
       changed_while_running_ = true;
     }
   }
 
-  RuntimeProcess* process_;
+  const Activation* waiting_;
   bool changed_while_running_ = false;
 };
 
@@ -358,12 +359,12 @@ auto WaitOnImplicitList(const ReadReport* report) -> Wait {
 
 auto WaitContinuouslyOn(std::span<const Trigger> triggers) -> Wait {
   return MakeWait<ContinuousAwaiter>(
-      current_runtime().CurrentProcess(), triggers);
+      current_runtime().RunningActivation(), triggers);
 }
 
 auto WaitContinuouslyOn(std::span<const Trigger* const> triggers) -> Wait {
   return MakeWait<ContinuousAwaiter>(
-      current_runtime().CurrentProcess(), triggers);
+      current_runtime().RunningActivation(), triggers);
 }
 
 auto WaitRecollecting(

@@ -107,7 +107,6 @@ auto CallMakesValue(const CallTarget& target) -> bool {
   }
   switch (support::RuntimeEntryOf(builtin->fn).answer) {
     case support::EntryAnswer::kNewValue:
-    case support::EntryAnswer::kExecution:
       return true;
     case support::EntryAnswer::kReadOnlyReferenceIntoTheReceiver:
     case support::EntryAnswer::kMutableReferenceIntoTheReceiver:
@@ -119,31 +118,18 @@ auto CallMakesValue(const CallTarget& target) -> bool {
 }
 
 auto CallBuildsExecution(const CallTarget& target) -> bool {
-  if (const auto* coroutine = std::get_if<CoroutineTarget>(&target)) {
-    switch (coroutine->op) {
-      case CoroutineTarget::Op::kEnter:
-        return true;
-      case CoroutineTarget::Op::kAwait:
-      case CoroutineTarget::Op::kRelease:
-        return false;
-    }
-    throw InternalError("lir: unknown coroutine operation");
-  }
-  const auto* builtin = std::get_if<BuiltinTarget>(&target);
-  if (builtin == nullptr) {
+  const auto* coroutine = std::get_if<CoroutineTarget>(&target);
+  if (coroutine == nullptr) {
     return false;
   }
-  switch (support::RuntimeEntryOf(builtin->fn).answer) {
-    case support::EntryAnswer::kExecution:
+  switch (coroutine->op) {
+    case CoroutineTarget::Op::kEnter:
       return true;
-    case support::EntryAnswer::kNewValue:
-    case support::EntryAnswer::kReadOnlyReferenceIntoTheReceiver:
-    case support::EntryAnswer::kMutableReferenceIntoTheReceiver:
-    case support::EntryAnswer::kReferenceToContents:
-    case support::EntryAnswer::kReferenceToSampledContents:
+    case CoroutineTarget::Op::kAwait:
+    case CoroutineTarget::Op::kRelease:
       return false;
   }
-  throw InternalError("lir: unknown entry answer");
+  throw InternalError("lir: unknown coroutine operation");
 }
 
 auto MakesValue(const Rvalue& value) -> bool {

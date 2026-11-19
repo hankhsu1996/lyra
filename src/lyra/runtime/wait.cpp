@@ -75,17 +75,22 @@ auto Wait::operator=(Wait&&) noexcept -> Wait& = default;
 Wait::~Wait() = default;
 
 auto ParkAt(RuntimeEffects& services, Wait* wait) -> bool {
-  return services.CurrentProcess().ParkAt(services, wait->Awaited());
+  return services.ParkRunning(wait->Awaited());
 }
 
 void ConsumeWait(Activation* activation) {
   activation->Withdraw();
-  // An awaiter lives in the frame until the frame leaves its scope, which it
-  // cannot do while parked, so it is still there to ask; an activation already
-  // made runnable is parked on none.
+  // Whatever holds an awaiter keeps it while its activation is parked there --
+  // a frame cannot leave its scope then, and a reaction holds its wait for the
+  // run -- so it is still there to ask; an activation already made runnable is
+  // parked on none.
   if (activation->awaiter != nullptr &&
       activation->awaiter->IsReportFlushPoint()) {
-    activation->Process().FlushDeferredReports();
+    // Only a process keeps deferred reports, and a reaction has none until the
+    // language asks for its process.
+    if (RuntimeProcess* process = activation->ProcessIfMade()) {
+      process->FlushDeferredReports();
+    }
   }
   activation->awaiter = nullptr;
 }

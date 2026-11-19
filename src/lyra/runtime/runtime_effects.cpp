@@ -66,7 +66,7 @@ auto RunningNbaRegion(RuntimeEffects& effects) -> support::Region {
 // which has no deferred report queue, so no flush point clears what it makes.
 auto RunningPass(RuntimeEffects& effects)
     -> std::shared_ptr<const DeferredReportEpoch> {
-  RuntimeProcess* process = effects.TryCurrentProcess();
+  RuntimeProcess* process = effects.RunningProcess();
   return process != nullptr ? process->CurrentDeferredReportEpoch() : nullptr;
 }
 
@@ -131,23 +131,6 @@ CurrentRuntimeGuard::~CurrentRuntimeGuard() {
   CurrentRuntimeSlot() = previous_;
 }
 
-ProcessExecutionGuard::ProcessExecutionGuard(
-    RuntimeEffects& effects, RuntimeProcess& process)
-    : effects_(&effects),
-      previous_process_(
-          AsRuntime(effects).current_process_.load(std::memory_order_relaxed)),
-      previous_running_(
-          std::exchange(AsRuntime(effects).running_, &process.Running())) {
-  AsRuntime(effects).current_process_.store(
-      &process, std::memory_order_relaxed);
-}
-
-ProcessExecutionGuard::~ProcessExecutionGuard() {
-  AsRuntime(*effects_).current_process_.store(
-      previous_process_, std::memory_order_relaxed);
-  AsRuntime(*effects_).running_ = previous_running_;
-}
-
 auto RuntimeEffects::Diagnostic() -> DiagnosticDispatcher& {
   return AsRuntime(*this).diagnostic_;
 }
@@ -184,7 +167,7 @@ void RuntimeEffects::Schedule(
 
 void RuntimeEffects::Wake(Activation* activation) {
   ConsumeWait(activation);
-  const ExecutionContext& context = activation->Process().Context();
+  const ExecutionContext& context = activation->Context();
   switch (context.wake) {
     case WakePlacement::kActiveRegion:
       Schedule(Now(), context.regions.active, activation);
@@ -440,7 +423,7 @@ void RuntimeEffects::RunWokenAtTheOccurrence() {
     std::vector<Activation*> woken;
     woken.swap(rt.woken_at_the_occurrence_);
     for (Activation* activation : woken) {
-      RuntimeProcess::RunUndispatched(*this, activation);
+      activation->RunAtTheOccurrence(rt);
     }
   }
 }
@@ -594,25 +577,25 @@ void RequireCallerMayScheduleAfterReturn(
 
 auto RuntimeEffects::Spawn(Coroutine<void> coroutine)
     -> std::shared_ptr<RuntimeProcess> {
-  Runtime& rt = AsRuntime(*this);
-  if (rt.current_process_ == nullptr) {
+  RuntimeProcess* const spawner = RunningProcess();
+  if (spawner == nullptr) {
     throw InternalError(
         "RuntimeEffects::Spawn: no ambient process to parent the branch to");
   }
-  RuntimeProcess& parent = *rt.current_process_.load();
+  RuntimeProcess& parent = *spawner;
   // Hierarchical seeding (LRM 18.14.1): the branch's generator is taken out of
   // the spawner's, so a whole subtree of threads follows from the seed of the
   // one at its root and the order the branches then run in does not move any
   // of it.
-  auto child = RuntimeProcess::Create(
+  auto child = CoroutineProcess::Create(
       parent.Context().ForStarted(), std::move(coroutine),
       parent.Generator().Split());
-  Activation* const activation = child->TopActivation();
+  FrameActivation* const activation = child->Thread().TopActivation();
   // The spawned activity is enabled within whatever disable targets the spawner
   // is inside (LRM 9.6.2), so it takes that membership here rather than
   // rebuilding it once it starts running: it is spawned already enclosed, and a
   // `disable` landing before its first resumption still reaches it.
-  child->Running().targets.InheritFrom(Running().targets);
+  child->Thread().State().targets.InheritFrom(Running().targets);
   parent.Children().Adopt(child);
   Schedule(Now(), child->Context().regions.active, activation);
   return child;
@@ -636,9 +619,9 @@ void RuntimeEffects::StartDetached(
   // draws from a generator of its own. No thread creates it, so that generator
   // is one whatever reached the statement hands over, and that one's draws do
   // not move (LRM 18.14).
-  auto execution = RuntimeProcess::Create(
+  auto execution = CoroutineProcess::Create(
       context, std::move(coroutine), Running().HandOff());
-  Activation* const activation = execution->TopActivation();
+  FrameActivation* const activation = execution->Thread().TopActivation();
   // No lineage and no disable membership: the standard makes a process of
   // neither an update it carries out nor a covergroup's sampling, so nothing
   // that names processes may find it (LRM 9.6.1, 9.6.3). What keeps it alive
@@ -656,7 +639,7 @@ void RuntimeEffects::StartDetached(
   // event names and the value a change is measured from are those of that
   // moment, a change the process makes after the statement is one the wait
   // sees, and an error evaluating the control is the statement's.
-  RuntimeProcess::RunUndispatched(*this, activation);
+  activation->RunAtTheOccurrence(*this);
 }
 
 void RuntimeEffects::SubmitAtRunEnd(
@@ -667,25 +650,49 @@ void RuntimeEffects::SubmitAtRunEnd(
           .procedure = rt.RunningProcedure(), .call = std::move(closure)});
 }
 
-auto RuntimeEffects::CurrentProcess() -> RuntimeProcess& {
-  RuntimeProcess* p = AsRuntime(*this).current_process_;
-  if (p == nullptr) {
+auto RuntimeEffects::RunningProcess() -> RuntimeProcess* {
+  Runner* const running =
+      AsRuntime(*this).running_.load(std::memory_order_relaxed);
+  return running != nullptr ? running->Process() : nullptr;
+}
+
+auto RuntimeEffects::RunningProcessIfMade() -> RuntimeProcess* {
+  Runner* const running =
+      AsRuntime(*this).running_.load(std::memory_order_relaxed);
+  return running != nullptr ? running->ProcessIfMade() : nullptr;
+}
+
+auto RuntimeEffects::ParkRunning(Awaiter& awaiter) -> bool {
+  Runner* const running =
+      AsRuntime(*this).running_.load(std::memory_order_relaxed);
+  Activation* const leaf = running != nullptr ? running->Leaf() : nullptr;
+  if (leaf == nullptr) {
     throw InternalError(
-        "RuntimeEffects::CurrentProcess: no process is currently executing");
+        "RuntimeEffects::ParkRunning: a stop was made where nothing that can "
+        "stop is running -- please report this as a bug");
   }
-  return *p;
+  return RuntimeProcess::Arrange(*this, leaf, awaiter, awaiter.Begin());
 }
 
-auto RuntimeEffects::HasCurrentProcess() const -> bool {
-  return AsRuntime(*this).current_process_ != nullptr;
+auto RuntimeEffects::RunningActivation() const -> const Activation* {
+  Runner* const running =
+      AsRuntime(*this).running_.load(std::memory_order_relaxed);
+  return running != nullptr ? running->Leaf() : nullptr;
 }
 
-auto RuntimeEffects::TryCurrentProcess() -> RuntimeProcess* {
-  return AsRuntime(*this).current_process_;
+auto RuntimeEffects::RunningThread() -> CoroutineThread& {
+  auto* const thread = dynamic_cast<CoroutineThread*>(
+      AsRuntime(*this).running_.load(std::memory_order_relaxed));
+  if (thread == nullptr) {
+    throw InternalError(
+        "RuntimeEffects::RunningThread: what runs is no frame, and only a "
+        "frame stops or calls what may -- please report this as a bug");
+  }
+  return *thread;
 }
 
 auto RuntimeEffects::Running() -> RunningState& {
-  RunningState* running = AsRuntime(*this).running_;
+  RunningState* running = TryRunning();
   if (running == nullptr) {
     throw InternalError(
         "RuntimeEffects::Running: a generated body reached the runtime with no "
@@ -706,7 +713,9 @@ void NoThreadContext::Enter() const {
 }
 
 auto RuntimeEffects::TryRunning() -> RunningState* {
-  return AsRuntime(*this).running_;
+  Runner* const running =
+      AsRuntime(*this).running_.load(std::memory_order_relaxed);
+  return running != nullptr ? &running->State() : nullptr;
 }
 
 auto RuntimeEffects::UnseededRandomSeed() -> std::int32_t& {

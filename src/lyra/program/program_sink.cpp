@@ -85,19 +85,10 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_emit_fatal_at_caller", &lyra_rt_emit_fatal_at_caller);
   add("lyra_rt_record_coverage", &lyra_rt_record_coverage);
   add("lyra_rt_enter_coroutine", &lyra_rt_enter_coroutine);
-  add("lyra_rt_enter_reaction_running_first",
-      &lyra_rt_enter_reaction_running_first);
-  add("lyra_rt_enter_reaction_stopping_first",
-      &lyra_rt_enter_reaction_stopping_first);
-  add("lyra_rt_enter_run_to_completion", &lyra_rt_enter_run_to_completion);
   add("lyra_rt_await_coroutine", &lyra_rt_await_coroutine);
   add("lyra_rt_release_coroutine", &lyra_rt_release_coroutine);
-  add("lyra_rt_register_always", &lyra_rt_register_always);
-  add("lyra_rt_register_observing", &lyra_rt_register_observing);
-  add("lyra_rt_register_continuous_driver",
-      &lyra_rt_register_continuous_driver);
-  add("lyra_rt_register_initial", &lyra_rt_register_initial);
-  add("lyra_rt_register_triggered", &lyra_rt_register_triggered);
+  add("lyra_rt_register_coroutine", &lyra_rt_register_coroutine);
+  add("lyra_rt_register_reaction", &lyra_rt_register_reaction);
   add("lyra_rt_register_final", &lyra_rt_register_final);
   add("lyra_rt_run_assertion_action", &lyra_rt_run_assertion_action);
   add("lyra_rt_enter_scope_static_init", &lyra_rt_enter_scope_static_init);

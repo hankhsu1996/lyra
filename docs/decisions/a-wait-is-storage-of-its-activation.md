@@ -93,9 +93,11 @@ a foreign task carried on a fiber (LRM 35.9), which waits for no occurrence at a
   control measures each observation from what its expression is worth then -- and parks it there
   again. A `disable` that landed meanwhile is taken at the restart.
 
-Every process stays one kind of thing: a coroutine resumed where it stopped. MIR states every wait
-as a local of the runtime's one wait type and every stop as the existing wait on a call
-(`waiting-is-an-operation` D2) taking that local; neither backend decides anything new.
+Every process stays one kind of thing above the run, which carries it as a coroutine resumed where
+it stopped or, for a body stopping only at its loop head, as a reaction
+(`a-process-stopping-only-at-its-loop-head-is-called.md`). MIR states every wait as a local of the
+runtime's one wait type and every stop as the existing wait on a call (`waiting-is-an-operation` D2)
+taking that local; neither backend decides anything new.
 
 ## Survey
 
@@ -131,7 +133,11 @@ process and ours is per stop, which is the same mechanism at a finer grain.
   detached carriers -- and the cost it removed was never the coroutine's; it was rebuilding the
   wait, which this decision removes for every stop on fixed storage, including the many-stop
   testbench processes the split left paying it. SystemC split because it had only stackful threads;
-  that condition is not ours.
+  that condition is not ours. Measured for time alone, while each stop still rebuilt its wait; once
+  the wait was built once, what a run-to-completion body still paid was the coroutine and the
+  process around it, and memory, which this did not weigh, followed them. What came of that keeps
+  one process shape in every layer above the run and splits only how the run carries a body
+  (`a-process-stopping-only-at-its-loop-head-is-called.md`, "At run time").
 - **Enrolling at each stop through nodes the wait owns.** Allocation-free, but every stop of an
   `always_comb` pays one link and one unlink per leaf; a standing membership pays one gate test per
   occurrence instead.

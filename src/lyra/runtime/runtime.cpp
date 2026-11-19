@@ -86,21 +86,22 @@ class RunningAnEffect {
 class Runtime::NoThreadRunsScope {
  public:
   explicit NoThreadRunsScope(Runtime& runtime)
-      : runtime_(&runtime), began_with_(runtime.running_) {
+      : runtime_(&runtime),
+        began_with_(runtime.running_.load(std::memory_order_relaxed)) {
   }
   NoThreadRunsScope(const NoThreadRunsScope&) = delete;
   auto operator=(const NoThreadRunsScope&) -> NoThreadRunsScope& = delete;
   NoThreadRunsScope(NoThreadRunsScope&&) = delete;
   auto operator=(NoThreadRunsScope&&) -> NoThreadRunsScope& = delete;
   ~NoThreadRunsScope() {
-    while (runtime_->running_ != began_with_) {
+    while (runtime_->running_.load(std::memory_order_relaxed) != began_with_) {
       runtime_->LeaveNoThread();
     }
   }
 
  private:
   Runtime* runtime_;
-  const RunningState* began_with_;
+  const Runner* began_with_;
 };
 
 Runtime::Runtime() : Runtime(RuntimeOptions{}) {
@@ -394,30 +395,36 @@ void Runtime::AdoptProcess(std::shared_ptr<RuntimeProcess> process) {
   roots_.Adopt(std::move(process));
 }
 
+auto Runtime::AdoptReaction(
+    const abi::ReactionDefinition& definition, void* object,
+    const ExecutionContext& context, DrawRng generator) -> Reaction& {
+  return reactions_.Add(definition, object, context, generator);
+}
+
 void Runtime::RunAction(
     const ExecutionContext& context, Coroutine<void> coroutine, DrawRng rng) {
-  if (current_process_ != nullptr) {
+  if (RunningActivation() != nullptr) {
     throw InternalError(
         "Runtime::RunAction: an action starts from the region it is due in, "
         "between executions, and one is executing");
   }
-  auto action = RuntimeProcess::Create(context, std::move(coroutine), rng);
-  Activation* const top = action->TopActivation();
+  auto action = CoroutineProcess::Create(context, std::move(coroutine), rng);
+  FrameActivation* const top = action->Thread().TopActivation();
   roots_.Adopt(std::move(action));
-  RuntimeProcess::Run(*this, top);
+  CoroutineThread::Run(*this, top);
 }
 
 void Runtime::RegisterFinal(RegisteredFinal registered) {
   finals_.push_back(std::move(registered));
 }
 
-void Runtime::QueueStart(StartKind kind, Activation* top) {
+void Runtime::QueueStart(support::StartKind kind, Activation* top) {
   // The region set is an ordered scale's two halves, so its first region says
   // which set it is.
-  StartingTurns& starting = top->Process().Context().regions.active ==
-                                    program_starting_.regions.active
-                                ? program_starting_
-                                : design_starting_;
+  StartingTurns& starting =
+      top->Context().regions.active == program_starting_.regions.active
+          ? program_starting_
+          : design_starting_;
   top->Queue(starting.turns.at(TurnOf(kind)));
 }
 
@@ -489,40 +496,58 @@ void Runtime::EnterNoThread(const NoThreadContext& taken) {
   InstallNoThreadRun(taken, nullptr);
 }
 
+Runner::Runner() = default;
+Runner::~Runner() = default;
+
+NoThreadRun::~NoThreadRun() = default;
+
+auto NoThreadRun::State() -> RunningState& {
+  return state_;
+}
+
+auto NoThreadRun::Context() const noexcept -> const ExecutionContext& {
+  return context_;
+}
+
+auto NoThreadRun::Leaf() -> Activation* {
+  return nullptr;
+}
+
+auto NoThreadRun::ProcessIfMade() -> RuntimeProcess* {
+  return nullptr;
+}
+
+auto NoThreadRun::Process() -> RuntimeProcess* {
+  return nullptr;
+}
+
 void Runtime::InstallNoThreadRun(
     const NoThreadContext& taken, InitializationRng* objects_from) {
   no_thread_runs_.emplace_back(
-      taken.generator, objects_from, taken.context, running_,
-      procedure_in_force_.load(std::memory_order_relaxed));
-  running_ = &no_thread_runs_.back().state;
-  procedure_in_force_.store(
-      &no_thread_runs_.back().context.procedure, std::memory_order_relaxed);
+      taken.generator, objects_from, taken.context,
+      running_.load(std::memory_order_relaxed));
+  running_.store(&no_thread_runs_.back(), std::memory_order_relaxed);
 }
 
 auto Runtime::RunningContext() const -> const ExecutionContext& {
-  if (const RuntimeProcess* const process = current_process_) {
-    return process->Context();
-  }
-  if (no_thread_runs_.empty()) {
+  const Runner* const running = running_.load(std::memory_order_relaxed);
+  if (running == nullptr) {
     throw InternalError(
         "Runtime::RunningContext: generated code runs only inside a process "
         "or on no thread, and neither is running");
   }
-  return no_thread_runs_.back().context;
+  return running->Context();
 }
 
 auto Runtime::RunningProcedure() const noexcept -> const ProcedureContext& {
-  const RuntimeProcess* const process =
-      current_process_.load(std::memory_order_relaxed);
-  return process == nullptr
+  const Runner* const running = running_.load(std::memory_order_relaxed);
+  return running == nullptr
              ? *procedure_in_force_.load(std::memory_order_relaxed)
-             : process->Context().procedure;
+             : running->Context().procedure;
 }
 
 void Runtime::LeaveNoThread() {
-  running_ = no_thread_runs_.back().displaced;
-  procedure_in_force_.store(
-      no_thread_runs_.back().displaced_procedure, std::memory_order_relaxed);
+  running_.store(no_thread_runs_.back().Displaced(), std::memory_order_relaxed);
   no_thread_runs_.pop_back();
 }
 
@@ -598,10 +623,10 @@ auto Runtime::DrainRegions(
       // What a pass runs is what its region holds as the pass begins, and a
       // procedure is noted from there because its run may be the one that ends
       // it.
-      current_slot_[*region].activations.ForEach([&passes](
-                                                     const QueuePlace& queued) {
-        passes.ran.push_back(queued.activation->Process().Context().procedure);
-      });
+      current_slot_[*region].activations.ForEach(
+          [&passes](const QueuePlace& queued) {
+            passes.ran.push_back(queued.activation->Context().procedure);
+          });
     }
     RunRegion(*region);
   }
@@ -708,7 +733,7 @@ namespace {
 // long as the call lasts, whichever way it is left.
 class InFinalProcedure {
  public:
-  InFinalProcedure(RuntimeProcess& thread, const ExecutionContext& context)
+  InFinalProcedure(CoroutineThread& thread, const ExecutionContext& context)
       : thread_(&thread), left_(thread.EnterProcedure(context)) {
   }
   ~InFinalProcedure() {
@@ -721,7 +746,7 @@ class InFinalProcedure {
   auto operator=(InFinalProcedure&&) -> InFinalProcedure& = delete;
 
  private:
-  RuntimeProcess* thread_;
+  CoroutineThread* thread_;
   ExecutionContext left_;
 };
 
@@ -733,19 +758,19 @@ void Runtime::ExecuteFinalProcedures() {
   // so LRM 18.14.1 says nothing of its generator; it is split from the root's
   // initialization RNG, last of all, which moves no draw made before.
   Scope& root = design_->Root();
-  auto thread = RuntimeProcess::Create(
+  auto thread = CoroutineProcess::Create(
       ExecutionContext{
           .procedure = kNoProcedure,
           .seeds = &root.InitializationSeeds(),
           .creator = ThreadCreator::kAnotherConstruct},
       CallingFinalProcedures(), root.InitializationSeeds().Split());
-  Activation* const top = thread->TopActivation();
+  FrameActivation* const top = thread->Thread().TopActivation();
   AdoptProcess(std::move(thread));
-  RuntimeProcess::Run(*this, top);
+  CoroutineThread::Run(*this, top);
 }
 
 auto Runtime::CallingFinalProcedures() -> Coroutine<void> {
-  RuntimeProcess& thread = CurrentProcess();
+  CoroutineThread& thread = RunningThread();
   const std::uint64_t requests_before = end_requests_;
   for (RegisteredFinal& registered : finals_) {
     {
@@ -775,7 +800,7 @@ void Runtime::RunProcess(Activation* activation) {
   // No wait dispatch: an execution that stopped to wait arranged its own way
   // back before it gave up control, and one that ended already woke what
   // awaits it and its parent's `wait fork` (LRM 9.3.2, 9.7, 9.6.1).
-  RuntimeProcess::Run(*this, activation);
+  activation->Run(*this);
 }
 
 namespace {
@@ -810,97 +835,85 @@ auto ContextIn(
 // A continuous assignment's driver is a thread of its own (LRM 10.3) that no
 // procedure created; every other kind that starts at time zero is an initial or
 // always procedure (LRM 9.2).
-auto CreatorOf(StartKind kind) -> ThreadCreator {
+auto CreatorOf(support::StartKind kind) -> ThreadCreator {
   switch (kind) {
-    case StartKind::kAlwaysProcedure:
-    case StartKind::kInitialProcedure:
-    case StartKind::kTriggeredProcedure:
+    case support::StartKind::kAlwaysProcedure:
+    case support::StartKind::kInitialProcedure:
+    case support::StartKind::kTriggeredProcedure:
       return ThreadCreator::kInitialOrAlwaysProcedure;
-    case StartKind::kContinuousDriver:
-    case StartKind::kObserver:
+    case support::StartKind::kContinuousDriver:
+    case support::StartKind::kObserver:
       return ThreadCreator::kAnotherConstruct;
   }
   throw InternalError("CreatorOf: a kind of starting process has no creator");
 }
 
-auto StartingProcess(const ExecutionContext& context, Coroutine<void> coroutine)
-    -> std::shared_ptr<RuntimeProcess> {
-  return RuntimeProcess::Create(
-      context, std::move(coroutine), context.SplitInitializationRng());
-}
-
-void RegisterStartingProcess(
-    StartKind kind, Scope* owning_scope, Scope* unit_instance, Scope* runs_as,
-    Coroutine<void> coroutine, base::SourceLocation written_at) {
-  Runtime& rt = AsRuntime(current_runtime());
-  auto process = StartingProcess(
-      ContextIn(
-          owning_scope, unit_instance, runs_as, written_at, CreatorOf(kind)),
-      std::move(coroutine));
-  rt.QueueStart(kind, process->TopActivation());
-  rt.AdoptProcess(std::move(process));
+// What the process `definition` states runs in: the context `ContextIn`
+// gives, as a root of its program where it is an initial procedure of a
+// program instance, which the program keeps and every thread it starts is one
+// of (LRM 24.3, 24.7), and woken inside each occurrence it waits for where it
+// is an observer (LRM 14.7).
+auto StaticContextOf(
+    Runtime& rt, const abi::ProcessDefinition& definition, Scope* owning_scope,
+    Scope* unit_instance, Scope* runs_as) -> ExecutionContext {
+  const support::StartKind kind = definition.Kind();
+  const ExecutionContext context = ContextIn(
+      owning_scope, unit_instance, runs_as,
+      base::SourceLocation(definition.written_at), CreatorOf(kind));
+  switch (kind) {
+    case support::StartKind::kObserver:
+      return context.WokenAtTheOccurrence();
+    case support::StartKind::kInitialProcedure:
+      switch (unit_instance->Definition().Execution()) {
+        case support::ScopeExecution::kDesign:
+          return context;
+        case support::ScopeExecution::kProgram:
+          return context.InProgram(rt.ProgramOf(*unit_instance));
+      }
+      throw InternalError("StaticContextOf: an instance run no way");
+    case support::StartKind::kAlwaysProcedure:
+    case support::StartKind::kContinuousDriver:
+    case support::StartKind::kTriggeredProcedure:
+      return context;
+  }
+  throw InternalError("StaticContextOf: a kind of process runs nowhere");
 }
 
 }  // namespace
 
-void RegisterAlwaysProcess(
-    Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine,
-    base::SourceLocation written_at) {
-  RegisterStartingProcess(
-      StartKind::kAlwaysProcedure, owning_scope, unit_instance, unit_instance,
-      std::move(coroutine), written_at);
-}
-
-// An observer is woken inside each occurrence it waits for, and belongs to no
-// lineage, since no procedure created it (LRM 9.6.1, 9.6.3).
-void RegisterObservingProcess(
-    Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine,
-    base::SourceLocation written_at) {
+void RegisterCoroutine(
+    Scope* owning_scope, Scope* unit_instance, Scope* runs_as,
+    const abi::ProcessDefinition* definition, Coroutine<void> coroutine) {
   Runtime& rt = AsRuntime(current_runtime());
-  auto process = StartingProcess(
-      ContextIn(
-          owning_scope, unit_instance, unit_instance, written_at,
-          CreatorOf(StartKind::kObserver))
-          .WokenAtTheOccurrence(),
-      std::move(coroutine));
-  rt.QueueStart(StartKind::kObserver, process->TopActivation());
+  const ExecutionContext context =
+      StaticContextOf(rt, *definition, owning_scope, unit_instance, runs_as);
+  auto process = CoroutineProcess::Create(
+      context, std::move(coroutine), context.SplitInitializationRng());
+  rt.QueueStart(definition->Kind(), process->Thread().TopActivation());
+  if (context.program != nullptr) {
+    context.program->AdoptRoot(std::move(process));
+    return;
+  }
   rt.AdoptProcess(std::move(process));
 }
 
-void RegisterContinuousDriver(
+// A reaction is seeded as the process it is when it is created, whether or not
+// it ever draws, so that every process created after it is seeded as it would
+// be (LRM 18.14.1). It is kept by the run; a program's root needs its process
+// from the start, which the program keeps.
+void RegisterReaction(
     Scope* owning_scope, Scope* unit_instance, Scope* runs_as,
-    Coroutine<void> coroutine, base::SourceLocation written_at) {
-  RegisterStartingProcess(
-      StartKind::kContinuousDriver, owning_scope, unit_instance, runs_as,
-      std::move(coroutine), written_at);
-}
-
-// A program's initial procedure is one of its roots, which the program keeps,
-// and every thread it starts is one of the program's (LRM 24.3, 24.7).
-void RegisterInitialProcess(
-    Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine,
-    base::SourceLocation written_at) {
-  switch (unit_instance->Definition().Execution()) {
-    case support::ScopeExecution::kDesign:
-      RegisterStartingProcess(
-          StartKind::kInitialProcedure, owning_scope, unit_instance,
-          unit_instance, std::move(coroutine), written_at);
-      return;
-    case support::ScopeExecution::kProgram: {
-      Runtime& rt = AsRuntime(current_runtime());
-      ProgramThreads& program = rt.ProgramOf(*unit_instance);
-      auto process = StartingProcess(
-          ContextIn(
-              owning_scope, unit_instance, unit_instance, written_at,
-              CreatorOf(StartKind::kInitialProcedure))
-              .InProgram(program),
-          std::move(coroutine));
-      rt.QueueStart(StartKind::kInitialProcedure, process->TopActivation());
-      program.AdoptRoot(std::move(process));
-      return;
-    }
+    const abi::ProcessDefinition* definition,
+    const abi::ReactionDefinition* reaction, void* object) {
+  Runtime& rt = AsRuntime(current_runtime());
+  const ExecutionContext context =
+      StaticContextOf(rt, *definition, owning_scope, unit_instance, runs_as);
+  Reaction& made = rt.AdoptReaction(
+      *reaction, object, context, context.SplitInitializationRng());
+  rt.QueueStart(definition->Kind(), &made);
+  if (context.program != nullptr) {
+    context.program->AdoptRoot(made.MakeProcess());
   }
-  throw InternalError("RegisterInitialProcess: an instance run no way");
 }
 
 void Exit(RuntimeEffects& runtime, base::SourceLocation at) {
@@ -916,14 +929,6 @@ void Exit(RuntimeEffects& runtime, base::SourceLocation at) {
     return;
   }
   program->Exit(runtime);
-}
-
-void RegisterTriggeredProcess(
-    Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine,
-    base::SourceLocation written_at) {
-  RegisterStartingProcess(
-      StartKind::kTriggeredProcedure, owning_scope, unit_instance,
-      unit_instance, std::move(coroutine), written_at);
 }
 
 void RegisterFinalProcedure(

@@ -313,6 +313,13 @@ class UnitLowerer {
     return unit_;
   }
 
+  // The unit's constant for where `span` is in the source, a record of the
+  // library's.
+  [[nodiscard]] auto SourceLocationConstantAt(diag::SourceSpan span)
+      -> mir::ConstantId {
+    return mir::InternSourceLocation(unit_, mir::PositionOf(*sources_, span));
+  }
+
   // The unit's constant for where `span` is in the source, added to `block` as
   // a value of the library's location type.
   [[nodiscard]] auto BuildSourceLocationAt(

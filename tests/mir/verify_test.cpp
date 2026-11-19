@@ -1441,7 +1441,11 @@ TEST(MirVerifyTest, AConstantIsAValueOfItsType) {
       if (wrong == Wrong::kPointerAtOtherType) {
         u.constants.Intern(
             ConstantDecl{
-                .type = u.builtins.source_location_record_ptr,
+                .type = u.types.Intern(
+                    Type{PointerType{
+                        .pointee = u.builtins.source_location_record,
+                        .ownership = PointerOwnership::kBorrowed,
+                        .mutability = Mutability::kReadOnly}}),
                 .value = ConstantValue{PointerValue{
                     .to = ConstantRef{.constant = places},
                     .type = u.builtins.source_location_record}}});

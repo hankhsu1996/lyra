@@ -230,19 +230,6 @@ void lyra_rt_record_coverage(void* runtime, const void* site, bool succeeded);
 // which it ends when it ends (LRM 9.3.2).
 auto lyra_rt_enter_coroutine(void* frame, void* out) noexcept -> void*;
 
-// Makes an execution the engine can schedule out of a process body that stops
-// only at the wait at the head of its loop, stated as its setup and its pass,
-// each entered on `receiver` and on the wait the execution holds for them. The
-// second is the body whose loop stops before its statements.
-auto lyra_rt_enter_reaction_running_first(
-    void* receiver, bool (*setup)(void*, void*), bool (*pass)(void*, void*),
-    void* out) noexcept -> void*;
-auto lyra_rt_enter_run_to_completion(
-    void* receiver, void (*body)(void*), void* out) noexcept -> void*;
-auto lyra_rt_enter_reaction_stopping_first(
-    void* receiver, bool (*setup)(void*, void*), bool (*pass)(void*, void*),
-    void* out) noexcept -> void*;
-
 // Calling a task (LRM 13.3, where the call is also named a task enable).
 // `await_coroutine` gives the calling thread to `activation` and runs it there,
 // so it executes in the caller's process (LRM 9.5) rather than as one of its
@@ -257,17 +244,15 @@ auto lyra_rt_enter_reaction_stopping_first(
 auto lyra_rt_await_coroutine(void* runtime, void* activation) -> bool;
 void lyra_rt_release_coroutine(void* runtime);
 
-void lyra_rt_register_always(
-    void* self, void* unit_instance, void* coroutine, const void* written_at);
-void lyra_rt_register_continuous_driver(
-    void* self, void* unit_instance, void* runs_as, void* coroutine,
-    const void* written_at);
-void lyra_rt_register_initial(
-    void* self, void* unit_instance, void* coroutine, const void* written_at);
-void lyra_rt_register_observing(
-    void* self, void* unit_instance, void* coroutine, const void* written_at);
-void lyra_rt_register_triggered(
-    void* self, void* unit_instance, void* coroutine, const void* written_at);
+// A static process handed to the run to start with its instance: a coroutine
+// the run resumes, or an object the run calls the parts of its reaction on.
+// `definition` and `reaction` are the unit's constant records of it.
+void lyra_rt_register_coroutine(
+    void* self, void* unit_instance, void* runs_as, const void* definition,
+    void* coroutine);
+void lyra_rt_register_reaction(
+    void* self, void* unit_instance, void* runs_as, const void* definition,
+    const void* reaction, void* object);
 void lyra_rt_register_final(
     void* self, void* unit_instance, void* closure, const void* written_at);
 void lyra_rt_run_assertion_action(

@@ -98,8 +98,8 @@ auto FindExportEntry(Scope* scope, const char* subroutine) -> abi::ErasedEntry;
 // foreign frame.
 template <class T>
 auto RunExportedTaskToCompletion(Coroutine<T> task) -> T {
-  Activation& body = *task.Token();
-  body.process = &CurrentForeignProcess();
+  FrameActivation& body = *task.Token();
+  body.thread = &CurrentForeignThread();
   EnterActivation(body);
   DriveOnForeignStack(body);
   LeaveActivation(body);

@@ -1274,23 +1274,16 @@ enum class BuiltinFn : std::uint16_t {
   kObjectConstraintModeSet,
   kStaticConstraintModeSet,
   kStaticConstraintModeGet,
-  // Lifecycle activation registration (LRM 9.2): binds a process body's
-  // coroutine to the scope's startup. Each dispatches on the scope handle; the
-  // coroutine to register is a regular argument.
-  //
-  // What starts at time zero is registered by the kind of process it is,
-  // because the kinds start in turn: an `always` procedure
-  // (`kRegisterAlways`), a continuous assignment or a port connection
-  // (`kRegisterContinuousDriver`, LRM 4.9.1), an `initial` procedure
-  // (`kRegisterInitial`), and an `always_comb` or `always_latch`, which is
-  // triggered once the others have started (`kRegisterTriggered`, LRM
-  // 9.2.2.2). A clocking block is no procedure and is woken inside each
-  // occurrence of its clocking event (`kRegisterObserving`, LRM 14.7).
-  kRegisterAlways,
-  kRegisterObserving,
-  kRegisterContinuousDriver,
-  kRegisterInitial,
-  kRegisterTriggered,
+  // A static process handed to the run to start with its instance (LRM 9.2,
+  // 10.3, Annex P): the scope it belongs to, the instance whose text holds it,
+  // the instance whose code it evaluates, and its definition, a constant of the
+  // unit saying what kind of process it is and where the source writes it. The
+  // two entries are one operation over the two ways a body is compiled: a
+  // coroutine the run resumes, and a body that runs to its end each time it is
+  // triggered, whose setup and pass a second constant names and which the run
+  // calls on the object it belongs to, erased.
+  kRegisterCoroutine,
+  kRegisterReaction,
   // A final procedure is a function the run calls at the end of simulation
   // (LRM 9.2.3), so what registers it is a closure calling it on its scope.
   kRegisterFinal,
@@ -1298,14 +1291,6 @@ enum class BuiltinFn : std::uint16_t {
   // its own when an attempt's outcome selects it (LRM 16.14.1), from what a
   // registered process is started from.
   kRunAssertionAction,
-  // The execution a process body runs as when its only stop is the wait at the
-  // head of its loop: built from the object the body belongs to, erased, and
-  // the addresses of its setup and its pass, and registered as any process
-  // body's execution is. A loop whose statements come before its stop is set
-  // up to its first pass, and one stopping first is set up to that stop.
-  kEnterReactionRunningFirst,
-  kEnterReactionStoppingFirst,
-  kEnterRunToCompletion,
   // The extent a static initializer draws inside (LRM 18.14.1): entered before
   // the initializers a body runs and left on every way out of them, so a
   // randomization call made before any procedure starts has the generator the
@@ -1705,17 +1690,13 @@ enum class CallEnding : std::uint8_t {
 // a capability wrapper holds, whose dereference is the storage the wrapper
 // represents, as a `std::cell::Ref` dereferences to the value its cell holds;
 // and a read-only reference to what that storage held when it was sampled
-// (LRM 16.5.1), which the library keeps apart from it and alone can find. An
-// entry may also answer with an execution the engine drives (LRM 9.2), which a
-// target building values in its caller's storage builds there too, and which
-// whoever drives it takes from there rather than the caller ending it.
+// (LRM 16.5.1), which the library keeps apart from it and alone can find.
 enum class EntryAnswer : std::uint8_t {
   kNewValue,
   kReadOnlyReferenceIntoTheReceiver,
   kMutableReferenceIntoTheReceiver,
   kReferenceToContents,
   kReferenceToSampledContents,
-  kExecution,
 };
 
 // How an entry that reaches one part of the value it acts on names that part:
@@ -1847,6 +1828,16 @@ enum class LibraryDecl : std::uint8_t;
 struct TheClassReached {};
 using ObjectView = std::variant<TheClassReached, LibraryDecl>;
 
+// How an entry hands the run a static process whose body it starts: which of
+// its operands is the started body, its last, and the entry handing the run
+// the same process as a reaction once a rewrite compiles the body that way,
+// which takes the operands before the body, then the reaction's definition and
+// the object its parts run on.
+struct HandsTheRunABody {
+  std::size_t body_at;
+  BuiltinFn as_a_reaction;
+};
+
 // Every property of one runtime entry: what the library calls it, how code
 // reaches it, and what it does with the operands it is given. A consumer
 // asking any of those reads the field for it, never a list of its own, so an
@@ -1955,6 +1946,9 @@ struct RuntimeEntry {
   // long it keeps each, which bounds how long it can run and so what it may
   // refer to, and the signature it calls each closure at.
   CallableOperands callables = {};
+  // How the entry hands the run a static process whose body it starts (LRM
+  // Annex P), for an entry that hands it one.
+  std::optional<HandsTheRunABody> hands_the_run_a_body = std::nullopt;
 };
 
 // The one declaration of `id`. Total over the entry set, so an entry added

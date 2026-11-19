@@ -19,6 +19,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/abi/records.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diagnostic.hpp"
@@ -80,6 +81,7 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/field.hpp"
+#include "lyra/mir/library_record_builder.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
@@ -89,6 +91,7 @@
 #include "lyra/support/library_callback.hpp"
 #include "lyra/support/library_decl.hpp"
 #include "lyra/support/movability.hpp"
+#include "lyra/support/start_kind.hpp"
 #include "lyra/support/strength_level.hpp"
 #include "lyra/support/takeover_level.hpp"
 
@@ -442,7 +445,7 @@ auto BuildOwnedInstance(
   mir::Builder block = frame.Builder();
   const auto& builtins = unit.builtins;
   const mir::ExprId segment_id = BuildHierarchySegment(
-      unit, block, ConstantAddressIn(unit, block, declaration),
+      unit, block, mir::BuildConstantAddress(unit, declaration, block),
       MachineIndices(unit, block, indices));
 
   // This unit read what the instantiated one published, which states what may
@@ -1198,6 +1201,51 @@ auto StartedBody(
       unit_lowerer.Unit().builtins.coroutine_void);
 }
 
+// The unit's record of a static process it starts: what kind of process it
+// is and where the source writes it, which every instance starting it shares.
+auto InternProcessDefinition(
+    UnitLowerer& unit_lowerer, support::StartKind kind,
+    diag::SourceSpan written_at) -> mir::ConstantId {
+  using Record = abi::ProcessDefinition;
+  const mir::CompilationUnit& unit = unit_lowerer.Unit();
+  const mir::ConstantId location =
+      unit_lowerer.SourceLocationConstantAt(written_at);
+  mir::LibraryRecordBuilder<Record> record(unit);
+  record.Set(
+      &Record::kind, mir::ConstantValue{mir::MachineIntValue{
+                         .value = static_cast<std::int64_t>(kind)}});
+  record.Set(
+      &Record::written_at, mir::ConstantValue{mir::PointerValue{
+                               .to = mir::ConstantRef{.constant = location},
+                               .type = unit.constants.Get(location).type}});
+  return std::move(record).Intern();
+}
+
+// Hands `body` to the run, in the scope's `activate` body, as a static process
+// of `kind` that evaluates the code of `runs_as` (LRM 9.2, 24.3.1). Every
+// process is handed over as the coroutine it is; the rewrite of a body that
+// stops only at its head hands it over as a reaction instead.
+void AppendRegistration(
+    UnitLowerer& unit_lowerer, const WalkFrame& activate_frame,
+    mir::ExprId runs_as, mir::CallableId body, support::StartKind kind,
+    diag::SourceSpan written_at) {
+  mir::CompilationUnit& unit = unit_lowerer.Unit();
+  mir::Builder block = activate_frame.Builder();
+  block.AppendStmt(
+      mir::ExprStmt{
+          .expr = block.Add(
+              mir::MakeCallExpr(
+                  mir::Direct{.target = support::BuiltinFn::kRegisterCoroutine},
+                  {OwningScope(activate_frame),
+                   CreatingInstance(unit_lowerer, activate_frame), runs_as,
+                   mir::BuildConstantAddress(
+                       unit,
+                       InternProcessDefinition(unit_lowerer, kind, written_at),
+                       block),
+                   StartedBody(unit_lowerer, activate_frame, body)},
+                  unit.builtins.void_type))});
+}
+
 // Registers a continuous driver, which, alone among static processes, may be
 // created by one instance's text and evaluate another's code: the drive across
 // a child's output port is created by the instantiation and reads the child's
@@ -1206,30 +1254,21 @@ auto StartedBody(
 void AppendDriverRegistration(
     UnitLowerer& unit_lowerer, const WalkFrame& activate_frame,
     mir::ExprId runs_as, mir::CallableId body, diag::SourceSpan written_at) {
-  mir::Builder block = activate_frame.Builder();
-  block.AppendStmt(
-      mir::ExprStmt{
-          .expr = block.Add(
-              mir::MakeCallExpr(
-                  mir::Direct{
-                      .target = support::BuiltinFn::kRegisterContinuousDriver},
-                  {OwningScope(activate_frame),
-                   CreatingInstance(unit_lowerer, activate_frame), runs_as,
-                   StartedBody(unit_lowerer, activate_frame, body),
-                   unit_lowerer.BuildSourceLocationAt(block, written_at)},
-                  unit_lowerer.Unit().builtins.void_type))});
+  AppendRegistration(
+      unit_lowerer, activate_frame, runs_as, body,
+      support::StartKind::kContinuousDriver, written_at);
 }
 
-// Registers `body` in the scope's `activate` body through `registration`,
-// which says which turn it starts in with the scope (LRM 9.2).
+// Registers `body` in the scope's `activate` body as a process of `kind`, which
+// says which turn it starts in with the scope (LRM 9.2), evaluating the code of
+// the instance whose text holds it.
 void AppendProcessRegistration(
     UnitLowerer& unit_lowerer, const WalkFrame& activate_frame,
-    mir::CallableId body, support::BuiltinFn registration,
+    mir::CallableId body, support::StartKind kind,
     diag::SourceSpan written_at) {
-  activate_frame.Builder().AppendStmt(
-      mir::ExprStmt{
-          .expr = BuildExecutionStart(
-              unit_lowerer, activate_frame, body, registration, written_at)});
+  AppendRegistration(
+      unit_lowerer, activate_frame,
+      CreatingInstance(unit_lowerer, activate_frame), body, kind, written_at);
 }
 
 // Registers `body`, a final procedure of the scope, to be called at the end of
@@ -1811,8 +1850,8 @@ auto InstallClockingBlocks(
       const mir::CallableId body = unit.AddClassCallable(
           frames.ctor.current_class.id, std::nullopt, std::move(*execution));
       AppendProcessRegistration(
-          unit_lowerer, frames.activate, body,
-          support::BuiltinFn::kRegisterObserving, clocking.span);
+          unit_lowerer, frames.activate, body, support::StartKind::kObserver,
+          clocking.span);
       return {};
     };
     if (auto r = started(LowerClockingSampler(lowerer, frames.ctor, id)); !r) {
@@ -2069,7 +2108,7 @@ auto BuildBlockAt(
       ObjectAs(
           block, block.Add(MakeSelfRefExpr(frame)), unit.builtins.scope_ptr),
       BuildHierarchySegment(
-          unit, block, ConstantAddressIn(unit, block, declaration),
+          unit, block, mir::BuildConstantAddress(unit, declaration, block),
           std::move(numbers)),
       read(
           support::BuiltinFn::kBlockTable,
@@ -3072,21 +3111,13 @@ auto DescribeDataObjects(
       });
 }
 
-auto BuildExecutionStart(
-    UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::CallableId body,
-    support::BuiltinFn start, diag::SourceSpan written_at) -> mir::ExprId {
-  return BuildExecutionStart(
-      unit_lowerer, frame, StartedBody(unit_lowerer, frame, body), start,
-      written_at);
-}
-
-auto BuildExecutionStart(
+auto BuildAssertionActionStart(
     UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::ExprId started,
-    support::BuiltinFn start, diag::SourceSpan written_at) -> mir::ExprId {
+    diag::SourceSpan written_at) -> mir::ExprId {
   mir::Builder block = frame.Builder();
   return block.Add(
       mir::MakeCallExpr(
-          mir::Direct{.target = start},
+          mir::Direct{.target = support::BuiltinFn::kRunAssertionAction},
           {OwningScope(frame), CreatingInstance(unit_lowerer, frame), started,
            unit_lowerer.BuildSourceLocationAt(block, written_at)},
           unit_lowerer.Unit().builtins.void_type));
@@ -4238,7 +4269,7 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
       for (const mir::CallableId process : built->processes) {
         AppendProcessRegistration(
             unit_lowerer, activate_frame, process,
-            support::BuiltinFn::kRegisterAlways, stmt.span);
+            support::StartKind::kAlwaysProcedure, stmt.span);
       }
       installed_assertions.push_back(*std::move(built));
     }
@@ -4256,31 +4287,31 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
     // kind starts with the scope (LRM 9.2), registered as the kind it is. What
     // an `always_comb` is at time zero holds of an `always_latch` too (LRM
     // 9.2.2.3).
-    using support::BuiltinFn;
-    const auto starts_as = [&](BuiltinFn registration) {
+    using support::StartKind;
+    const auto starts_as = [&](StartKind kind) {
       AppendProcessRegistration(
-          unit_lowerer, activate_frame, body, registration, p.span);
+          unit_lowerer, activate_frame, body, kind, p.span);
     };
     std::visit(
         Overloaded{
             [&](const hir::InitialProcess&) {
-              starts_as(BuiltinFn::kRegisterInitial);
+              starts_as(StartKind::kInitialProcedure);
             },
             [&](const hir::FinalProcess&) {
               AppendFinalRegistration(
                   unit_lowerer, activate_frame, body, p.span);
             },
             [&](const hir::AlwaysProcess&) {
-              starts_as(BuiltinFn::kRegisterAlways);
+              starts_as(StartKind::kAlwaysProcedure);
             },
             [&](const hir::AlwaysFfProcess&) {
-              starts_as(BuiltinFn::kRegisterAlways);
+              starts_as(StartKind::kAlwaysProcedure);
             },
             [&](const hir::AlwaysCombProcess&) {
-              starts_as(BuiltinFn::kRegisterTriggered);
+              starts_as(StartKind::kTriggeredProcedure);
             },
             [&](const hir::AlwaysLatchProcess&) {
-              starts_as(BuiltinFn::kRegisterTriggered);
+              starts_as(StartKind::kTriggeredProcedure);
             }},
         p.kind);
     for (const StaticCellBinding& binding : statics) {
@@ -4373,7 +4404,7 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
     for (const mir::CallableId process : installed->processes) {
       AppendProcessRegistration(
           unit_lowerer, activate_frame, process,
-          support::BuiltinFn::kRegisterAlways, assertion.span);
+          support::StartKind::kAlwaysProcedure, assertion.span);
     }
     installed_assertions.push_back(*std::move(installed));
   }
@@ -4423,7 +4454,7 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
     for (const HistorySampler& sampler : *samplers) {
       AppendProcessRegistration(
           unit_lowerer, activate_frame, sampler.body,
-          support::BuiltinFn::kRegisterAlways, sampler.written_at);
+          support::StartKind::kAlwaysProcedure, sampler.written_at);
     }
     return {};
   };

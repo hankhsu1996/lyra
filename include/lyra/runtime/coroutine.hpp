@@ -12,8 +12,11 @@
 
 namespace lyra::runtime {
 
+class CoroutineThread;
+class RuntimeEffects;
 class RuntimeProcess;
 struct Activation;
+struct ExecutionContext;
 
 // An activation's place in a queue the scheduler drains, as a node of that
 // queue's list.
@@ -22,30 +25,17 @@ struct QueuePlace : IntrusiveListNode<QueuePlace> {
   Activation* activation = nullptr;
 };
 
-// One suspendable execution -- a process body, a task body, a fork branch --
-// as the scheduler sees it: the wait it is parked on, the queue it sits in,
-// whom its completion goes to. It is the part of every frame's promise that
-// does not depend on the value the frame completes with, so the engine and
-// everything an execution waits on hold an `Activation*` and never name the
-// frame's result type.
+// One execution as the scheduler sees it -- a process body, a task body, a
+// fork branch, a reaction: the wait it is parked on, the queue it sits in, and
+// how it runs once taken off that queue. The engine and everything an
+// execution waits on hold an `Activation*` and run it through it, never asking
+// which kind it is: a frame is resumed where it stopped, and a reaction, which
+// is no frame, runs its body to its end each time it is triggered.
 struct Activation {
-  // The process whose thread this frame runs in: its own for a process body or
-  // a fork branch, its caller's for a called task (LRM 9.5).
-  RuntimeProcess* process = nullptr;
-  // This frame, type-erased, so the engine resumes it and asks whether it is
-  // done without knowing its result type. Stored where the frame is made,
-  // because a promise of one type cannot be turned back into its frame through
-  // a base of it.
-  std::coroutine_handle<> coroutine;
-
-  // The frame awaiting this one's completion, resumed in its place (a task
-  // returning to its caller); none for a process body, which ends its process.
-  std::coroutine_handle<> continuation;
-
   // The awaiter this activation is stopped at, while it is blocked and only
-  // then. The frame owns it; this only names it. Stopping the process from
-  // outside keeps it, and starting it again waits for the same thing afresh
-  // through it (LRM 9.7).
+  // then. What holds the wait owns it; this only names it. Stopping the
+  // process from outside keeps it, and starting it again waits for the same
+  // thing afresh through it (LRM 9.7).
   Awaiter* awaiter = nullptr;
 
   // This activation's place in the scheduler queue, delay slot or end-of-run
@@ -64,7 +54,29 @@ struct Activation {
   auto operator=(const Activation&) -> Activation& = delete;
   Activation(Activation&&) = delete;
   auto operator=(Activation&&) -> Activation& = delete;
-  ~Activation();
+  virtual ~Activation();
+
+  // Runs this execution from where it stands, once the engine has taken it off
+  // the queue it sat in, answering whether it was left -- ended by a departure
+  // or an error rather than stopping or running out its body.
+  virtual auto Run(RuntimeEffects& effects) -> bool = 0;
+
+  // The same, for an execution woken inside the occurrence it waited for, or
+  // started where it is reached, which nothing outside it names: what left it
+  // is an error it met, already reported, which ended the run, and it was met
+  // where what made the occurrence stands, so that leaves the same way. An
+  // occurrence the scheduler itself carries out, with nothing running, stops
+  // nothing more.
+  void RunAtTheOccurrence(RuntimeEffects& effects);
+
+  // What this execution runs in: its region set, its procedure, what created
+  // its thread.
+  [[nodiscard]] virtual auto Context() const -> const ExecutionContext& = 0;
+
+  // The process whose thread this execution runs in, where that has an object:
+  // a frame's always does, and a reaction's only once the language has asked
+  // for it.
+  [[nodiscard]] virtual auto ProcessIfMade() -> RuntimeProcess* = 0;
 
   // Puts this activation in `queue`, to run when the queue does.
   void Queue(IntrusiveList<QueuePlace>& queue) noexcept;
@@ -78,6 +90,25 @@ struct Activation {
   // runnable again, or stopped from outside, so nothing it was waiting on may
   // resume it.
   void Withdraw() noexcept;
+};
+
+// The activation of a coroutine frame -- a process body, a task body, a fork
+// branch -- which the frame's promise holds whatever value the frame completes
+// with, so what it compiles to is the library's alone. It is resumed where it
+// stopped.
+struct FrameActivation final : Activation {
+  FrameActivation();
+  FrameActivation(const FrameActivation&) = delete;
+  auto operator=(const FrameActivation&) -> FrameActivation& = delete;
+  FrameActivation(FrameActivation&&) = delete;
+  auto operator=(FrameActivation&&) -> FrameActivation& = delete;
+  ~FrameActivation() override;
+
+  // A frame is resumed through the thread it runs in.
+  auto Run(RuntimeEffects& effects) -> bool override;
+  // A frame's is its thread's.
+  [[nodiscard]] auto Context() const -> const ExecutionContext& override;
+  [[nodiscard]] auto ProcessIfMade() -> RuntimeProcess* override;
 
   // What runs once this frame completes: the frame awaiting it (a task
   // returning to its caller), or nothing, so a process body suspends at its end
@@ -85,20 +116,32 @@ struct Activation {
   [[nodiscard]] auto ContinuationAfterCompletion() const noexcept
       -> std::coroutine_handle<>;
 
-  [[nodiscard]] auto Process() const -> RuntimeProcess&;
+  [[nodiscard]] auto Thread() const -> CoroutineThread&;
+
+  // The thread this frame runs in: its own process's for a process body or a
+  // fork branch, its caller's for a called task (LRM 9.5).
+  CoroutineThread* thread = nullptr;
+  // This frame, type-erased, so the engine resumes it and asks whether it is
+  // done without knowing its result type. Stored where the frame is made,
+  // because a promise of one type cannot be turned back into its frame through
+  // a base of it.
+  std::coroutine_handle<> coroutine;
+  // The frame awaiting this one's completion, resumed in its place (a task
+  // returning to its caller); none for a process body, which ends its process.
+  std::coroutine_handle<> continuation;
 };
 
 // A nested activation -- a called task -- takes over its process's thread and
 // gives it back when it completes (LRM 9.5). The pair is what makes "which
 // frame is running" a fact the runtime holds, so a stop made from anywhere
 // parks the frame that actually made it and nothing has to be handed one.
-void EnterActivation(Activation& leaf);
-void LeaveActivation(Activation& leaf);
+void EnterActivation(FrameActivation& leaf);
+void LeaveActivation(FrameActivation& leaf);
 
 // Enters `nested` as an activation of the process running now, to return to
 // `continuation` when it completes.
 void EnterNestedActivation(
-    Activation& nested, std::coroutine_handle<> continuation);
+    FrameActivation& nested, std::coroutine_handle<> continuation);
 
 // The activation was left by a control effect no region claimed, which its
 // landing reports as a forced termination (LRM 9.6.2, 9.7).
@@ -233,7 +276,7 @@ class CompletionSlot<void> {
 template <class T>
 class Coroutine {
  public:
-  struct promise_type : Activation, CompletionSlot<T> {
+  struct promise_type : CompletionSlot<T> {
     // Defaulted after the class rather than here: left implicit, the frame's
     // promise would be constructed and destroyed by code every unit stating a
     // body defines itself, which no statement that the family is already
@@ -247,7 +290,7 @@ class Coroutine {
 
     auto get_return_object() -> Coroutine {
       auto handle = std::coroutine_handle<promise_type>::from_promise(*this);
-      coroutine = handle;
+      activation.coroutine = handle;
       return Coroutine{handle};
     }
 
@@ -266,6 +309,8 @@ class Coroutine {
       void await_resume() const noexcept;
     };
     auto final_suspend() noexcept -> FinalAwaiter;
+
+    FrameActivation activation;
   };
 
   Coroutine() = default;
@@ -298,11 +343,11 @@ class Coroutine {
   }
   auto await_suspend(std::coroutine_handle<> caller)
       -> std::coroutine_handle<promise_type> {
-    EnterNestedActivation(handle_.promise(), caller);
+    EnterNestedActivation(handle_.promise().activation, caller);
     return handle_;
   }
   auto await_resume() -> decltype(auto) {
-    LeaveActivation(handle_.promise());
+    LeaveActivation(handle_.promise().activation);
     return handle_.promise().Take();
   }
 
@@ -311,19 +356,19 @@ class Coroutine {
   }
 
   // The scheduling token for this frame -- what the engine queues and resumes.
-  [[nodiscard]] auto Token() const -> Activation* {
-    return handle_ ? &handle_.promise() : nullptr;
+  [[nodiscard]] auto Token() const -> FrameActivation* {
+    return handle_ ? &handle_.promise().activation : nullptr;
   }
 
   [[nodiscard]] auto Done() const -> bool {
     return !handle_ || handle_.done();
   }
 
-  // Wires the promise's back-pointer to the owning RuntimeProcess. Called from
-  // RuntimeProcess construction for the top-level coroutine.
-  void BindProcess(RuntimeProcess& process) {
+  // Wires the promise's back-pointer to the thread running it. Called from
+  // that thread's construction for the top-level coroutine.
+  void BindThread(CoroutineThread& thread) {
     if (handle_) {
-      handle_.promise().process = &process;
+      handle_.promise().activation.thread = &thread;
     }
   }
 
@@ -357,7 +402,7 @@ template <class T>
 auto Coroutine<T>::promise_type::FinalAwaiter::await_suspend(
     std::coroutine_handle<promise_type> completing) const noexcept
     -> std::coroutine_handle<> {
-  return completing.promise().ContinuationAfterCompletion();
+  return completing.promise().activation.ContinuationAfterCompletion();
 }
 
 template <class T>

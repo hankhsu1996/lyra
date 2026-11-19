@@ -35,6 +35,7 @@ class CommandLine;
 class BoundMembers;
 class VariableCell;
 class EvaluationAttempts;
+class CoroutineThread;
 class Observable;
 class RuntimeProcess;
 class Scope;
@@ -313,20 +314,33 @@ class RuntimeEffects {
   // procedures (LRM 9.2.3): what writes the coverage database (LRM 19.9).
   void SubmitAtRunEnd(OwnedClosure<support::EffectSignature> closure);
 
-  // The process whose body is executing right now (LRM 9.5); the observation
-  // target `wait fork` reads and a fork spawn parents its branch to. Throws
-  // if no process is executing.
-  [[nodiscard]] auto CurrentProcess() -> RuntimeProcess&;
-  [[nodiscard]] auto HasCurrentProcess() const -> bool;
-  // Nullable form of `CurrentProcess()`: returns the executing process, or
-  // `nullptr` when no process is running -- a scope-agnostic foreign query
-  // (e.g. `svGetScope` outside an imported subroutine, LRM 35.5.3) uses this
-  // to report a null scope rather than fault.
-  [[nodiscard]] auto TryCurrentProcess() -> RuntimeProcess*;
+  // The process of the thread running now, whose object is made here where it
+  // has none yet, since the language asked for it: what `process::self()`
+  // names, what a fork is a child of, what a deferred report is withdrawn with
+  // (LRM 9.7, 9.5, 12.4.2.1). Null where code runs on no thread.
+  [[nodiscard]] auto RunningProcess() -> RuntimeProcess*;
+  // The same where its object has been made, and null where it has not: a
+  // process nobody can name yet has no termination due, no descendants and is
+  // no process a handle names, so a question of that kind makes none.
+  [[nodiscard]] auto RunningProcessIfMade() -> RuntimeProcess*;
+  // The thread of frames running now, which is what calls a task, makes a
+  // foreign call that may stop, calls the final procedures, or waits for its
+  // forks (LRM 9.5, 35.5, 9.2.3, 9.6.1): only a body that can stop does those,
+  // and such a body always runs as frames.
+  [[nodiscard]] auto RunningThread() -> CoroutineThread&;
+
+  // Parks what is running -- a thread's innermost frame, or a reaction -- at
+  // `awaiter`, answering whether it must give up control.
+  auto ParkRunning(Awaiter& awaiter) -> bool;
+
+  // What is running, as the scheduler holds it; none where code runs on no
+  // thread.
+  [[nodiscard]] auto RunningActivation() const -> const Activation*;
 
   // What is running: the generator a randomization system call draws from (LRM
   // 18.13, 18.14) and the scope chain a DPI-C foreign call reports through (LRM
-  // 35.5.3). A process installs one, and so does code that runs on no thread:
+  // 35.5.3). A thread installs its own, a reaction one for each run, and so
+  // does code that runs on no thread:
   // a static initialization, and a deferred body that evaluates what the
   // source wrote, which enters the context it took where it was made. A call
   // reaching this with neither running is a defect of the tool.
@@ -446,28 +460,6 @@ class CurrentRuntimeGuard {
 
  private:
   RuntimeEffects* previous_;
-};
-
-// Publication of `process` as this runtime's ambient execution identity for
-// the extent of a resume (LRM 9.5), and of its generator as what a
-// randomization call made in that extent draws from (LRM 18.14.2).
-// Save-and-restore, so a nested foreign call that re-enters generated code
-// cannot lose either on the way back.
-class ProcessExecutionGuard {
- public:
-  ProcessExecutionGuard(RuntimeEffects& effects, RuntimeProcess& process);
-  ~ProcessExecutionGuard();
-
-  ProcessExecutionGuard(const ProcessExecutionGuard&) = delete;
-  auto operator=(const ProcessExecutionGuard&)
-      -> ProcessExecutionGuard& = delete;
-  ProcessExecutionGuard(ProcessExecutionGuard&&) = delete;
-  auto operator=(ProcessExecutionGuard&&) -> ProcessExecutionGuard& = delete;
-
- private:
-  RuntimeEffects* effects_;
-  RuntimeProcess* previous_process_;
-  RunningState* previous_running_;
 };
 
 }  // namespace lyra::runtime

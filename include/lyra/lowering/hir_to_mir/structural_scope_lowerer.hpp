@@ -557,23 +557,15 @@ auto DescribeDataObjects(
     const std::vector<hir::DescribedDataObject>& described)
     -> diag::Result<void>;
 
-// The call `start` makes of `body`, a callable of the scope `frame` stands on
-// whose result is the execution it runs as, written into `frame`'s block, for
-// a procedure the scope registers. The call names the scope; the instance
-// whose text creates the execution, which holds the seeds LRM 18.14.1 splits
-// its generator from and whose code it evaluates; and where the source writes
-// it. A continuous driver is not started here, because it may evaluate another
-// instance's code and so also names the instance it runs as.
-[[nodiscard]] auto BuildExecutionStart(
-    UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::CallableId body,
-    support::BuiltinFn start, diag::SourceSpan written_at) -> mir::ExprId;
-
-// The same call for `started`, the coroutine a call of a closure answered,
-// whose captures are the values it runs with: the statement a concurrent
-// assertion's answer selects (LRM 16.14.1).
-[[nodiscard]] auto BuildExecutionStart(
+// The call starting `started`, the coroutine a call of a closure answered,
+// whose captures are the values it runs with, written into `frame`'s block:
+// the statement a concurrent assertion's answer selects (LRM 16.14.1). The call
+// names the scope; the instance whose text creates the execution, which holds
+// the seeds LRM 18.14.1 splits its generator from and whose code it evaluates;
+// and where the source writes it.
+[[nodiscard]] auto BuildAssertionActionStart(
     UnitLowerer& unit_lowerer, const WalkFrame& frame, mir::ExprId started,
-    support::BuiltinFn start, diag::SourceSpan written_at) -> mir::ExprId;
+    diag::SourceSpan written_at) -> mir::ExprId;
 
 // The time unit and precision of the time scope a declaration in `declaring`
 // lies in (LRM 3.14.2.2), or in the unit's own scope where `declaring` is
