@@ -23,4 +23,9 @@ auto CopyFile(
     const std::filesystem::path& from, const std::filesystem::path& to)
     -> diag::Result<void>;
 
+// Whether `p` names `dir` or something under it, by their spelling alone: a
+// path through a link is under the directory it is spelled through.
+auto IsWithin(const std::filesystem::path& dir, const std::filesystem::path& p)
+    -> bool;
+
 }  // namespace lyra::driver

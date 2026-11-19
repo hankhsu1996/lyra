@@ -89,7 +89,8 @@ to it every symbol the library asks for, so an export it calls needs nothing mor
   loader's, and the clause does not name it.
 - **A program is kept by every file its foreign code reads**, in order, and by where each shared
   library lies, since that is what it loads when it runs. An emitted project, which has to build
-  where the originals are not, carries a copy of each input, a shared library under the file name
+  where the originals are not, carries a copy of each input -- of a source, every file its compile
+  reads, as the compiler lists them, laid out as they lie -- a shared library under the file name
   the loader looks for, and finds its shared libraries among those copies, beside wherever the
   program is moved to; a library whose soname is a path, which the loader would look for there and
   not among the copies, cannot be carried and is refused when the project is emitted.

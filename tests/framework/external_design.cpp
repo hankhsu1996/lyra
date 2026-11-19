@@ -164,16 +164,18 @@ auto DeclarationOf(
   }
   files.push_back((suite / "rtl" / "__rtlmeter_utils.sv").string());
 
-  std::vector<std::string> incdir;
-  const auto searched = [&](const std::filesystem::path& dir) {
-    if (std::ranges::find(incdir, dir.string()) == incdir.end()) {
-      incdir.push_back(dir.string());
+  // A directory searched for includes, named once however many files lie in it.
+  const auto searched = [](std::vector<std::string>& dirs,
+                           const std::filesystem::path& dir) {
+    if (std::ranges::find(dirs, dir.string()) == dirs.end()) {
+      dirs.push_back(dir.string());
     }
   };
+  std::vector<std::string> incdir;
   for (const std::string& file : ListOf(compile, "verilogIncludeFiles")) {
-    searched((design_dir / file).parent_path());
+    searched(incdir, (design_dir / file).parent_path());
   }
-  searched(suite / "rtl");
+  searched(incdir, suite / "rtl");
 
   // The suite's sources were prepared for its reference simulator and many
   // select on the macros that simulator predefines -- one naming it, one saying
@@ -189,9 +191,19 @@ auto DeclarationOf(
           "__RTLMETER_MAIN_CLOCK={}",
           LastOf(compile, "mainClock").value_or("")));
 
+  // The design's native code, with the macros the descriptor compiles it with
+  // and the directory of each header it lists for it.
   std::vector<std::string> native;
   for (const std::string& file : ListOf(compile, "cppSourceFiles")) {
     native.push_back((design_dir / file).string());
+  }
+  std::vector<std::string> native_defines;
+  for (const auto& [macro, value] : MapOf(compile, "cppDefines")) {
+    native_defines.push_back(std::format("{}={}", macro, value));
+  }
+  std::vector<std::string> native_incdir;
+  for (const std::string& file : ListOf(compile, "cppIncludeFiles")) {
+    searched(native_incdir, (design_dir / file).parent_path());
   }
 
   // A time scale and a value for a parameter of the top are facts about the
@@ -223,10 +235,12 @@ auto DeclarationOf(
 
   return std::format(
       "[library]\nname = {}\nfiles = {}\nincdir = {}\ndefines = {}\ndpi = {}\n"
+      "dpi_defines = {}\ndpi_incdir = {}\n"
       "\n[design]\ntop = [{}]\nparams = {}\n"
       "\n[compile]\n{}single_unit = true\nassertions = \"skip\"\n",
       TomlString(LibraryNameOf(design)), TomlArray(files), TomlArray(incdir),
-      TomlArray(defines), TomlArray(native),
+      TomlArray(defines), TomlArray(native), TomlArray(native_defines),
+      TomlArray(native_incdir),
       TomlString(LastOf(compile, "topModule").value_or("")), TomlArray(values),
       time_scale);
 }

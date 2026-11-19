@@ -112,8 +112,12 @@ is where the analogy to an inline function stops: the approach is the same, the 
 
 A bundled project carries this surface, and a copy of every foreign input it was given -- sources,
 objects, archives and shared libraries -- so it builds where neither Lyra nor the originals are
-reachable, and its program finds each shared library among those copies, beside wherever it is moved
-to. The in-place path produces the same surface in its work directory, and copies nothing else.
+reachable. A source brings every file its compile reads -- itself and each header it includes, found
+beside it or under the include directories its declaration states -- which the compiler is asked to
+list, as make asks it for a rule's prerequisites; each is laid out as it lay, so every include finds
+what it found before. The program finds each shared library among those copies, beside wherever it
+is moved to. The in-place path produces the same surface in its work directory, and copies nothing
+else.
 
 ## Command output contract
 

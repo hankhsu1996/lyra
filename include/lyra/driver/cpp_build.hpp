@@ -166,9 +166,11 @@ class CppProjectSink {
 
 // Completes a self-contained C++ project in `dir` around sources a
 // `CppProjectSink` has already written: the design's DPI-C boundary surface
-// with a copy of each foreign input, a `build.sh` recipe, and a bundled copy
-// of `runtime`. The directory then builds with no external include or link
-// paths, and on a machine that has never seen the original foreign inputs.
+// with a copy of each foreign input -- of a source, of every file its compile
+// reads, which `host`'s compiler is asked to list -- a `build.sh` recipe, and
+// a bundled copy of `runtime`. The directory then builds with no external
+// include or link paths, and on a machine that has never seen the original
+// foreign inputs.
 //
 // The compiler is baked into the recipe, so the project builds in a shell with
 // nothing configured -- which is what self-contained has to mean. Carried to a

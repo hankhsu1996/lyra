@@ -20,6 +20,7 @@
 #include <llvm/Support/MemoryBuffer.h>
 
 #include "lyra/diag/diag_code.hpp"
+#include "lyra/driver/file_output.hpp"
 #include "lyra/stable_hash/fingerprint.hpp"
 #include "lyra/stable_hash/stable_hasher.hpp"
 
@@ -286,9 +287,11 @@ auto DigestOfFiles(
   named.reserve(files.size());
   for (const auto& file : files) {
     const auto normal = file.lexically_normal();
-    const auto relative = normal.lexically_relative(root.lexically_normal());
-    const bool under = !relative.empty() && relative.begin()->string() != "..";
-    named.emplace_back((under ? relative : normal).generic_string(), normal);
+    const auto named_as =
+        IsWithin(root, normal)
+            ? normal.lexically_relative(root.lexically_normal())
+            : normal;
+    named.emplace_back(named_as.generic_string(), normal);
   }
   std::ranges::sort(named);
   const auto [first, last] = std::ranges::unique(named);

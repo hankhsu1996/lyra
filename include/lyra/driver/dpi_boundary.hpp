@@ -16,6 +16,26 @@
 
 namespace lyra::driver {
 
+// What the preprocessor of a foreign source is told beyond its language and
+// the boundary it compiles against: the macros and the include directories the
+// source set naming it states for its foreign code, a fact of that code for
+// everyone who builds it, as a C build states its definitions and include
+// paths apart from its compiler's options.
+struct ForeignPreprocessing {
+  std::vector<std::string> defines;
+  std::vector<std::filesystem::path> incdir;
+
+  auto operator==(const ForeignPreprocessing&) const -> bool = default;
+};
+
+// A DPI-C link input as a declaration or the command line names it, with what
+// the source set naming it states for compiling it. One the command line names
+// states nothing.
+struct DpiLinkRequest {
+  std::filesystem::path path;
+  ForeignPreprocessing preprocessing;
+};
+
 // A user's native source supplying DPI-C foreign symbols (LRM 35), classified
 // by the language it must be compiled as. A C source is compiled on its own so
 // its symbols keep C linkage -- an import's emitted declaration expects that,
@@ -25,6 +45,7 @@ namespace lyra::driver {
 struct DpiSource {
   std::filesystem::path path;
   bool compile_as_c;
+  ForeignPreprocessing preprocessing;
 };
 
 // Foreign code handed over already compiled into a relocatable object or an
@@ -52,14 +73,12 @@ using DpiLinked = std::variant<DpiCompiledCode, DpiSharedLibrary>;
 // so an unreadable, unsupported, or ambiguously named input is reported against
 // the command line rather than surfacing much later as a compiler error, a
 // linker error, or a silently overwritten intermediate. A file named a second
-// time is taken once (LRM J.4). Every consumer -- a build of either backend,
+// time is taken once (LRM J.4), and a source named again with other macros or
+// include directories is refused. Every consumer -- a build of either backend,
 // and the recipe an emitted project ships -- reads the classification from
 // here rather than re-deriving it.
-auto ValidateDpiLinkInputs(std::span<const std::string> inputs)
+auto ValidateDpiLinkInputs(std::span<const DpiLinkRequest> inputs)
     -> diag::Result<std::vector<DpiLinkInput>>;
-
-// The file the user handed over.
-auto DpiInputPath(const DpiLinkInput& input) -> const std::filesystem::path&;
 
 // The file name an input is known by beside the others wherever they are
 // gathered into one directory: what is made from a source and the copy an
@@ -69,25 +88,31 @@ auto GatheredNameOf(const DpiLinkInput& input) -> std::string;
 
 // Writes the design's DPI-C boundary surface into `dir` (LRM 35): the header a
 // foreign source includes, naming the per-unit fragments already written there,
-// and the standard header those prototypes are spelled in. `fragments` is a
-// file list rather than anything read out of the design, which is what makes
+// the standard headers those prototypes and the VPI are spelled in, and the
+// header of the TF routines, which declares nothing (LRM 36.1). `fragments` is
+// a file list rather than anything read out of the design, which is what makes
 // assembling the union a step of the build. A foreign source compiles against
 // `dir` whichever backend runs the design. Written for every design -- one that
 // declares no DPI-C names no fragment -- so no consumer needs a case for its
-// absence.
+// absence. Answers every file it wrote, which is the surface and nothing else
+// `dir` holds.
 auto WriteDpiSurface(
     const RuntimeLocation& runtime, std::span<const dpi::AbiFragment> fragments,
-    const std::filesystem::path& dir) -> diag::Result<void>;
+    const std::filesystem::path& dir)
+    -> diag::Result<std::vector<std::filesystem::path>>;
 
 // What a foreign source is compiled with: the language it is compiled as and
-// the standard where its language has one to name (LRM 35), at `optimization`
-// and checked for `sanitizer`. A C source is compiled as C so its symbols keep
-// C linkage, which is what the emitted declaration expects and what a C++
-// compilation would mangle away. The in-process build and the recipe an emitted
-// project ships both read it here, so the two compile a source alike.
+// the standard where its language has one to name (LRM 35), the macros and
+// include directories its source set states, then `boundary`, the directory
+// the boundary surface was written in, at `optimization` and checked for
+// `sanitizer`. A C source is compiled as C so its symbols keep C linkage, which
+// is what the emitted declaration expects and what a C++ compilation would
+// mangle away. The in-process build and the recipe an emitted project ships
+// both read it here, so the two compile a source alike.
 auto ForeignCompileFlags(
-    const DpiSource& source, OptimizationLevel optimization,
-    support::Sanitizer sanitizer) -> std::vector<std::string>;
+    const DpiSource& source, const std::filesystem::path& boundary,
+    OptimizationLevel optimization, support::Sanitizer sanitizer)
+    -> std::vector<std::string>;
 
 // Compiles each DPI-C source to a relocatable object in `work_dir` and answers
 // every input as the link takes it, in input order. Every program links these

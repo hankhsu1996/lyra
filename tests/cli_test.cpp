@@ -424,18 +424,55 @@ auto WriteFile(const std::filesystem::path& path, std::string_view text)
   std::ofstream(path) << text;
 }
 
+// A foreign source is compiled once (LRM J.4), so the library and the design
+// may both name it only where both state the same macros for it; naming it
+// under two sets of macros is refused rather than compiled under the first.
+TEST(LyraManifest, RefusesAForeignSourceCompiledTwoWays) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  WriteFile(*tmp_or / "top.sv", "module Top;\nendmodule\n");
+  WriteFile(*tmp_or / "model.c", "int model(void) { return 1; }\n");
+  const auto declare = [&](std::string_view design_macro) {
+    WriteFile(
+        *tmp_or / "lyra.toml",
+        std::format(
+            "[library]\nname = \"twice\"\nfiles = [\"top.sv\"]\n"
+            "dpi = [\"model.c\"]\ndpi_defines = [\"A\"]\n"
+            "\n[design]\ntop = [\"Top\"]\ndpi = [\"model.c\"]\n"
+            "dpi_defines = [\"{}\"]\n",
+            design_macro));
+  };
+
+  declare("A");
+  const auto same = RunLyraFrom(lyra, *tmp_or, "check");
+  EXPECT_THAT(same, ExitedWithCode(0)) << same.stderr_text;
+
+  declare("B");
+  const auto other = RunLyraFrom(lyra, *tmp_or, "check");
+  EXPECT_THAT(other, ExitedWithCode(Ne(0))) << other.stdout_text;
+  EXPECT_NE(
+      other.stderr_text.find("is named twice, with different macros"),
+      std::string::npos)
+      << other.stderr_text;
+}
+
 // Three libraries in a chain, `soc` on `prim` on `base`, written so that each
 // thing one library could leak into another is observable: `soc` and `prim`
 // each hold a cell `fifo`, a header `who.svh` and a define `FLAVOUR`, `soc`
 // is one compilation unit that defines a macro before `prim` is read, and only
-// `prim` declares that it uses `base`. `base` calls a foreign function only its
-// own declaration supplies, and `soc` and `base` each find a cell `found_cell`
-// by searching a directory of their own.
+// `prim` declares that it uses `base`. `base` and `soc`'s design each call a
+// foreign function only their own source set supplies, compiled under macros
+// of its own, and `soc` and `base` each find a cell `found_cell` by searching a
+// directory of their own.
 auto WriteLibraryChain(const std::filesystem::path& root) -> void {
   WriteFile(
       root / "base" / "lyra.toml",
       "[library]\nname = \"base\"\nfiles = [\"base_cell.sv\"]\n"
       "dpi = [\"base_answer.c\"]\n"
+      "dpi_defines = [\"TENS=4\"]\n"
+      "dpi_incdir = [\"c_include\"]\n"
       "defines = [\"FLAVOUR=7\"]\n"
       "searchdir = [\"found\"]\nsearchext = [\".sv\"]\n");
   WriteFile(
@@ -450,9 +487,19 @@ auto WriteLibraryChain(const std::filesystem::path& root) -> void {
       "module found_cell;\n"
       "  initial $display(\"base found flavour %0d\", `FLAVOUR);\n"
       "endmodule\n");
+  // The foreign code is read under the macros and include directories its own
+  // library states for it, and under neither the macros its SystemVerilog is
+  // read with nor another library's; it finds the header of the TF routines
+  // as foreign code written for older tools expects to.
   WriteFile(
       root / "base" / "base_answer.c",
-      "int base_answer(void) { return 42; }\n");
+      "#include <veriuser.h>\n"
+      "#include \"units.h\"\n"
+      "#if defined(FLAVOUR) || defined(DESIGN_ONES)\n"
+      "#error \"another set's macro reached the library's foreign code\"\n"
+      "#endif\n"
+      "int base_answer(void) { return TENS * 10 + UNITS; }\n");
+  WriteFile(root / "base" / "c_include" / "units.h", "#define UNITS 2\n");
 
   WriteFile(
       root / "prim" / "lyra.toml",
@@ -493,18 +540,28 @@ auto WriteLibraryChain(const std::filesystem::path& root) -> void {
       "defines = [\"FLAVOUR=2\"]\n"
       "searchdir = [\"found\"]\nsearchext = [\".sv\"]\n"
       "\n[design]\ntop = [\"Top\"]\n"
+      "dpi = [\"design_answer.cc\"]\n"
+      "dpi_defines = [\"DESIGN_ONES=5\"]\n"
       "\n[dependencies]\nprim = { path = \"../prim\" }\n"
       "\n[compile]\nsingle_unit = true\n");
+  WriteFile(
+      root / "soc" / "design_answer.cc",
+      "#if defined(TENS) || defined(FLAVOUR)\n"
+      "#error \"another set's macro reached the design's foreign code\"\n"
+      "#endif\n"
+      "extern \"C\" int design_answer() { return DESIGN_ONES; }\n");
   WriteFile(root / "soc" / "inc" / "who.svh", "`define WHO \"soc\"\n");
   WriteFile(
       root / "soc" / "top.sv",
       "`define SOC_MACRO\n"
       "`include \"prim_macros.svh\"\n"
       "module Top;\n"
+      "  import \"DPI-C\" function int design_answer();\n"
       "  prim_user u ();\n"
       "  fifo f ();\n"
       "  found_cell c ();\n"
       "  initial $display(\"top: %s\", `PRIM_GREETING);\n"
+      "  initial $display(\"design answer %0d\", design_answer());\n"
       "endmodule\n");
   WriteFile(
       root / "soc" / "found" / "found_cell.sv",
@@ -533,8 +590,9 @@ auto WriteLibraryChain(const std::filesystem::path& root) -> void {
 // it. A cell it instantiates is its own before anyone else's of that name
 // (LRM 33.4.1.5 names the parent cell's library for the same reason), and its
 // text is read under its own defines and include directories and no other
-// compilation unit's macros (LRM 3.12.1). What crosses to a dependent is what
-// the library exports, and what the command line says reaches everything.
+// compilation unit's macros (LRM 3.12.1), and its foreign code under the ones
+// it states for that code. What crosses to a dependent is what the library
+// exports, and what the command line says reaches everything.
 TEST(LyraManifest, ALibraryIsReadAsItDeclaresItselfWhoeverUsesIt) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
@@ -549,7 +607,7 @@ TEST(LyraManifest, ALibraryIsReadAsItDeclaresItselfWhoeverUsesIt) {
     for (const std::string_view line :
          {"prim fifo: who prim flavour 1 soc macro 0", "soc fifo",
           "base cell 42", "base found flavour 7", "soc found flavour 2",
-          "top: from prim"}) {
+          "top: from prim", "design answer 5"}) {
       EXPECT_NE(run.stdout_text.find(line), std::string::npos)
           << backend << ": no '" << line << "' in: " << run.stdout_text;
     }

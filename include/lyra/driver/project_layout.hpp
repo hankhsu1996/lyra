@@ -212,6 +212,12 @@ inline constexpr std::string_view kPreparedHeaderSuffix = ".gch";
 inline constexpr std::string_view kDpiAbiHeader = "dpi.h";
 inline constexpr std::array<std::string_view, 4> kStandardHeaders = {
     "svdpi.h", "vpi_user.h", "sv_vpi_user.h", "vpi_compatibility.h"};
+// The header of the TF routines, which IEEE 1364-2005 deprecated and IEEE 1800
+// does not include (LRM 36.1, C.2.1). Foreign code written for older tools
+// includes it and calls nothing from it, so it is written beside the others
+// declaring nothing, and a call of a TF routine fails to compile or to link
+// with an error naming the routine.
+inline constexpr std::string_view kTfRoutinesHeader = "veriuser.h";
 // Where a portable project keeps its copies of the user's DPI-C link inputs,
 // so the directory builds on another machine without reaching back to their
 // originals, and where its program finds a shared library among them when it

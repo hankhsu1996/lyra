@@ -59,14 +59,29 @@ auto WriteDpiSource(const std::filesystem::path& path) -> void {
 }
 
 // The foreign half, stating no prototype of its own: the generated ABI header
-// carries both the import it defines and the export it calls.
-auto WriteDpiForeignSource(const std::filesystem::path& path) -> void {
-  std::ofstream out(path);
-  out << "#include \"dpi.h\"\n"
+// carries both the import it defines and the export it calls. It reads a
+// header beside it, one under an include directory its declaration states,
+// and a macro its declaration defines, whose value holds what a shell would
+// take apart, as foreign code written in several files does. The declaration,
+// `lyra.toml` beside the design's source, names both halves.
+auto WriteDpiForeignSource(const std::filesystem::path& root) -> void {
+  std::filesystem::create_directories(root / "c");
+  std::filesystem::create_directories(root / "inc");
+  std::ofstream(root / "c" / "foreign.c")
+      << "#include \"dpi.h\"\n"
+      << "#include \"beside.h\"\n"
+      << "#include \"searched.h\"\n"
       << "\n"
       << "int call_pkg(int x) {\n"
-      << "  return triple(x);\n"
+      << "  return triple(x) * FROM_BESIDE + FROM_SEARCHED;\n"
       << "}\n";
+  std::ofstream(root / "c" / "beside.h") << "#define FROM_BESIDE 1\n";
+  std::ofstream(root / "inc" / "searched.h")
+      << "#define FROM_SEARCHED (SCALE * 2)\n";
+  std::ofstream(root / "lyra.toml")
+      << "[library]\nname = \"portable\"\nfiles = [\"test.sv\"]\n"
+      << "dpi = [\"c/foreign.c\"]\ndpi_defines = [\"SCALE=(1+2)\"]\n"
+      << "dpi_incdir = [\"inc\"]\n\n[design]\ntop = [\"Test\"]\n";
 }
 
 TEST(LyraEmittedProject, ProducesPortableBuildableProject) {
@@ -609,25 +624,25 @@ TEST(LyraEmittedProject, PortableProjectBuildsItsDpiSources) {
 
   auto tmp_or = MakeScratchDir();
   ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
-  const auto src = *tmp_or / "test.sv";
-  WriteDpiSource(src);
-  const auto foreign = *tmp_or / "foreign.c";
-  WriteDpiForeignSource(foreign);
-  const auto out_dir = *tmp_or / "out";
+  WriteDpiSource(*tmp_or / "test.sv");
+  WriteDpiForeignSource(*tmp_or);
+  // The project is written over the directory the sources lie in, which is
+  // where a user typing `-o .` puts it, so it is the foreign boundary alone
+  // that the carried sources do not include.
+  const auto& out_dir = *tmp_or;
 
-  const std::vector<std::string> args = {
-      "emit",           "cpp",        "--top",          "Test",      "-o",
-      out_dir.string(), "--dpi-link", foreign.string(), src.string()};
-  const auto emit = RunChildProcess(lyra, args);
+  const std::vector<std::string> args = {"emit", "cpp", "-o", "."};
+  const auto emit = RunChildProcess(lyra, args, std::nullopt, *tmp_or);
   ASSERT_THAT(emit, ExitedWithCode(0)) << emit.stdout_text << emit.stderr_text;
 
   // The emitted directory carries the whole foreign boundary: the generated
-  // prototypes, the standard header they are spelled in, and a copy of the
-  // user's source, so it builds where the originals are not reachable.
+  // prototypes, the standard header they are spelled in, and a copy of every
+  // file the user's source reads, so it builds where the originals are not
+  // reachable.
   EXPECT_TRUE(std::filesystem::exists(out_dir / "dpi.h"));
   EXPECT_TRUE(std::filesystem::exists(out_dir / "svdpi.h"));
-  ASSERT_TRUE(std::filesystem::exists(out_dir / "dpi/foreign.c"));
-  std::filesystem::remove(foreign);
+  std::filesystem::remove_all(*tmp_or / "c");
+  std::filesystem::remove_all(*tmp_or / "inc");
 
   auto sh_or = lyra::driver::FindOnPath("sh");
   ASSERT_TRUE(sh_or.has_value()) << sh_or.error().Text();
@@ -639,7 +654,7 @@ TEST(LyraEmittedProject, PortableProjectBuildsItsDpiSources) {
 
   const auto run = RunChildProcess(out_dir / "program", {});
   EXPECT_THAT(run, ExitedWithCode(0)) << run.stderr_text;
-  EXPECT_NE(run.stdout_text.find("dpi 21"), std::string::npos)
+  EXPECT_NE(run.stdout_text.find("dpi 27"), std::string::npos)
       << "stdout: " << run.stdout_text;
 }
 

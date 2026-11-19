@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "lyra/backend/cpp/api.hpp"
+#include "lyra/base/diag_message.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/base/parallel.hpp"
@@ -337,9 +338,25 @@ auto JoinWords(std::span<const std::string> words) -> std::string {
   return out;
 }
 
-// Where a DPI-C link input sits once copied into the project, relative to
-// it. The recipe and the copy read the location from here, so neither restates
-// it.
+// `word` as one shell word whatever it holds -- a macro's value with quotes or
+// parentheses in it, a path with a blank -- single-quoted, with each quote it
+// holds closed, escaped and reopened.
+auto ShellWord(std::string_view word) -> std::string {
+  std::string out = "'";
+  for (const char c : word) {
+    if (c == '\'') {
+      out += "'\\''";
+    } else {
+      out += c;
+    }
+  }
+  out += "'";
+  return out;
+}
+
+// Where a DPI-C link input is copied into the project, relative to it: the
+// copy of a file the link takes as it is, or the directory a source's files
+// are laid out under.
 auto DpiCopyRelPath(const DpiLinkInput& input) -> std::string {
   return std::format("{}/{}", kDpiInputDir, GatheredNameOf(input));
 }
@@ -350,43 +367,52 @@ auto DpiObjectRelPath(const DpiLinkInput& input) -> std::string {
       "{}/{}/{}.o", kObjectDir, kDpiInputDir, GatheredNameOf(input));
 }
 
-// The build recipe's DPI-C contribution (LRM 35), rendered from the already
-// classified link inputs so the script carries no detection of its own. Both
-// halves are empty for a design with no foreign inputs, which is why the recipe
-// needs no branch for that case. A foreign source compiles against the one
-// include path the project publishes its boundary on, which from the recipe's
-// own directory is `.`. A shared library is linked from the project's copies
-// by the name the loader will look for, and the program looks for it among
-// them, beside wherever it is moved to.
+// The build recipe's DPI-C contribution (LRM 35), rendered from the link
+// inputs as the project holds them, so the script carries no detection of its
+// own. Both halves are empty for a design with no foreign inputs, which is why
+// the recipe needs no branch for that case. A foreign source compiles against
+// the boundary the project publishes, which from the recipe's own directory is
+// `.`. A shared library is linked from the project's copy by the name the
+// loader will look for, and the program looks for it beside that copy,
+// wherever the project is moved to. Every word the user's inputs supply is
+// written as one shell word, so the recipe compiles a source as the build in
+// place does.
 struct DpiRecipe {
   std::string compile_steps;
   std::string link_inputs;
 };
 
 auto RenderDpiRecipe(
-    std::span<const DpiLinkInput> inputs, const HostBuild& host) -> DpiRecipe {
+    std::span<const DpiLinkInput> carried, const HostBuild& host) -> DpiRecipe {
   DpiRecipe recipe;
-  for (const DpiLinkInput& input : inputs) {
+  for (const DpiLinkInput& input : carried) {
     std::visit(
         Overloaded{
             [&](const DpiSource& source) {
               const std::string object = DpiObjectRelPath(input);
+              std::vector<std::string> words = ForeignCompileFlags(
+                  source, ".", host.optimization, host.sanitizer);
+              words.insert(
+                  words.end(), {"-c", source.path.string(), "-o", object});
+              std::string compile;
+              for (const std::string& word : words) {
+                compile += " " + ShellWord(word);
+              }
               recipe.compile_steps += std::format(
-                  "mkdir -p {}/{}\n\"$CXX\" {} -c {} -I . -o {}\n", kObjectDir,
-                  kDpiInputDir,
-                  JoinWords(ForeignCompileFlags(
-                      source, host.optimization, host.sanitizer)),
-                  DpiCopyRelPath(input), object);
-              recipe.link_inputs += std::format(" {}", object);
+                  "mkdir -p {}/{}\n\"$CXX\"{}\n", kObjectDir, kDpiInputDir,
+                  compile);
+              recipe.link_inputs += " " + ShellWord(object);
             },
-            [&](const DpiCompiledCode&) {
-              recipe.link_inputs += std::format(" {}", DpiCopyRelPath(input));
+            [&](const DpiCompiledCode& code) {
+              recipe.link_inputs += " " + ShellWord(code.path.string());
             },
-            [&](const DpiSharedLibrary&) {
+            [&](const DpiSharedLibrary& library) {
+              const std::string held_in = library.path.parent_path().string();
               recipe.link_inputs += std::format(
-                  " -L{} -Wl,--push-state,--no-as-needed -l:{} "
-                  "-Wl,--pop-state '-Wl,-rpath,$ORIGIN/{}'",
-                  kDpiInputDir, GatheredNameOf(input), kDpiInputDir);
+                  " -L{} -Wl,--push-state,--no-as-needed {} -Wl,--pop-state {}",
+                  ShellWord(held_in),
+                  ShellWord("-l:" + library.path.filename().string()),
+                  ShellWord("-Wl,-rpath,$ORIGIN/" + held_in));
             }},
         input);
   }
@@ -429,11 +455,11 @@ auto RenderOptionalFlags() -> std::string {
 }
 
 auto RenderBuildScript(
-    const HostBuild& host, std::span<const DpiLinkInput> dpi_inputs,
+    const HostBuild& host, std::span<const DpiLinkInput> carried,
     std::span<const TranslationUnit> translation_units) -> std::string {
   const std::string_view optimization_flag =
       OptimizationFlag(host.optimization);
-  const DpiRecipe dpi = RenderDpiRecipe(dpi_inputs, host);
+  const DpiRecipe dpi = RenderDpiRecipe(carried, host);
   std::vector<std::string> relpaths;
   relpaths.reserve(translation_units.size());
   for (const TranslationUnit& unit : translation_units) {
@@ -561,22 +587,6 @@ auto RefuseSonamesNamingAPath(std::span<const DpiLinkInput> inputs)
         input);
     if (!carried) {
       return carried;
-    }
-  }
-  return {};
-}
-
-// Copies the user's DPI-C link inputs into the project (LRM 35) so the
-// directory builds on another machine: the recipe reaches them by a
-// project-relative path, which an absolute path back to the originals could
-// not survive.
-auto CopyDpiInputs(
-    std::span<const DpiLinkInput> inputs, const std::filesystem::path& dir)
-    -> diag::Result<void> {
-  for (const DpiLinkInput& input : inputs) {
-    if (auto r = CopyFile(DpiInputPath(input), dir / DpiCopyRelPath(input));
-        !r) {
-      return r;
     }
   }
   return {};
@@ -810,6 +820,156 @@ auto PrerequisitesOf(std::string_view rule)
   return files;
 }
 
+// The files a compile told `args` reads, as `cxx` lists them asked for a make
+// rule of them. One the compiler cannot list is `refused`, with what the
+// compiler said beside it.
+auto FilesReadBy(
+    const std::filesystem::path& cxx, std::span<const std::string> args,
+    base::DiagMessage refused)
+    -> diag::Result<std::vector<std::filesystem::path>> {
+  auto listed = RunProcessCaptured(cxx, args);
+  if (!listed) {
+    return diag::Fail(diag::DiagCode::kHostIoError, std::move(listed.error()));
+  }
+  if (listed->exit_code != 0) {
+    return std::unexpected(
+        diag::Make(diag::DiagCode::kHostBuildFailed, std::move(refused))
+            .WithNote("{}", listed->stderr_text));
+  }
+  return PrerequisitesOf(listed->stdout_text);
+}
+
+// `p` from the root, as it is spelled: a compiler finds a file an include
+// names through the directory the including file was opened from, so a link
+// on the way is kept rather than resolved.
+auto Spelled(const std::filesystem::path& p) -> std::filesystem::path {
+  std::error_code unknown;
+  const std::filesystem::path absolute = std::filesystem::absolute(p, unknown);
+  return (unknown ? p : absolute).lexically_normal();
+}
+
+// The innermost directory every one of `paths` lies within.
+auto CommonDirectory(std::span<const std::filesystem::path> paths)
+    -> std::filesystem::path {
+  std::filesystem::path common = paths.front();
+  for (const std::filesystem::path& p : paths) {
+    while (!IsWithin(common, p)) {
+      common = common.parent_path();
+    }
+  }
+  return common;
+}
+
+// A foreign source as the project holds it: every file its compile reads --
+// itself and each header it includes, found beside it or under its include
+// directories, as the compiler lists them -- copied under `home` laid out as
+// they lie, so each include finds what it found before. The boundary surface
+// it compiles against, `surface`, is the project's own, and is not copied.
+auto CarrySource(
+    const DpiSource& source, const HostBuild& host,
+    const std::filesystem::path& dir,
+    std::span<const std::filesystem::path> surface,
+    const std::filesystem::path& home) -> diag::Result<DpiSource> {
+  std::vector<std::string> args =
+      ForeignCompileFlags(source, dir, host.optimization, host.sanitizer);
+  args.insert(args.end(), {"-MM", "-MT", "source", source.path.string()});
+  auto listed = FilesReadBy(
+      host.cxx, args,
+      base::DiagMessage(
+          "the foreign source '{}' does not compile with '{}'",
+          source.path.string(), host.cxx.string()));
+  if (!listed) {
+    return std::unexpected(std::move(listed.error()));
+  }
+  std::vector<std::filesystem::path> published;
+  for (const std::filesystem::path& file : surface) {
+    published.push_back(Spelled(file));
+  }
+  std::vector<std::filesystem::path> read;
+  for (const std::filesystem::path& file : *listed) {
+    std::filesystem::path found = Spelled(file);
+    if (std::ranges::find(published, found) == published.end()) {
+      read.push_back(std::move(found));
+    }
+  }
+  const std::filesystem::path source_file = Spelled(source.path);
+  std::vector<std::filesystem::path> laid_out = {source_file.parent_path()};
+  for (const std::filesystem::path& file : read) {
+    laid_out.push_back(file.parent_path());
+  }
+  std::vector<std::filesystem::path> incdir;
+  for (const std::filesystem::path& searched : source.preprocessing.incdir) {
+    incdir.push_back(Spelled(searched));
+    laid_out.push_back(incdir.back());
+  }
+  const std::filesystem::path root = CommonDirectory(laid_out);
+  for (const std::filesystem::path& file : read) {
+    if (auto r = CopyFile(file, dir / home / file.lexically_relative(root));
+        !r) {
+      return std::unexpected(std::move(r.error()));
+    }
+  }
+  // Each include directory is in the project even where nothing under it was
+  // read, so an include naming a path through it still resolves.
+  std::vector<std::filesystem::path> held_incdir;
+  for (const std::filesystem::path& searched : incdir) {
+    const std::filesystem::path held = home / searched.lexically_relative(root);
+    std::error_code created;
+    std::filesystem::create_directories(dir / held, created);
+    if (created) {
+      return diag::Fail(
+          diag::DiagCode::kHostIoError, "cannot create '{}' ({})",
+          (dir / held).string(), created.message());
+    }
+    held_incdir.push_back(held);
+  }
+  return DpiSource{
+      .path = home / source_file.lexically_relative(root),
+      .compile_as_c = source.compile_as_c,
+      .preprocessing = {
+          .defines = source.preprocessing.defines,
+          .incdir = std::move(held_incdir)}};
+}
+
+// The user's DPI-C link inputs as the project holds them (LRM 35): each copied
+// in, so the directory builds on another machine, and reached by a
+// project-relative path, which an absolute path back to the originals could
+// not survive. `surface` is the boundary the project already publishes.
+auto CarryDpiInputs(
+    std::span<const DpiLinkInput> inputs, const HostBuild& host,
+    const std::filesystem::path& dir,
+    std::span<const std::filesystem::path> surface)
+    -> diag::Result<std::vector<DpiLinkInput>> {
+  std::vector<DpiLinkInput> carried;
+  carried.reserve(inputs.size());
+  for (const DpiLinkInput& input : inputs) {
+    const std::filesystem::path copy = DpiCopyRelPath(input);
+    auto held = std::visit(
+        Overloaded{
+            [&](const DpiSource& source) -> diag::Result<DpiLinkInput> {
+              return CarrySource(source, host, dir, surface, copy);
+            },
+            [&](const DpiCompiledCode& code) -> diag::Result<DpiLinkInput> {
+              if (auto r = CopyFile(code.path, dir / copy); !r) {
+                return std::unexpected(std::move(r.error()));
+              }
+              return DpiCompiledCode{.path = copy};
+            },
+            [&](const DpiSharedLibrary& library) -> diag::Result<DpiLinkInput> {
+              if (auto r = CopyFile(library.path, dir / copy); !r) {
+                return std::unexpected(std::move(r.error()));
+              }
+              return DpiSharedLibrary{.path = copy, .soname = library.soname};
+            }},
+        input);
+    if (!held) {
+      return std::unexpected(std::move(held.error()));
+    }
+    carried.push_back(*std::move(held));
+  }
+  return carried;
+}
+
 }  // namespace
 
 auto FindUsualCompiler() -> std::optional<std::filesystem::path> {
@@ -830,18 +990,14 @@ auto DigestOfPreludeInputs(
   args.insert(
       args.end(), {"-M", "-MT", "prelude", "-xc++-header",
                    (include_root / support::kRuntimePreludeHeader).string()});
-  auto listed = RunProcessCaptured(cxx, args);
+  auto listed = FilesReadBy(
+      cxx, args,
+      base::DiagMessage(
+          "the runtime's headers do not compile with '{}'", cxx.string()));
   if (!listed) {
-    return diag::Fail(diag::DiagCode::kHostIoError, std::move(listed.error()));
+    return std::unexpected(std::move(listed.error()));
   }
-  if (listed->exit_code != 0) {
-    return std::unexpected(
-        diag::Make(
-            diag::DiagCode::kHostBuildFailed,
-            "the runtime's headers do not compile with '{}'", cxx.string())
-            .WithNote("{}", listed->stderr_text));
-  }
-  return DigestOfFiles(include_root, PrerequisitesOf(listed->stdout_text));
+  return DigestOfFiles(include_root, *listed);
 }
 
 auto CompileTranslationUnits(
@@ -1179,17 +1335,19 @@ auto AssembleProject(
   if (auto r = RefuseSonamesNamingAPath(dpi_inputs); !r) {
     return r;
   }
-  if (auto r = WriteDpiSurface(runtime, sources.dpi_fragments, dir); !r) {
-    return r;
+  auto surface = WriteDpiSurface(runtime, sources.dpi_fragments, dir);
+  if (!surface) {
+    return std::unexpected(std::move(surface.error()));
   }
-  if (auto r = CopyDpiInputs(dpi_inputs, dir); !r) {
-    return r;
+  auto carried = CarryDpiInputs(dpi_inputs, host, dir, *surface);
+  if (!carried) {
+    return std::unexpected(std::move(carried.error()));
   }
 
   const auto script_path = dir / "build.sh";
   if (auto r = WriteFile(
           script_path,
-          RenderBuildScript(host, dpi_inputs, sources.translation_units));
+          RenderBuildScript(host, *carried, sources.translation_units));
       !r) {
     return r;
   }

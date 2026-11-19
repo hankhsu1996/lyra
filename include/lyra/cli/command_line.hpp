@@ -15,6 +15,7 @@
 #include "lyra/cli/manifest.hpp"
 #include "lyra/cli/object_code_switches.hpp"
 #include "lyra/diag/diagnostic.hpp"
+#include "lyra/driver/dpi_boundary.hpp"
 #include "lyra/driver/pch.hpp"
 #include "lyra/driver/project_layout.hpp"
 #include "lyra/mir_transform/pass.hpp"
@@ -76,9 +77,9 @@ struct ParsedArgs {
   // LRM 35 DPI-C link inputs, the foreign code an `import "DPI-C"` calls, in
   // the order they are linked: what the declaration names, then what the
   // command line does, the shared libraries the LRM Annex J switches name
-  // last. Each is a source compiled for the program or compiled code linked
-  // into it.
-  std::vector<std::string> dpi_link_inputs;
+  // last. Each is a source compiled for the program, with what its source set
+  // states for compiling it, or compiled code linked into it.
+  std::vector<driver::DpiLinkRequest> dpi_link_inputs;
   // Which optional rewrites of MIR run, and whether the unit is checked after
   // each, where a compiler developer asked.
   mir_transform::PassOptions mir_passes;

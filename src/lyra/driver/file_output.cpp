@@ -81,4 +81,11 @@ auto CopyFile(
   return WriteFile(to, *content);
 }
 
+auto IsWithin(const std::filesystem::path& dir, const std::filesystem::path& p)
+    -> bool {
+  const std::filesystem::path relative =
+      p.lexically_normal().lexically_relative(dir.lexically_normal());
+  return !relative.empty() && *relative.begin() != "..";
+}
+
 }  // namespace lyra::driver

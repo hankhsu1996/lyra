@@ -17,7 +17,8 @@ namespace lyra::cli {
 // Source text and everything reading it needs: where an include is searched
 // for, what is defined before the first line, where a cell no file lists is
 // found by name, and the foreign code its DPI-C imports resolve against
-// (LRM 35).
+// (LRM 35) with the macros and include directories that code is compiled
+// with, which are its own and not the ones the SystemVerilog text is read with.
 //
 // Every path here is absolute. A relative path in the file is resolved against
 // the file's own directory as it is read, so a declaration means the same thing
@@ -31,6 +32,8 @@ struct SourceSet {
   std::vector<std::string> searchdir;
   std::vector<std::string> searchext;
   std::vector<std::string> dpi;
+  std::vector<std::string> dpi_defines;
+  std::vector<std::string> dpi_incdir;
 };
 
 // A named collection of cells (LRM 33.2.1): what something depending on this

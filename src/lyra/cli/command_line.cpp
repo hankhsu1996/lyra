@@ -32,6 +32,7 @@
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/driver/action_cache.hpp"
+#include "lyra/driver/dpi_boundary.hpp"
 #include "lyra/driver/pch.hpp"
 #include "lyra/driver/project_layout.hpp"
 #include "lyra/mir_transform/pass.hpp"
@@ -1157,8 +1158,14 @@ auto ResolveCliOptions(
     const Manifest& root = declared->root;
     out.library_name = root.library.name;
     const auto link = [&](const SourceSet& sources) {
-      out.dpi_link_inputs.insert(
-          out.dpi_link_inputs.end(), sources.dpi.begin(), sources.dpi.end());
+      const driver::ForeignPreprocessing preprocessing{
+          .defines = sources.dpi_defines,
+          .incdir = {sources.dpi_incdir.begin(), sources.dpi_incdir.end()}};
+      for (const std::string& path : sources.dpi) {
+        out.dpi_link_inputs.push_back(
+            driver::DpiLinkRequest{
+                .path = path, .preprocessing = preprocessing});
+      }
     };
     for (const Manifest& reached : declared->dependencies) {
       link(reached.library.sources);
@@ -1171,14 +1178,18 @@ auto ResolveCliOptions(
       out.assertions = *root.assertions;
     }
   }
-  out.dpi_link_inputs.insert(
-      out.dpi_link_inputs.end(), opts.dpi_link.begin(), opts.dpi_link.end());
   auto libraries = SharedLibrariesNamedBy(opts.object_code_switches);
   if (!libraries) {
     return std::unexpected(std::move(libraries.error()));
   }
-  out.dpi_link_inputs.insert(
-      out.dpi_link_inputs.end(), libraries->begin(), libraries->end());
+  const auto named = [&](const std::vector<std::string>& paths) {
+    for (const std::string& path : paths) {
+      out.dpi_link_inputs.push_back(
+          driver::DpiLinkRequest{.path = path, .preprocessing = {}});
+    }
+  };
+  named(opts.dpi_link);
+  named(*libraries);
 
   if (opts.assertions) {
     auto policy = ParseAssertionPolicy(*opts.assertions);

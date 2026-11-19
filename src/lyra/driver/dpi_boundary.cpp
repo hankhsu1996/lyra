@@ -174,19 +174,24 @@ auto ClassifyCompiled(const std::filesystem::path& path)
 
 // A source is told by its extension, as a compiler driver tells one; anything
 // else by its contents.
-auto Classify(const std::filesystem::path& path) -> diag::Result<DpiLinkInput> {
-  const std::string ext = path.extension().string();
+auto Classify(const DpiLinkRequest& request) -> diag::Result<DpiLinkInput> {
+  const std::string ext = request.path.extension().string();
   if (ext == ".c") {
-    return DpiSource{.path = path, .compile_as_c = true};
+    return DpiSource{
+        .path = request.path,
+        .compile_as_c = true,
+        .preprocessing = request.preprocessing};
   }
   if (ext == ".cpp" || ext == ".cc" || ext == ".cxx") {
-    return DpiSource{.path = path, .compile_as_c = false};
+    return DpiSource{
+        .path = request.path,
+        .compile_as_c = false,
+        .preprocessing = request.preprocessing};
   }
-  return ClassifyCompiled(path);
+  return ClassifyCompiled(request.path);
 }
 
-}  // namespace
-
+// The file the user handed over.
 auto DpiInputPath(const DpiLinkInput& input) -> const std::filesystem::path& {
   return std::visit(
       [](const auto& kind) -> const std::filesystem::path& {
@@ -194,6 +199,8 @@ auto DpiInputPath(const DpiLinkInput& input) -> const std::filesystem::path& {
       },
       input);
 }
+
+}  // namespace
 
 auto GatheredNameOf(const DpiLinkInput& input) -> std::string {
   return std::visit(
@@ -213,17 +220,17 @@ auto GatheredNameOf(const DpiLinkInput& input) -> std::string {
       input);
 }
 
-auto ValidateDpiLinkInputs(std::span<const std::string> inputs)
+auto ValidateDpiLinkInputs(std::span<const DpiLinkRequest> inputs)
     -> diag::Result<std::vector<DpiLinkInput>> {
   std::vector<DpiLinkInput> classified;
   classified.reserve(inputs.size());
-  for (const std::string& input : inputs) {
-    const std::filesystem::path path{input};
+  for (const DpiLinkRequest& input : inputs) {
+    const std::filesystem::path& path = input.path;
     std::error_code ec;
     if (!std::filesystem::is_regular_file(path, ec)) {
       return diag::Fail(
           diag::DiagCode::kHostInvalidCliArgs,
-          "DPI-C link input '{}' is not a readable file", input);
+          "DPI-C link input '{}' is not a readable file", path.string());
     }
     // LRM J.4: any library is loaded once, and a file reached by two names --
     // a link, a second spelling of its path -- is the same file.
@@ -231,10 +238,32 @@ auto ValidateDpiLinkInputs(std::span<const std::string> inputs)
       std::error_code unequal;
       return std::filesystem::equivalent(DpiInputPath(seen), path, unequal);
     };
-    if (std::ranges::any_of(classified, same_file)) {
+    if (const auto seen = std::ranges::find_if(classified, same_file);
+        seen != classified.end()) {
+      // A source compiled once cannot be compiled under two declarations'
+      // macros, so a second naming of it has to state the same ones.
+      const bool restated = std::visit(
+          Overloaded{
+              [&](const DpiSource& source) {
+                return source.preprocessing == input.preprocessing;
+              },
+              [](const DpiCompiledCode&) { return true; },
+              [](const DpiSharedLibrary&) { return true; }},
+          *seen);
+      if (!restated) {
+        return std::unexpected(
+            diag::Make(
+                diag::DiagCode::kHostInvalidCliArgs,
+                "the DPI-C source '{}' is named twice, with different macros "
+                "or include directories",
+                path.string())
+                .WithNote(
+                    "name it once, in the source set whose macros and include "
+                    "directories it is compiled with"));
+      }
       continue;
     }
-    auto kind = Classify(path);
+    auto kind = Classify(input);
     if (!kind) {
       return std::unexpected(std::move(kind.error()));
     }
@@ -263,31 +292,51 @@ auto ValidateDpiLinkInputs(std::span<const std::string> inputs)
 
 auto WriteDpiSurface(
     const RuntimeLocation& runtime, std::span<const dpi::AbiFragment> fragments,
-    const std::filesystem::path& dir) -> diag::Result<void> {
+    const std::filesystem::path& dir)
+    -> diag::Result<std::vector<std::filesystem::path>> {
+  std::vector<std::filesystem::path> written;
   for (const dpi::AbiFragment& fragment : fragments) {
-    if (auto r = WriteFile(dir / fragment.relpath, fragment.text); !r) {
-      return r;
+    written.push_back(dir / fragment.relpath);
+    if (auto r = WriteFile(written.back(), fragment.text); !r) {
+      return std::unexpected(std::move(r.error()));
     }
   }
-  if (auto r = WriteFile(dir / kDpiAbiHeader, dpi::RenderAbiHeader(fragments));
+  written.push_back(dir / kDpiAbiHeader);
+  if (auto r = WriteFile(written.back(), dpi::RenderAbiHeader(fragments)); !r) {
+    return std::unexpected(std::move(r.error()));
+  }
+  for (const std::filesystem::path& standard : runtime.standard_headers) {
+    written.push_back(dir / standard.filename());
+    if (auto r = CopyFile(standard, written.back()); !r) {
+      return std::unexpected(std::move(r.error()));
+    }
+  }
+  written.push_back(dir / kTfRoutinesHeader);
+  if (auto r = WriteFile(
+          written.back(),
+          "/* The TF routines are not part of IEEE 1800 (LRM 36.1, C.2.1); "
+          "this\n   header declares none of them. */\n");
       !r) {
-    return r;
+    return std::unexpected(std::move(r.error()));
   }
-  for (const std::filesystem::path& header : runtime.standard_headers) {
-    if (auto r = CopyFile(header, dir / header.filename()); !r) {
-      return r;
-    }
-  }
-  return {};
+  return written;
 }
 
 auto ForeignCompileFlags(
-    const DpiSource& source, OptimizationLevel optimization,
-    support::Sanitizer sanitizer) -> std::vector<std::string> {
+    const DpiSource& source, const std::filesystem::path& boundary,
+    OptimizationLevel optimization, support::Sanitizer sanitizer)
+    -> std::vector<std::string> {
   std::vector<std::string> flags =
       source.compile_as_c ? std::vector<std::string>{"-x", "c"}
                           : std::vector<std::string>{
                                 std::string(kCxxStandardFlag), "-x", "c++"};
+  for (const std::string& define : source.preprocessing.defines) {
+    flags.push_back("-D" + define);
+  }
+  for (const std::filesystem::path& dir : source.preprocessing.incdir) {
+    flags.push_back("-I" + dir.string());
+  }
+  flags.push_back("-I" + boundary.string());
   flags.emplace_back(OptimizationFlag(optimization));
   std::ranges::move(
       SanitizerCompileFlags(sanitizer), std::back_inserter(flags));
@@ -326,11 +375,11 @@ auto CompileDpiLink(
                   // each other.
                   const std::filesystem::path object =
                       work_dir / (GatheredNameOf(input) + ".o");
-                  std::vector<std::string> args =
-                      ForeignCompileFlags(source, optimization, sanitizer);
+                  std::vector<std::string> args = ForeignCompileFlags(
+                      source, header_dir, optimization, sanitizer);
                   args.insert(
-                      args.end(), {"-c", source.path.string(), "-I",
-                                   header_dir.string(), "-o", object.string()});
+                      args.end(),
+                      {"-c", source.path.string(), "-o", object.string()});
                   requests.push_back(
                       ProcessRequest{.exe = cxx, .args = std::move(args)});
                   names.push_back(source.path.filename().string());
