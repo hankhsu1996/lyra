@@ -7,12 +7,13 @@
 namespace lyra::runtime {
 
 // Where every deferred effect of one run gets its bytes, whichever region and
-// time slot holds it: a free list for each size class, refilled a block at a
-// time, as SystemC's kernel keeps its timed events. An effect's bytes return to
-// their class when it ends, so what is held follows how many effects are
-// pending at once and how large each is, never how many times they are due at.
-// Blocks stay until the run ends, so what is held once a burst is over is what
-// the burst needed. One thread uses it, the one running the scheduler.
+// time slot holds it, and so does each original an interval keeps: a
+// free list for each size class, refilled a block at a time, as SystemC's
+// kernel keeps its timed events. An effect's bytes return to their class when
+// it ends, so what is held follows how many effects are pending at once and how
+// large each is, never how many times they are due at. Blocks stay until the
+// run ends, so what is held once a burst is over is what the burst needed. One
+// thread uses it, the one running the scheduler.
 class EffectStorage {
  public:
   EffectStorage() = default;

@@ -60,27 +60,27 @@ struct InRegion {
 using Resumption = std::variant<
     WithoutStopping, OnAnOccurrence, LaterInThisTimeStep, AtTime, InRegion>;
 
-class CombinationalAwaiter;
 class DumpWatch;
+class PerIntervalAwaiter;
 class ProgramThreads;
 class PropertyEvaluation;
 class SampledValue;
 class SourceFollower;
 
 // What is enrolled on a place to be told of what happens there: the awaiter of
-// a wait, told so that the execution parked on it may be woken; the wait of an
-// `always_comb` or `always_latch`, which notes what reaches it and is woken
-// once the event's execution that wrote it ends, by what that execution left;
-// a sampled
-// value, which wakes nothing; what keeps forced storage showing its source,
-// which wakes nothing either; a program, told as each of its initial
-// procedures ends, which ends the rest of its threads at once once they all
-// have (LRM 24.3); an expect statement's evaluation, told of each tick of its
-// clock and each change its disable condition reads, which wakes nothing
-// either (LRM 16.17); or a value dump recording the place, which wakes nothing
-// and records the change at the end of the time step (LRM 21.7.1.4).
+// a wait, told so that the execution parked on it may be woken; a per-interval
+// observer, the wait of an `always_comb` or `always_latch` in a design built to
+// coalesce combinational updates, told the net change an interval leaves when
+// it ends and any write no interval accumulated as it lands; a sampled value,
+// which wakes nothing; what keeps forced storage showing its source, which
+// wakes nothing either; a program, told as each of its initial procedures ends,
+// which ends the rest of its threads at once once they all have (LRM 24.3); an
+// expect statement's evaluation, told of each tick of its clock and each change
+// its disable condition reads, which wakes nothing either (LRM 16.17); or a
+// value dump recording the place, which wakes nothing and records the change at
+// the end of the time step (LRM 21.7.1.4).
 using Observer = std::variant<
-    Awaiter*, CombinationalAwaiter*, SampledValue*, SourceFollower*,
+    Awaiter*, PerIntervalAwaiter*, SampledValue*, SourceFollower*,
     ProgramThreads*, PropertyEvaluation*, DumpWatch*>;
 
 // One place an observer watches: an observable, a join, a `wait fork`
@@ -106,9 +106,9 @@ struct WaitMembership : IntrusiveListNode<WaitMembership> {
   // What decides whether reaching this membership is an event for the wait
   // (LRM 9.4.2): reaching it is a candidacy, and this decides. It holds nothing
   // where it decides nothing -- an implicit sensitivity, which being reached
-  // decides, or for an `always_comb` what an event's execution left; a join.
-  // It is held rather than pointed at, so it lives as long as anything watching
-  // for that wait does.
+  // decides, or for a per-interval observer the net change an interval left and
+  // being reached by any other write; a join. It is held rather than pointed
+  // at, so it lives as long as anything watching for that wait does.
   Observation observation;
 };
 
@@ -153,8 +153,14 @@ class Awaiter {
   // (LRM 9.7). The standard gives each construct its own rule there, and for
   // most of them it is the same answer asked afresh: a delay still resumes at
   // the deadline it holds, and a join is asked whether its branches are done.
-  virtual auto Again() -> Resumption {
+  virtual auto Resuming() -> Resumption {
     return Begin();
+  }
+
+  // The execution parked here is about to be stopped from outside (LRM 9.7),
+  // still parked, so it stops listening for what it waits for. Most waits have
+  // nothing to do then.
+  virtual void Suspending() {
   }
 
   // Whether a process resuming from this wait reaches a violation report flush
@@ -192,11 +198,6 @@ class Awaiter {
   // The same, enrolled as `observer`: the alternative of `Observer` this
   // awaiter is told as.
   void EnrolOnLeafAs(Observer observer, const Trigger& trigger);
-
-  // Whether an activation is parked here now.
-  [[nodiscard]] auto Parked() const -> bool {
-    return parked_ != nullptr;
-  }
 
   // Enrols on `target`, which fires unconditionally, for this awaiter's whole
   // life.

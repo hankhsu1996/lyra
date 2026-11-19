@@ -9,7 +9,6 @@
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
-#include "lyra/runtime/combinational_awaiter.hpp"
 #include "lyra/runtime/observable.hpp"
 #include "lyra/runtime/owned_call.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
@@ -124,19 +123,17 @@ void BoundMembers::Move(
       if (!follows(membership.through)) {
         continue;
       }
+      // A per-interval observer stops listening here and starts listening
+      // there, so it is told the net change so far first, while it still
+      // watches what each update wrote.
+      if (std::holds_alternative<PerIntervalAwaiter*>(membership.observer)) {
+        current_runtime().EndInterval();
+      }
       const PartPath watched =
           enrolled.path.StripPrefix(membership.through->part);
       membership.Unlink();
-      const PartPath at = names.part.Join(watched);
-      // A wait the event's execution under way reached here is no longer where
-      // what the execution left here is told, so it is woken as a write's own
-      // reaching would have woken it, and it watches the new place from now on.
-      if (CombinationalAwaiter* const* awaiter =
-              std::get_if<CombinationalAwaiter*>(&membership.observer)) {
-        (*awaiter)->Relocated(current_runtime());
-      }
       if (to != nullptr) {
-        to->Enrol(at, membership);
+        to->Enrol(names.part.Join(watched), membership);
       }
     }
   }

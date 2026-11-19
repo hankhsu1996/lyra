@@ -76,6 +76,7 @@ struct Manifest {
   std::optional<std::string> timescale;
   std::optional<bool> single_unit;
   std::optional<support::AssertionPolicy> assertions;
+  std::optional<bool> coalesce_comb_updates;
 };
 
 struct ManifestFound {

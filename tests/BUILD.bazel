@@ -683,7 +683,10 @@ cc_test(
     size = "medium",
     srcs = ["cli_test.cpp"],
     copts = LYRA_COPTS,
-    data = ["//:lyra"],
+    data = [
+        "coalesced_comb_updates/main.sv",
+        "//:lyra",
+    ],
     shard_count = 50,
     deps = [
         ":framework",
@@ -762,10 +765,11 @@ cc_test(
 )
 
 # What reads the external design suite reads: the descriptions, the record, the
-# options, and every suite's inputs.
+# front end's options and Lyra's build options, and every suite's inputs.
 filegroup(
     name = "external_design_inputs",
     srcs = [
+        "external_design_build_options.yaml",
         "external_design_options.yaml",
         "external_design_suites.yaml",
         "paths/llvm.external_designs.yaml",

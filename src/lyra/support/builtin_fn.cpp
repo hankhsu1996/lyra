@@ -1800,10 +1800,15 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "wait_on",
           .declaration = RuntimeFunction("WaitOn"),
           .takes_the_location = false};
-    case BuiltinFn::kWaitOnImplicitList:
+    case BuiltinFn::kWaitPerChangeOnImplicitList:
       return {
-          .name = "wait_on_implicit_list",
-          .declaration = RuntimeFunction("WaitOnImplicitList"),
+          .name = "wait_per_change_on_implicit_list",
+          .declaration = RuntimeFunction("WaitPerChangeOnImplicitList"),
+          .takes_the_location = false};
+    case BuiltinFn::kWaitPerIntervalOnImplicitList:
+      return {
+          .name = "wait_per_interval_on_implicit_list",
+          .declaration = RuntimeFunction("WaitPerIntervalOnImplicitList"),
           .takes_the_location = false};
     case BuiltinFn::kWaitContinuouslyOn:
       return {

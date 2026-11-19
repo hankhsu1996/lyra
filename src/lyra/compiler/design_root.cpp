@@ -264,6 +264,7 @@ auto SynthesizeDesignRoot(
     std::span<const lowering::ast_to_hir::TopLevelUnit> tops,
     const hir::UnitSignatures& published,
     lowering::hir_to_mir::DesignInstantiations instantiations,
+    const support::CombinationalUpdatesByLibrary& combinational_updates,
     const mir_transform::PassOptions& passes,
     const diag::SourceManager& sources) -> diag::Result<mir::CompilationUnit> {
   // The root states every unit's construction table, so it is made from the
@@ -280,7 +281,9 @@ auto SynthesizeDesignRoot(
       signatures, instantiations, root_unit.types, root_unit.classes,
       root_unit.covergroups, root_unit.scope_classes);
   ReadTypeDefinitions(root_unit, signatures);
-  lowering::hir_to_mir::UnitLowerer root_lowerer(root_unit, sources);
+  lowering::hir_to_mir::UnitLowerer root_lowerer(
+      root_unit, combinational_updates.Of(root_unit.definition.library),
+      sources);
   auto root_mir = root_lowerer.RunDesignRoot(
       lowering::hir_to_mir::DesignRootInputs{
           .namespaces =

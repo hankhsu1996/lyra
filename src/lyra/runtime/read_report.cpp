@@ -69,8 +69,8 @@ ReadReport::~ReadReport() = default;
 
 // A place is watched only for being reached. The process decides by its own
 // evaluation, so nothing is asked where the change happens. An implicit list
-// wakes on any change to what it lists, an `always_comb`'s or `always_latch`'s
-// on what an event's execution leaves changed of it.
+// wakes on any change to what it lists, a per-interval observer on the net
+// change an interval leaves of it.
 void ReadReport::Add(
     WatchedPlace place, std::span<const std::int64_t> steps,
     std::int64_t lsb_bit_offset, std::int64_t bit_width) {

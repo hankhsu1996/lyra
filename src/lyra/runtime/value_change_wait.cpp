@@ -5,13 +5,13 @@
 #include <utility>
 #include <vector>
 
-#include "lyra/runtime/combinational_awaiter.hpp"
 #include "lyra/runtime/object_ref.hpp"
 #include "lyra/runtime/observable.hpp"
 #include "lyra/runtime/observation.hpp"
 #include "lyra/runtime/read_report.hpp"
 #include "lyra/runtime/region.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
+#include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/trigger.hpp"
 #include "lyra/runtime/wait.hpp"
 
@@ -53,7 +53,7 @@ class StandingAwaiter final : public Awaiter {
   // Whatever moved while the process was stopped is not an occurrence this wait
   // may report (LRM 9.7), so each observation measures from what its
   // expression is worth now.
-  auto Again() -> Resumption override {
+  auto Resuming() -> Resumption override {
     Arm();
     return OnAnOccurrence{};
   }
@@ -192,7 +192,7 @@ class LevelConditionAwaiter final : public ReachedPlacesAwaiter {
  public:
   using ReachedPlacesAwaiter::ReachedPlacesAwaiter;
 
-  auto Again() -> Resumption override {
+  auto Resuming() -> Resumption override {
     return WithoutStopping{};
   }
 };
@@ -215,7 +215,7 @@ class RecollectingEventAwaiter final : public ReachedPlacesAwaiter {
     }
   }
 
-  auto Again() -> Resumption override {
+  auto Resuming() -> Resumption override {
     for (const Observation& observation : observations_) {
       observation.Disarm();
     }
@@ -248,101 +248,27 @@ auto Collected(std::span<ReadReport* const> reports) -> ReachedPlaces {
 
 }  // namespace
 
-CombinationalAwaiter::CombinationalAwaiter(std::span<const Trigger> triggers)
-    : Awaiter(triggers.size()) {
-  reached_.awaiter = this;
+PerChangeAwaiter::PerChangeAwaiter(std::span<const Trigger> triggers)
+    : ImplicitListAwaiter(triggers.size()) {
+  for (const Trigger& trigger : triggers) {
+    EnrolOnLeaf(trigger);
+  }
+}
+
+PerIntervalAwaiter::PerIntervalAwaiter(std::span<const Trigger> triggers)
+    : ImplicitListAwaiter(triggers.size()) {
   for (const Trigger& trigger : triggers) {
     EnrolOnLeafAs(this, trigger);
   }
 }
 
-auto CombinationalAwaiter::Begin() -> Resumption {
-  Forget();
-  owed_ = false;
-  return OnAnOccurrence{};
+auto PerIntervalAwaiter::Begin() -> Resumption {
+  current_runtime().EndInterval();
+  return ImplicitListAwaiter::Begin();
 }
 
-// Started again from outside, it is the one way this wait begins while another
-// process's execution may be under way; stopping at its own stop it begins at
-// the end of an execution of its own, whose writes never reach it.
-auto CombinationalAwaiter::Again() -> Resumption {
-  if (owed_ || reached_through_ != nullptr) {
-    Forget();
-    owed_ = false;
-    return WithoutStopping{};
-  }
-  const Resumption resumption = Begin();
-  BeginWatching(current_runtime());
-  return resumption;
-}
-
-void CombinationalAwaiter::BeginWatching(RuntimeEffects& effects) {
-  begun_during_the_execution_ = true;
-  AskOnceTheEventIsExecuted(effects);
-}
-
-void CombinationalAwaiter::AskOnceTheEventIsExecuted(RuntimeEffects& effects) {
-  if (reached_.next == nullptr) {
-    effects.AskOnceTheEventIsExecuted(reached_);
-  }
-}
-
-void CombinationalAwaiter::Reached(
-    RuntimeEffects& effects, const WaitMembership& membership, bool judged) {
-  if (!Parked()) {
-    return;
-  }
-  if (reached_through_ == nullptr) {
-    reached_through_ = &membership;
-    AskOnceTheEventIsExecuted(effects);
-  }
-  if (!judged || begun_during_the_execution_) {
-    unjudged_ = true;
-  }
-}
-
-void CombinationalAwaiter::Relocated(RuntimeEffects& effects) {
-  if (reached_through_ != nullptr) {
-    unjudged_ = true;
-  }
-  BeginWatching(effects);
-}
-
-void CombinationalAwaiter::LeftChanged(RuntimeEffects& effects) {
-  if (reached_through_ == nullptr || !Parked()) {
-    return;
-  }
-  Wake(effects);
-}
-
-// Nothing but process control takes a process off this wait while an event is
-// executed, so one no longer parked here was stopped from outside.
-void CombinationalAwaiter::EventExecuted(RuntimeEffects& effects) {
-  if (!Parked()) {
-    owed_ = reached_through_ != nullptr;
-    Forget();
-    return;
-  }
-  if (reached_through_ != nullptr && unjudged_) {
-    Wake(effects);
-    return;
-  }
-  Forget();
-}
-
-void CombinationalAwaiter::Wake(RuntimeEffects& effects) {
-  const WaitMembership* through = reached_through_;
-  Forget();
-  if (Activation* woken = WokenBy(*through)) {
-    effects.Wake(woken);
-  }
-}
-
-void CombinationalAwaiter::Forget() {
-  reached_.Unlink();
-  reached_through_ = nullptr;
-  begun_during_the_execution_ = false;
-  unjudged_ = false;
+void PerIntervalAwaiter::Suspending() {
+  current_runtime().EndInterval();
 }
 
 auto WaitOn(std::span<const Trigger> triggers) -> Wait {
@@ -353,8 +279,19 @@ auto WaitOn(std::span<const Trigger* const> triggers) -> Wait {
   return MakeWait<StandingAwaiter>(triggers);
 }
 
-auto WaitOnImplicitList(const ReadReport* report) -> Wait {
-  return MakeWait<CombinationalAwaiter>(report->ImplicitList());
+// Each wait is made where the procedure begins, before it first runs, by the
+// process the procedure runs as, which from then on runs combinational logic
+// in the dialect the wait states.
+auto WaitPerChangeOnImplicitList(const ReadReport* report) -> Wait {
+  current_runtime().SetRunningCombinationalUpdates(
+      support::CombinationalUpdates::kPerChange);
+  return MakeWait<PerChangeAwaiter>(report->ImplicitList());
+}
+
+auto WaitPerIntervalOnImplicitList(const ReadReport* report) -> Wait {
+  current_runtime().SetRunningCombinationalUpdates(
+      support::CombinationalUpdates::kPerInterval);
+  return MakeWait<PerIntervalAwaiter>(report->ImplicitList());
 }
 
 auto WaitContinuouslyOn(std::span<const Trigger> triggers) -> Wait {

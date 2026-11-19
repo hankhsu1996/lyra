@@ -2,12 +2,14 @@
 
 #include <compare>
 #include <cstdint>
+#include <optional>
 
 #include "lyra/base/source_location.hpp"
 #include "lyra/runtime/cancellation.hpp"
 #include "lyra/runtime/import_call_chain.hpp"
 #include "lyra/runtime/region.hpp"
 #include "lyra/runtime/rng.hpp"
+#include "lyra/support/combinational_updates.hpp"
 
 namespace lyra::runtime {
 
@@ -98,6 +100,13 @@ struct ExecutionContext {
   // What created the thread the execution belongs to, which a fork carries on
   // to the threads it starts (LRM 9.7, 13.4.4).
   ThreadCreator creator = ThreadCreator::kAnotherConstruct;
+  // The dialect of the `always_comb` or `always_latch` it runs (LRM 9.2.2.2,
+  // 9.2.2.3), which that procedure's wait states as the procedure begins:
+  // where its updates are told per interval, each run of it is an interval.
+  // None for an execution of anything else, which is every execution one
+  // starts.
+  std::optional<support::CombinationalUpdates> combinational_updates =
+      std::nullopt;
 
   // The context of a root thread of `program`, whose initial procedure it is,
   // and so of every thread it starts (LRM 24.3, 24.7).
@@ -113,6 +122,7 @@ struct ExecutionContext {
   [[nodiscard]] auto ForStarted() const -> ExecutionContext {
     ExecutionContext started = *this;
     started.wake = WakePlacement::kActiveRegion;
+    started.combinational_updates = std::nullopt;
     return started;
   }
 

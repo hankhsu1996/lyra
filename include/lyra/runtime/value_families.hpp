@@ -110,10 +110,10 @@ extern template class Coroutine<value::ObjectRef>;
 extern template class Coroutine<value::Tuple<>>;
 
 // What a write keeps of the part it lands on.
-extern template class KeptPart<value::String>;
-extern template class KeptPart<value::Real>;
-extern template class KeptPart<value::ShortReal>;
-extern template class KeptPart<value::UnmanagedRef>;
-extern template class KeptPart<value::ObjectRef>;
+extern template class WriteOriginal<value::String>;
+extern template class WriteOriginal<value::Real>;
+extern template class WriteOriginal<value::ShortReal>;
+extern template class WriteOriginal<value::UnmanagedRef>;
+extern template class WriteOriginal<value::ObjectRef>;
 
 }  // namespace lyra::runtime

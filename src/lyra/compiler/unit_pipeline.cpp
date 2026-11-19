@@ -46,11 +46,14 @@ void RecordSemanticForm(const mir::CompilationUnit& unit) {
 }
 
 auto LowerUnitToSemantic(
-    const hir::CompilationUnit& unit, const mir_transform::PassOptions& passes,
+    const hir::CompilationUnit& unit,
+    support::CombinationalUpdates combinational_updates,
+    const mir_transform::PassOptions& passes,
     const diag::SourceManager& sources) -> diag::Result<mir::CompilationUnit> {
   const profiling::TimeTraceScope span(
       "lower to MIR", [&] { return unit.body_name; });
-  lowering::hir_to_mir::UnitLowerer lowerer(unit, sources);
+  lowering::hir_to_mir::UnitLowerer lowerer(
+      unit, combinational_updates, sources);
   auto semantic = hir::RootsAnObject(unit.definition) ? lowerer.RunObjectRoot()
                                                       : lowerer.RunNamespace();
   if (!semantic) {

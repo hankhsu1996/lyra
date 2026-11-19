@@ -1570,13 +1570,13 @@ the detail lives in the entry itself.
   makes itself while it runs and evaluates it again in the Active region. Every process stays one
   shape above the run; the two-kinds-of-process split was built, measured and rejected. Revises
   waiting-is-an-operation D4 and disable-scope-invalidation D2.
-- [an-always-comb-is-triggered-by-what-a-run-leaves](an-always-comb-is-triggered-by-what-a-run-leaves.md)
-  -- an `always_comb` or `always_latch` wakes on what an event's execution leaves changed of what it
-  reads: a variable it watches keeps each part the execution writes as it was before it -- the words
-  of a packed value's bits written, an array whose size changes whole -- compared whole once the
-  execution ends, so two procedures each reading the other's defaulted output settle; every event
-  control keeps each change as an event. A choice beside the standard's letter, visible only through
-  a side effect of the procedure or a counted glitch.
+- [combinational-updates-are-coalesced-where-a-build-asks](combinational-updates-are-coalesced-where-a-build-asks.md)
+  -- every update is an event, as the standard reads, unless a library is built with
+  `--coalesce-comb-updates`: then an `always_comb` or `always_latch` wakes on the net change another
+  such procedure's execution leaves of what it reads, each write announcing its part before it lands
+  so the interval keeps its original, so two procedures each reading the other's defaulted output
+  settle. A dialect chosen per library, stated in MIR by the wait each procedure builds; a design
+  that does not settle is told of the option by a note.
 - [a-coroutines-storage-states-its-lifetime](a-coroutines-storage-states-its-lifetime.md) -- a
   coroutine's slots realize LIR's storage statements as lifetime markers, as clang's do at every
   level, so LLVM's split reads the lifetime LIR states rather than checking every pair of a slot's

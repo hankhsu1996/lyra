@@ -108,9 +108,9 @@ struct Trigger {
 // its bits can be shown unchanged and every wait on it is asked. Which part it
 // was is told beside the change, by the part's path.
 //
-// It is only ever told where the bits it reached moved -- by a write, or by an
-// event's execution measured against what the part held before it -- so a leaf
-// reading all of them is moved without being compared.
+// It is only ever told where the bits it reached moved -- by a write, or by a
+// interval, measured from the part's original -- so a leaf reading
+// all of them is moved without being compared.
 class Change {
  public:
   // Defined in the library: a unit's write builds and copies these, and a

@@ -210,7 +210,10 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_wait_recollecting", &lyra_rt_wait_recollecting);
   add("lyra_rt_wait_until", &lyra_rt_wait_until);
   add("lyra_rt_wait_on", &lyra_rt_wait_on);
-  add("lyra_rt_wait_on_implicit_list", &lyra_rt_wait_on_implicit_list);
+  add("lyra_rt_wait_per_change_on_implicit_list",
+      &lyra_rt_wait_per_change_on_implicit_list);
+  add("lyra_rt_wait_per_interval_on_implicit_list",
+      &lyra_rt_wait_per_interval_on_implicit_list);
   add("lyra_rt_wait_continuously_on", &lyra_rt_wait_continuously_on);
   add("lyra_rt_wait_on_property_evaluation",
       &lyra_rt_wait_on_property_evaluation);

@@ -21,6 +21,7 @@
 #include "lyra/mir_transform/pass.hpp"
 #include "lyra/status/status.hpp"
 #include "lyra/support/assertion_policy.hpp"
+#include "lyra/support/combinational_updates.hpp"
 #include "lyra/support/sanitizer.hpp"
 
 namespace lyra::cli {
@@ -47,6 +48,7 @@ enum class Backend : std::uint8_t { kCpp, kLlvm };
 struct ParsedArgs {
   Backend backend = Backend::kCpp;
   support::AssertionPolicy assertions = support::AssertionPolicy::kCheck;
+  support::CombinationalUpdatesByLibrary combinational_updates{};
   driver::SourceFormatting formatting = driver::SourceFormatting::kOff;
   driver::OptimizationLevel optimization = driver::OptimizationLevel::kO0;
   driver::LinkTimeOptimization link_time = driver::LinkTimeOptimization::kNone;
@@ -93,6 +95,7 @@ struct CliOptions {
   std::optional<bool> no_color;
   std::optional<bool> format;
   std::optional<std::string> assertions;
+  std::optional<bool> coalesce_comb_updates;
   std::optional<bool> no_pch;
   std::optional<std::string> optimization;
   std::optional<bool> link_time;
@@ -209,9 +212,13 @@ auto ApplyDeclarations(
 // Turns what the parser recorded into the choices the rest of the run needs,
 // applying Lyra's defaults and rejecting a value no command can act on. A
 // declaration is read first and the command line over it, which is the whole of
-// the precedence rule: material accumulates, selection replaces.
+// the precedence rule: material accumulates, selection replaces. Where there is
+// a declaration, `root_library` is the library the front end compiles the
+// root's own units in, which is what the root's answers about its units are
+// kept under.
 auto ResolveCliOptions(
-    const CliOptions& opts, const Declarations* declared, CommandKind cmd,
+    const CliOptions& opts, const Declarations* declared,
+    std::string_view root_library, CommandKind cmd,
     std::span<const std::string> simulation_args) -> diag::Result<ParsedArgs>;
 
 }  // namespace lyra::cli

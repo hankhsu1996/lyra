@@ -98,6 +98,14 @@ Consequences:
    for a single reading, such as `--allow-hierarchical-const`). Lyra applies the corresponding
    analysis rules and stands behind the mode as it does the default. It does not promise to behave
    the same as any other simulator.
+7. **A build may select a dialect of execution where the standard leaves the schedule to the tool
+   and a common style relies on one choice of it.** It is an option of Lyra's own lowering, never of
+   analysis, and it changes what a program computes, so it is chosen where a library is compiled,
+   stated in what the compiler lowers, and off by default; the default keeps the standard's reading.
+   There is one: `--coalesce-comb-updates`, under which an `always_comb` or `always_latch` is
+   triggered by the net change another's execution leaves rather than by each update it makes
+   (`decisions/combinational-updates-are-coalesced-where-a-build-asks.md`). A design that does not
+   settle under the default is told of it by a note.
 
 ## Ruling on a disputed text
 

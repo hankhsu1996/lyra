@@ -496,6 +496,33 @@ auto DescribedSuiteCases(
   return cases;
 }
 
+// The options the file at `path` lists for each design, a list naming no
+// design of `corpus` being one of its problems.
+auto OptionsListed(
+    const bazel::tools::cpp::runfiles::Runfiles& runfiles,
+    const std::string& path, DesignCorpus& corpus)
+    -> std::map<std::string, std::vector<std::string>> {
+  std::map<std::string, std::vector<std::string>> listed;
+  for (const auto& entry : YAML::LoadFile(runfiles.Rlocation(path))) {
+    const auto design = entry.first.as<std::string>();
+    const auto is_of = [&](const DesignCase& one) {
+      return one.design_name == design;
+    };
+    if (std::ranges::none_of(corpus.cases, is_of)) {
+      corpus.problems.push_back(
+          std::format(
+              "options are listed for '{}', which is not a design", design));
+      continue;
+    }
+    std::vector<std::string> options;
+    for (const YAML::Node& option : entry.second) {
+      options.push_back(option.as<std::string>());
+    }
+    listed.emplace(design, std::move(options));
+  }
+  return listed;
+}
+
 }  // namespace
 
 auto NameOf(DesignStep step) -> std::string_view {
@@ -548,25 +575,10 @@ auto LoadDesignCorpus(const bazel::tools::cpp::runfiles::Runfiles& runfiles)
             .at = *at, .said = LastOf({entry.second}, "says").value_or("")});
   }
 
-  const YAML::Node options = YAML::LoadFile(
-      runfiles.Rlocation("_main/tests/external_design_options.yaml"));
-  for (const auto& entry : options) {
-    const auto design = entry.first.as<std::string>();
-    const auto is_of = [&](const DesignCase& one) {
-      return one.design_name == design;
-    };
-    if (std::ranges::none_of(corpus.cases, is_of)) {
-      corpus.problems.push_back(
-          std::format(
-              "options are listed for '{}', which is not a design", design));
-      continue;
-    }
-    std::vector<std::string> listed;
-    for (const YAML::Node& option : entry.second) {
-      listed.push_back(option.as<std::string>());
-    }
-    corpus.options.emplace(design, std::move(listed));
-  }
+  corpus.options = OptionsListed(
+      runfiles, "_main/tests/external_design_options.yaml", corpus);
+  corpus.build_options = OptionsListed(
+      runfiles, "_main/tests/external_design_build_options.yaml", corpus);
   return corpus;
 }
 

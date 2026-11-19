@@ -25,7 +25,6 @@
 #include "lyra/base/source_location.hpp"
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/cancellation.hpp"
-#include "lyra/runtime/combinational_awaiter.hpp"
 #include "lyra/runtime/design.hpp"
 #include "lyra/runtime/evaluation_attempts.hpp"
 #include "lyra/runtime/file_table.hpp"
@@ -34,6 +33,7 @@
 #include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/scope.hpp"
 #include "lyra/runtime/timer.hpp"
+#include "lyra/support/combinational_updates.hpp"
 #include "lyra/support/file_descriptor.hpp"
 #include "lyra/support/scope_execution.hpp"
 #include "lyra/value/string.hpp"
@@ -76,6 +76,25 @@ class RunningAnEffect {
   std::atomic<const ProcedureContext*>* in_force_;
   const ProcedureContext* outer_;
 };
+
+// Whether an execution in `context` runs an `always_comb` or `always_latch`
+// triggered by each change, which a design built to coalesce combinational
+// updates might have settled.
+auto RunsPerChangeCombinationalLogic(const ExecutionContext& context) -> bool {
+  const std::optional<support::CombinationalUpdates>& updates =
+      context.combinational_updates;
+  if (!updates.has_value()) {
+    return false;
+  }
+  switch (*updates) {
+    case support::CombinationalUpdates::kPerChange:
+      return true;
+    case support::CombinationalUpdates::kPerInterval:
+      return false;
+  }
+  throw InternalError(
+      "RunsPerChangeCombinationalLogic: unknown combinational updates");
+}
 
 }  // namespace
 
@@ -307,7 +326,7 @@ auto Runtime::ReportContext() const -> DiagnosticDispatcher::Context {
       .written_at = procedure.written_at};
 }
 
-void Runtime::ReportUnsettledSlot(std::span<const ProcedureContext> ran) {
+void Runtime::ReportUnsettledSlot(const SlotPasses& passes) {
   ReportDesignFailure(
       base::kNoSourceLocation,
       base::DiagMessage(
@@ -321,7 +340,7 @@ void Runtime::ReportUnsettledSlot(std::span<const ProcedureContext> ran) {
   };
   std::vector<Counted> counted;
   std::map<ProcedureContext, std::size_t> index_of;
-  for (const ProcedureContext& procedure : ran) {
+  for (const ProcedureContext& procedure : passes.ran) {
     const auto [at, first] = index_of.try_emplace(procedure, counted.size());
     if (first) {
       counted.push_back(Counted{.procedure = procedure, .runs = 0});
@@ -353,6 +372,16 @@ void Runtime::ReportUnsettledSlot(std::span<const ProcedureContext> ran) {
   if (named < counted.size()) {
     diagnostic_.Line(
         std::format("note: and {} more processes", counted.size() - named));
+  }
+  // The usual cause is two `always_comb` procedures each assigning a default
+  // and then a value, each reading the other's output: every write is a
+  // change, so each wakes the other however the execution ends.
+  if (passes.ran_per_change_combinational_logic) {
+    diagnostic_.Line(
+        "note: an 'always_comb' or 'always_latch' is triggered by each change "
+        "of what it reads, a value written and written back included; to "
+        "trigger one only by the net change an execution of another leaves, "
+        "build with '--coalesce-comb-updates'");
   }
 }
 
@@ -616,7 +645,7 @@ auto Runtime::DrainRegions(
   while (const std::optional<support::Region> region =
              current_slot_.FirstPending(first, last)) {
     if (++passes.count > kMaxRegionPassesPerSlot) {
-      ReportUnsettledSlot(passes.ran);
+      ReportUnsettledSlot(passes);
       return false;
     }
     if (passes.count > kMaxRegionPassesPerSlot - kNotedRegionPasses) {
@@ -625,7 +654,10 @@ auto Runtime::DrainRegions(
       // it.
       current_slot_[*region].activations.ForEach(
           [&passes](const QueuePlace& queued) {
-            passes.ran.push_back(queued.activation->Context().procedure);
+            const ExecutionContext& context = queued.activation->Context();
+            passes.ran.push_back(context.procedure);
+            passes.ran_per_change_combinational_logic |=
+                RunsPerChangeCombinationalLogic(context);
           });
     }
     RunRegion(*region);
@@ -684,34 +716,13 @@ void Runtime::RunRegion(support::Region region) {
   }
 }
 
-// What expiry runs belongs to the execution too, and dropping what a place kept
-// can let an object expire, so judging, telling expiry and deciding each wait
-// go in turn until none has anything left. Judging and deciding wake and run
-// nothing.
+// What expiry runs belongs to the execution too, and dropping an original can
+// let an object expire, so ending the interval and telling expiry go in turn
+// until neither has anything left.
 void Runtime::EndEventExecution() {
-  while (!kept_originals_.Empty() || !expired_.Empty() ||
-         !reached_waits_.Empty()) {
-    while (CombinationalWatch* watch = kept_originals_.PopFront()) {
-      const KeptParts kept = std::exchange(watch->kept, {});
-      for (const auto& [at, original] : kept) {
-        if (const std::optional<Change> change = original->Changed()) {
-          watch->place->TellWhatWasLeft(*this, at, *change);
-        }
-      }
-      auto bits = std::exchange(watch->bits, {});
-      for (auto& [at, kept_bits] : bits) {
-        if (const std::optional<Change> change = kept_bits.Changed()) {
-          watch->place->TellWhatWasLeft(*this, at, *change);
-        }
-      }
-    }
-    if (!expired_.Empty()) {
-      TellExpired();
-      continue;
-    }
-    while (ReachedWait* reached = reached_waits_.PopFront()) {
-      reached->awaiter->EventExecuted(*this);
-    }
+  while (!interval_accumulators_.Empty() || !expired_.Empty()) {
+    EndInterval();
+    TellExpired();
   }
 }
 

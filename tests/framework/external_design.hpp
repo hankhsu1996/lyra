@@ -11,7 +11,8 @@
 //
 // A case is the one the benchmark suite marks as a design's quick check, or one
 // run of a described suite, and what it is recorded as stopping on, and the
-// front end's options it is built with, are read beside it.
+// front end's options and Lyra's build options it is built with, are read
+// beside it.
 
 #include <cstdint>
 #include <filesystem>
@@ -55,12 +56,13 @@ struct DesignCase {
   std::optional<std::vector<std::string>> check;
 };
 
-// The cases, their record, and the front end's options each design is built
-// with, found where the build put them.
+// The cases, their record, and the front end's options and Lyra's own build
+// options each design is built with, found where the build put them.
 struct DesignCorpus {
   std::vector<DesignCase> cases;
   std::map<std::string, DesignStop> recorded;
   std::map<std::string, std::vector<std::string>> options;
+  std::map<std::string, std::vector<std::string>> build_options;
   std::vector<std::string> problems;
 };
 

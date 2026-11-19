@@ -1,20 +1,22 @@
 #include "lyra/runtime/observable.hpp"
 
+#include <algorithm>
 #include <cstdint>
+#include <iterator>
 #include <map>
 #include <memory>
-#include <optional>
 #include <ranges>
 #include <utility>
 #include <variant>
 #include <vector>
 
+#include "lyra/runtime/interval_accumulator.hpp"
 #include "lyra/runtime/intrusive_list.hpp"
-#include "lyra/runtime/kept_original.hpp"
 #include "lyra/runtime/part_path.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/scope_exit.hpp"
 #include "lyra/runtime/trigger.hpp"
+#include "lyra/runtime/value_change_wait.hpp"
 #include "lyra/runtime/wait.hpp"
 #include "lyra/value/integral_words.hpp"
 
@@ -104,144 +106,148 @@ void Observable::TellAround(
   }
 }
 
-void Observable::WakeAffectedBy(
+void Observable::TellChange(
     RuntimeEffects& effects, const PartPath& written, const Change& change,
-    bool kept) {
+    bool accumulated) {
   const Change only_reached = Change::Whole();
   const Change& told = written.IsInexact() ? only_reached : change;
   TellAround(
       written, told,
       [&](IntrusiveList<WaitMembership>& members, const Change& there) {
-        effects.TellWrite(members, there, kept);
+        effects.TellChange(members, there, accumulated);
       });
 }
 
-void Observable::TellWhatWasLeft(
+void Observable::TellIntervalChange(
     RuntimeEffects& effects, const PartPath& at, const Change& change) {
   TellAround(
       at, change,
       [&](IntrusiveList<WaitMembership>& members, const Change& there) {
-        effects.TellWhatTheEventLeft(members, there);
+        effects.TellIntervalChange(members, there);
       });
 }
 
 void Observable::Enrol(const PartPath& path, WaitMembership& membership) {
   MembersAt(path).PushBack(membership);
-  if (std::holds_alternative<CombinationalAwaiter*>(membership.observer) &&
-      combinational_ == nullptr) {
-    combinational_ = std::make_unique<CombinationalWatch>();
-    combinational_->place = this;
+  if (std::holds_alternative<PerIntervalAwaiter*>(membership.observer) &&
+      accumulator_ == nullptr) {
+    accumulator_ = std::make_unique<IntervalAccumulator>();
+    accumulator_->place = this;
   }
 }
 
 namespace {
 
-// No part kept lies in another, so a kept part holding `written` is the last
-// one ordered no later than it: any between the two would lie in the first.
-auto Holds(const KeptParts& kept, const PartPath& written) -> bool {
-  auto at_or_before = kept.upper_bound(written);
-  if (at_or_before == kept.begin()) {
-    return false;
-  }
-  --at_or_before;
-  return at_or_before->first.IsPrefixOf(written);
+// No part kept lies in another, so a kept part holding `at` is the last one
+// ordered no later than it: any between the two would lie in the first. An
+// inexact path keeps the steps it has, so a part holding it is found the same
+// way.
+auto Holds(const std::vector<PartOriginalAt>& parts, const PartPath& at)
+    -> bool {
+  const auto at_or_before =
+      std::ranges::upper_bound(parts, at, ByStep{}, &PartOriginalAt::at);
+  return at_or_before != parts.begin() &&
+         std::prev(at_or_before)->at.IsPrefixOf(at);
 }
 
-// The entries of `kept` at the part `at` and inside it, which come right after
-// it.
-template <class Kept>
-auto Inside(Kept& kept, const PartPath& at) {
-  const auto inside = kept.lower_bound(at);
+// The entries of `entries` at the part `at` and inside it, which come right
+// after it.
+template <class Entry>
+auto Inside(std::vector<Entry>& entries, const PartPath& at) {
+  const auto inside =
+      std::ranges::lower_bound(entries, at, ByStep{}, &Entry::at);
   auto past_inside = inside;
-  while (past_inside != kept.end() && at.IsPrefixOf(past_inside->first)) {
+  while (past_inside != entries.end() && at.IsPrefixOf(past_inside->at)) {
     ++past_inside;
   }
   return std::ranges::subrange(inside, past_inside);
 }
 
-// Keeps the part at `at` in `watch`, which holds nothing holding it. What was
-// kept of the parts and bits inside it is what they held before the event's
-// execution, so they are put back while this part is copied and taken out
-// again after.
-void KeepIn(CombinationalWatch& watch, const PartPath& at, MakeOriginal make) {
-  const auto parts = Inside(watch.kept, at);
-  const auto bits = Inside(watch.bits, at);
+// Keeps the original of the part at `at` in `accumulator`, which holds none of
+// a part holding it, in bytes `storage` hands out. The originals of the parts
+// and bits inside it are what they held before the interval first modified
+// them, so they are put back while this part is copied and taken out again
+// after.
+void KeepIn(
+    IntervalAccumulator& accumulator, const PartPath& at, CopyOriginal copy,
+    EffectStorage& storage) {
+  const auto parts = Inside(accumulator.parts, at);
+  const auto bits = Inside(accumulator.bits, at);
   const auto exchange = [&] {
-    for (const auto& entry : parts) {
-      entry.second->Exchange();
+    for (const PartOriginalAt& entry : parts) {
+      entry.original->Exchange();
     }
-    for (auto& entry : bits) {
-      entry.second.Exchange();
+    for (BitsOriginalAt& entry : bits) {
+      entry.bits.Exchange();
     }
   };
   exchange();
-  std::unique_ptr<KeptOriginal> original;
-  {
+  OwnedOriginal original = [&] {
     const ScopeExit put_back(exchange);
-    original = make();
-  }
-  watch.bits.erase(bits.begin(), bits.end());
-  watch.kept.emplace_hint(
-      watch.kept.erase(parts.begin(), parts.end()), at, std::move(original));
+    return copy(storage);
+  }();
+  accumulator.bits.erase(bits.begin(), bits.end());
+  accumulator.parts.insert(
+      accumulator.parts.erase(parts.begin(), parts.end()),
+      PartOriginalAt{.at = at, .original = std::move(original)});
 }
 
 }  // namespace
 
-// The place is on the run's list exactly while it keeps something, so it is
-// put there by the first thing it keeps.
-void Observable::KeepOriginalBy(const PartPath& at, MakeOriginal make) {
-  CombinationalWatch& watch = *combinational_;
-  if (at.IsInexact() || Holds(watch.kept, at)) {
-    return;
-  }
-  const bool first = watch.kept.empty() && watch.bits.empty();
-  KeepIn(watch, at, make);
-  if (first) {
-    current_runtime().JudgeOnceTheEventIsExecuted(watch);
-  }
-}
+namespace {
 
-void Observable::KeepBitsOriginal(
-    const PartPath& at, value::IntegralView live, value::BitPositions bits) {
-  if (!WatchedCombinationally()) {
-    return;
-  }
-  CombinationalWatch& watch = *combinational_;
-  if (at.IsInexact() || Holds(watch.kept, at)) {
-    return;
-  }
-  const bool first = watch.kept.empty() && watch.bits.empty();
-  watch.bits.try_emplace(at, live).first->second.Keep(bits);
-  if (first) {
-    current_runtime().JudgeOnceTheEventIsExecuted(watch);
-  }
-}
-
-auto Observable::KeepsOriginalOf(const PartPath& written) const -> bool {
-  return Holds(combinational_->kept, written) ||
-         combinational_->bits.contains(written);
-}
-
-auto Observable::KeepsWhatWasWritten(
-    const PartPath& written, const Change& change) const -> bool {
-  if (!WatchedCombinationally()) {
+// Whether the open interval accumulated a modification of the part at
+// `at` of the place `accumulator` keeps originals for, `keep` keeping the
+// part's original where no part holding it is kept yet. The place is on the
+// interval's list exactly while it keeps something, so it is put there by the
+// first original it keeps. Only the execution of a process whose updates
+// coalesce opens an interval; any other modification is told as it lands.
+template <class Keep>
+auto AccumulateAt(
+    IntervalAccumulator& accumulator, RuntimeEffects& effects,
+    const PartPath& at, Keep keep) -> bool {
+  if (!effects.IntervalOpen()) {
     return false;
   }
-  if (KeepsOriginalOf(written)) {
-    return true;
+  if (at.IsInexact()) {
+    return Holds(accumulator.parts, at);
   }
-  const std::optional<value::BitPositions> elements = change.ElementsReached();
-  if (!elements.has_value()) {
-    return false;
-  }
-  for (std::uint64_t ordinal = elements->lsb;
-       ordinal < elements->lsb + elements->width; ++ordinal) {
-    if (!KeepsOriginalOf(written.Join(
-            PartPath::Element(static_cast<std::int64_t>(ordinal))))) {
-      return false;
+  if (!Holds(accumulator.parts, at)) {
+    const bool first = accumulator.Empty();
+    keep();
+    if (first) {
+      effects.JoinInterval(accumulator);
     }
   }
   return true;
+}
+
+}  // namespace
+
+auto Observable::Accumulate(const PartPath& at, CopyOriginal copy) -> bool {
+  RuntimeEffects& effects = current_runtime();
+  IntervalAccumulator& accumulator = *accumulator_;
+  return AccumulateAt(accumulator, effects, at, [&] {
+    KeepIn(accumulator, at, copy, effects.StorageForEffects());
+  });
+}
+
+auto Observable::BeforeModifyBits(
+    const PartPath& at, value::IntegralView live, value::BitPositions bits)
+    -> bool {
+  if (accumulator_ == nullptr) {
+    return false;
+  }
+  IntervalAccumulator& accumulator = *accumulator_;
+  return AccumulateAt(accumulator, current_runtime(), at, [&] {
+    auto kept = std::ranges::lower_bound(
+        accumulator.bits, at, ByStep{}, &BitsOriginalAt::at);
+    if (kept == accumulator.bits.end() || kept->at != at) {
+      kept = accumulator.bits.insert(
+          kept, BitsOriginalAt{.at = at, .bits = BitsOriginal(live)});
+    }
+    kept->bits.Keep(bits);
+  });
 }
 
 auto Observable::EveryEnrolled() -> std::vector<Enrolled> {

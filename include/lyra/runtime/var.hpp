@@ -17,7 +17,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/base/source_location.hpp"
-#include "lyra/runtime/kept_original.hpp"
+#include "lyra/runtime/interval_accumulator.hpp"
 #include "lyra/runtime/laid_out_storage.hpp"
 #include "lyra/runtime/object_change.hpp"
 #include "lyra/runtime/object_ref.hpp"
@@ -147,33 +147,33 @@ void KeepAfter(Change& change, const T& storage) {
 // one driver deciding a net has the waits enrolled on that net, as a variable
 // has its own.
 //
-// `PublishTransition` tells the owner the write changed it: which part of the
-// owner's storage the write reached, and what can be said about which bits of
-// that part moved.
+// `AfterModify` tells the owner the write changed it: which part of the
+// owner's storage the write reached, what can be said about which bits of that
+// part moved, and whether the open interval accumulated the write.
 //
-// `Keeper` is where a write keeps, before it changes a part, what the part held
-// before the event's execution under way, where an `always_comb` or
-// `always_latch` watches it: the variable `MutationStorage` is a part of, at
-// the path of that part; a part an inexact path reaches keeps nothing. A net's
-// driver keeps nothing: what an execution leaves of a net is its resolved
-// value, not one driver's contribution.
+// `WrittenPart` is where each modification the write makes is announced,
+// immediately before it: the variable `MutationStorage` is a part of, at the
+// path of that part, which keeps the part's original for the open interval and
+// answers whether the interval accumulated the modification. A net's driver
+// announces nowhere: a net is resolved by the scheduler, never modified by an
+// interval (LRM 10.3, 10.4).
 //
 // Each sink claims the contract with a `static_assert(MutationSink<...>)`
 // beside its own definition, the way a value type claims its `lyra::value`
 // concepts; the bracket itself takes the sink unconstrained, because a sink
 // names the handle in its own partial-write entry's return type and checking
 // the constraint there would depend on the sink being complete.
-struct OriginalKeeper;
+struct WrittenPart;
 
 template <class S>
-concept MutationSink =
-    requires(S sink, const PartPath& reached, const Change& change) {
-      typename S::ValueType;
-      { sink.MutationStorage() } -> std::same_as<typename S::ValueType&>;
-      { sink.Watched() } -> std::same_as<bool>;
-      sink.PublishTransition(reached, change);
-      { sink.Keeper() } -> std::same_as<OriginalKeeper>;
-    };
+concept MutationSink = requires(
+    S sink, const PartPath& reached, const Change& change, bool accumulated) {
+  typename S::ValueType;
+  { sink.MutationStorage() } -> std::same_as<typename S::ValueType&>;
+  { sink.Watched() } -> std::same_as<bool>;
+  sink.AfterModify(reached, change, accumulated);
+  { sink.WrittenPart() } -> std::same_as<WrittenPart>;
+};
 
 // A sink whose writes a procedural continuous assignment can override (LRM
 // 10.6), which only a variable is. Three more things that takes.
@@ -485,8 +485,10 @@ class Cell : public VariableCell {
   // produced is kept beneath the takeovers, and the cell shows it at every
   // position no takeover shows at, which is the whole of a write where nothing
   // drives the cell continuously. A write of part of the cell arrives here as
-  // the whole value it left.
-  void ApplyOverriddenWrite(const Owned& written);
+  // the whole value it left. Kept out of line, so that a write nothing
+  // overrides, which only asks whether something does, stays small enough to
+  // be folded into whatever writes.
+  [[gnu::noinline]] void ApplyOverriddenWrite(const Owned& written);
 
   // The same of a value handed as its bytes.
   void ApplyOverriddenWriteBytes(const void* bytes)
@@ -570,12 +572,13 @@ class Cell : public VariableCell {
     return SampledOf(rare == nullptr ? nullptr : rare->Sampled());
   }
 
-  // Tells whoever waits on the part of the cell at `reached`, on what that
-  // part lies in or on what lies in it that a write changed it (LRM 4.3),
-  // passing over a wait on the part whose bits `change` shows the write left
-  // alone.
-  void PublishTransition(const PartPath& reached, const Change& change) {
-    current_runtime().WakeParkedOn(*this, reached, change);
+  // Tells whoever waits on the part of the cell at `reached`, on what that part
+  // lies in or on what lies in it that a write changed it (LRM 4.3), passing
+  // over a wait on the part whose bits `change` shows the write left alone, and
+  // a per-interval observer where the open interval accumulated the write.
+  void AfterModify(
+      const PartPath& reached, const Change& change, bool accumulated) {
+    current_runtime().WakeParkedOn(*this, reached, change, accumulated);
   }
 
  protected:
@@ -618,11 +621,24 @@ class Cell : public VariableCell {
       overwrite();
       return;
     }
+    StoreTold(already_held, overwrite);
+  }
+
+  // The same where a wait is enrolled, which is told what the write did. Never
+  // folded into the store nothing waits on, which every write of a variable
+  // makes, so that one stays the size of the write itself and is folded into
+  // whatever writes, as a cold path is kept out of a hot one.
+  template <class AlreadyHeld, class Overwrite>
+  [[gnu::noinline]] void StoreTold(
+      AlreadyHeld already_held, Overwrite overwrite) {
     if (already_held()) {
       return;
     }
-    this->KeepOriginal(PartPath{}, [&] { return OriginalOf(storage_); });
-    PublishTransition(PartPath{}, ReplaceWhole(storage_.Get(), overwrite));
+    const bool accumulated = this->BeforeModify(
+        PartPath{},
+        [&](EffectStorage& into) { return NewOriginalOf(into, storage_); });
+    AfterModify(
+        PartPath{}, ReplaceWhole(storage_.Get(), overwrite), accumulated);
   }
 
   // Shows what a release reestablished, as its reevaluation (LRM 10.6.2).
@@ -786,14 +802,14 @@ template <class Part>
 // lies in the frame of whatever writes, so the copy is kept as a frame keeps a
 // value aside.
 template <class Part>
-class KeptPart {
+class WriteOriginal {
  public:
-  explicit KeptPart(const Part& part);
-  KeptPart(const KeptPart&) = delete;
-  auto operator=(const KeptPart&) -> KeptPart& = delete;
-  KeptPart(KeptPart&&) = delete;
-  auto operator=(KeptPart&&) -> KeptPart& = delete;
-  ~KeptPart();
+  explicit WriteOriginal(const Part& part);
+  WriteOriginal(const WriteOriginal&) = delete;
+  auto operator=(const WriteOriginal&) -> WriteOriginal& = delete;
+  WriteOriginal(WriteOriginal&&) = delete;
+  auto operator=(WriteOriginal&&) -> WriteOriginal& = delete;
+  ~WriteOriginal();
 
   // What the write did to `part`, none where it left it as it was.
   [[nodiscard]] auto ChangeTo(const Part& part) -> std::optional<Change>;
@@ -803,14 +819,14 @@ class KeptPart {
 };
 
 template <class Part>
-KeptPart<Part>::KeptPart(const Part& part) : before_(part) {
+WriteOriginal<Part>::WriteOriginal(const Part& part) : before_(part) {
 }
 
 template <class Part>
-KeptPart<Part>::~KeptPart() = default;
+WriteOriginal<Part>::~WriteOriginal() = default;
 
 template <class Part>
-auto KeptPart<Part>::ChangeTo(const Part& part) -> std::optional<Change> {
+auto WriteOriginal<Part>::ChangeTo(const Part& part) -> std::optional<Change> {
   return ChangeBetween(*before_, part);
 }
 
@@ -819,11 +835,11 @@ auto KeptPart<Part>::ChangeTo(const Part& part) -> std::optional<Change> {
 // value's bits are a part a write lands on as well, kept as the words of the
 // value they lie in.
 template <BitAddressed Part>
-class KeptPart<Part> {
+class WriteOriginal<Part> {
  public:
-  explicit KeptPart(const Part& part) : reached_(KeptBefore(part)) {
+  explicit WriteOriginal(const Part& part) : reached_(KeptBefore(part)) {
   }
-  KeptPart(const Part& storage, value::BitPositions reached)
+  WriteOriginal(const Part& storage, value::BitPositions reached)
       : reached_(KeptBefore(storage, reached)) {
   }
 
@@ -843,16 +859,15 @@ class KeptPart<Part> {
 // `live` held instead.
 void ExchangeLaidOut(const value::ValueType& type, void* live, void* kept);
 
-// What a part held before the event's execution under way first wrote it,
-// kept as the value it is: a copy, compared once the execution ends with the
-// part it was copied from. The part is one a variable reaches by steps that fix
-// where it lies -- the variable itself, a member, an element of a fixed-size
-// array, an array whose size changes taken whole -- so it lies where it is for
-// as long as the place does.
+// A part's original, kept as the value it is: a copy, compared when the
+// interval ends with the part it was copied from. The part is one a variable
+// reaches by steps that fix where it lies -- the variable itself, a member, an
+// element of a fixed-size array, an array whose size changes taken whole -- so
+// it lies where it is for as long as the place does.
 template <value::LyraValue Part>
-class KeptPartOriginal final : public KeptOriginal {
+class ValueOriginal final : public IntervalOriginal {
  public:
-  explicit KeptPartOriginal(Part& live) : live_(&live), before_(live) {
+  explicit ValueOriginal(Part& live) : live_(&live), before_(live) {
   }
 
   [[nodiscard]] auto Changed() -> std::optional<Change> override {
@@ -872,9 +887,9 @@ class KeptPartOriginal final : public KeptOriginal {
 // view of its words: what is kept is a copy of the words, since a copy of the
 // view would name the part itself.
 template <value::HeldAsWords Wide>
-class KeptWideOriginal final : public KeptOriginal {
+class WordsOriginal final : public IntervalOriginal {
  public:
-  explicit KeptWideOriginal(Wide live) : live_(live), before_(live.ByteSize()) {
+  explicit WordsOriginal(Wide live) : live_(live), before_(live.ByteSize()) {
     std::memcpy(before_.data(), live_.bytes, before_.size());
   }
 
@@ -895,9 +910,9 @@ class KeptWideOriginal final : public KeptOriginal {
 
 // The same of a value laid out by a type the library is handed, which is its
 // bytes where it lies.
-class KeptLaidOutOriginal final : public KeptOriginal {
+class LaidOutOriginal final : public IntervalOriginal {
  public:
-  KeptLaidOutOriginal(const value::ValueType& type, void* live)
+  LaidOutOriginal(const value::ValueType& type, void* live)
       : type_(&type), live_(live), before_(type, live) {
   }
 
@@ -915,20 +930,22 @@ class KeptLaidOutOriginal final : public KeptOriginal {
   value::KeptCopy before_;
 };
 
-// What each kind of storage keeps of the whole value it holds.
+// The original each kind of storage keeps of the whole value it holds, in
+// bytes `into` hands out.
 template <value::LyraValue T>
-auto OriginalOf(ValueStorageCore<T>& storage) -> std::unique_ptr<KeptOriginal> {
-  return std::make_unique<KeptPartOriginal<T>>(storage.Storage());
+auto NewOriginalOf(EffectStorage& into, ValueStorageCore<T>& storage)
+    -> OwnedOriginal {
+  return NewOriginal<ValueOriginal<T>>(into, storage.Storage());
 }
 template <value::StateDomain kDomain>
-auto OriginalOf(WordsStorage<kDomain>& storage)
-    -> std::unique_ptr<KeptOriginal> {
-  return std::make_unique<KeptWideOriginal<value::WideAt<kDomain>>>(
-      storage.Get());
+auto NewOriginalOf(EffectStorage& into, WordsStorage<kDomain>& storage)
+    -> OwnedOriginal {
+  return NewOriginal<WordsOriginal<value::WideAt<kDomain>>>(
+      into, storage.Get());
 }
-inline auto OriginalOf(LaidOutStorage& storage)
-    -> std::unique_ptr<KeptOriginal> {
-  return std::make_unique<KeptLaidOutOriginal>(storage.Type(), storage.Bytes());
+inline auto NewOriginalOf(EffectStorage& into, LaidOutStorage& storage)
+    -> OwnedOriginal {
+  return NewOriginal<LaidOutOriginal>(into, storage.Type(), storage.Bytes());
 }
 
 // Writes `value` into the bits `bits` names (LRM 11.5.1) and answers what the
@@ -943,7 +960,7 @@ auto WriteBits(Bits& bits, const Value& value, bool watched)
     bits.Set(value);
     return std::nullopt;
   }
-  KeptPart<std::remove_cvref_t<decltype(bits.Root())>> kept(
+  WriteOriginal<std::remove_cvref_t<decltype(bits.Root())>> kept(
       bits.Root(), *reached);
   bits.Set(value);
   return kept.ChangeTo(bits.Root());
@@ -1040,11 +1057,13 @@ struct ErasedReference {
   // of the value the reference names, and none is on every write's path.
 
   // Tells whoever waits on what holds the storage that a write through the
-  // reference changed the part at `within` of what the reference names
-  // (LRM 4.3), `change` saying what it did to that part. A wait on an object
-  // reevaluates the expression that reached it, which decides whether the
-  // write was an event, so it is told nothing about what moved.
-  void Report(const PartPath& within, const Change& change) const;
+  // reference changed the part at `within` of what the reference names (LRM
+  // 4.3), `change` saying what it did to that part and `accumulated` whether
+  // the open interval accumulated the write. A wait on an object reevaluates
+  // the expression that reached it, which decides whether the write was an
+  // event, so it is told nothing about what moved.
+  void AfterModify(
+      const PartPath& within, const Change& change, bool accumulated) const;
 
   // A step can form what it reaches, which is a write into the variable, so
   // the variable admits it first.
@@ -1070,41 +1089,49 @@ struct ErasedReference {
   // The reference to a part of what this one names, at `storage`, reached by
   // the further steps `within` and which forming did `formed` to. The part has
   // the same holder, which is told at once where forming it changed the
-  // storage -- an associative entry made by being bound (LRM 7.8.7). An index
-  // naming no element names storage that belongs to nothing (LRM 7.4.6).
+  // storage -- an associative entry made by being bound (LRM 7.8.7) -- with
+  // `accumulated` saying whether the open interval accumulated that. An
+  // index naming no element names storage that belongs to nothing (LRM 7.4.6).
   [[nodiscard]] auto Part(
-      void* storage, value::Formation formed, const PartPath& within) const
-      -> ErasedReference;
+      void* storage, value::Formation formed, const PartPath& within,
+      bool accumulated) const -> ErasedReference;
 };
 
-// Where a write keeps what it changes from before the event's execution (LRM
-// 9.2.2.2): the place that is told of it, and the path of what the write names
-// within that place. Nothing where the write changes no place an execution
-// keeps anything of.
-struct OriginalKeeper {
+// Where a write announces each modification it makes, immediately before it
+// (LRM 9.2.2.2): the place that is told of the write, and the path of what the
+// write names within that place. No place where the write modifies nothing a
+// interval keeps an original of.
+struct WrittenPart {
   Observable* place = nullptr;
-  PartPath named{};
+  PartPath at{};
 
-  // Has the place keep what the part `within` of what the write names holds,
-  // which `make` copies, before the write changes it.
-  template <class Make>
-  void Keep(const PartPath& within, Make make) const {
-    if (place == nullptr) {
-      return;
-    }
-    place->KeepOriginal(named.Join(within), make);
+  // Whether a per-interval observer watches the place, the one place a
+  // modification may keep an original of. Asked by every watched write as it
+  // opens.
+  [[nodiscard]] auto WatchedPerInterval() const -> bool {
+    return place != nullptr && place->WatchedPerInterval();
+  }
+
+  // Announces that the part `within` of what the write names, which `copy`
+  // copies, is about to be modified, and answers whether the open interval
+  // accumulated the modification.
+  template <class Copy>
+  [[nodiscard]] auto BeforeModify(const PartPath& within, Copy copy) const
+      -> bool {
+    return place != nullptr && place->BeforeModify(at.Join(within), copy);
   }
 
   // The same of the bits `bits` of the integral value the part `within` is,
   // whose words `live` names.
-  void KeepBits(
+  [[nodiscard]] auto BeforeModifyBits(
       const PartPath& within, value::IntegralView live,
-      value::BitPositions bits) const;
+      value::BitPositions bits) const -> bool;
 };
 
-// Where a write through `lent` keeps what it changes: in the variable it names
-// a part of, where it says which part.
-[[nodiscard]] auto KeeperThrough(const ErasedReference& lent) -> OriginalKeeper;
+// Where a write through `lent` announces its modifications: the variable it
+// names a part of, where it says which part.
+[[nodiscard]] auto WrittenPartThrough(const ErasedReference& lent)
+    -> WrittenPart;
 
 // What keeps storage a call binds by reference in existence until the call
 // returns, whatever the program does meanwhile (LRM 13.5.2, 8.29): a share of
@@ -1152,12 +1179,16 @@ class LeasedReference {
 // A write of a whole value through `lent` (LRM 4.3, 10.6): one the variable
 // overrides is handed to it as `overridden` hands it, one nobody waits on is
 // written as `assign` writes it, and one that leaves the bits as `identical`
-// finds them is no change. Otherwise `replace` writes it and answers the
-// change, which whoever waits through `lent` is told.
-template <class Overridden, class Assign, class Identical, class Replace>
+// finds them is no change. Otherwise `announce` announces the modification,
+// answering whether the open interval accumulated it, and `replace`
+// writes it and answers the change, which whoever waits through `lent` is
+// told.
+template <
+    class Overridden, class Assign, class Identical, class Announce,
+    class Replace>
 void SetThrough(
     const ErasedReference& lent, Overridden overridden, Assign assign,
-    Identical identical, Replace replace) {
+    Identical identical, Announce announce, Replace replace) {
   if (lent.OverridesWrites()) {
     overridden();
     return;
@@ -1169,7 +1200,8 @@ void SetThrough(
   if (identical()) {
     return;
   }
-  lent.Report(PartPath{}, replace());
+  const bool accumulated = announce();
+  lent.AfterModify(PartPath{}, replace(), accumulated);
 }
 
 // A write of a whole value laid out by `type` -- the bytes of an integral
@@ -1266,10 +1298,8 @@ class VariableRef {
     SetThrough(
         erased_, [&] { ApplyOverriddenWrite(new_val); }, assign,
         [&] { return Storage().IsBitIdentical(new_val); },
-        [&] {
-          KeepWhole();
-          return ReplaceWhole(Storage(), assign);
-        });
+        [&] { return BeforeModifyWhole(); },
+        [&] { return ReplaceWhole(Storage(), assign); });
   }
 
   // Opens a write into the referenced storage, as an observable cell itself
@@ -1299,13 +1329,12 @@ class VariableRef {
       const Key& key, base::SourceLocation at) const {
     const base::SourceLocationScope bound(at);
     erased_.AdmitStep();
-    if (StepCanReshape(Storage(), key)) {
-      KeepWhole();
-    }
+    const bool accumulated =
+        StepCanReshape(Storage(), key) && BeforeModifyWhole();
     value::Formation formed{};
     auto& element = Storage().ElementMut(key, formed);
     return VariableRef<std::remove_reference_t<decltype(element)>>{
-        erased_.Part(&element, formed, RetainedStepTo<T>(key))};
+        erased_.Part(&element, formed, RetainedStepTo<T>(key), accumulated)};
   }
 
   // The same, bound by a call, with a lease on the element the array keeps,
@@ -1315,13 +1344,12 @@ class VariableRef {
       const Key& key, base::SourceLocation at) const -> LeasedReference {
     const base::SourceLocationScope bound(at);
     erased_.AdmitStep();
-    if (StepCanReshape(Storage(), key)) {
-      KeepWhole();
-    }
+    const bool accumulated =
+        StepCanReshape(Storage(), key) && BeforeModifyWhole();
     value::Formation formed{};
     auto& element = Storage().ElementMut(key, formed);
     const ErasedReference part =
-        erased_.Part(&element, formed, RetainedStepTo<T>(key));
+        erased_.Part(&element, formed, RetainedStepTo<T>(key), accumulated);
     if (formed == value::Formation::kNowhere) {
       return {StorageLease{}, part};
     }
@@ -1331,11 +1359,13 @@ class VariableRef {
   template <std::size_t I>
   [[nodiscard]] auto ReferComponent() const {
     auto& component = Storage().template Component<I>();
+    const bool accumulated = false;
     return VariableRef<std::remove_reference_t<decltype(component)>>{
         erased_.Part(
             &component, value::Formation::kExisting,
             PartPath::Written(
-                support::PartStep::kComponent, static_cast<std::int64_t>(I)))};
+                support::PartStep::kComponent, static_cast<std::int64_t>(I)),
+            accumulated)};
   }
 
   // The `MutationSink` surface. Storage that belongs to no variable has no
@@ -1405,20 +1435,22 @@ class VariableRef {
 
   // A write through the reference changed the part at `within` of what it
   // names, which lies where the reference's own steps led.
-  void PublishTransition(const PartPath& within, const Change& change) const {
-    erased_.Report(within, change);
+  void AfterModify(
+      const PartPath& within, const Change& change, bool accumulated) const {
+    erased_.AfterModify(within, change, accumulated);
   }
 
-  [[nodiscard]] auto Keeper() const -> OriginalKeeper {
-    return KeeperThrough(erased_);
+  [[nodiscard]] auto WrittenPart() const -> runtime::WrittenPart {
+    return WrittenPartThrough(erased_);
   }
 
  private:
-  // Has the place this names a part of keep what that part holds, before a
-  // write through it, or a step that can make an element, changes it.
-  void KeepWhole() const {
-    Keeper().Keep(PartPath{}, [&] {
-      return std::make_unique<KeptPartOriginal<T>>(Storage());
+  // Announces that what this names is about to be modified whole, by a write
+  // through it or by a step that can make an element, and answers whether the
+  // open interval accumulated that.
+  [[nodiscard]] auto BeforeModifyWhole() const -> bool {
+    return WrittenPart().BeforeModify(PartPath{}, [&](EffectStorage& into) {
+      return NewOriginal<ValueOriginal<T>>(into, Storage());
     });
   }
 
@@ -1702,47 +1734,57 @@ class WriteBracket {
     }
     storage_ = &sink_.MutationStorage();
     watched_ = sink_.Watched();
+    watched_per_interval_ =
+        watched_ && sink_.WrittenPart().WatchedPerInterval();
   }
 
   [[nodiscard]] auto Storage() const -> ValueType& {
     return *storage_;
   }
 
-  // Has the place the sink writes keep what the part `further` leads to from
-  // the part the steps so far reached holds, which `make` copies, before the
-  // write changes it: where an `always_comb` or `always_latch` watches the
-  // place (LRM 9.2.2.2). Only a write whose steps are still followed keeps
-  // anything: one a step settled has changed only what that step kept, or
-  // lands where no read reaches (LRM 7.4.5); and an overridden write changes
-  // the place only once it is over, where the place keeps what it takes as a
-  // whole.
-  template <class Make>
-  void KeepOriginal(const PartPath& further, Make make) {
-    if (!Undecided()) {
+  // Announces that the part `further` leads to from the part the steps so far
+  // reached, which `copy` copies, is about to be modified, so the open
+  // interval keeps its original where a per-interval observer watches
+  // the place (LRM 9.2.2.2). Only a write whose steps are still followed
+  // announces anything: one a step settled has modified only what that step
+  // announced, or lands where no read reaches (LRM 7.4.5); and an overridden
+  // write modifies the place only once it is over, where the place announces
+  // what it takes as a whole.
+  template <class Copy>
+  void BeforeModify(const PartPath& further, Copy copy) {
+    if (!Announces()) {
       return;
     }
-    sink_.Keeper().Keep(reached_.Join(further), make);
+    NoteAccumulated(
+        sink_.WrittenPart().BeforeModify(reached_.Join(further), copy));
   }
   // The same of a part of a type known here.
   template <value::LyraValue Part>
-  void KeepPartOriginal(Part& part, const PartPath& further = PartPath{}) {
-    KeepOriginal(further, [&] {
-      return std::make_unique<KeptPartOriginal<Part>>(part);
+  void BeforeModifyPart(Part& part, const PartPath& further = PartPath{}) {
+    BeforeModify(further, [&](EffectStorage& into) {
+      return NewOriginal<ValueOriginal<Part>>(into, part);
     });
   }
   // The same of the bits `bits` of the integral value the steps so far
   // reached, whose words `live` names.
-  void KeepBitsOriginal(value::IntegralView live, value::BitPositions bits) {
-    if (!Undecided()) {
+  void BeforeModifyBits(value::IntegralView live, value::BitPositions bits) {
+    if (!Announces()) {
       return;
     }
-    sink_.Keeper().KeepBits(reached_, live, bits);
+    NoteAccumulated(sink_.WrittenPart().BeforeModifyBits(reached_, live, bits));
   }
 
-  // Whether the part a write lands on is worth keeping from before the write:
+  // Whether what the write does to the part it lands on is still to be told:
   // something reads the answer, and no step has given it already.
-  [[nodiscard]] auto Undecided() const -> bool {
+  [[nodiscard]] auto Tells() const -> bool {
     return watched_ && Open();
+  }
+
+  // Whether a modification this write is still to make has to be announced:
+  // a per-interval observer watches the place, which is settled where the write
+  // opens, and no step has settled the write.
+  [[nodiscard]] auto Announces() const -> bool {
+    return watched_per_interval_ && Open();
   }
 
   void Formed(value::Formation formed) {
@@ -1789,7 +1831,7 @@ class WriteBracket {
       return;
     }
     outcome_ = Outcome::kSettled;
-    sink_.PublishTransition(reached_, change);
+    sink_.AfterModify(reached_, change, Accumulated());
   }
 
   // The end of the write, with the full-expression that opened it.
@@ -1806,7 +1848,7 @@ class WriteBracket {
         return;
       case Outcome::kChanged:
         if (watched_) {
-          sink_.PublishTransition(reached_, Change::Elements(moved_));
+          sink_.AfterModify(reached_, Change::Elements(moved_), Accumulated());
         }
         return;
     }
@@ -1815,6 +1857,26 @@ class WriteBracket {
 
  private:
   enum class Outcome : std::uint8_t { kUndecided, kChanged, kSettled };
+
+  // Notes whether the open interval accumulated a modification this
+  // write announced. Covered belongs to each modification, and every one a
+  // write announces is the part it tells of or a part holding it, announced
+  // in the interval open at that moment, so the answers cannot differ within
+  // one write: either the interval holds an original holding the part told of,
+  // or no original was kept at all.
+  void NoteAccumulated(bool accumulated) {
+    if (announced_ && accumulated_ != accumulated) {
+      throw InternalError(
+          "WriteBracket: modifications of one write answer differently "
+          "whether an interval accumulated them -- please report this as "
+          "a bug");
+    }
+    announced_ = true;
+    accumulated_ = accumulated;
+  }
+  [[nodiscard]] auto Accumulated() const -> bool {
+    return accumulated_;
+  }
 
   // Whether nothing has yet settled what the write did.
   [[nodiscard]] auto Open() const -> bool {
@@ -1832,6 +1894,13 @@ class WriteBracket {
   ValueType* storage_ = nullptr;
   bool watched_ = false;
   bool overridden_ = false;
+  // What the write knows of the open interval, read on every write
+  // and held in the room of one flag: whether a per-interval observer watches
+  // the place, settled where the write opens; whether the write has announced
+  // a modification; and whether the interval accumulated what it announced.
+  bool watched_per_interval_ : 1 = false;
+  bool announced_ : 1 = false;
+  bool accumulated_ : 1 = false;
   Outcome outcome_ = Outcome::kUndecided;
   // The part of the storage the steps taken so far reached.
   PartPath reached_;
@@ -1881,12 +1950,12 @@ class Designation {
   template <typename Key>
   auto DesignateElement(const Key& key) {
     if constexpr (ResizableArray<Part>) {
-      write_->KeepPartOriginal(*part_);
+      write_->BeforeModifyPart(*part_);
     }
     value::Formation formed{};
     auto& element = part_->ElementMut(key, formed);
     write_->Formed(formed);
-    if (write_->Undecided()) {
+    if (write_->Tells()) {
       write_->Stepped(StepTo<Part>(key));
     }
     return Designation<Sink, std::remove_reference_t<decltype(element)>>{
@@ -1902,7 +1971,7 @@ class Designation {
   template <std::size_t I>
   auto DesignateComponent() {
     auto& component = part_->template Component<I>();
-    if (write_->Undecided()) {
+    if (write_->Tells()) {
       write_->Stepped(
           PartPath::Written(
               support::PartStep::kComponent, static_cast<std::int64_t>(I)));
@@ -1913,13 +1982,13 @@ class Designation {
 
   // A member of a union lies where every other member does (LRM 7.3), so the
   // path a write of it reports stops at the union, which every member reads,
-  // and the union is what the event's execution keeps from before its first
-  // write, while the write itself keeps only what it lands on below it.
+  // and the union is what an interval keeps the original of, while the write
+  // itself keeps only what it lands on below it.
   template <std::size_t I>
   auto DesignateMember() {
     auto& member = part_->template Component<I>();
-    if (write_->Undecided()) {
-      write_->KeepPartOriginal(*part_);
+    if (write_->Tells()) {
+      write_->BeforeModifyPart(*part_);
       write_->Stepped(
           PartPath::Written(
               support::PartStep::kUnionMember, static_cast<std::int64_t>(I)));
@@ -1930,9 +1999,9 @@ class Designation {
 
   // A reference to the bits of a value of `Bits` at `position` within the
   // part (LRM 11.5.1), written within this write. They lie in the part's own
-  // words, so a write through it lands on them where they are. An event's
-  // execution keeps the words the bits written lie in; a part narrower than a
-  // word is that word, kept whole.
+  // words, so a write through it lands on them where they are. An
+  // interval keeps the original of the words the bits written lie in; a part
+  // narrower than a word is that word, kept whole.
   template <typename Bits, typename Position>
   auto SliceMut(const Position& position) {
     auto bits = part_->template SliceMut<Bits>(position);
@@ -1941,7 +2010,7 @@ class Designation {
       return DesignatedBits<Sink, decltype(bits)>{
           *write_, std::move(bits), words.AsDynamic()};
     } else {
-      write_->KeepPartOriginal(*part_);
+      write_->BeforeModifyPart(*part_);
       return DesignatedBits<Sink, decltype(bits)>{
           *write_, std::move(bits), std::nullopt};
     }
@@ -1955,7 +2024,7 @@ class Designation {
   template <typename Position, typename Value>
   void AssignSlice(
       const Position& start, std::int64_t count, const Value& value) {
-    KeepSlice(value::ReadPosition(start), count);
+    BeforeModifySlice(value::ReadPosition(start), count);
     if (part_->AssignSlice(start, count, value)) {
       const std::int64_t first = *value::ReadPosition(start);
       const std::int64_t size = *value::ReadPosition(part_->Size());
@@ -1970,7 +2039,7 @@ class Designation {
   void AssignSlice(
       const Position& lo, const Position& hi, const Value& value,
       base::SourceLocation at) {
-    write_->KeepPartOriginal(*part_);
+    write_->BeforeModifyPart(*part_);
     if (const auto written = part_->AssignSlice(lo, hi, value, at)) {
       write_->Moved(
           static_cast<std::int64_t>(written->start),
@@ -1979,8 +2048,8 @@ class Designation {
   }
 
   auto operator*() -> Part& {
-    write_->KeepPartOriginal(*part_);
-    if (write_->Undecided()) {
+    write_->BeforeModifyPart(*part_);
+    if (write_->Tells()) {
       kept_.emplace(*part_);
     }
     return *part_;
@@ -1993,21 +2062,22 @@ class Designation {
   }
 
  private:
-  // What the `count` elements from `first` held, kept before a slice write
-  // changes them: each where it lies in a fixed-size array, the whole of an
-  // array whose size changes, which moves its elements. A bound naming no
-  // position writes nothing.
-  void KeepSlice(std::optional<std::int64_t> first, std::int64_t count) {
+  // Announces the `count` elements from `first` before a slice write modifies
+  // them: each where it lies in a fixed-size array, the whole of an array
+  // whose size changes, which moves its elements. A bound naming no position
+  // writes nothing.
+  void BeforeModifySlice(
+      std::optional<std::int64_t> first, std::int64_t count) {
     if constexpr (ResizableArray<Part>) {
-      write_->KeepPartOriginal(*part_);
+      write_->BeforeModifyPart(*part_);
     } else {
-      if (!write_->Undecided()) {
+      if (!write_->Announces()) {
         return;
       }
       for (const std::int64_t ordinal : PositionsASliceWrites(
                first, count, *value::ReadPosition(part_->Size()))) {
         value::Formation formed{};
-        write_->KeepPartOriginal(
+        write_->BeforeModifyPart(
             part_->ElementMut(value::Position::FromInt(ordinal), formed),
             PartPath::Element(ordinal));
       }
@@ -2016,7 +2086,7 @@ class Designation {
 
   WriteBracket<Sink>* write_;
   Part* part_;
-  std::optional<KeptPart<Part>> kept_;
+  std::optional<WriteOriginal<Part>> kept_;
 };
 
 // A reference to bits of a bit-addressed value within a write (LRM 11.5.1),
@@ -2024,8 +2094,8 @@ class Designation {
 // value's own words, so the write lands on them where they are, and each write
 // through them keeps what they held, writes them, and tells the write which
 // bits it reached. `whole` names the words of the value they lie in, of which
-// an event's execution keeps those the bits written lie in; none for a value
-// narrower than a word, which the execution has kept whole already.
+// an interval keeps the original of those the bits written lie in;
+// none for a value narrower than a word, which was announced whole already.
 template <class Sink, class Bits>
 class DesignatedBits {
  public:
@@ -2043,13 +2113,13 @@ class DesignatedBits {
 
   template <class Value>
   void Set(const Value& value) {
-    if (whole_.has_value() && write_->Undecided()) {
+    if (whole_.has_value() && write_->Announces()) {
       if (const std::optional<value::BitPositions> reached = bits_.Reached()) {
-        write_->KeepBitsOriginal(*whole_, *reached);
+        write_->BeforeModifyBits(*whole_, *reached);
       }
     }
     if (const std::optional<Change> change =
-            WriteBits(bits_, value, write_->Undecided())) {
+            WriteBits(bits_, value, write_->Tells())) {
       write_->Landed(*change);
     }
   }

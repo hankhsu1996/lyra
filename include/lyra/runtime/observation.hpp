@@ -99,8 +99,8 @@ class ArmedObservation {
 // `wait (cond)` or a continuous assignment -- the standard makes those
 // sensitive to the variables read rather than to the value of an expression
 // (LRM 9.2.2.2.1), so the observation decides nothing: being reached does, or
-// for an `always_comb` or `always_latch` what an event's execution left of
-// those variables.
+// for a per-interval observer the net change an interval left of those
+// variables.
 //
 // Every member no expression shapes is defined in the library: a unit stating
 // a wait constructs, copies and destroys these, and a definition written here

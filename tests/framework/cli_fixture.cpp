@@ -21,12 +21,8 @@ namespace lyra::test {
 using conformance::framework::ProcessOutcome;
 using conformance::framework::RunShellScript;
 
-namespace {
-
 using bazel::tools::cpp::runfiles::Runfiles;
 
-// Where this run was given something the test declared it needs, named from the
-// workspace root.
 auto ResolveDeclaredInput(std::string_view workspace_path)
     -> std::filesystem::path {
   std::string err;
@@ -35,6 +31,8 @@ auto ResolveDeclaredInput(std::string_view workspace_path)
   if (!runfiles) return {};
   return runfiles->Rlocation(std::format("_main/{}", workspace_path));
 }
+
+namespace {
 
 // Where this run was given a tool the test names by an environment variable
 // holding its runfiles location.

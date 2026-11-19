@@ -8,6 +8,7 @@
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir_transform/pass.hpp"
+#include "lyra/support/combinational_updates.hpp"
 
 namespace lyra::compiler {
 
@@ -18,7 +19,9 @@ namespace lyra::compiler {
 // one that names only declarations composes a namespace of callables. The
 // model is rewritten as `passes` asks before anything reads it.
 auto LowerUnitToSemantic(
-    const hir::CompilationUnit& unit, const mir_transform::PassOptions& passes,
+    const hir::CompilationUnit& unit,
+    support::CombinationalUpdates combinational_updates,
+    const mir_transform::PassOptions& passes,
     const diag::SourceManager& sources) -> diag::Result<mir::CompilationUnit>;
 
 // Tells a run that records itself what `unit` holds as a semantic model. A

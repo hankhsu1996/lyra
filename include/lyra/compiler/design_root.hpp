@@ -9,6 +9,7 @@
 #include "lyra/lowering/hir_to_mir/design_instantiations.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir_transform/pass.hpp"
+#include "lyra/support/combinational_updates.hpp"
 
 namespace lyra::compiler {
 
@@ -35,6 +36,7 @@ auto SynthesizeDesignRoot(
     std::span<const lowering::ast_to_hir::TopLevelUnit> tops,
     const hir::UnitSignatures& published,
     lowering::hir_to_mir::DesignInstantiations instantiations,
+    const support::CombinationalUpdatesByLibrary& combinational_updates,
     const mir_transform::PassOptions& passes,
     const diag::SourceManager& sources) -> diag::Result<mir::CompilationUnit>;
 

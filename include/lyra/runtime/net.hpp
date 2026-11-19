@@ -1350,7 +1350,7 @@ class ResolvedNet<T> : public PositionalNet<ResolvedNet<T>, T> {
   auto LayPositions(std::uint32_t offset, const NetPositions& positions)
       -> std::optional<Change> {
     auto&& own = Own();
-    KeptPart<std::remove_cvref_t<decltype(own)>> kept(
+    WriteOriginal<std::remove_cvref_t<decltype(own)>> kept(
         own, value::BitPositions{.lsb = offset, .width = positions.Count()});
     WritePositions(own, offset, positions);
     return kept.ChangeTo(own);
@@ -2056,12 +2056,19 @@ class Driver<T> {
             [](const Showing<T>& to) { return to.watched; }},
         Landing());
   }
-  void PublishTransition(const PartPath& reached, const Change& change) const {
+  // A driver's write announces nowhere, so no interval accumulated it.
+  void AfterModify(
+      const PartPath& reached, const Change& change, bool accumulated) const {
+    if (accumulated) {
+      throw InternalError(
+          "Driver: an interval accumulated a driver's write -- please "
+          "report this as a bug");
+    }
     Driven().DriverWrote(current_runtime(), reached, change);
   }
-  // A net keeps nothing of what it shows: each evaluation of a driver writes
-  // it once, so each write is what that evaluation leaves.
-  static auto Keeper() -> OriginalKeeper {
+  // A net keeps no original of what it shows: it is resolved by the
+  // scheduler, never modified by an interval.
+  static auto WrittenPart() -> runtime::WrittenPart {
     return {};
   }
 

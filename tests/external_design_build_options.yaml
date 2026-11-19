@@ -1,0 +1,11 @@
+# Lyra's own build options each design of the benchmark suite is built with,
+# on every path, keyed by the design. Each selects a dialect its author wrote
+# the design in, which the standard's own reading does not settle the way the
+# author meant -- two `always_comb` procedures each assigning a default and
+# then a value, each reading the other's output, trigger each other for ever
+# under it -- so the design is built in that dialect, and what stands behind it
+# is still reached. Unlike the front end's options beside it, whether one is
+# still needed is answered only by a whole build, so it is not asked on every
+# run.
+OpenPiton:
+  - --coalesce-comb-updates

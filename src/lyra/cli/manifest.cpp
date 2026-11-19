@@ -651,8 +651,9 @@ auto LoadManifest(const fs::path& path, slang::SourceManager& sources)
 
   if (const auto* compile = root.get_as<toml::table>("compile");
       compile != nullptr) {
-    static constexpr std::array<std::string_view, 4> kKeys = {
-        "std", "timescale", "single_unit", "assertions"};
+    static constexpr std::array<std::string_view, 5> kKeys = {
+        "std", "timescale", "single_unit", "assertions",
+        "coalesce_comb_updates"};
     if (auto ok = CheckKeys(file, "compile", *compile, kKeys); !ok) {
       return std::unexpected(std::move(ok.error()));
     }
@@ -676,6 +677,13 @@ auto LoadManifest(const fs::path& path, slang::SourceManager& sources)
     }
     if (auto ok = ReadAssertionPolicy(
             file, compile->get("assertions"), manifest.assertions);
+        !ok) {
+      return std::unexpected(std::move(ok.error()));
+    }
+    if (auto ok = ReadBool(
+            file, "[compile] coalesce_comb_updates",
+            compile->get("coalesce_comb_updates"),
+            manifest.coalesce_comb_updates);
         !ok) {
       return std::unexpected(std::move(ok.error()));
     }

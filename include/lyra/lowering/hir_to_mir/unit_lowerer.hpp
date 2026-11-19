@@ -40,6 +40,7 @@
 #include "lyra/mir/record_id.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/support/class_name.hpp"
+#include "lyra/support/combinational_updates.hpp"
 #include "lyra/support/def_path.hpp"
 #include "lyra/support/library_callback.hpp"
 
@@ -267,8 +268,12 @@ struct PublishedScope {
 class UnitLowerer {
  public:
   UnitLowerer(
-      const hir::CompilationUnit& hir, const diag::SourceManager& sources)
-      : hir_(&hir), sources_(&sources) {
+      const hir::CompilationUnit& hir,
+      support::CombinationalUpdates combinational_updates,
+      const diag::SourceManager& sources)
+      : hir_(&hir),
+        sources_(&sources),
+        combinational_updates_(combinational_updates) {
     // The class of each scope of the design hierarchy the unit names -- its
     // own scopes' and those of other units it reaches -- takes its identity
     // first: building the tree of the unit's scopes names its own, and a type
@@ -330,6 +335,13 @@ class UnitLowerer {
 
   [[nodiscard]] auto Hir() const -> const hir::CompilationUnit& {
     return *hir_;
+  }
+
+  // What triggers the unit's combinational procedures, which the wait each
+  // builds states.
+  [[nodiscard]] auto CombinationalUpdates() const
+      -> support::CombinationalUpdates {
+    return combinational_updates_;
   }
 
   // The record of the definition every scope of this unit comes from (LRM
@@ -811,6 +823,7 @@ class UnitLowerer {
 
   const hir::CompilationUnit* hir_;
   const diag::SourceManager* sources_;
+  support::CombinationalUpdates combinational_updates_;
   mir::CompilationUnit unit_;
   base::Translation<hir::TypeId, std::optional<mir::TypeId>> type_translations_;
   // The class each class the unit names is, of this unit or another, and the

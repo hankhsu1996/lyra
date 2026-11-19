@@ -59,6 +59,9 @@ class Reaction final : public Activation, public ProcessExecution {
   [[nodiscard]] auto Leaf() -> Activation* override;
   // Its process, made now where it has none, and kept by the run.
   [[nodiscard]] auto Process() -> RuntimeProcess* override;
+  void SetCombinationalUpdates(support::CombinationalUpdates updates) override {
+    context_.combinational_updates = updates;
+  }
 
   // Its process, made now and handed to whoever is to keep it: an initial
   // procedure of a program is one of the program's roots (LRM 24.3).

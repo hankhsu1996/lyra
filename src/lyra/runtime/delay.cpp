@@ -66,7 +66,7 @@ class ZeroDelayAwaiter final : public Awaiter {
     return due_;
   }
 
-  auto Again() -> Resumption override {
+  auto Resuming() -> Resumption override {
     return WithoutStopping{};
   }
 

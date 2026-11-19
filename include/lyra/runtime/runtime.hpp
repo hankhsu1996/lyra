@@ -22,15 +22,14 @@
 #include "lyra/runtime/assertion_control.hpp"
 #include "lyra/runtime/bound_members.hpp"
 #include "lyra/runtime/closure.hpp"
-#include "lyra/runtime/combinational_awaiter.hpp"
 #include "lyra/runtime/command_line.hpp"
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/coverage.hpp"
 #include "lyra/runtime/diagnostic.hpp"
 #include "lyra/runtime/effect_storage.hpp"
 #include "lyra/runtime/file_table.hpp"
+#include "lyra/runtime/interval_accumulator.hpp"
 #include "lyra/runtime/intrusive_list.hpp"
-#include "lyra/runtime/kept_original.hpp"
 #include "lyra/runtime/mem_file.hpp"
 #include "lyra/runtime/observable.hpp"
 #include "lyra/runtime/owned_call.hpp"
@@ -290,10 +289,13 @@ class Runtime final : public RuntimeEffects {
   static constexpr std::size_t kMaxNamedProcedures = 8;
 
   // How many times a slot has entered its regions, and what its last passes
-  // ran, which the bound on its passes reports.
+  // ran, which the bound on its passes reports: each procedure, and whether one
+  // was an `always_comb` or `always_latch` triggered by each change, which a
+  // design built to coalesce combinational updates might have settled.
   struct SlotPasses {
     std::size_t count = 0;
     std::vector<ProcedureContext> ran;
+    bool ran_per_change_combinational_logic = false;
   };
 
   // The slot at `when`. Asked on every wake and every nonblocking update, so
@@ -348,10 +350,9 @@ class Runtime final : public RuntimeEffects {
       support::Region first, support::Region last, SlotPasses& passes) -> bool;
   void RunRegion(support::Region region);
   // The end of one event's execution -- a process up to its stop, one deferred
-  // update, one timer firing (LRM 4.5) -- once it has handed control back: each
-  // part it wrote of a place an `always_comb` or `always_latch` watches is
-  // compared with what it held before, the waits on objects that expired
-  // meanwhile are told, and each wait the execution has to ask is decided.
+  // update, one timer firing (LRM 4.5) -- once it has handed control back: the
+  // interval it opened ends, and the waits on objects that expired
+  // meanwhile are told.
   void EndEventExecution();
   // Tells the waits on objects that expired since this was last asked (LRM
   // 8.30.3), with no execution running: each runs where its context places a
@@ -359,7 +360,7 @@ class Runtime final : public RuntimeEffects {
   void TellExpired();
   // The fatal report of a slot that met the bound on its passes, and what its
   // last passes ran, a procedure once for each time it ran.
-  void ReportUnsettledSlot(std::span<const ProcedureContext> ran);
+  void ReportUnsettledSlot(const SlotPasses& passes);
   // The final procedures are not processes of their own but a series of
   // function calls from a single one (LRM 9.2.3), made here once the
   // simulation has ended.
@@ -391,17 +392,15 @@ class Runtime final : public RuntimeEffects {
   // before everything that holds an object, so it outlives every object that
   // can expire into it.
   IntrusiveList<WaitMembership> expired_;
-  // What the event's execution under way leaves, judged once it ends: the
-  // places keeping what the parts it wrote held before it, and the waits its
-  // writes reached while a process was parked on them or that began watching
-  // in the middle of it. Declared before everything that holds a place or a
-  // wait, each of which leaves its list as it ends.
-  IntrusiveList<CombinationalWatch> kept_originals_;
-  IntrusiveList<ReachedWait> reached_waits_;
-  std::unique_ptr<Design> design_;
+  // The places keeping the originals of what the open interval
+  // modified, whose net change is told when it ends. Declared before
+  // everything that holds a place, each of which leaves the list as it ends.
+  IntrusiveList<IntervalAccumulator> interval_accumulators_;
   // Where every deferred effect of the run gets its bytes, whichever slot and
-  // region holds it, so it outlives every slot.
+  // region holds it, and every original an interval keeps, so it
+  // outlives every slot and every place.
   EffectStorage effect_storage_;
+  std::unique_ptr<Design> design_;
   // LRM 4.4 divides the event set first by time, into the current slot and
   // later ones, and each slot by region. Nearly every event -- a wake, a
   // nonblocking update with no delay -- is placed in the current slot, so it is

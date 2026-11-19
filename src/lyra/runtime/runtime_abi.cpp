@@ -624,12 +624,13 @@ void WideRefSet(void* reference, std::int64_t width, const void* value) {
       assign,
       [&] { return std::memcmp(held.bytes, value, held.ByteSize()) == 0; },
       [&] {
-        KeeperThrough(lent).Keep(PartPath{}, [&] {
-          return std::make_unique<KeptWideOriginal<value::WideAt<T::kDomain>>>(
-              held);
-        });
-        return ReplaceWhole(held, assign);
-      });
+        return WrittenPartThrough(lent).BeforeModify(
+            PartPath{}, [&](EffectStorage& into) {
+              return NewOriginal<WordsOriginal<value::WideAt<T::kDomain>>>(
+                  into, held);
+            });
+      },
+      [&] { return ReplaceWhole(held, assign); });
 }
 
 // A value lying after what holds it, lent by reference or by its holder as a
@@ -780,11 +781,12 @@ class ReferenceWrite {
   [[nodiscard]] auto Watched() const -> bool {
     return lent_.Watched();
   }
-  void PublishTransition(const PartPath& reached, const Change& change) const {
-    lent_.Report(reached, change);
+  void AfterModify(
+      const PartPath& reached, const Change& change, bool accumulated) const {
+    lent_.AfterModify(reached, change, accumulated);
   }
-  [[nodiscard]] auto Keeper() const -> OriginalKeeper {
-    return KeeperThrough(lent_);
+  [[nodiscard]] auto WrittenPart() const -> lyra::runtime::WrittenPart {
+    return WrittenPartThrough(lent_);
   }
 
  private:
@@ -867,12 +869,13 @@ class HolderWrite {
   [[nodiscard]] auto Watched() const -> bool {
     return holder_->Watched();
   }
-  void PublishTransition(const PartPath& reached, const Change& change) const {
-    holder_->PublishTransition(reached, change);
+  void AfterModify(
+      const PartPath& reached, const Change& change, bool accumulated) const {
+    holder_->AfterModify(reached, change, accumulated);
   }
-  // A variable keeps what its parts held; a driver writes what its net
+  // A variable keeps its parts' originals; a driver writes what its net
   // resolves.
-  [[nodiscard]] auto Keeper() const -> OriginalKeeper {
+  [[nodiscard]] auto WrittenPart() const -> lyra::runtime::WrittenPart {
     if constexpr (kOverridable) {
       return {.place = holder_};
     } else {
@@ -921,9 +924,12 @@ void WriteLaidOutThrough(
       },
       assign, [&] { return type.BitIdentical(lent.storage, value); },
       [&] {
-        KeeperThrough(lent).Keep(PartPath{}, [&] {
-          return std::make_unique<KeptLaidOutOriginal>(type, lent.storage);
-        });
+        return WrittenPartThrough(lent).BeforeModify(
+            PartPath{}, [&](EffectStorage& into) {
+              return NewOriginal<LaidOutOriginal>(into, type, lent.storage);
+            });
+      },
+      [&] {
         assign();
         return Change::Whole();
       });
@@ -1088,11 +1094,11 @@ auto DesignateElement(const void* designation, const Index& index, void* out)
     -> void* {
   const ErasedDesignation& within = DesignationAt(designation);
   auto& container = *static_cast<Container*>(within.part);
-  within.write->KeepPartOriginal(container);
+  within.write->BeforeModifyPart(container);
   value::Formation formed{};
   void* element = container.ElementMut(index, formed);
   within.write->Formed(formed);
-  if (within.write->Undecided()) {
+  if (within.write->Tells()) {
     within.write->Stepped(StepTo<Container>(index));
   }
   return std::construct_at(
@@ -1107,7 +1113,7 @@ void AssignDesignatedSlice(
     std::int64_t count, const Replacement& replacement) {
   const ErasedDesignation& within = DesignationAt(designation);
   auto& container = *static_cast<Container*>(within.part);
-  within.write->KeepPartOriginal(container);
+  within.write->BeforeModifyPart(container);
   // A start that names no position assigns nothing, so one that moved an
   // element names one; an element past the last is skipped (LRM 7.4.5).
   if (container.AssignSlice(start, count, replacement)) {
@@ -1153,7 +1159,7 @@ auto DesignateArrayElement(
   value::Formation formed{};
   void* element = type.ElementMut(within.part, position, formed);
   within.write->Formed(formed);
-  if (within.write->Undecided()) {
+  if (within.write->Tells()) {
     within.write->Stepped(
         PartPath::Written(support::PartStep::kElement, position));
   }
@@ -1167,13 +1173,13 @@ void AssignDesignatedArraySlice(
     std::optional<std::int64_t> start, std::int64_t count,
     std::span<const void* const> replacement) {
   const ErasedDesignation& within = DesignationAt(designation);
-  // Each element the slice writes is kept where it lies, before it changes;
-  // which exist is read off the array's count.
-  if (within.write->Undecided()) {
+  // Each element the slice writes is announced where it lies, before it
+  // changes; which exist is read off the array's count.
+  if (within.write->Announces()) {
     for (const std::int64_t ordinal : PositionsASliceWrites(
              start, count, static_cast<std::int64_t>(type.Count()))) {
       value::Formation formed{};
-      within.write->KeepLaidOutOriginal(
+      within.write->BeforeModifyLaidOut(
           type.ElementType().Type(),
           type.ElementMut(within.part, ordinal, formed),
           PartPath::Element(ordinal));
@@ -1221,17 +1227,19 @@ auto StepIntoElement(
   const base::SourceLocationScope bound(at);
   from.AdmitStep();
   auto& container = *static_cast<Container*>(from.storage);
-  if (StepCanReshape(container, index)) {
-    KeeperThrough(from).Keep(PartPath{}, [&] {
-      return std::make_unique<KeptPartOriginal<Container>>(container);
-    });
-  }
+  const bool accumulated =
+      StepCanReshape(container, index) &&
+      WrittenPartThrough(from).BeforeModify(
+          PartPath{}, [&](EffectStorage& into) {
+            return NewOriginal<ValueOriginal<Container>>(into, container);
+          });
   value::Formation formed{};
   void* element = container.ElementMut(index, formed);
   return {
       .element = element,
       .formed = formed,
-      .part = from.Part(element, formed, RetainedStepTo<Container>(index))};
+      .part = from.Part(
+          element, formed, RetainedStepTo<Container>(index), accumulated)};
 }
 
 template <typename Container, typename Index>
@@ -1273,10 +1281,12 @@ auto ReferArrayElement(
   from.AdmitStep();
   value::Formation formed{};
   void* element = type.ElementMut(from.storage, position, formed);
+  const bool accumulated = false;
   return BuildReference(
       out, from.Part(
                element, formed,
-               PartPath::Written(support::PartStep::kElement, position)));
+               PartPath::Written(support::PartStep::kElement, position),
+               accumulated));
 }
 
 // Stores each of a literal's entries under the index it names (LRM 7.9.11). An
@@ -1956,15 +1966,15 @@ void InsertDesignatedBits(
   }
   const ErasedDesignation& within = DesignationAt(designation);
   T& whole = *static_cast<T*>(within.part);
-  within.write->KeepPartOriginal(whole);
+  within.write->BeforeModifyPart(whole);
   const T before = whole;
   InsertBitsInto(
       whole.MutableView().Truncated(static_cast<std::uint64_t>(width)), bits,
       count, bits_are_four_state, *range);
-  if (whole.IsBitIdentical(before) || !within.write->Undecided()) {
+  if (whole.IsBitIdentical(before) || !within.write->Tells()) {
     return;
   }
-  KeptPart<T> kept(before, range->clamped);
+  WriteOriginal<T> kept(before, range->clamped);
   if (const std::optional<Change> change = kept.ChangeTo(whole)) {
     within.write->Landed(*change);
   }
@@ -1986,13 +1996,13 @@ void InsertDesignatedWideBits(
   const ErasedDesignation& within = DesignationAt(designation);
   const value::WideAt<T::kDomain> whole{
       .bytes = within.part, .width = static_cast<std::uint64_t>(width)};
-  within.write->KeepBitsOriginal(whole.MutableView(), range->clamped);
-  if (!within.write->Undecided()) {
+  within.write->BeforeModifyBits(whole.MutableView(), range->clamped);
+  if (!within.write->Tells()) {
     InsertBitsInto(
         whole.MutableView(), bits, count, bits_are_four_state, *range);
     return;
   }
-  KeptPart<value::WideAt<T::kDomain>> kept(whole, range->clamped);
+  WriteOriginal<value::WideAt<T::kDomain>> kept(whole, range->clamped);
   InsertBitsInto(whole.MutableView(), bits, count, bits_are_four_state, *range);
   if (const std::optional<Change> change = kept.ChangeTo(whole)) {
     within.write->Landed(*change);
@@ -2218,8 +2228,9 @@ using lyra::runtime::VectorPropagationDelay;
 using lyra::runtime::Wait;
 using lyra::runtime::WaitFork;
 using lyra::runtime::WaitOn;
-using lyra::runtime::WaitOnImplicitList;
 using lyra::runtime::WaitOnPropertyEvaluation;
+using lyra::runtime::WaitPerChangeOnImplicitList;
+using lyra::runtime::WaitPerIntervalOnImplicitList;
 using lyra::runtime::WaitRecollecting;
 using lyra::runtime::WaitUntil;
 using lyra::runtime::WatchedPlace;
@@ -3383,9 +3394,17 @@ auto lyra_rt_wait_on(void* triggers, std::uint64_t triggers_count, void* out)
       out, WaitOn(SpanAt<const Trigger* const>(triggers, triggers_count)));
 }
 
-auto lyra_rt_wait_on_implicit_list(const void* report, void* out) -> void* {
+auto lyra_rt_wait_per_change_on_implicit_list(const void* report, void* out)
+    -> void* {
   return Emplace(
-      out, WaitOnImplicitList(static_cast<const ReadReport*>(report)));
+      out, WaitPerChangeOnImplicitList(static_cast<const ReadReport*>(report)));
+}
+
+auto lyra_rt_wait_per_interval_on_implicit_list(const void* report, void* out)
+    -> void* {
+  return Emplace(
+      out,
+      WaitPerIntervalOnImplicitList(static_cast<const ReadReport*>(report)));
 }
 
 auto lyra_rt_wait_continuously_on(
@@ -4388,13 +4407,15 @@ auto lyra_rt_laidout_refer_component(
     const void* reference, std::int64_t index, const void* tuple_type,
     void* out) -> void* {
   const ErasedReference& from = ErasedAt(reference);
+  const bool accumulated = false;
   return BuildReference(
       out, from.Part(
                lyra::runtime::TupleTypeAt(tuple_type)
                    .ComponentAt(from.storage, static_cast<std::size_t>(index)),
                lyra::value::Formation::kExisting,
                lyra::runtime::PartPath::Written(
-                   lyra::support::PartStep::kComponent, index)));
+                   lyra::support::PartStep::kComponent, index),
+               accumulated));
 }
 
 auto lyra_rt_string_ref_get(void* reference) -> const void* {
@@ -7893,6 +7914,7 @@ auto lyra_rt_queue_cell_open_for_write(void* cell, void* out) -> void* {
 auto lyra_rt_assocarray_cell_open_for_write(void* cell, void* out) -> void* {
   return OpenCellWrite<RuntimeAssociativeArray>(cell, out);
 }
+
 auto lyra_rt_string_ref_open_for_write(void* reference, void* out) -> void* {
   return OpenRefWrite<String>(reference, out);
 }
@@ -8258,7 +8280,7 @@ auto lyra_rt_laidout_designate_component(
     const void* designation, std::int64_t index, const void* tuple_type,
     void* out) -> void* {
   const ErasedDesignation& within = DesignationAt(designation);
-  if (within.write->Undecided()) {
+  if (within.write->Tells()) {
     within.write->Stepped(
         lyra::runtime::PartPath::Written(
             lyra::support::PartStep::kComponent, index));
@@ -8275,8 +8297,8 @@ auto lyra_rt_laidout_designate_component(
 auto lyra_rt_laidout_designate_member(
     const void* designation, const void* union_type, void* out) -> void* {
   const ErasedDesignation& within = DesignationAt(designation);
-  if (within.write->Undecided()) {
-    within.write->KeepLaidOutOriginal(
+  if (within.write->Tells()) {
+    within.write->BeforeModifyLaidOut(
         lyra::runtime::TypeAt(union_type), within.part);
     within.write->Stepped(
         lyra::runtime::PartPath::Written(
@@ -8309,7 +8331,7 @@ void lyra_rt_queue_assign_slice(
   const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
   const ErasedDesignation& within = DesignationAt(designation);
   auto& queue = *static_cast<RuntimeQueue*>(within.part);
-  within.write->KeepPartOriginal(queue);
+  within.write->BeforeModifyPart(queue);
   if (const auto written = queue.AssignSlice(
           PositionNamedAt(lo), PositionNamedAt(hi),
           lyra::runtime::ElementHandles(replacement, replacement_type))) {
