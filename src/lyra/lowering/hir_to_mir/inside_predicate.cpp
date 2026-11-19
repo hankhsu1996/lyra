@@ -29,6 +29,7 @@
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
+#include "lyra/mir/value_parts.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/library_decl.hpp"
 
@@ -56,7 +57,8 @@ auto BuildMatch(
       unit, block,
       integral ? hir::BinaryOp::kWildcardEquality : hir::BinaryOp::kEquality,
       left, value,
-      OneBitAnswerType(unit, std::array{compared_at, block.Get(value).type})));
+      mir::OneBitAnswerType(
+          unit, std::array{compared_at, block.Get(value).type})));
 }
 
 // Whether `left` matches any single value `value` holds, both already in the
@@ -158,7 +160,7 @@ auto BuildSetMemberTest(
   auto high = bound(range->hi);
   if (!high) return std::unexpected(std::move(high.error()));
 
-  const mir::TypeId type = OneBitAnswerType(unit, compared);
+  const mir::TypeId type = mir::OneBitAnswerType(unit, compared);
   std::vector<mir::ExprId> tests;
   const auto admits = [&](hir::BinaryOp relation,
                           const std::optional<mir::ExprId>& limit) {

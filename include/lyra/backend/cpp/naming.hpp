@@ -961,14 +961,25 @@ inline void WriteOne(TargetText& out, const RecordQualifiedName& ref) {
     support::ValueOperation operation) -> VerbatimName {
   return std::visit(
       Overloaded{
-          [](support::ValueOperator op) -> VerbatimName {
-            switch (op) {
-              case support::ValueOperator::kEquality:
+          // An item the library also answers for other types, and a
+          // bound-free conversion, is called by the name the library's entry
+          // for it declares.
+          [](support::LibraryAnsweredItem item) -> VerbatimName {
+            return CppValueOperationMemberName(support::LibraryEntryOf(item));
+          },
+          [](support::BoundFreeItem item) -> VerbatimName {
+            return CppValueOperationMemberName(support::LibraryEntryOf(item));
+          },
+          [](support::EqualityItem item) -> VerbatimName {
+            switch (item) {
+              case support::EqualityItem::kEqual:
                 return VerbatimName{.text = "operator=="};
-              case support::ValueOperator::kInequality:
+              case support::EqualityItem::kNotEqual:
                 return VerbatimName{.text = "operator!="};
+              case support::EqualityItem::kCaseEqual:
+                return VerbatimName{.text = "CaseEqual"};
             }
-            throw InternalError("backend::cpp: unknown value operator");
+            throw InternalError("backend::cpp: unknown equality item");
           },
           [](support::BuiltinFn fn) -> VerbatimName {
             return std::visit(
@@ -993,6 +1004,13 @@ inline void WriteOne(TargetText& out, const RecordQualifiedName& ref) {
                           "type, and an allocation function is no question "
                           "-- please report this as a bug");
                     },
+                    [](const support::ReservedPlacementForm&) -> VerbatimName {
+                      throw InternalError(
+                          "backend::cpp: a type's own operation answers a "
+                          "question the library asks of a value or of its "
+                          "type, and the reserved placement form is no "
+                          "question -- please report this as a bug");
+                    },
                     [](const support::Constructor&) -> VerbatimName {
                       throw InternalError(
                           "backend::cpp: a type's own operation answers a "
@@ -1001,6 +1019,63 @@ inline void WriteOne(TargetText& out, const RecordQualifiedName& ref) {
                           "report this as a bug");
                     }},
                 support::RuntimeEntryOf(fn).declaration);
+          },
+          // A step of a value's life a container type states is an item of
+          // its implementation of the library's traits, named there.
+          [](support::ValueStep) -> VerbatimName {
+            throw InternalError(
+                "backend::cpp: a step of a value's life is named as a member, "
+                "and it is an item of its type's implementation -- please "
+                "report this as a bug");
+          }},
+      operation);
+}
+
+// The static function of the struct holding a type's implementation of the
+// library's traits answering `operation`: the name a library template asks a
+// value by, `CaseEqual`, but `Equal` and `Unequal` for an operator, which a
+// static function cannot be, and `Copy`, `Assign` and `End` for the steps of a
+// value's life the type states. The library's class for the type calls each by
+// this name.
+[[nodiscard]] inline auto CppImplItemName(support::ValueOperation operation)
+    -> VerbatimName {
+  return std::visit(
+      Overloaded{
+          [](support::EqualityItem item) -> VerbatimName {
+            switch (item) {
+              case support::EqualityItem::kEqual:
+                return VerbatimName{.text = "Equal"};
+              case support::EqualityItem::kNotEqual:
+                return VerbatimName{.text = "Unequal"};
+              case support::EqualityItem::kCaseEqual:
+                return VerbatimName{.text = "CaseEqual"};
+            }
+            throw InternalError("backend::cpp: unknown equality item");
+          },
+          [&](support::LibraryAnsweredItem) -> VerbatimName {
+            return CppValueOperationMemberName(operation);
+          },
+          [&](support::BoundFreeItem) -> VerbatimName {
+            return CppValueOperationMemberName(operation);
+          },
+          [&](support::BuiltinFn) -> VerbatimName {
+            return CppValueOperationMemberName(operation);
+          },
+          [](support::ValueStep step) -> VerbatimName {
+            switch (step) {
+              case support::ValueStep::kCopy:
+                return VerbatimName{.text = "Copy"};
+              case support::ValueStep::kAssign:
+                return VerbatimName{.text = "Assign"};
+              case support::ValueStep::kEnd:
+                return VerbatimName{.text = "End"};
+              case support::ValueStep::kRelocate:
+                break;
+            }
+            throw InternalError(
+                "backend::cpp: a relocation is named as an operation of a "
+                "type, and no type states one -- please report this as a "
+                "bug");
           }},
       operation);
 }

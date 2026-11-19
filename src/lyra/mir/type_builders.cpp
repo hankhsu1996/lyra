@@ -136,6 +136,15 @@ auto ErasedPointer(const TypePool& types) -> TypeId {
           .ownership = PointerOwnership::kBorrowed}});
 }
 
+auto BorrowedPointerTo(
+    const TypePool& types, TypeId pointee, Mutability mutability) -> TypeId {
+  return types.Intern(
+      Type{PointerType{
+          .pointee = pointee,
+          .ownership = PointerOwnership::kBorrowed,
+          .mutability = mutability}});
+}
+
 auto BoxOf(const TypePool& types, TypeId value) -> TypeId {
   return types.Intern(
       Type{PointerType{

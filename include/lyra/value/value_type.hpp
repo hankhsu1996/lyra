@@ -11,11 +11,14 @@
 #include "lyra/support/layout.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/integral_words.hpp"
+#include "lyra/value/value_type_kind.hpp"
 
 namespace lyra::value {
 
+class DynamicArrayType;
 class FixedArrayType;
 class IntegralValueType;
+class QueueType;
 class ValueType;
 
 // What a value whose parts are ordered by position -- a fixed-size array, a
@@ -128,12 +131,13 @@ struct ValueOperations {
 // read: generated code states one for each type it compiles the operations
 // of, placing each function where this record lays it out.
 //
-// Every value is passed as its address. Copying and moving build in `out` a
-// value the source still has to end; `assign` writes into a value already
-// there, which goes on being that value.
+// Every value is passed as its address. Copying builds in `out` a second value
+// equal to the source; relocating builds the value itself there and takes it
+// from the source, whose storage is owed nothing afterwards; `assign` writes
+// into a value already there, which goes on being that value.
 struct ValueWitnessTable {
   void (*copy)(const ValueType& type, const void* value, void* out);
-  void (*move)(const ValueType& type, void* value, void* out) noexcept;
+  void (*relocate)(const ValueType& type, void* value, void* out) noexcept;
   void (*destroy)(const ValueType& type, void* value) noexcept;
   void (*assign)(const ValueType& type, void* storage, const void* value);
   bool (*bit_identical)(
@@ -198,21 +202,11 @@ inline constexpr OperationFunctions kOperationFunctionsFor{
 template <typename W>
 inline constexpr ValueWitnessTable kValueWitnessTableFor{
     .copy = W::Copy,
-    .move = W::Move,
+    .relocate = W::Relocate,
     .destroy = W::Destroy,
     .assign = W::Assign,
     .bit_identical = W::BitIdentical,
     .parts = W::kParts};
-
-// Which of the records the library reads a type through this one opens, where
-// it opens one: an integral type's (LRM 6.11), whose values a facility
-// compiled for every type reads the bits of, and a fixed-size unpacked array
-// type's (LRM 7.4.2). Every other type is its table and its numbers alone.
-enum class ValueTypeKind : std::uint32_t {
-  kIntegral,
-  kFixedArray,
-  kOther,
-};
 
 // A type as code compiled before any design existed is handed it: how much
 // storage a value of it takes, its table, and which record it opens. A library
@@ -256,8 +250,8 @@ class ValueType {
   void Copy(const void* value, void* out) const {
     witnesses_->copy(*this, value, out);
   }
-  void Move(void* value, void* out) const noexcept {
-    witnesses_->move(*this, value, out);
+  void Relocate(void* value, void* out) const noexcept {
+    witnesses_->relocate(*this, value, out);
   }
   void Destroy(void* value) const noexcept {
     witnesses_->destroy(*this, value);
@@ -293,13 +287,19 @@ class ValueType {
     return Parts().ref_at(*this, value, position);
   }
 
-  // This type as an integral one, or as a fixed-size unpacked array type,
-  // where it opens that record, and nothing otherwise.
+  // Which record this type opens; and this type as an integral one, as a
+  // fixed-size unpacked array type, as a dynamic array type or as a queue
+  // type, where it opens that record, and nothing otherwise.
+  [[nodiscard]] auto Kind() const -> ValueTypeKind {
+    return kind_;
+  }
   [[nodiscard]] auto AsIntegral() const -> const IntegralValueType* {
     switch (kind_) {
       case ValueTypeKind::kIntegral:
         return std::bit_cast<const IntegralValueType*>(this);
       case ValueTypeKind::kFixedArray:
+      case ValueTypeKind::kDynamicArray:
+      case ValueTypeKind::kQueue:
       case ValueTypeKind::kOther:
         return nullptr;
     }
@@ -310,6 +310,32 @@ class ValueType {
       case ValueTypeKind::kFixedArray:
         return std::bit_cast<const FixedArrayType*>(this);
       case ValueTypeKind::kIntegral:
+      case ValueTypeKind::kDynamicArray:
+      case ValueTypeKind::kQueue:
+      case ValueTypeKind::kOther:
+        return nullptr;
+    }
+    std::unreachable();
+  }
+  [[nodiscard]] auto AsDynamicArray() const -> const DynamicArrayType* {
+    switch (kind_) {
+      case ValueTypeKind::kDynamicArray:
+        return std::bit_cast<const DynamicArrayType*>(this);
+      case ValueTypeKind::kIntegral:
+      case ValueTypeKind::kFixedArray:
+      case ValueTypeKind::kQueue:
+      case ValueTypeKind::kOther:
+        return nullptr;
+    }
+    std::unreachable();
+  }
+  [[nodiscard]] auto AsQueue() const -> const QueueType* {
+    switch (kind_) {
+      case ValueTypeKind::kQueue:
+        return std::bit_cast<const QueueType*>(this);
+      case ValueTypeKind::kIntegral:
+      case ValueTypeKind::kFixedArray:
+      case ValueTypeKind::kDynamicArray:
       case ValueTypeKind::kOther:
         return nullptr;
     }

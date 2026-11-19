@@ -17,6 +17,7 @@
 
 #include "lyra/base/diag_message.hpp"
 #include "lyra/base/fault_watch.hpp"
+#include "lyra/base/internal_error.hpp"
 #include "lyra/base/memory_watch.hpp"
 #include "lyra/runtime/ambient_run_context.hpp"
 #include "lyra/runtime/design.hpp"
@@ -28,37 +29,48 @@
 #include "lyra/runtime/runtime.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/third_party_licenses.hpp"
-#include "lyra/value/queue_bound.hpp"
+#include "lyra/value/queue_report.hpp"
 
 namespace lyra::runtime {
 
 namespace {
 
-// For as long as the run lasts, a bounded queue that drops what the design
-// wrote past its bound (LRM 7.10.5) is said as one of the run's own reports,
-// placed and timed like any other.
-class BoundOverflowReport {
+// For as long as the run lasts, what a queue says of a write -- that a bounded
+// queue dropped what the design wrote past its bound (LRM 7.10.5), or that a
+// write through an invalid index was ignored (LRM 7.10.1) -- is said as one of
+// the run's own reports, placed and timed like any other.
+class QueueReports {
  public:
-  BoundOverflowReport() : replaced_(value::ListenForBoundOverflow(&Say)) {
+  QueueReports() : replaced_(value::ListenForQueueReports(&Say)) {
   }
-  ~BoundOverflowReport() {
-    value::ListenForBoundOverflow(replaced_);
+  ~QueueReports() {
+    value::ListenForQueueReports(replaced_);
   }
-  BoundOverflowReport(const BoundOverflowReport&) = delete;
-  auto operator=(const BoundOverflowReport&) -> BoundOverflowReport& = delete;
-  BoundOverflowReport(BoundOverflowReport&&) = delete;
-  auto operator=(BoundOverflowReport&&) -> BoundOverflowReport& = delete;
+  QueueReports(const QueueReports&) = delete;
+  auto operator=(const QueueReports&) -> QueueReports& = delete;
+  QueueReports(QueueReports&&) = delete;
+  auto operator=(QueueReports&&) -> QueueReports& = delete;
 
  private:
-  static void Say() {
+  static void Say(value::QueueReport report) {
     AmbientRunContext::Current().Effects().Diagnostic().Report(
-        Severity::kWarning,
-        base::DiagMessage(
+        Severity::kWarning, MessageOf(report));
+  }
+  static auto MessageOf(value::QueueReport report) -> base::DiagMessage {
+    switch (report) {
+      case value::QueueReport::kGrewPastItsBound:
+        return base::DiagMessage(
             "a bounded queue grew past its declared bound, and the elements "
-            "past it were dropped"));
+            "past it were dropped");
+      case value::QueueReport::kWrittenAtAnInvalidIndex:
+        return base::DiagMessage(
+            "a queue was written at an invalid index, and the write was "
+            "ignored");
+    }
+    throw InternalError("runtime: unknown queue report");
   }
 
-  value::BoundOverflowListener replaced_;
+  value::QueueReportListener replaced_;
 };
 
 // Drives a bound Runtime to completion. The run accounts for a design's own
@@ -74,7 +86,7 @@ auto RunSimulation(Runtime& runtime) -> int {
     // 10.5, 35.5.3).
     const AmbientRunContext run_context{runtime.DesignRoot(), runtime};
     const InterruptReport interrupt_report{runtime};
-    const BoundOverflowReport bound_overflow_report;
+    const QueueReports queue_reports;
     return runtime.Run();
   } catch (const std::exception&) {
     ReportRaisedError(runtime, std::current_exception());

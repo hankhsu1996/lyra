@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 
@@ -14,6 +15,7 @@
 #include "lyra/support/def_path.hpp"
 #include "lyra/support/library_callback.hpp"
 #include "lyra/support/value_operation.hpp"
+#include "lyra/support/value_step.hpp"
 
 namespace lyra::lir {
 
@@ -174,15 +176,18 @@ auto ClosureInvokeSymbol(std::string_view unit_name, std::uint32_t ordinal)
 auto SymbolPartOf(const CompilationUnit& unit, TypeId type) -> SymbolPart;
 
 // A function answering an operation at a type with no declaration is named by
-// the type and the operation, as rustc names drop glue by the type it drops.
+// the type, the operation and the types it is instantiated at, as rustc names
+// drop glue by the type it drops and an instance by its generic arguments.
 auto TypeOperationSymbol(
     std::string_view unit_name, SymbolPart type,
-    support::ValueOperation operation) -> std::string;
+    support::ValueOperation operation, std::span<const SymbolPart> arguments)
+    -> std::string;
 
 // A function carrying out a step of a value's life at a type is named the same
 // way, by the type and the step.
 auto ValueStepSymbol(
-    std::string_view unit_name, SymbolPart type, ValueStep step) -> std::string;
+    std::string_view unit_name, SymbolPart type, support::ValueStep step)
+    -> std::string;
 
 // The name the class `name` of `unit` is qualified by: the unit's own for a
 // class another unit names, which every body of the unit states alike; the

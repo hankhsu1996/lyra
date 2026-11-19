@@ -1,7 +1,6 @@
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 
 #include <cstddef>
-#include <cstdint>
 #include <expected>
 #include <format>
 #include <optional>
@@ -17,7 +16,6 @@
 #include "lyra/hir/real_bits.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/hir/type_definition.hpp"
-#include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/container_construction.hpp"
 #include "lyra/lowering/hir_to_mir/expression/references.hpp"
 #include "lyra/lowering/hir_to_mir/real_literal.hpp"
@@ -26,11 +24,9 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/integral_constant.hpp"
-#include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
-#include "lyra/mir/type_builders.hpp"
-#include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/library_decl.hpp"
+#include "lyra/support/value_operation.hpp"
 #include "lyra/value/integral_words.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -193,7 +189,7 @@ auto DefaultValueOf(
                                     mir::CallableTarget{
                                         .callable = mir::RecordMethodOf(
                                             unit, s.declaration,
-                                            support::BuiltinFn::
+                                            support::DefaultItem::
                                                 kDeclaredDefault)}},
                         .arguments = {}},
                 .type = type};
@@ -234,6 +230,22 @@ auto DefaultValueOf(
                 support::DeclarationOf(t.decl);
             if (!declaration.default_value.has_value()) {
               return holds_no_declared_value(declaration.name);
+            }
+            // A container's default is its type's own body for the default
+            // trait.
+            if (support::IsLaidOutByItsType(t.decl)) {
+              return mir::Expr{
+                  .data =
+                      mir::CallExpr{
+                          .callee =
+                              mir::Direct{
+                                  .target =
+                                      mir::TypeOperationTarget{
+                                          .type = type,
+                                          .answers = support::DefaultItem::
+                                              kDeclaredDefault}},
+                          .arguments = {}},
+                  .type = type};
             }
             return mir::Expr{
                 .data =

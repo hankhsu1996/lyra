@@ -65,7 +65,7 @@ auto Read(const void* handle) -> const T& {
 template <typename T>
 concept LaysItsBytesOut = requires(const T& kept, T given, void* out) {
   { kept.CopyInto(out) } -> std::convertible_to<void*>;
-  { std::move(given).MoveInto(out) } -> std::convertible_to<void*>;
+  { std::move(given).RelocateInto(out) } -> std::convertible_to<void*>;
 };
 
 // Builds what an entry answers with in the storage the call handed it,
@@ -82,7 +82,7 @@ auto Emplace(void* out, T&& value) -> void* {
   } else if constexpr (
       std::is_rvalue_reference_v<T&&> &&
       !std::is_const_v<std::remove_reference_t<T>>) {
-    return std::forward<T>(value).MoveInto(out);
+    return std::forward<T>(value).RelocateInto(out);
   } else {
     return value.CopyInto(out);
   }

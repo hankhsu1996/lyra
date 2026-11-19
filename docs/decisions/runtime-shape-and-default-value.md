@@ -140,10 +140,10 @@ _Rejected alternatives:_
   instances would lose self-description; every operation handling an individual element would
   require shape passed in alongside the value.
 
-- **Emit-side validity gate (`if (in_bounds(idx)) arr.RawAt(idx) op= rhs;` instead of returning
-  `T&`).** Pushes LRM 7.4.5 semantics into every codegen site, complicates NBA capture (validity has
-  to be re-derived at fire time), and explodes for multi-dim chains. The default / sink fields keep
-  codegen uniform across in-bounds and OOB.
+- **Emit-side validity gate (`if (in_bounds(idx)) arr.GetUnchecked(idx) op= rhs;` instead of
+  returning `T&`).** Pushes LRM 7.4.5 semantics into every codegen site, complicates NBA capture
+  (validity has to be re-derived at fire time), and explodes for multi-dim chains. The default /
+  sink fields keep codegen uniform across in-bounds and OOB.
 
 - **Throw on empty-container OOB read.** Violates LRM 7.4.5, which mandates the element type's Table
   7-1 default.
@@ -187,5 +187,6 @@ and uniformity within a collection is the element type's.
 - LRM 7.4.5 (Indexing and slicing of arrays), 7.4.6 (Operations on arrays), Table 6-7 (Default
   initial values), Table 7-1 (Value read from a nonexistent array entry).
 - `src/lyra/lowering/hir_to_mir/default_value.cpp` -- default-expression synthesis.
-- `include/lyra/value/dynamic_array.hpp`, `include/lyra/value/unpacked_array.hpp` -- first wrappers
-  to adopt the default / sink pattern.
+- `include/lyra/value/unpacked_array.hpp` -- the first wrapper to adopt the default / sink pattern.
+  A dynamic array and a queue answer the default and the sink from their types' own bodies
+  ([a-containers-operations-are-built-for-its-type-over-a-core](a-containers-operations-are-built-for-its-type-over-a-core.md)).

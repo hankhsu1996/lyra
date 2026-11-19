@@ -25,12 +25,11 @@
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/var.hpp"
 #include "lyra/support/random_qualifier.hpp"
+#include "lyra/value/dynamic_array_type.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_value_type.hpp"
-#include "lyra/value/library_value_types.hpp"
 #include "lyra/value/object_ref.hpp"
-#include "lyra/value/runtime_dynamic_array.hpp"
-#include "lyra/value/runtime_queue.hpp"
+#include "lyra/value/queue_type.hpp"
 #include "lyra/value/string.hpp"
 #include "lyra/value/value_type.hpp"
 
@@ -160,38 +159,36 @@ auto RandomizeFinish(const value::ObjectRef& problem) -> value::Int {
 // program chooses.
 auto ResizeOf(const ErasedReference& whole, const value::ValueType& type)
     -> std::optional<ArrayResizer> {
-  if (&type == &value::lyra_rt_dynarray_value_type) {
-    return [whole, &type](std::size_t count) -> std::function<void()> {
-      const auto& current =
-          *static_cast<const value::RuntimeDynamicArray*>(whole.storage);
-      auto before = std::make_shared<value::RuntimeDynamicArray>(current);
-      const value::RuntimeDynamicArray resized(
-          current.ElementType(), count, &current);
-      WriteLaidOutThrough(whole, type, &resized);
+  const auto resizer = [&](auto resized_into) -> ArrayResizer {
+    return [whole, &type,
+            resized_into](std::size_t count) -> std::function<void()> {
+      auto before = std::make_shared<value::AnyValue>(
+          value::AnyValue::CopyOf(type, whole.storage));
+      const value::AnyValue resized = value::AnyValue::Built(
+          type, [&](void* out) { resized_into(whole.storage, count, out); });
+      WriteLaidOutThrough(whole, type, resized.Bytes());
       return [whole, &type, before] {
-        WriteLaidOutThrough(whole, type, before.get());
+        WriteLaidOutThrough(whole, type, before->Bytes());
       };
     };
+  };
+  switch (type.Kind()) {
+    case value::ValueTypeKind::kDynamicArray:
+      return resizer([dynamic = type.AsDynamicArray()](
+                         const void* array, std::size_t count, void* out) {
+        dynamic->Resized(array, count, out);
+      });
+    case value::ValueTypeKind::kQueue:
+      return resizer([queue = type.AsQueue()](
+                         const void* array, std::size_t count, void* out) {
+        queue->Resized(array, count, out);
+      });
+    case value::ValueTypeKind::kIntegral:
+    case value::ValueTypeKind::kFixedArray:
+    case value::ValueTypeKind::kOther:
+      return std::nullopt;
   }
-  if (&type == &value::lyra_rt_queue_value_type) {
-    return [whole, &type](std::size_t count) -> std::function<void()> {
-      const auto& current =
-          *static_cast<const value::RuntimeQueue*>(whole.storage);
-      auto before = std::make_shared<value::RuntimeQueue>(current);
-      value::RuntimeQueue resized = current;
-      while (resized.Count() < count) {
-        resized.PushBack(resized.ElementType().Default());
-      }
-      while (resized.Count() > count) {
-        resized.DeleteIndex(static_cast<std::int64_t>(resized.Count() - 1));
-      }
-      WriteLaidOutThrough(whole, type, &resized);
-      return [whole, &type, before] {
-        WriteLaidOutThrough(whole, type, before.get());
-      };
-    };
-  }
-  return std::nullopt;
+  std::unreachable();
 }
 
 namespace {

@@ -72,9 +72,10 @@ class OpenWrite {
     bracket_of_->stepped(bracket_.data(), step);
   }
 
-  // A write of the `count` elements from `start` moved at least one of them.
-  void Moved(std::int64_t start, std::int64_t count) {
-    bracket_of_->moved(bracket_.data(), start, count);
+  // A write of a run of elements changed those from `begin` to one before
+  // `end`, none where the two are the same.
+  void Moved(std::int64_t begin, std::int64_t end) {
+    bracket_of_->moved(bracket_.data(), begin, end);
   }
 
   // Whether what a write lands on is worth keeping from before it; and the
@@ -188,7 +189,7 @@ class OpenWrite {
     bool (*announces)(void* room);
     void (*formed)(void* room, value::Formation formed);
     void (*stepped)(void* room, const PartPath& step);
-    void (*moved)(void* room, std::int64_t start, std::int64_t count);
+    void (*moved)(void* room, std::int64_t begin, std::int64_t end);
     void (*landed)(void* room, const Change& change);
     void (*before_modify)(
         void* room, const PartPath& further, CopyOriginal copy);
@@ -223,10 +224,8 @@ class OpenWrite {
           [](void* room, const PartPath& step) {
             Bracket<Sink>(room)->Stepped(step);
           },
-      .moved =
-          [](void* room, std::int64_t start, std::int64_t count) {
-            Bracket<Sink>(room)->Moved(start, count);
-          },
+      .moved = [](void* room, std::int64_t begin,
+                  std::int64_t end) { Bracket<Sink>(room)->Moved(begin, end); },
       .landed =
           [](void* room, const Change& change) {
             Bracket<Sink>(room)->Landed(change);

@@ -52,6 +52,16 @@ class AnyValue {
 
   [[nodiscard]] auto IsBitIdentical(const AnyValue& other) const -> bool;
 
+  // The value relocated into `out`, answering `out`, which holds it from then
+  // on; this holds none afterwards, and its storage is given back with
+  // nothing ended, since a relocation leaves it owed nothing.
+  auto RelocateInto(void* out) && -> void* {
+    const ValueType& type = Type();
+    type.Relocate(bytes_.get(), out);
+    Deallocate{std::align_val_t{type.Align()}}(bytes_.release());
+    return out;
+  }
+
  private:
   // Frees storage a value was being built in, for a build that did not finish:
   // nothing in it is known to be whole, so nothing is ended.

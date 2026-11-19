@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <type_traits>
 #include <utility>
 
 #include "lyra/base/source_location.hpp"
@@ -209,7 +210,7 @@ concept BitstreamSizable = requires(
 // as rustc's `Index` and `IndexMut` reach one. `Element` answers a read-only
 // reference to the element, or to the element default where the position
 // names none; `ElementMut` answers the element, or storage no read reaches
-// where the position names none (LRM 7.4.6), saying which in `formed`. A
+// where the position names none (LRM 7.4.5), saying which in `formed`. A
 // position is a value of the position type, which names none where it holds x
 // or z or lies outside the container.
 template <typename T>
@@ -225,14 +226,6 @@ template <typename T, typename K>
 concept AssocIndexable = requires(T& t, const K& key, Formation& formed) {
   { t.Element(key) };
   { t.ElementMut(key, formed) };
-};
-
-// Sortable: the in-place ordering family (LRM 7.12.2). A sort is handed
-// whether the element at one position comes before the one at another.
-template <typename T>
-concept Sortable = requires(T& t, bool (*before)(std::int64_t, std::int64_t)) {
-  { t.Reverse() };
-  { t.Sort(before) };
 };
 
 // IndexTraversal: associative-array ordered-index navigation (LRM 7.9.4 --
@@ -256,9 +249,16 @@ concept IndexTraversal = requires(const T& t, const Index& probe) {
 // either naming the other's kind.
 template <typename T>
 concept OrdinalElements = requires(const T& t, std::size_t ordinal) {
-  { t.RawSize() } -> std::same_as<std::size_t>;
-  { t.RawAt(ordinal) };
+  { t.Count() } -> std::same_as<std::size_t>;
+  { t.GetUnchecked(ordinal) };
 };
+
+// The element type of an array whose elements are read by storage ordinal,
+// which the element at an ordinal is a reference to, so every array -- one of
+// the library's own or a container type's -- states it the one way.
+template <OrdinalElements Array>
+using ElementOf =
+    std::remove_cvref_t<decltype(std::declval<const Array&>().GetUnchecked(0))>;
 
 // A held value that compares itself with, and takes, the bytes of a value laid
 // out as it is itself: an integral value as wide, or a tuple, a union or an

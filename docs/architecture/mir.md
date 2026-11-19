@@ -111,10 +111,13 @@ what the construct means.
   large a frame holding one is, the entry that builds what a declared variable of it starts as and
   the constructor a construction of one reaches, the type of the values it holds where it is storage
   holding them -- it reads off that declaration, which states it once for every layer, and MIR holds
-  no per-type answer of its own. A rule the language gives containers -- iterating by key or by
-  position, leasing an element a call binds, what a queue's bound admits -- is MIR's to state, and
-  it reads the element type, the index type and the bound as the arguments the declaration names
-  them.
+  no per-type answer of its own. A structure of the library whose members MIR reaches -- a dynamic
+  array's core, a queue's core and the recycler its elements' storage comes from -- stays the
+  library's. MIR names each member by its position, as it names a record's, and reads the member's
+  type and place off that declaration, which lays it out, as rustc projects a field of an `Adt`
+  another crate defines. A rule the language gives containers -- iterating by key or by position,
+  leasing an element a call binds, what a queue's bound admits -- is MIR's to state, and it reads
+  the element type, the index type and the bound as the arguments the declaration names them.
 - A record is an unpacked structure, union or tagged union the source declared (LRM 7.2, 7.3), as
   rustc's struct, union and enum are one kind of declared type. It carries its kind, its members'
   types, the name another unit reaches it by and a method for each operation the language defines on
@@ -137,12 +140,57 @@ what the construct means.
   operation the language defines on its whole value, built from its elements' operations, which a
   use calls by the type and the operation, handing each value by reference as a record's method
   takes it. The same for a tuple, built from its components' operations where every component has
-  each. A unit holds no such body, as a call in rustc's THIR holds no instance: a body is built when
-  something below this layer finds the unit needs it, as a generic impl is instantiated where it is
-  used, from the unit's types and nothing of the source, then legalized and verified alone and
-  lowered with the unit. What needs one is a call naming it, or a record of the library that a value
-  of the type is handed over with, which only the target realizing the record can state. A type the
+  each. The same for a run-time-sized container -- a queue, a dynamic array, an associative array --
+  for every operation the language gives it, its methods included: each body is a program over the
+  element's type and the library's core that keeps the container's storage, which it reaches by
+  calling the core's entries, by reading and writing the core's members where the core is a
+  structure of the library whose members MIR reaches, and by stepping to an element, and the
+  program's own method call is a call of it. An element of a dynamic array or a queue is a call of
+  the type's own body answering where it lies, and every write through a position is built on one
+  body answering where the write lands and whether it made the element there, as rustc reaches an
+  element of a `Vec` by `Index::index`. An element of a fixed-size array or an associative array is
+  a call of the language's element entry, which the lowering below makes a step within the
+  container. Such a type has an interface, stated from the type alone and from nothing else: the
+  items of each trait of the library it implements, and the methods of its kind's own inherent impl,
+  each of a fixed signature or a family taken at a type argument, as rustc's trait impls and
+  inherent impl for a generic type name their items, and for each the declaration -- what it takes
+  and answers, with no body -- stated where it is asked, as rustc's `fn_sig` states an item's
+  signature apart from its body. Every call of an operation of the type names one of them and hands
+  it what its declaration takes, and each body is built from that declaration. A body that walks an
+  array's elements counts a machine index below that array's own count and reaches each element by
+  it with no check, to read or to write, as Rust's core reaches a slice's by `get_unchecked`; a
+  position the program computed or is handed is checked against the count before it reaches one, by
+  the element step or by the body itself (LRM 7.4.5). A type whose value's life is its own -- a
+  dynamic array, a queue -- states in its interface the record its value is laid out as and its four
+  operations on a whole value: its default and a copy of a value, each answering the value it
+  builds, as Rust's `Default::default` and `Clone::clone` do, writing a copy over a value, and
+  ending one. A move is none of them: it hands a value on with its ownership whatever the type, and
+  writing a moved value over another is ending the one there and then the move. A type that states
+  none has the steps its parts give it, which the lowering below builds. Each operation's
+  declaration states whether a call of it can be unwound out of, as a runtime entry's does and as
+  clang's exception specification and LLVM's `nounwind` say it, and one that cannot promises that no
+  unwind leaves it, which the unit's verification holds its body to. A fixed-size array and a tuple
+  have an interface too, stated from the type alone: the operations on a whole value its parts
+  decide, as a generic impl exists where its type arguments meet its bounds, and a fixed-size
+  array's own methods; a record's methods are its declaration's, each declared the same way. An
+  operation takes and answers the same at every type that has it, as one trait method's signature is
+  every implementation's, and an array's operation is one program over its elements whatever kind of
+  array it is, asking the array how many it holds. A type is named by what it is, the same in every
+  unit that names it, as clang's canonical type names a type rather than a translation unit's
+  spelling of it, so two types are never one. A unit holds no such body, as a call in rustc's THIR
+  holds no instance: a body is built when something below this layer finds the unit needs it, as a
+  generic impl is instantiated where it is used, from the unit's types and nothing of the source,
+  then legalized and verified alone and lowered with the unit. What needs one is a call naming it, a
+  record of the library that a value of the type is handed over with, which only the target
+  realizing the record can state, or an item of the type's implementation of the library's traits
+  that a target's library asks of a value of the type wherever its own code holds one. A type the
   unit only names has none, and a call is well formed without one.
+- Which of a type's operations the runtime library asks of it by name: the library declares its
+  traits -- a value's life, its change test, its elements, being made a count long, the questions
+  asked of a whole value, its stream -- each the operations it requires, a library declaration lists
+  the traits its types implement, and MIR states a type's implementation from it, the type and the
+  traits, as rustc resolves an impl of a trait for a type. Each target's library asks the items it
+  needs, however it is told of them, and no target decides which items the type has.
 - For an array of any kind holding a bounded queue below its outermost dimension, a value of it
   taken into the form of its type with no queue bounded, and a value of that form built as one of
   it, each element built afresh. Every type equivalent to it has that form (a bound is no part of

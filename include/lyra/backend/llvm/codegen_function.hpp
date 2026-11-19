@@ -145,20 +145,17 @@ class CodeGenFunction {
       std::vector<llvm::Value*> args, llvm::Value* out) -> llvm::Value*;
   // The steps of an owned value's life, each carried out as the unit says.
   // `EndValue` ends the value `value` names. `CopyValue` builds a second value
-  // equal to it in the unbuilt storage `out`, and answers `out`. `MoveValue`
-  // builds it in `out` out of the one at `value`, which is still to be ended.
-  // `RelocateValue` moves it into `out` and ends what the move left behind, so
-  // the value lives in `out` and nowhere else. `AssignValue` writes it into the
-  // value already built at `out`, which goes on being that value. Each fails
-  // where the step is the library's to carry out and has to be handed a type
-  // the library does not realize.
+  // equal to it in the unbuilt storage `out`, and answers `out`.
+  // `RelocateValue` relocates it into `out` and answers `out`: the value lives
+  // in `out` and nowhere else, and nothing of the storage it left is owed an
+  // end. `AssignValue` writes it into the value already built at `out`, which
+  // goes on being that value. Each fails where the step is the library's to
+  // carry out and has to be handed a type the library does not realize.
   auto EndValue(lir::TypeId type, llvm::Value* value) -> diag::Result<void>;
   auto CopyValue(lir::TypeId type, llvm::Value* value, llvm::Value* out)
       -> diag::Result<llvm::Value*>;
-  auto MoveValue(lir::TypeId type, llvm::Value* value, llvm::Value* out)
-      -> diag::Result<llvm::Value*>;
   auto RelocateValue(lir::TypeId type, llvm::Value* value, llvm::Value* out)
-      -> diag::Result<void>;
+      -> diag::Result<llvm::Value*>;
   auto AssignValue(lir::TypeId type, llvm::Value* value, llvm::Value* out)
       -> diag::Result<void>;
   // Where the value `value` of `type` lies, which is what a step of it takes.
@@ -407,6 +404,9 @@ class CodeGenFunction {
   auto ArrayElementAddress(
       lir::TypeId array_type, llvm::Value* array, const OperandRef& position,
       const StepWithinArray& step) -> diag::Result<llvm::Value*>;
+  // Where a position naming no element reads or writes, which `entry` asks
+  // the library of the element type.
+  auto CallNoElement(const EntryCall& entry) -> diag::Result<llvm::Value*>;
   // The address a place names. The base contributes the storage the chain
   // starts from, either a place local's own frame slot or the referent of a
   // reference value, and each further step walks one projection.

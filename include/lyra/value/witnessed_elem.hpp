@@ -53,9 +53,6 @@ class WitnessedElem {
   void Copy(const void* value, void* out) const {
     Type().Copy(value, out);
   }
-  void Move(void* value, void* out) const {
-    Type().Move(value, out);
-  }
   void Destroy(void* value) const {
     Type().Destroy(value);
   }

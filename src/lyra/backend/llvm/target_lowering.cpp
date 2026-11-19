@@ -19,6 +19,7 @@
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/function.hpp"
+#include "lyra/lir/operator.hpp"
 #include "lyra/lir/place_query.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/runtime/object_layout.hpp"
@@ -37,6 +38,26 @@ auto Unsupported(base::DiagFormatFor<Args...> format, Args&&... args)
   return diag::Fail(
       diag::DiagCode::kUnsupportedExpressionForm, format,
       std::forward<Args>(args)...);
+}
+
+// Where a position naming no element of an array of `element` reads or writes,
+// which is the element type's to answer, so the entry is asked of that type
+// alone.
+auto NoElementCall(
+    const lir::TypePool& types, lir::TypeId element, PlaceAccess access)
+    -> EntryCall {
+  const RuntimeOp answered_by = [&] {
+    switch (access) {
+      case PlaceAccess::kRead:
+        return RuntimeOp::kElementDefault;
+      case PlaceAccess::kWrite:
+        return RuntimeOp::kDiscardedWrite;
+    }
+    throw InternalError("llvm codegen: unknown access");
+  }();
+  return EntryCall{
+      .symbol = RuntimeSymbol(answered_by),
+      .abi = ArrangeEntryCall(types, answered_by, {}, std::nullopt, element)};
 }
 
 // How a value cell of `domain` is written where its value lies, none where the
@@ -113,6 +134,33 @@ auto TargetLowering::CallFormOf(
       unit_->types.Get(result_type).IsMoveOnly()) {
     return ForwardedOperand{};
   }
+  if (const auto* builtin = std::get_if<lir::BuiltinTarget>(&call.target)) {
+    if (builtin->fn == support::BuiltinFn::kDynamicArrayPlace) {
+      return GenerationElementAddress{};
+    }
+    if (builtin->fn == support::BuiltinFn::kTypeRecordOf) {
+      if (!builtin->type_argument.has_value()) {
+        throw InternalError(
+            "llvm codegen: a type's record is asked at no type -- please "
+            "report this as a bug");
+      }
+      return TypeRecordAddress{.type = *builtin->type_argument};
+    }
+    if (builtin->fn == support::BuiltinFn::kElementDefault ||
+        builtin->fn == support::BuiltinFn::kDiscardedWrite) {
+      if (!builtin->type_argument.has_value()) {
+        throw InternalError(
+            "llvm codegen: where no element lies is asked at no element type "
+            "-- please report this as a bug");
+      }
+      return NoElementAnswer{
+          .entry = NoElementCall(
+              unit_->types, *builtin->type_argument,
+              builtin->fn == support::BuiltinFn::kElementDefault
+                  ? PlaceAccess::kRead
+                  : PlaceAccess::kWrite)};
+    }
+  }
   const auto* cell = std::get_if<lir::ValueCellTarget>(&call.target);
   if (cell == nullptr) {
     return OrdinaryCall{};
@@ -142,6 +190,31 @@ auto TargetLowering::OperatorFormOf(const lir::BinaryInstr& binary) const
     -> diag::Result<OperatorForm> {
   const lir::TypeId operand = OperandType(binary.lhs);
   const lir::Type& operated = unit_->types.Get(operand);
+  // An address added to or taken from moves by whole values of what it points
+  // at, as clang's pointer arithmetic does; an address compared with another
+  // is the machine comparison below.
+  if (operated.Is<lir::PointerType>()) {
+    switch (binary.op) {
+      case lir::BinaryOp::kAdd:
+      case lir::BinaryOp::kSub:
+        return AddressOffset{};
+      case lir::BinaryOp::kMul:
+      case lir::BinaryOp::kDiv:
+      case lir::BinaryOp::kMod:
+      case lir::BinaryOp::kBitwiseAnd:
+      case lir::BinaryOp::kBitwiseOr:
+      case lir::BinaryOp::kBitwiseXor:
+      case lir::BinaryOp::kEquality:
+      case lir::BinaryOp::kInequality:
+      case lir::BinaryOp::kLessThan:
+      case lir::BinaryOp::kLessEqual:
+      case lir::BinaryOp::kGreaterThan:
+      case lir::BinaryOp::kGreaterEqual:
+      case lir::BinaryOp::kLogicalAnd:
+      case lir::BinaryOp::kLogicalOr:
+        break;
+    }
+  }
   // A machine integer's operator is the machine instruction over one scalar,
   // and an address compared with another is a machine comparison too, as it is
   // in what clang makes of the same comparison.
@@ -245,34 +318,20 @@ auto TargetLowering::ElementStepOf(
     lir::TypeId container, std::span<const lir::Operand> coordinates,
     PlaceAccess access) const -> diag::Result<ElementStep> {
   const lir::Type& stated = unit_->types.Get(container);
+  const auto no_element = [&](lir::TypeId element) {
+    return NoElementCall(unit_->types, element, access);
+  };
   if (const auto* array = stated.As<lir::UnpackedArrayType>()) {
-    // What a position naming no element reaches is the element type's to
-    // answer, so the entry is asked of that type alone.
-    const RuntimeOp answered_by = [&] {
-      switch (access) {
-        case PlaceAccess::kRead:
-          return RuntimeOp::kElementDefault;
-        case PlaceAccess::kWrite:
-          return RuntimeOp::kDiscardedWrite;
-      }
-      throw InternalError("llvm codegen: unknown access");
-    }();
-    return StepWithinArray{
-        .no_element = EntryCall{
-            .symbol = RuntimeSymbol(answered_by),
-            .abi = ArrangeEntryCall(
-                unit_->types, answered_by, {}, std::nullopt,
-                array->element_type)}};
+    return StepWithinArray{.no_element = no_element(array->element_type)};
   }
   auto domain = RealizedDomainOf(*unit_, container);
   if (!domain) {
     return std::unexpected(std::move(domain.error()));
   }
   // A container indexed by a type is reached by a key, which crosses with the
-  // type it was written in (LRM 7.8), and only a queue's write can report.
-  const ElementEntries entries =
-      stated.IndexType().has_value() ? KeyedElementEntries()
-      : stated.IsQueue()             ? QueueElementEntries()
+  // type it was written in (LRM 7.8).
+  const ElementEntries entries = stated.IndexType().has_value()
+                                     ? KeyedElementEntries()
                                      : PositionedElementEntries(*domain);
   StepEntry entry = [&] {
     switch (access) {
@@ -283,8 +342,16 @@ auto TargetLowering::ElementStepOf(
     }
     throw InternalError("llvm codegen: unknown access");
   }();
+  std::vector<PassMode> modes = CoordinatesCrossing(entry.entry, coordinates);
+  return StepByEntry{
+      .entry = std::move(entry), .coordinates = std::move(modes)};
+}
+
+auto TargetLowering::CoordinatesCrossing(
+    support::BuiltinFn entry, std::span<const lir::Operand> coordinates) const
+    -> std::vector<PassMode> {
   const support::OperandReadings readings =
-      support::RuntimeEntryOf(entry.entry).operands;
+      support::RuntimeEntryOf(entry).operands;
   std::vector<PassMode> modes;
   modes.reserve(coordinates.size());
   for (std::size_t i = 0; i < coordinates.size(); ++i) {
@@ -293,8 +360,7 @@ auto TargetLowering::ElementStepOf(
     RequireReadAs(unit_->types, reading, coordinate);
     modes.push_back(CrossingModeOf(unit_->types, reading, coordinate));
   }
-  return StepByEntry{
-      .entry = std::move(entry), .coordinates = std::move(modes)};
+  return modes;
 }
 
 auto TargetLowering::StorageAt(const lir::Place& place) const
@@ -790,8 +856,8 @@ auto TargetLowering::FnAbiOf(
             result_type, in_storage));
   };
   // A part the callee names goes right after the object whose part it is, and
-  // first where the entry acts on no object -- which is what its declaration
-  // says by being a factory on the type it builds. Every member of a union
+  // first where the entry acts on no object, as a factory on the type it
+  // builds does not. Every member of a union
   // lies at the union's own start in this target's layout, so a step into one
   // names no position, as clang's code generation adjusts no address for a
   // union's field.
@@ -802,10 +868,10 @@ auto TargetLowering::FnAbiOf(
         t.fn == support::BuiltinFn::kDesignateMember) {
       return std::nullopt;
     }
-    const bool acts_on_an_object =
-        !std::holds_alternative<support::StaticFactory>(declared.declaration);
     return NamedPartArg{
-        .before = acts_on_an_object ? std::size_t{1} : std::size_t{0},
+        .before = support::ActsOnAnObject(declared.declaration)
+                      ? std::size_t{1}
+                      : std::size_t{0},
         .position = t.position->value};
   };
   return std::visit(
@@ -875,7 +941,7 @@ auto TargetLowering::FnAbiOf(
           },
           [&](const lir::EndValueTarget&) { return as_stated(); },
           [&](const lir::CopyValueTarget&) { return as_stated(); },
-          [&](const lir::MoveValueTarget&) { return as_stated(); },
+          [&](const lir::RelocateValueTarget&) { return as_stated(); },
           [&](const lir::DynamicStorageTarget&) { return as_stated(); },
           [&](const lir::BuildCellTarget&) -> Arranged {
             const lir::TypeId cell =

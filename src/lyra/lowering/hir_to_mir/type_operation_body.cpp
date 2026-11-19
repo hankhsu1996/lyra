@@ -7,6 +7,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/lowering/hir_to_mir/bound_free_conversion.hpp"
+#include "lyra/lowering/hir_to_mir/container_bodies.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/value_operations.hpp"
 #include "lyra/mir/builder.hpp"
@@ -16,7 +17,7 @@
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
-#include "lyra/support/value_operation.hpp"
+#include "lyra/mir/type_interface.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -41,10 +42,11 @@ auto BuildDefaultBody(const mir::CompilationUnit& unit, mir::TypeId type)
 }  // namespace
 
 auto MakeTypeOperationBody(
-    const mir::CompilationUnit& unit, mir::TypeId type,
-    support::ValueOperation answers) -> std::optional<mir::CallableCode> {
+    const mir::CompilationUnit& unit, const mir::TypeOperationSource& source)
+    -> std::optional<mir::CallableCode> {
+  const mir::TypeId type = source.type;
   const std::optional<mir::TypeOperationKind> kind =
-      mir::TypeOperationKindOf(unit.types, type, answers);
+      mir::TypeOperationKindOf(unit, type, source.answers);
   if (!kind.has_value()) {
     return std::nullopt;
   }
@@ -53,10 +55,20 @@ auto MakeTypeOperationBody(
       return BuildToBoundFreeBody(unit, type);
     case mir::TypeOperationKind::kFromBoundFree:
       return BuildFromBoundFreeBody(unit, type);
+    // A fixed-size array's operations are an array's, built as every array's
+    // are over its elements, and a tuple's are each component's in turn.
     case mir::TypeOperationKind::kStructural:
-      return BuildStructuralOperationBody(unit, type, answers);
+      switch (mir::StructuralOperationsTypeOf(unit.types.Get(type)).value()) {
+        case mir::StructuralOperationsType::kFixedArray:
+          return BuildArrayOperationBody(unit, source);
+        case mir::StructuralOperationsType::kTuple:
+          return BuildTupleOperationBody(unit, source);
+      }
+      throw InternalError("hir_to_mir: unknown type of structural operations");
     case mir::TypeOperationKind::kDefault:
       return BuildDefaultBody(unit, type);
+    case mir::TypeOperationKind::kContainer:
+      return BuildArrayOperationBody(unit, source);
   }
   throw InternalError("hir_to_mir: unknown kind of type operation");
 }

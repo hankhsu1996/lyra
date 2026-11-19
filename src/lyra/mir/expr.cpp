@@ -3,8 +3,12 @@
 #include <optional>
 #include <variant>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/stmt.hpp"
+#include "lyra/mir/type.hpp"
+#include "lyra/mir/type_interface.hpp"
 
 namespace lyra::mir {
 
@@ -119,6 +123,38 @@ auto CalleeReceiver(const Callee& callee) -> std::optional<ExprId> {
           [](const Indirect&) { return std::optional<ExprId>{}; },
           [](const Construct&) { return std::optional<ExprId>{}; }},
       callee);
+}
+
+auto DesignatedRunWrite(
+    const CompilationUnit& unit, const Block& block, const CallExpr& call)
+    -> TypeOperationTarget {
+  const std::optional<ExprId> receiver = CalleeReceiver(call.callee);
+  const auto* designated = receiver.has_value()
+                               ? unit.types.Get(block.exprs.Get(*receiver).type)
+                                     .As<DesignationType>()
+                               : nullptr;
+  const auto* direct = std::get_if<Direct>(&call.callee);
+  if (designated == nullptr || direct == nullptr ||
+      direct->type_arguments.size() != 1) {
+    throw InternalError(
+        "mir: a run written within a write is written on a designation, at "
+        "the run's type -- please report this as a bug");
+  }
+  // The run write the designated array's type has: a queue's own, between two
+  // positions it clamps, whose value is a queue its type fixes (LRM 7.10.1);
+  // any other array's from a position, at the type of the value written.
+  const std::optional<TypeInterface> interface =
+      TypeInterfaceOf(unit, designated->value);
+  if (interface.has_value() &&
+      Declares(*interface, support::BuiltinFn::kAssignQueueSlice)) {
+    return TypeOperationTarget{
+        .type = designated->value,
+        .answers = support::BuiltinFn::kAssignQueueSlice};
+  }
+  return TypeOperationTarget{
+      .type = designated->value,
+      .answers = support::BuiltinFn::kAssignElementSlice,
+      .arguments = {direct->type_arguments.front()}};
 }
 
 }  // namespace lyra::mir

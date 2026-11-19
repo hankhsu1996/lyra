@@ -53,7 +53,6 @@ concept ElementPolicy =
       { p.Default() } -> std::same_as<const void*>;
       { p.DiscardedWrite() } -> std::same_as<void*>;
       p.Copy(in, out);
-      p.Move(from, out);
       p.Destroy(from);
       p.Assign(from, in);
       { p.BitIdentical(in, in) } -> std::same_as<bool>;
@@ -99,15 +98,39 @@ template <typename T>
 
 }  // namespace detail
 
+// Where a read through a position naming no element of an array of `T` finds
+// the element default, and where a write through one lands (LRM 7.4.5,
+// 7.10.1): the addresses an array's own code answers such a position with.
+template <typename T>
+[[nodiscard]] auto ElementDefault() -> const T* {
+  return &DefaultOf<T>();
+}
+template <typename T>
+[[nodiscard]] auto DiscardedWrite() -> T* {
+  return &detail::DiscardedWriteOf<T>();
+}
+
+// A value whose stream is a run of bits as long as the value makes it (LRM
+// 6.24.3): `run`, the run it answers, written below the stream's `filled` most
+// significant positions, answering how many are filled after it.
+inline auto WriteRunToStream(
+    const BitVec& run, const IntegralView& stream, std::uint64_t filled)
+    -> std::uint64_t {
+  Insert(
+      stream, run.View(),
+      static_cast<std::int64_t>(stream.width - filled - run.View().width));
+  return filled + run.View().width;
+}
+// What comparing two values of `T` answers (LRM 11.4.5): one bit, unknown
+// where the value can hold x or z.
+template <typename T>
+using EqualityOf =
+    decltype(std::declval<const T&>() == std::declval<const T&>());
+
 // The element is the C++ type `T`.
 template <LyraValue T>
 class StaticElem {
  public:
-  // What comparing two elements answers (LRM 11.4.5): one bit, unknown where
-  // the element can hold x or z.
-  using Equality =
-      decltype(std::declval<const T&>() == std::declval<const T&>());
-
   [[nodiscard]] static constexpr auto Size() -> std::size_t {
     return sizeof(T);
   }
@@ -124,9 +147,6 @@ class StaticElem {
 
   static void Copy(const void* value, void* out) {
     std::construct_at(static_cast<T*>(out), Of(value));
-  }
-  static void Move(void* value, void* out) {
-    std::construct_at(static_cast<T*>(out), std::move(*static_cast<T*>(value)));
   }
   static void Destroy(void* value) {
     std::destroy_at(static_cast<T*>(value));
@@ -198,11 +218,8 @@ class StaticElem {
     } else if constexpr (requires {
                            Of(value).ToBitVec(base::SourceLocation{});
                          }) {
-      const BitVec run = Of(value).ToBitVec(base::SourceLocation{});
-      Insert(
-          stream, run.View(),
-          static_cast<std::int64_t>(stream.width - filled - run.View().width));
-      return filled + run.View().width;
+      return WriteRunToStream(
+          Of(value).ToBitVec(base::SourceLocation{}), stream, filled);
     } else {
       return lyra::value::WriteToStream(
           Of(value).ToBitstream(base::SourceLocation{}), stream, filled);
@@ -378,18 +395,6 @@ void FreeElement(const Elem& elem, void* slot) {
   }
   elem.Destroy(slot);
   detail::DeleteSlot(shape, slot);
-}
-
-// The value of the element at `slot`, built in `out`, as the container lets
-// the element go: moved out where nothing leases it, copied where a call does,
-// since that call goes on reading it.
-template <ElementPolicy Elem>
-void TakeElement(const Elem& elem, void* slot, void* out) {
-  if (detail::ShapeOf(elem).CountOf(slot).held > 0) {
-    elem.Copy(slot, out);
-  } else {
-    elem.Move(slot, out);
-  }
 }
 
 // A lease a call takes on the element at `slot`, which a container keeps in

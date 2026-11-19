@@ -531,17 +531,9 @@ auto Renderer::BuildIndexedElements(
     count = mir::BuildIntLiteral(
         Unit(), block, static_cast<std::int64_t>(fixed->dim.ElementCount()));
   } else {
-    count = block.Add(
-        mir::Expr{
-            .data =
-                mir::CallExpr{
-                    .callee =
-                        mir::Direct{
-                            .target = support::BuiltinFn::kSize,
-                            .receiver =
-                                frame.Builder().LocalPlace(value, mir_type)},
-                    .arguments = {}},
-            .type = IntType()});
+    count = block.Add(BuildBuiltinMethodCall(
+        Unit(), block, support::BuiltinFn::kSize,
+        frame.Builder().LocalPlace(value, mir_type), {}, IntType()));
   }
 
   const mir::LocalId text = frame.bindings->DeclareAnonymous(StringType());

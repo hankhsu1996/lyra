@@ -1,5 +1,5 @@
 // A queue is sliced by an indexed part-select as an array is (LRM 7.10.1,
-// 7.4.6): `q[base +: w]` takes `w` elements upward from `base` and
+// 7.4.5): `q[base +: w]` takes `w` elements upward from `base` and
 // `q[base -: w]` takes `w` downward to it. The base is one operand, written
 // once, so a base the program computes -- a variable, or a function it calls --
 // is evaluated once however the two ends of the slice are worked out from it.

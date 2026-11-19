@@ -13,6 +13,7 @@
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/endpoint.hpp"
+#include "lyra/lowering/hir_to_mir/expression/calls.hpp"
 #include "lyra/lowering/hir_to_mir/expression/operators.hpp"
 #include "lyra/lowering/hir_to_mir/expression/view_names.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
@@ -117,18 +118,10 @@ auto LowerHirQueueLastIndex(
   }
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   mir::Builder block = frame.Builder();
-  const mir::ExprId size = block.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee =
-                      mir::Direct{
-                          .target = support::BuiltinFn::kSize,
-                          .receiver = PathValue(
-                              unit, block,
-                              NamedIn(unit, *frame.selected_queue, block))},
-                  .arguments = {}},
-          .type = type});
+  const mir::ExprId size = block.Add(BuildBuiltinMethodCall(
+      unit, block, support::BuiltinFn::kSize,
+      PathValue(unit, block, NamedIn(unit, *frame.selected_queue, block)), {},
+      type));
   return BuildMirBinaryExpr(
       unit, block, hir::BinaryOp::kSub, size,
       mir::BuildIntLiteral(unit, block, 1), type);

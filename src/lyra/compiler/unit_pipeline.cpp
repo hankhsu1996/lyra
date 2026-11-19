@@ -65,6 +65,19 @@ auto LowerUnitToSemantic(
   return transformed;
 }
 
+auto BuiltTypeOperationBody(
+    const mir::CompilationUnit& unit, const mir::TypeOperationSource& source,
+    const mir_transform::PassOptions& passes,
+    const diag::SourceManager& sources) -> std::optional<mir::CallableCode> {
+  std::optional<mir::CallableCode> built =
+      lowering::hir_to_mir::MakeTypeOperationBody(unit, source);
+  if (!built.has_value()) {
+    return std::nullopt;
+  }
+  return mir_transform::TransformBody(
+      unit, source, *std::move(built), passes, sources);
+}
+
 auto LowerUnitToExecutable(
     const mir::CompilationUnit& unit, const mir_transform::PassOptions& passes,
     const TypeOperationCollection& collection,
@@ -76,17 +89,9 @@ auto LowerUnitToExecutable(
     return std::unexpected(std::move(lowered.error()));
   }
   lowering::mir_to_lir::UnitLowerer& lowerer = *lowered;
-  const auto transformed_body =
-      [&](mir::TypeId type,
-          support::ValueOperation answers) -> std::optional<mir::CallableCode> {
-    std::optional<mir::CallableCode> built =
-        lowering::hir_to_mir::MakeTypeOperationBody(unit, type, answers);
-    if (!built.has_value()) {
-      return std::nullopt;
-    }
-    return mir_transform::TransformBody(
-        unit, mir::TypeOperationSource{.type = type, .answers = answers},
-        *std::move(built), passes, sources);
+  const auto transformed_body = [&](const mir::TypeOperationSource& source)
+      -> std::optional<mir::CallableCode> {
+    return BuiltTypeOperationBody(unit, source, passes, sources);
   };
   // What a body uses comes to light once it is LIR, and a body uses others in
   // turn, so the two alternate until a round finds nothing new.

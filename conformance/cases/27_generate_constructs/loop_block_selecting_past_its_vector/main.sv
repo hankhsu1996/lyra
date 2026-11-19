@@ -1,7 +1,7 @@
 // A loop generate's blocks each select the bit of a vector their own index
 // names, and the last two blocks name bits past its end. A select outside its
 // object reads the value a nonexistent entry has, `x` for a 4-state vector
-// (LRM 11.5.1, 7.4.6), whatever the vector holds; the blocks inside the vector
+// (LRM 11.5.1, 7.4.5), whatever the vector holds; the blocks inside the vector
 // read their bit, and keep following it as it changes (LRM 10.3.2).
 module Top;
   logic [3:0] a;

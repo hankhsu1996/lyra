@@ -29,7 +29,7 @@ struct IntegralWitnesses {
     std::memcpy(out, value, type.Size());
   }
 
-  static void Move(const ValueType& type, void* value, void* out) noexcept {
+  static void Relocate(const ValueType& type, void* value, void* out) noexcept {
     std::memcpy(out, value, type.Size());
   }
 

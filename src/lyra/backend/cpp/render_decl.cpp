@@ -4,6 +4,7 @@
 #include <map>
 #include <optional>
 #include <span>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <variant>
@@ -15,6 +16,7 @@
 #include "lyra/backend/cpp/render_expr.hpp"
 #include "lyra/backend/cpp/render_stmt.hpp"
 #include "lyra/backend/cpp/render_type.hpp"
+#include "lyra/backend/cpp/render_type_operations.hpp"
 #include "lyra/backend/cpp/scope_view.hpp"
 #include "lyra/backend/cpp/target_text.hpp"
 #include "lyra/base/internal_error.hpp"
@@ -34,10 +36,12 @@
 #include "lyra/mir/record_decl.hpp"
 #include "lyra/mir/record_id.hpp"
 #include "lyra/mir/type_builders.hpp"
+#include "lyra/mir/type_interface.hpp"
 #include "lyra/support/callable_bounds.hpp"
 #include "lyra/support/def_path.hpp"
 #include "lyra/support/library_decl.hpp"
 #include "lyra/support/linkage.hpp"
+#include "lyra/support/value_operation.hpp"
 
 namespace lyra::backend::cpp {
 
@@ -68,6 +72,15 @@ auto MemberReceiverOf(
   return ReceiverOf(unit, code);
 }
 
+// How an item of a type's implementation takes the object it is asked of: as
+// its first parameter, every item being a static function of the struct
+// holding the implementation; one asked of the type takes none.
+auto ImplItemReceiver(const mir::CallableCode& code)
+    -> std::optional<ReceiverSpelling> {
+  if (!code.TakesReceiver()) return std::nullopt;
+  return ReceiverAsParameter{};
+}
+
 // `static ` for a member function C++ hands no object as `this`.
 auto StaticPrefix(const std::optional<ReceiverSpelling>& receiver)
     -> std::string_view {
@@ -79,9 +92,16 @@ auto StaticPrefix(const std::optional<ReceiverSpelling>& receiver)
       *receiver);
 }
 
+// ` noexcept` for code no unwind leaves, which C++ states in the function's
+// type as its exception specification, and nothing otherwise.
+auto ExceptionSpecificationOf(const mir::CallableCode& code)
+    -> std::string_view {
+  return code.can_unwind ? "" : " noexcept";
+}
+
 // What a member function's declaration and its definition share after its
-// name, `(params) const -> R`: a receiver taken as a parameter leads the
-// parameters, and `const` follows them where the body is handed its object
+// name, `(params) const noexcept -> R`: a receiver taken as a parameter leads
+// the parameters, and `const` follows them where the body is handed its object
 // read-only.
 void WriteMemberSignatureTail(
     const mir::CompilationUnit& unit, const mir::CallableCode& code,
@@ -91,20 +111,22 @@ void WriteMemberSignatureTail(
   out += "(";
   if (!receiver.has_value()) {
     WriteParameters(unit, code, params, out);
-    Write(out, ") -> ", result);
+    Write(out, ")", ExceptionSpecificationOf(code), " -> ", result);
     return;
   }
   std::visit(
       Overloaded{
           [&](const ReceiverFromThis& from) {
             WriteParameters(unit, code, params, out);
-            Write(out, ")", CppConstQualifier{from.object}, " -> ", result);
+            Write(
+                out, ")", CppConstQualifier{from.object},
+                ExceptionSpecificationOf(code), " -> ", result);
           },
           [&](ReceiverAsParameter) {
             std::vector<mir::LocalId> taken{*code.receiver};
             taken.insert(taken.end(), params.begin(), params.end());
             WriteParameters(unit, code, taken, out);
-            Write(out, ") -> ", result);
+            Write(out, ")", ExceptionSpecificationOf(code), " -> ", result);
           }},
       *receiver);
 }
@@ -130,9 +152,26 @@ void WriteReceiverBinding(
       *receiver);
 }
 
+// A body declared as a member of the class being written, handed the object
+// as `receiver` says, `auto member(params) const -> R;`, static where C++
+// hands it no object as `this`.
+template <typename Member>
+void RenderMemberDeclaration(
+    const mir::CompilationUnit& unit, const Member& member,
+    const mir::CallableCode& code,
+    const std::optional<ReceiverSpelling>& receiver, TargetText& out) {
+  out.OpenLine();
+  Write(out, StaticPrefix(receiver), "auto ", member);
+  WriteMemberSignatureTail(
+      unit, code, receiver, code.ParamsAfterReceiver(), out);
+  out += ";\n";
+}
+
 // Where the definitions of one class or record are written: in the header
-// declaring it, which every file stating it reads, or in one code file.
-enum class WrittenIn : std::uint8_t { kHeader, kCodeFile };
+// declaring it, which every file stating it reads, in one code file, or in a
+// code file of their own, which every unit stating them writes alike and the
+// project keeps one of.
+enum class WrittenIn : std::uint8_t { kHeader, kCodeFile, kOwnFile };
 
 // How the definitions of one class or record are written: how the unit links
 // them, and where their text goes.
@@ -142,10 +181,11 @@ struct DefinedAs {
 };
 
 // What C++ spells a definition's linkage with where it is written. A shared
-// one is inline in a header, where every file reading it defines it, and weak
-// in a code file, where a file that only declares it still finds the one the
-// link keeps. What only this file names is in the namespace with no name,
-// which the layout of the file says, and one defined once needs nothing.
+// one is inline in a header, where every file reading it defines it, weak in
+// a code file, where a file that only declares it still finds the one the
+// link keeps, and nothing in a file of its own, which the project compiles
+// once. What only this file names is in the namespace with no name, which
+// the layout of the file says, and one defined once needs nothing.
 auto SpecifiersOf(DefinedAs defined) -> std::string_view {
   switch (defined.linkage) {
     case support::Linkage::kInternal:
@@ -157,6 +197,8 @@ auto SpecifiersOf(DefinedAs defined) -> std::string_view {
           return "inline ";
         case WrittenIn::kCodeFile:
           return "[[gnu::weak]] ";
+        case WrittenIn::kOwnFile:
+          return "";
       }
       throw InternalError(
           "backend::cpp: unknown place a definition is written");
@@ -168,13 +210,14 @@ auto SpecifiersOf(DefinedAs defined) -> std::string_view {
 // method (LRM 8.10), process or lifecycle body, the entry a scope answers a
 // foreign caller with (LRM 35.5.3), or a record's method -- written
 // outside its type so the body can use any type of the unit as a complete one,
-// under the name `qualified` spells, qualified by its type.
+// under the name `qualified` spells, qualified by its type, handed the object
+// as `receiver` says.
 template <typename... Qualified>
 void RenderMemberFunctionDef(
     const mir::CompilationUnit& unit, UnitRenderReport& report,
-    DefinedAs defined, const mir::CallableCode& code, TargetText& out,
+    DefinedAs defined, const mir::CallableCode& code,
+    const std::optional<ReceiverSpelling>& receiver, TargetText& out,
     const Qualified&... qualified) {
-  const std::optional<ReceiverSpelling> receiver = MemberReceiverOf(unit, code);
   Write(out, SpecifiersOf(defined), "auto ", qualified...);
   WriteMemberSignatureTail(
       unit, code, receiver, code.ParamsAfterReceiver(), out);
@@ -254,14 +297,9 @@ void RenderClassCallableDecl(
     const mir::CompilationUnit& unit, mir::CallableId id,
     const mir::CallableDecl& m, TargetText& out) {
   if (!HasBody(m)) return;
-  const mir::CallableCode& code = m.code;
-  const std::optional<ReceiverSpelling> receiver = MemberReceiverOf(unit, code);
-  out.OpenLine();
-  out += StaticPrefix(receiver);
-  Write(out, "auto ", CppClassCallableName(unit, id));
-  WriteMemberSignatureTail(
-      unit, code, receiver, code.ParamsAfterReceiver(), out);
-  out += ";\n";
+  RenderMemberDeclaration(
+      unit, CppClassCallableName(unit, id), m.code,
+      MemberReceiverOf(unit, m.code), out);
 }
 
 // The table type a class declares inside it: the one of the class it extends
@@ -405,7 +443,7 @@ void RenderClassCallableDef(
     TargetText& out) {
   if (!HasBody(m)) return;
   RenderMemberFunctionDef(
-      unit, report, defined, m.code, out,
+      unit, report, defined, m.code, MemberReceiverOf(unit, m.code), out,
       ClassCallablePath{.unit = &unit, .callable = id});
 }
 
@@ -434,7 +472,7 @@ void RenderConstructor(
       unit, ctor_code, receiver, ctor_code.ParamsAfterReceiver(), signature);
   signature += ";\n";
   RenderMemberFunctionDef(
-      unit, report, defined, ctor_code, code,
+      unit, report, defined, ctor_code, receiver, code,
       ClassCallablePath{.unit = &unit, .callable = ctor});
 }
 
@@ -777,7 +815,9 @@ void RenderFreeSignature(
     const CppName& symbol, const mir::CallableCode& code, TargetText& out) {
   Write(out, linkage, "auto ", symbol, "(");
   WriteParameters(unit, code, code.params, out);
-  Write(out, ") -> ", CppType(unit, code.result_type));
+  Write(
+      out, ")", ExceptionSpecificationOf(code), " -> ",
+      CppType(unit, code.result_type));
 }
 
 void RenderFreeCallableSignature(
@@ -835,13 +875,9 @@ void RenderRecord(
         CppValueOperationMemberName(mir::AnsweredOperationOf(unit, method));
     const std::optional<ReceiverSpelling> receiver =
         MemberReceiverOf(unit, code);
-    declared.OpenLine();
-    Write(declared, StaticPrefix(receiver), "auto ", member);
-    WriteMemberSignatureTail(
-        unit, code, receiver, code.ParamsAfterReceiver(), declared);
-    declared += ";\n";
+    RenderMemberDeclaration(unit, member, code, receiver, declared);
     RenderMemberFunctionDef(
-        unit, report, defined_as, code, defined, name, "::", member);
+        unit, report, defined_as, code, receiver, defined, name, "::", member);
   }
   declared.Outdent();
   declared += "};\n";
@@ -1123,6 +1159,53 @@ void RenderForeignScopeSymbols(
     });
     out += "\n";
   }
+}
+
+void RenderImpl(
+    const mir::CompilationUnit& unit, mir::TypeId self_type,
+    std::span<const mir::TypeOperationBody> items, TargetText& out) {
+  Write(
+      out, "struct ", VerbatimName{.text = ImplStructName(unit, self_type)},
+      " {\n");
+  out.Indent();
+  for (const mir::TypeOperationBody& item : items) {
+    RenderMemberDeclaration(
+        unit, CppImplItemName(item.source.answers), item.code,
+        ImplItemReceiver(item.code), out);
+  }
+  out.Outdent();
+  out += "};\n";
+}
+
+void RenderImplItemDefinition(
+    const mir::CompilationUnit& unit, UnitRenderReport& report,
+    const mir::TypeOperationBody& item, TargetText& out) {
+  RenderMemberFunctionDef(
+      unit, report,
+      DefinedAs{
+          .linkage = support::Linkage::kShared, .in = WrittenIn::kOwnFile},
+      item.code, ImplItemReceiver(item.code), out,
+      VerbatimName{.text = ImplStructName(unit, item.source.type)},
+      "::", CppImplItemName(item.source.answers));
+}
+
+void RenderFreeFunctionDeclaration(
+    const mir::CompilationUnit& unit, std::string_view name,
+    const mir::CallableCode& code, TargetText& out) {
+  RenderFreeSignature(unit, "", VerbatimName{.text = name}, code, out);
+  out += ";\n";
+}
+
+void RenderFreeFunctionDefinition(
+    const mir::CompilationUnit& unit, UnitRenderReport& report,
+    std::string_view name, const mir::CallableCode& code, TargetText& out) {
+  RenderFreeSignature(unit, "", VerbatimName{.text = name}, code, out);
+  out += " ";
+  WriteBody(out, [&] {
+    RenderBlockStatements(
+        ScopeView::ForCode(unit, code, support::Linkage::kShared, report), out);
+  });
+  out += "\n";
 }
 
 }  // namespace lyra::backend::cpp

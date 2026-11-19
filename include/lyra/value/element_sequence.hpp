@@ -1,6 +1,5 @@
 #pragma once
 
-#include <concepts>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -9,7 +8,6 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/simulation_error.hpp"
-#include "lyra/base/source_location.hpp"
 #include "lyra/value/element_policy.hpp"
 #include "lyra/value/integral_fwd.hpp"
 #include "lyra/value/integral_words.hpp"
@@ -29,12 +27,12 @@ namespace lyra::value {
 
 }  // namespace lyra::value
 
-// The whole-value operations of a container whose elements are a sequence by
-// position -- a queue, a dynamic array, a fixed-size array -- written once over
-// any such container that answers its element policy, its count, and the
-// element at a position. What compares or streams one element is handed to
-// the operation that does it, since the container holds an element type only
-// for what its storage needs.
+// The whole-value operations of an array whose elements are a sequence by
+// position, as the library's template for a fixed-size array states them,
+// written once over any array that answers its element policy, its count, and
+// the element at a position. What compares or streams one element is handed to
+// the operation that does it, since the array holds an element type only for
+// what its storage needs.
 namespace lyra::value::detail {
 
 // LRM 11.2.2 aggregate equality / 11.4.5: element-wise reduction over
@@ -68,59 +66,6 @@ template <typename Seq, typename Ops>
     }
   }
   return ops.CaseAnswer(true);
-}
-
-// The address of each element of `unit`, `count` times over (LRM 10.9.1), for
-// a container that copies what they name.
-template <typename T>
-[[nodiscard]] auto ReplicatedAddresses(
-    std::span<const T> unit, std::size_t count) -> std::vector<const void*> {
-  std::vector<const void*> addresses;
-  addresses.reserve(unit.size() * count);
-  for (std::size_t i = 0; i < count; ++i) {
-    for (const T& item : unit) {
-      addresses.push_back(&item);
-    }
-  }
-  return addresses;
-}
-
-// The address of each element of an unpacked array read by storage ordinal, in
-// order (LRM 7.6).
-template <typename C>
-[[nodiscard]] auto OrdinalAddresses(const C& source)
-    -> std::vector<const void*> {
-  std::vector<const void*> addresses;
-  addresses.reserve(source.RawSize());
-  for (std::size_t i = 0; i < source.RawSize(); ++i) {
-    addresses.push_back(&source.RawAt(i));
-  }
-  return addresses;
-}
-
-// `value` as an element of type `E`, assigned as an element of an array
-// assignment is (LRM 7.6): a value of `E` itself as it is, and a value of a
-// type equivalent to `E` that differs only in its queues' bounds built afresh
-// as an `E`, so each queue in it keeps what its own bound admits (LRM 7.10.5).
-template <typename E, typename U>
-[[nodiscard]] auto ElementAs(const U& value) -> E {
-  if constexpr (std::same_as<E, U>) {
-    return value;
-  } else {
-    return E::FromBoundFree(value, base::SourceLocation{});
-  }
-}
-
-// Each element of `source`, read by storage ordinal, as an element of type
-// `E` (LRM 7.6).
-template <typename E, typename C>
-[[nodiscard]] auto ElementsAs(const C& source) -> std::vector<E> {
-  std::vector<E> elements;
-  elements.reserve(source.RawSize());
-  for (std::size_t i = 0; i < source.RawSize(); ++i) {
-    elements.push_back(ElementAs<E>(source.RawAt(i)));
-  }
-  return elements;
 }
 
 // LRM 9.4.2 update event predicate: element-wise bit identity, a size
@@ -172,20 +117,6 @@ template <typename Seq, typename Ops>
   return total;
 }
 
-// LRM 6.24.3: the elements' own streams written into `stream` below its
-// `filled` most significant positions, the one at position 0 most significant
-// -- the order a `foreach` walks them in (LRM 11.4.14.1). Answers how many are
-// filled after them.
-template <typename Seq, typename Ops>
-auto SequenceWriteToStream(
-    const Seq& seq, const IntegralView& stream, std::uint64_t filled,
-    const Ops& ops) -> std::uint64_t {
-  for (std::size_t i = 0; i < seq.Count(); ++i) {
-    filled = ops.WriteToStream(seq.At(i), stream, filled);
-  }
-  return filled;
-}
-
 // LRM 11.4.14.4: the elements `elements` names written end to end into a run
 // of bits of their own, the first most significant.
 template <typename Ops>
@@ -202,66 +133,6 @@ template <typename Ops>
   }
   return run;
 }
-
-// LRM 6.24.3, 11.4.14.4: the elements a stream holds from its `taken` most
-// significant position up to `until`, each read in turn into storage of its own
-// holding the element default, in the order a `foreach` walks them. An element
-// whose type fixes its width takes that many positions, so as many are read as
-// fill the run; one whose width the running program decides takes every
-// position left, so it is the only one. A run that an element would end past
-// does not divide into the elements.
-template <ElementPolicy Elem>
-class ElementsRead {
- public:
-  template <typename Ops>
-  ElementsRead(
-      const Elem& elem, const Ops& ops, const ConstIntegralView& stream,
-      std::uint64_t taken, std::uint64_t until)
-      : read_(elem) {
-    while (taken < until) {
-      void* element = read_.Add(elem.Default());
-      taken = ops.ReadFromStream(stream, taken, until, element);
-    }
-    if (taken != until) {
-      throw SimulationError(
-          "a stream of bits does not divide into the elements of the array it "
-          "is read into");
-    }
-  }
-
-  // Where each element read lies, in order.
-  [[nodiscard]] auto Addresses() const -> std::vector<const void*> {
-    return {read_.items.begin(), read_.items.end()};
-  }
-
- private:
-  // The storage of each element read, given back however the reading ends.
-  struct Owned {
-    explicit Owned(const Elem& of) : elem(&of) {
-    }
-    Owned(const Owned&) = delete;
-    auto operator=(const Owned&) -> Owned& = delete;
-    Owned(Owned&&) = delete;
-    auto operator=(Owned&&) -> Owned& = delete;
-    ~Owned() {
-      for (void* item : items) {
-        FreeElement(*elem, item);
-      }
-    }
-
-    // Storage of its own holding a copy of `from`, kept here.
-    auto Add(const void* from) -> void* {
-      items.reserve(items.size() + 1);
-      items.push_back(CopyElement(*elem, from));
-      return items.back();
-    }
-
-    const Elem* elem;
-    std::vector<void*> items;
-  };
-
-  Owned read_;
-};
 
 // LRM 7.4.5 / 7.4.6: the `count` elements of `seq` from `start`, each the
 // element default where it lies outside the sequence, every one of them where
@@ -281,47 +152,6 @@ template <typename Seq>
                              : seq.Element().Default());
   }
   return elements;
-}
-
-// LRM 7.6: the `count` elements of `seq` from `start` take `replacement`,
-// element for element; an element outside the sequence is skipped and a start
-// naming no position writes nothing. Answers whether any element took a
-// different value (LRM 4.3).
-template <typename Seq>
-auto SequenceAssignSlice(
-    Seq& seq, std::optional<std::int64_t> start, std::size_t count,
-    std::span<const void* const> replacement) -> bool {
-  const auto size = static_cast<std::int64_t>(seq.Count());
-  // A start at or past the end names no element of the window, which also
-  // keeps the positions below from passing the largest one.
-  if (!start.has_value() || *start >= size) {
-    return false;
-  }
-  bool moved = false;
-  for (std::size_t i = 0; i < count; ++i) {
-    const std::int64_t at = *start + static_cast<std::int64_t>(i);
-    if (at < 0 || at >= size) {
-      continue;
-    }
-    void* element = seq.At(static_cast<std::size_t>(at));
-    if (seq.Element().BitIdentical(element, replacement[i])) {
-      continue;
-    }
-    seq.Element().Assign(element, replacement[i]);
-    moved = true;
-  }
-  return moved;
-}
-
-// LRM 7.12.2: puts the value `held` has at `order[k]` at position `k` of
-// `seq`. `held` is a copy of `seq` taken before any element moves, since an
-// element is read after the position it came from was written.
-template <typename Seq, typename Held>
-void SequencePermute(
-    Seq& seq, const Held& held, std::span<const std::size_t> order) {
-  for (std::size_t k = 0; k < order.size(); ++k) {
-    seq.Element().Assign(seq.At(k), held.At(order[k]));
-  }
 }
 
 }  // namespace lyra::value::detail

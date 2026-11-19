@@ -7,6 +7,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/value/concepts.hpp"
 #include "lyra/value/dpi_canonical.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/unpacked_range.hpp"
@@ -54,7 +55,7 @@ class DpiOpenArray {
       const T& sv, std::span<const std::int64_t> bounds,
       bool addressable_elements)
       : DpiOpenArray(
-            bounds, ElementOf<T>::kWidth, ElementOf<T>::kDomain,
+            bounds, LeafOf<T>::kWidth, LeafOf<T>::kDomain,
             addressable_elements) {
     std::size_t position = 0;
     Fill(sv, 0, position);
@@ -124,14 +125,14 @@ class DpiOpenArray {
   // unpacked layers `T` has.
   template <typename T>
   struct Leaf {
-    using Type = typename Leaf<typename T::ElementType>::Type;
+    using Type = typename Leaf<ElementOf<T>>::Type;
   };
   template <IntegralValue T>
   struct Leaf<T> {
     using Type = T;
   };
   template <typename T>
-  using ElementOf = typename Leaf<T>::Type;
+  using LeafOf = typename Leaf<T>::Type;
 
   [[nodiscard]] auto GroupsPerElement() const -> std::size_t {
     return CanonicalGroups(element_width_);
@@ -180,8 +181,10 @@ class DpiOpenArray {
       WriteElement(position, value.AsWords().View());
       ++position;
     } else {
-      for (std::size_t p = 0; p < value.RawSize(); ++p) {
-        Fill(value.RawAt(OrdinalAt(dimension, p)), dimension + 1, position);
+      for (std::size_t p = 0; p < value.Count(); ++p) {
+        Fill(
+            value.GetUnchecked(OrdinalAt(dimension, p)), dimension + 1,
+            position);
       }
     }
   }
@@ -195,17 +198,16 @@ class DpiOpenArray {
       ++position;
       return read;
     } else {
-      using Element = typename T::ElementType;
-      constexpr std::size_t kCount = T::RawSize();
+      using Element = ElementOf<T>;
+      constexpr std::size_t kCount = T::Count();
       std::vector<Element> elements(kCount);
       for (std::size_t p = 0; p < kCount; ++p) {
         elements[OrdinalAt(dimension, p)] =
             Rebuild<Element>(dimension + 1, position);
       }
-      return T::Gathered(
-          [&](std::size_t ordinal) -> const typename T::ElementType& {
-            return elements[ordinal];
-          });
+      return T::Gathered([&](std::size_t ordinal) -> const Element& {
+        return elements[ordinal];
+      });
     }
   }
 

@@ -4,13 +4,14 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <utility>
 
 #include "lyra/base/source_location.hpp"
 #include "lyra/value/concepts.hpp"
+#include "lyra/value/element_policy.hpp"
 #include "lyra/value/element_type.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_words.hpp"
+#include "lyra/value/ptr_read.hpp"
 #include "lyra/value/real.hpp"
 #include "lyra/value/unmanaged_ref.hpp"
 #include "lyra/value/value_type.hpp"
@@ -31,11 +32,11 @@ inline constexpr bool kIsBitStreamType<UnmanagedRef> = false;
 // A value of `T` holds parts ordered by position, each a value of a type the
 // value states and handed out where it lies.
 template <typename T>
-concept HoldsParts = requires(const T& c, T& m, std::size_t position) {
+concept HoldsParts = requires(const T& c, T& m, std::size_t index) {
   { c.Count() } -> std::same_as<std::size_t>;
   { c.ElementType() } -> std::same_as<const ElementType&>;
-  { c.ElementAt(position) } -> std::same_as<const void*>;
-  { m.ElementAt(position) } -> std::same_as<void*>;
+  { c.GetUnchecked(index) } -> std::same_as<const void*>;
+  { m.GetUnchecked(index) } -> std::same_as<void*>;
 };
 
 // A value of `T` written into a stream of bits, the stream being an integral
@@ -69,11 +70,11 @@ inline constexpr PartsWitnessTable kPartsWitnessTableOf{
       return static_cast<const T*>(value)->ElementType().Type();
     },
     .at = [](const ValueType&, const void* value,
-             std::size_t position) -> const void* {
-      return static_cast<const T*>(value)->ElementAt(position);
+             std::size_t index) -> const void* {
+      return static_cast<const T*>(value)->GetUnchecked(index);
     },
-    .ref_at = [](const ValueType&, void* value, std::size_t position) -> void* {
-      return static_cast<T*>(value)->ElementAt(position);
+    .ref_at = [](const ValueType&, void* value, std::size_t index) -> void* {
+      return static_cast<T*>(value)->GetUnchecked(index);
     }};
 
 // What `T` answers each operation of its table with, which is what `T` itself
@@ -90,9 +91,9 @@ struct ValueWitnessesOf {
                                   void* out) {
     std::construct_at(static_cast<T*>(out), Of(value));
   };
-  static constexpr auto Move = [](const ValueType&, void* value,
-                                  void* out) noexcept {
-    std::construct_at(static_cast<T*>(out), std::move(*static_cast<T*>(value)));
+  static constexpr auto Relocate = [](const ValueType&, void* value,
+                                      void* out) noexcept {
+    lyra::value::Relocate<T>(value, out);
   };
   static constexpr auto Destroy = [](const ValueType&, void* value) noexcept {
     std::destroy_at(static_cast<T*>(value));
@@ -167,6 +168,10 @@ struct OperationsOf {
          std::uint64_t filled) -> std::uint64_t {
     if constexpr (WritesBitStream<T>) {
       return Of(value).WriteToStream(stream, filled);
+    } else if constexpr (requires {
+                           Of(value).ToBitVec(base::SourceLocation{});
+                         }) {
+      return StaticElem<T>::WriteToStream(value, stream, filled);
     } else if constexpr (kIsBitStreamType<T>) {
       StreamNotYetSupported();
     } else {
@@ -178,6 +183,10 @@ struct OperationsOf {
          std::uint64_t taken, std::uint64_t until, void* out) -> std::uint64_t {
     if constexpr (ReadsBitStream<T>) {
       return static_cast<T*>(out)->ReadFromStream(stream, taken, until);
+    } else if constexpr (requires(const BitVec& run) {
+                           T::FromBitVec(run, base::SourceLocation{});
+                         }) {
+      return StaticElem<T>::ReadFromStream(stream, taken, until, out);
     } else if constexpr (kIsBitStreamType<T>) {
       StreamNotYetSupported();
     } else {
@@ -199,5 +208,12 @@ constexpr auto LibraryValueType() -> ValueType {
 // names, stated once for `T`.
 template <LyraValue T>
 inline constexpr ValueType kValueTypeOf = LibraryValueType<T>();
+
+// Where that type lies, which a call naming the type of a value hands on, as
+// Rust's `type_id::<T>()` answers the type it is called at.
+template <LyraValue T>
+[[nodiscard]] constexpr auto TypeRecordOf() -> const ValueType* {
+  return &kValueTypeOf<T>;
+}
 
 }  // namespace lyra::value

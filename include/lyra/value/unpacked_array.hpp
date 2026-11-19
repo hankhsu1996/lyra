@@ -9,11 +9,11 @@
 #include <span>
 #include <string_view>
 #include <type_traits>
-#include <vector>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/base/source_location.hpp"
+#include "lyra/value/array_ordering.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/element_policy.hpp"
 #include "lyra/value/element_sequence.hpp"
@@ -23,8 +23,9 @@
 #include "lyra/value/integral.hpp"
 #include "lyra/value/position.hpp"
 #include "lyra/value/positions.hpp"
-#include "lyra/value/queue.hpp"
 #include "lyra/value/small_box.hpp"
+#include "lyra/value/tuple.hpp"
+#include "lyra/value/value_type_kind.hpp"
 
 namespace lyra::value {
 
@@ -32,44 +33,42 @@ template <typename T, std::size_t N>
 class UnpackedArray;
 class String;
 
-// LRM 7.4.5: how many elements a slice takes, which the type the select
-// produces fixes. A select never names an empty run, so a count below one is a
-// lowering defect rather than a value.
-[[nodiscard]] inline auto SliceCount(std::int64_t count) -> std::size_t {
-  if (count < 1) {
-    throw InternalError("an unpacked slice names at least one element");
-  }
-  return static_cast<std::size_t>(count);
-}
-
 // LRM 7.6: `value` written into the `count` of `elements` from `start` as one
-// assignment, answering whether any element took a different value (LRM
-// 4.3). A start that names no position assigns nothing, and an element outside
-// the array is skipped.
+// assignment, answering the positions from the first element that took a
+// different value to one past the last, the same position twice where none
+// did (LRM 4.3). A start that names no position assigns nothing, and an
+// element outside the array is skipped. The elements are written in order, so
+// the first to change is the one found while nothing has yet.
 template <typename T, OrdinalElements C>
 auto AssignRun(
     std::span<T> elements, std::optional<std::int64_t> start, std::size_t count,
-    const C& value) -> bool {
+    const C& value) -> Tuple<Position, Position> {
+  std::int64_t begin = 0;
+  std::int64_t end = 0;
   const auto size = static_cast<std::int64_t>(elements.size());
   // A start at or past the end names no element of the window, which also
   // keeps the positions below from passing the largest one.
   if (!start.has_value() || *start >= size) {
-    return false;
+    return Tuple<Position, Position>{
+        Position::FromInt(begin), Position::FromInt(end)};
   }
-  bool moved = false;
   for (std::size_t i = 0; i < count; ++i) {
     const std::int64_t at = *start + static_cast<std::int64_t>(i);
     if (at < 0 || at >= size) {
       continue;
     }
     T& element = elements[static_cast<std::size_t>(at)];
-    if (element.IsBitIdentical(value.RawAt(i))) {
+    if (element.IsBitIdentical(value.GetUnchecked(i))) {
       continue;
     }
-    element = value.RawAt(i);
-    moved = true;
+    element = value.GetUnchecked(i);
+    if (end == 0) {
+      begin = at;
+    }
+    end = at + 1;
   }
-  return moved;
+  return Tuple<Position, Position>{
+      Position::FromInt(begin), Position::FromInt(end)};
 }
 
 namespace detail {
@@ -121,7 +120,7 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>> {
   static_assert(N >= 1, "a fixed-size unpacked array has at least one element");
 
  public:
-  using ElementType = T;
+  static constexpr ValueTypeKind kKind = ValueTypeKind::kFixedArray;
 
   UnpackedArray() = default;
 
@@ -187,42 +186,6 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>> {
     return OfBytes(BytesOf(bits.AsWords().View()));
   }
 
-  // LRM 7.6, 7.10.5: an array of this type built out of one of as many
-  // elements whose elements differ from `T` only in their queues' bounds, each
-  // element built afresh as a `T`.
-  template <typename U>
-  [[nodiscard]] static auto FromBoundFree(
-      const UnpackedArray<U, N>& source, base::SourceLocation at)
-      -> UnpackedArray {
-    const base::SourceLocationScope bound(at);
-    const std::vector<T> elements = detail::ElementsAs<T>(source);
-    return Gathered([&](std::size_t i) -> const T& { return elements[i]; });
-  }
-
-  // This array as a value of `R`, the same array with no queue in it bounded.
-  template <typename R>
-  [[nodiscard]] auto ToBoundFree(base::SourceLocation at) const -> R {
-    return R::FromBoundFree(*this, at);
-  }
-
-  // LRM 7.6: a fixed-size unpacked array assigned an array of another unpacked
-  // kind takes its elements in left-to-right order, and how many elements it
-  // has is a declared property of the variable being written rather than
-  // anything the source decides -- so a source of another size is a run-time
-  // error and the assignment does not happen.
-  template <OrdinalElements C>
-  [[nodiscard]] static auto FromArray(const C& source, base::SourceLocation at)
-      -> UnpackedArray {
-    if (source.RawSize() != N) {
-      const base::SourceLocationScope bound(at);
-      throw SimulationError(
-          "a fixed-size unpacked array of {} elements cannot be assigned an "
-          "array of {}",
-          N, source.RawSize());
-    }
-    return Of(source);
-  }
-
   // An array whose element at ordinal `i` is a copy of what `element_at(i)`
   // names.
   template <typename ElementAt>
@@ -245,17 +208,19 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>> {
     return Int::FromInt(static_cast<std::int64_t>(N));
   }
 
-  [[nodiscard]] static constexpr auto RawSize() -> std::size_t {
+  [[nodiscard]] static constexpr auto Count() -> std::size_t {
     return N;
   }
 
-  // The element at storage ordinal `i`, in [0, N), for a traversal that walks
-  // storage in ordinal order; a position the program computed is read through
-  // `Element` instead, which answers one naming no element.
-  [[nodiscard]] auto RawAt(std::size_t i) const -> const T& {
+  // The element at the index `i`, which names one the array holds, as Rust's
+  // `get_unchecked` reaches one: nothing checks it, so only a caller that
+  // counts below `N` asks; a position the program computed goes through the
+  // checked element access, which answers the element default where it names
+  // none (LRM 7.4.5).
+  [[nodiscard]] auto GetUnchecked(std::size_t i) const -> const T& {
     return Items()[i];
   }
-  [[nodiscard]] auto RawAt(std::size_t i) -> T& {
+  [[nodiscard]] auto GetUnchecked(std::size_t i) -> T& {
     return Items()[i];
   }
 
@@ -266,8 +231,8 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>> {
   [[nodiscard]] auto MergeConditional(const UnpackedArray& other) const
       -> UnpackedArray {
     return Gathered([&](std::size_t i) -> const T& {
-      return StaticElem<T>::Agree(&RawAt(i), &other.RawAt(i))
-                 ? RawAt(i)
+      return StaticElem<T>::Agree(&GetUnchecked(i), &other.GetUnchecked(i))
+                 ? GetUnchecked(i)
                  : ElementDefault();
     });
   }
@@ -297,20 +262,21 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>> {
   // the array reads the element default, and a start that names no position
   // reads a wholly-default sub-array.
   template <typename Result>
-  [[nodiscard]] auto Slice(const Position& start, std::int64_t count) const
-      -> Result {
-    Result::RequireDeclared(count);
+  [[nodiscard]] auto Slice(const Position& start) const -> Result {
     return Result::SliceOf(Elements(), ReadPosition(start));
   }
 
-  // LRM 7.6: `value` written into the `count` elements from `start`, one
-  // assignment to the whole window, answering whether any element took a
-  // different value (LRM 4.3).
+  // LRM 7.6: `value` written into as many elements from `start` as it holds,
+  // one assignment to the whole window, answering the positions it changed
+  // (LRM 4.3). Every run write is handed where it was written, which it binds
+  // for what it runs.
   template <OrdinalElements C>
-  auto AssignSlice(const Position& start, std::int64_t count, const C& value)
-      -> bool {
+  auto AssignSlice(
+      const Position& start, const C& value, base::SourceLocation at)
+      -> Tuple<Position, Position> {
+    const base::SourceLocationScope bound(at);
     return AssignRun(
-        MutableElements(), ReadPosition(start), SliceCount(count), value);
+        MutableElements(), ReadPosition(start), value.Count(), value);
   }
 
   // LRM 11.4.14.4: the stream of the `count` elements from `start`, an element
@@ -356,27 +322,13 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>> {
     });
   }
 
-  // A slice select states how many elements it takes (LRM 7.4.5), and the
-  // array type it produces fixes the same number, so a count that is not this
-  // type's is a lowering defect.
-  static void RequireDeclared(std::int64_t count) {
-    if (count < 0 || static_cast<std::uint64_t>(count) != N) {
-      throw InternalError(
-          std::format(
-              "an unpacked array of {} elements was stated as one of {}", N,
-              count));
-    }
-  }
-
   // LRM 11.2.2 + 11.4.5 aggregate equality / case-equality. `==` / `!=`
   // propagate X / Z; `CaseEqual` returns a deterministic 0/1.
-  [[nodiscard]] auto operator==(const UnpackedArray& other) const ->
-      typename StaticElem<T>::Equality {
-    return StaticElem<T>::Equality::Filled(
+  [[nodiscard]] auto operator==(const UnpackedArray& other) const {
+    return EqualityOf<T>::Filled(
         detail::SequenceEqual(Run(), other.Run(), StaticElem<T>{}));
   }
-  [[nodiscard]] auto operator!=(const UnpackedArray& other) const ->
-      typename StaticElem<T>::Equality {
+  [[nodiscard]] auto operator!=(const UnpackedArray& other) const {
     return !(*this == other);
   }
   [[nodiscard]] auto CaseEqual(const UnpackedArray& other) const -> Bit {
@@ -419,8 +371,8 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>> {
         const std::int64_t start = std::max(first, at);
         const std::int64_t stop = std::min(first + count, at + per_element);
         if (start < stop) {
-          out.Items()[i] =
-              PositionsTaken(RawAt(i), from.RawAt(i), start - at, stop - start);
+          out.Items()[i] = PositionsTaken(
+              GetUnchecked(i), from.GetUnchecked(i), start - at, stop - start);
         }
       }
     });
@@ -442,7 +394,7 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>> {
     for (std::int64_t element = first / per_element;
          element * per_element < end; ++element) {
       changed = WritePositionsOf(
-                    RawAt(static_cast<std::size_t>(element)), in,
+                    GetUnchecked(static_cast<std::size_t>(element)), in,
                     start - (element * per_element), count) ||
                 changed;
     }
@@ -456,7 +408,7 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>> {
     return Positions::Built([&](Positions& out) {
       for (std::size_t i = 0; i < N; ++i) {
         detail::WriteRun(
-            out.MutableView(), ToPositionsOf(RawAt(i)).View(),
+            out.MutableView(), ToPositionsOf(GetUnchecked(i)).View(),
             static_cast<std::int64_t>(i * Element::kWidth),
             {.lsb = i * Element::kWidth, .width = Element::kWidth});
       }
@@ -475,7 +427,7 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>> {
               bits.MutableView(), positions.View(),
               static_cast<std::int64_t>(i * Element::kWidth));
         });
-        out.RawAt(i) = FromPositionsOf<T>(part);
+        out.GetUnchecked(i) = FromPositionsOf<T>(part);
       }
     });
   }
@@ -511,7 +463,7 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>> {
   [[nodiscard]] auto WriteToStream(
       const IntegralView& stream, std::uint64_t filled) const -> std::uint64_t {
     for (std::size_t i = 0; i < N; ++i) {
-      filled = StaticElem<T>::WriteToStream(&RawAt(i), stream, filled);
+      filled = StaticElem<T>::WriteToStream(&GetUnchecked(i), stream, filled);
     }
     return filled;
   }
@@ -566,10 +518,10 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>> {
 
   // The elements, in ordinal order, where they lie.
   [[nodiscard]] auto Elements() const -> std::span<const T> {
-    return {Items(), N};
+    return Items();
   }
   [[nodiscard]] auto MutableElements() -> std::span<T> {
-    return {Items(), N};
+    return Items();
   }
 
  private:
@@ -590,11 +542,11 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>> {
     (*written.fill)(*this);
   }
 
-  [[nodiscard]] auto Items() const -> const T* {
-    return items_.data();
+  [[nodiscard]] auto Items() const -> std::span<const T, N> {
+    return items_;
   }
-  [[nodiscard]] auto Items() -> T* {
-    return items_.data();
+  [[nodiscard]] auto Items() -> std::span<T, N> {
+    return items_;
   }
   [[nodiscard]] auto Run() const -> detail::ElementRun<T> {
     return detail::ElementRun<T>{Elements()};
@@ -616,7 +568,8 @@ class UnpackedArray : public OrdinalArrayMethods<UnpackedArray<T, N>> {
   // An array holding copies of `source`'s elements, in order.
   template <typename C>
   [[nodiscard]] static auto Of(const C& source) -> UnpackedArray {
-    return Gathered([&](std::size_t i) -> const T& { return source.RawAt(i); });
+    return Gathered(
+        [&](std::size_t i) -> const T& { return source.GetUnchecked(i); });
   }
 
   // Left-justifies a byte sequence: the first byte lands at the array's left
@@ -649,7 +602,6 @@ static_assert(Sized<UnpackedArray<LogicVector<4>, 3>>);
 static_assert(BitstreamSizable<UnpackedArray<LogicVector<4>, 3>>);
 static_assert(Indexable<UnpackedArray<LogicVector<4>, 3>>);
 static_assert(ConditionallyMergeable<UnpackedArray<LogicVector<4>, 3>>);
-static_assert(Sortable<UnpackedArray<LogicVector<4>, 3>>);
 static_assert(NetResolvable<UnpackedArray<LogicVector<4>, 3>>);
 static_assert(
     NetResolvable<UnpackedArray<UnpackedArray<LogicVector<4>, 3>, 2>>);

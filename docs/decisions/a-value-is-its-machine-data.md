@@ -95,12 +95,28 @@ value of a type it was compiled without -- a container's algorithm, the schedule
 whether a change is an event -- it is handed the functions the compiler generated for that type,
 never a description to interpret.
 
-**D6. On the execution backend, a container whose size is a run-time quantity -- a queue, a dynamic
-array, an associative array -- holds its elements as raw storage and acts on them through the
-functions the compiler generated for the element type.** That is the one difference the prebuilt
-runtime causes, and it is how a tuple is already held. An element at an index is addressed by the
-compiler (base plus index times element size) without a call. A fixed-size unpacked array is no
-container: its size is a constant, so the compiler lays it out in place.
+**D6. A container whose size is a run-time quantity -- a queue, a dynamic array, an associative
+array -- holds its elements as raw storage in a core the library compiles once, and every operation
+on an element is compiled with the element's type.** An associative array's core is handed the
+element type's record and asks it only to end an element. A dynamic array's core holds the record
+for the size and alignment of the storage it hands out and for what a lease keeps past the array,
+and a queue's holds nothing that depends on the element type; the one function of either that ends
+such an element, a lease's, is handed its type by its caller. What a dynamic array or a queue does
+on every call -- reaching an element, putting one at an end and taking one out, holding a queue to
+its bound, taking and giving back an element's storage, ending the elements -- is the container
+type's own code over the core's fields, compiled with its caller. An element at an index lies where
+those fields say -- base plus index times element size, or a queue's ring -- and every write through
+an index, one that makes or drops an element included, is built on one such body. Building, copying,
+comparing, streaming and taking out an element are the operations of bodies the compiler builds for
+the container type, on both backends. A fixed-size unpacked array is no container: its size is a
+constant, so the compiler lays it out in place. Revised 2026-11-12: this said, for the execution
+backend alone, that the container acts on its elements through the functions generated for the
+element type and that the compiler addresses an element without a call. Acting through those
+functions made every element operation an indirect call from the library, and a queue's push and pop
+through its core took nearly ten times the instructions of hand-written C++ of the same semantics,
+which the requirement that `-O2 --lto` code match such C++ rules out. How the core and the bodies
+divide the work is
+[a-containers-operations-are-built-for-its-type-over-a-core](a-containers-operations-are-built-for-its-type-over-a-core.md).
 
 **D7. A write reports the range it reached, and a wait decided at the write tests that range against
 the bits it watches in place**, on the words, without materializing either side. Inside a packed
@@ -129,8 +145,11 @@ waits are decided at the write is unchanged
   a packed union read through another member (7.3.1), and a net alias (10.11).
 - **The execution backend generating each container's algorithms per element type**, as clang
   instantiates the C++ backend's templates. Correct and the closest to clang, at the price of a
-  second implementation of every container algorithm, for containers that live in testbenches rather
-  than on the paths a design spends its time in.
+  second implementation of every container algorithm. Revised 2026-11-12: this also said containers
+  live in testbenches rather than on the paths a design spends its time in, which weighed their
+  speed below the requirement that an operation match hand-written code of the same semantics. A
+  dynamic array's and a queue's per-call work is now generated per container type, as MIR both
+  backends compile, which is this alternative without its second implementation.
 - **A description of a type the runtime interprets** (a self-describing value, or a type record the
   runtime walks). The type is known where every operation is compiled, so interpreting it later is
   work the compiler had already done.

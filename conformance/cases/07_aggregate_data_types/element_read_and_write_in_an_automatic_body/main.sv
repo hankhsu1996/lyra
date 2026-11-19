@@ -1,7 +1,7 @@
 // An element of an array an automatic body declares (LRM 6.21) is reached
 // where it lies, for a read and for a write. A read through an index naming no
 // element answers the element default -- for a structure element, each
-// member's declared value (LRM 7.4.6, Table 7-1, 7.2.2), also where the read
+// member's declared value (LRM 7.4.5, Table 7-1, 7.2.2), also where the read
 // goes on into a member of that element -- and allocates nothing. A write
 // through one is ignored. An associative array allocates an entry for a write
 // and for a read-modify-write, which starts from the array's default, and for

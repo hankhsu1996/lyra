@@ -166,8 +166,9 @@ caller's.
 - A closure kept past the statement building it -- by a region, a timer, an observation, an
   assertion's action or a foreign fiber -- is made by a new-expression, and the keeper takes the
   box. That is still one allocation per nonblocking assignment.
-- A closure a sort borrows for its order lies where its value is, in the frame, as D5 said of a
-  borrowed body; it costs no allocation. A `with` clause is no closure at all but a loop at its call
+- A closure lent rather than handed over -- the write-back a reference seen as another type carries
+  -- lies where its value is, in the frame, as D5 said of a borrowed body; it costs no allocation. A
+  sort and a `with` clause make no closure at all: each is a loop at its call
   ([an-array-method-is-a-loop-at-its-call](an-array-method-is-a-loop-at-its-call.md)).
 - A closure started as a coroutine is made by a new-expression and called through its box, which the
   started body takes over as its receiver, so the box ends when the body does. D4's revision kept

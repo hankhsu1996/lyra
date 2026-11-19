@@ -74,6 +74,15 @@ auto DescribeMemory(
         .operands = {},
         .lowest_address = mir::BuildMachineIntLiteral(unit, wrapper, 0)};
   };
+  const auto from_zero_with_no_dimensions = [&](hir::TypeId element) {
+    MemAddressing addressing = from_zero(element);
+    addressing.operands.push_back(wrapper.Add(
+        mir::Expr{
+            .data = mir::CompositeExpr{.parts = {}},
+            .type = mir::MachineArrayOf(
+                unit.types, unit.builtins.machine_int64, 0)}));
+    return addressing;
+  };
   return unit_lowerer.Hir().types.Get(mem_type).Visit(
       Overloaded{
           [&](const hir::UnpackedArrayType&) -> diag::Result<MemAddressing> {
@@ -90,11 +99,15 @@ auto DescribeMemory(
                 .operands = {indices.ranges},
                 .lowest_address = indices.lowest};
           },
+          // A dynamic array and a queue are laid out by their types as a
+          // fixed-size array is, and are handed to the same entry with no
+          // dimensions, which says each is addressed from 0 across the
+          // elements it holds.
           [&](const hir::DynamicArrayType& d) -> diag::Result<MemAddressing> {
-            return from_zero(d.element_type);
+            return from_zero_with_no_dimensions(d.element_type);
           },
           [&](const hir::QueueType& q) -> diag::Result<MemAddressing> {
-            return from_zero(q.element_type);
+            return from_zero_with_no_dimensions(q.element_type);
           },
           [&](const hir::AssociativeArrayType& a)
               -> diag::Result<MemAddressing> {

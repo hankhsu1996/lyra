@@ -46,10 +46,9 @@ using PassMode = std::variant<
 // What a callee is told of a type no argument is a value of: the constant of a
 // type it keeps and acts on, how wide an integral type is and whether it
 // holds x or z, the constant stating a type as the element type of an array,
-// which says how a value of it starts as well (LRM Table 7-1), or the
-// constant stating a queue type, which says that of its elements and how many
-// it may hold (LRM 7.10.5), the type's own function taking some of the
-// positions of a value of it (LRM 10.6.2), the order an associative array
+// which says how a value of it starts as well (LRM Table 7-1), the type's own
+// function taking some of the positions of a value of it (LRM 10.6.2), the
+// order an associative array
 // indexed by `key` holds its entries in, which the library states once for each
 // kind of index (LRM 7.8), or the operations the library compares and streams a
 // value of the type by.
@@ -62,9 +61,6 @@ struct TypeExtentArg {
 struct ElementTypeArg {
   lir::TypeId type;
 };
-struct QueueTypeArg {
-  lir::TypeId type;
-};
 struct TakePositionsArg {
   lir::TypeId type;
 };
@@ -75,8 +71,8 @@ struct OperationsArg {
   lir::TypeId type;
 };
 using TypeArg = std::variant<
-    TypeConstantArg, TypeExtentArg, ElementTypeArg, QueueTypeArg,
-    TakePositionsArg, IndexOrderArg, OperationsArg>;
+    TypeConstantArg, TypeExtentArg, ElementTypeArg, TakePositionsArg,
+    IndexOrderArg, OperationsArg>;
 
 // What a callee takes ahead of the arguments a call states. An entry making
 // storage for the words of a value wider than a word is told how wide the

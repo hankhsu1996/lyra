@@ -66,6 +66,14 @@ discriminator this entry had not identified: the containers that need element id
 those with single-element removal, which LRM gives to the queue and the associative array and to
 neither array. The substrate serves those two.
 
+**Slot recycling did not stay one mechanism either.** On 2026-11-09 a queue's element storage came
+to be taken from the run's recycler for storage of its size and alignment, which takes back what a
+queue lets go of and hands it out again, as LLVM's `RecyclingAllocator` does. A hand-written queue
+allocating each element took 5.6 times the instructions of one recycling them, for `int` elements.
+An associative array's entries are each allocated and freed on their own. What the two share is the
+rest of this entry: storage that never moves while it is a member, and the lease that keeps a
+detached element (D3).
+
 ## Invariants
 
 1. A container holds membership and ordering. It never holds its elements' storage in a place it

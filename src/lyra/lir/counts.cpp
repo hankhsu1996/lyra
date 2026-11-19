@@ -16,7 +16,7 @@ auto CountsOf(const CompilationUnit& unit) -> std::vector<support::Count> {
   // Every member of the unit is taken apart by name, so a member added to it
   // does not compile here until it is said what kind of thing it is, or that
   // it is none.
-  const auto& [name, body_name, types, classes, closures, records, functions, type_operations, type_steps, static_storage, definitions, constants, root] =
+  const auto& [name, body_name, types, classes, closures, records, library_records, functions, type_operations, type_steps, implemented_traits, static_storage, definitions, constants, root] =
       unit;
 
   std::uint64_t operations = 0;
@@ -49,6 +49,10 @@ auto CountsOf(const CompilationUnit& unit) -> std::vector<support::Count> {
   for (const Function& function : functions) {
     coroutines += types.Get(function.result_type).Is<CoroutineType>() ? 1 : 0;
   }
+  std::uint64_t cannot_unwind = 0;
+  for (const FunctionId id : functions.Ids()) {
+    cannot_unwind += functions.Attributes(id).can_unwind ? 0 : 1;
+  }
 
   return {
       {.kind = "classes", .held = classes.size() - declared},
@@ -56,12 +60,14 @@ auto CountsOf(const CompilationUnit& unit) -> std::vector<support::Count> {
       {.kind = "members", .held = members},
       {.kind = "functions", .held = functions.size()},
       {.kind = "coroutines", .held = coroutines},
+      {.kind = "functions that cannot unwind", .held = cannot_unwind},
       {.kind = "closures", .held = closures.size()},
       {.kind = "captures", .held = captures},
       {.kind = "records", .held = records.size()},
       {.kind = "type operations", .held = operations},
       {.kind = "type operations of arrays", .held = operations_of_arrays},
       {.kind = "type steps", .held = type_steps.size()},
+      {.kind = "implemented traits", .held = implemented_traits.size()},
       {.kind = "static storage", .held = static_storage.size()},
       {.kind = "definitions", .held = definitions.size()},
       {.kind = "constants", .held = constants.size()},

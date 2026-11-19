@@ -48,12 +48,10 @@ auto ToldOfType(std::optional<lir::TypeId> stated, std::string_view what)
 auto BuiltArrayTypeArgs(const lir::TypePool& types, lir::TypeId built)
     -> std::vector<TypeArg> {
   const lir::Type& array = types.Get(built);
-  if (array.Is<lir::UnpackedArrayType>()) {
+  // A fixed-size array is told its whole type, and so is a queue, whose bound
+  // is part of it (LRM 7.10).
+  if (array.Is<lir::UnpackedArrayType>() || array.IsQueue()) {
     return {TypeConstantArg{.type = built}};
-  }
-  // A queue is told its whole type, whose bound is part of it (LRM 7.10).
-  if (array.IsQueue()) {
-    return {QueueTypeArg{.type = built}};
   }
   const std::optional<lir::TypeId> element = array.ContainerElementType();
   if (!element.has_value()) {

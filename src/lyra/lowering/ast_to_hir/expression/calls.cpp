@@ -420,7 +420,7 @@ auto BuiltinCall(
     support::BuiltinFn method, std::vector<std::optional<hir::ExprId>> operands)
     -> hir::CallExpr {
   const support::RuntimeEntry entry = support::RuntimeEntryOf(method);
-  if (std::holds_alternative<support::StaticFactory>(entry.declaration) ||
+  if (!support::ActsOnAnObject(entry.declaration) ||
       entry.acts_on_object_as.has_value()) {
     return hir::CallExpr{
         .callee =

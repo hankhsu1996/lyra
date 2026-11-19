@@ -72,7 +72,7 @@ TEST(CppBackendRefusal, ANodeWithNoFormIsReportedAsUnsupported) {
             mir::Type{mir::RealType{.width = support::FloatWidth::k64}});
       });
   diag::DiagnosticSink refusals;
-  std::ignore = EmitCppUnit(refused, refusals);
+  std::ignore = EmitCppUnit(refused, {}, refusals);
   ASSERT_EQ(refusals.Diagnostics().size(), kWrittenAt.size());
   for (const auto& [refusal, written_at] :
        std::views::zip(refusals.Diagnostics(), kWrittenAt)) {
@@ -89,7 +89,7 @@ TEST(CppBackendRefusal, ANodeWithNoFormIsReportedAsUnsupported) {
                 mir::UnmanagedRefType{.pointee = unit.builtins.void_type}});
       });
   diag::DiagnosticSink none;
-  std::ignore = EmitCppUnit(written, none);
+  std::ignore = EmitCppUnit(written, {}, none);
   EXPECT_FALSE(none.HasErrors());
 }
 

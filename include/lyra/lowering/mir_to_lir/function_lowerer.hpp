@@ -6,6 +6,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -489,10 +490,16 @@ class FunctionLowerer {
       const mir::Block& block, const mir::NewExpr& allocation,
       mir::TypeId owner) -> diag::Result<lir::Operand>;
   // A placement new-expression: storage from the allocation function it names,
-  // which owns it, initialized from the initializer and answered as it is.
+  // which owns it, or where the reserved placement form's one argument points,
+  // initialized from the initializer and answered as it is; and the call of
+  // that allocation function, handed the placement arguments `arguments` and
+  // then the size and the alignment of a value of `held`.
   auto LowerPlacementNew(
       const mir::Block& block, const mir::NewExpr& allocation, lir::TypeId held)
       -> diag::Result<lir::Operand>;
+  auto Allocated(
+      const mir::NewExpr& allocation, std::vector<lir::Operand> arguments,
+      lir::TypeId held) -> diag::Result<lir::Operand>;
   // An object of `object_type` created whole, which runs none of the design's
   // code, and held by `owner` from there: where it lies, and the hold.
   struct CreatedObject {
@@ -547,6 +554,15 @@ class FunctionLowerer {
   auto ObjectAddress(const mir::Block& block, mir::ExprId reaches)
       -> diag::Result<lir::Operand>;
   auto LowerAssign(const mir::Block& block, const mir::AssignExpr& assign)
+      -> diag::Result<lir::Operand>;
+  // A run of elements written on the array a write in progress designates
+  // (LRM 7.6), by `target`, the array type's slice write: the designation
+  // opened once, the body handed the part where it lies, nothing of it kept,
+  // and the write told the positions the body answers it changed, which is
+  // what this answers too.
+  auto LowerRunWrittenOnDesignation(
+      const mir::Block& block, const mir::CallExpr& call,
+      const mir::TypeOperationTarget& target, mir::TypeId type)
       -> diag::Result<lir::Operand>;
   // A method that changes the object it is applied to. The entry changes the
   // object where it lies, and answers with whatever result of its own the

@@ -52,12 +52,10 @@ struct StepToBits {
   std::optional<TagInBits> required_tag = std::nullopt;
 };
 
-// Elements of a fixed-size or dynamic array in a row (LRM 7.4.6): where they
-// start in the array's own numbering, and how many there are. The part's type
-// fixes the count, so it is a number rather than a value the program computes.
+// Elements of a fixed-size or dynamic array in a row (LRM 7.4.6), as many as
+// the part's type holds: where they start in the array's own numbering.
 struct StepToElementRun {
   mir::ExprId start;
-  std::uint64_t count = 0;
 };
 
 // One element of a container that numbers its elements, at the position the
@@ -293,9 +291,10 @@ using HoldLease = std::function<mir::ExprId(mir::ExprId leased)>;
     const mir::CompilationUnit& unit, mir::Builder block,
     const AccessPath& path, const HoldLease& hold) -> mir::ExprId;
 
-// The reference the read form of an element step answers on `receiver`, whose
-// dereference is the element: what a block of steps yields where the element
-// is reached after the block, the receiver outliving it.
+// What the read form of an element step answers on `receiver`, whose
+// dereference is the element -- where the array's own body says it lies, or
+// a reference to it: what a block of steps yields where the element is reached
+// after the block, the receiver outliving it.
 [[nodiscard]] auto ElementReference(
     const mir::CompilationUnit& unit, mir::Builder block,
     const DescentStep& step, mir::ExprId receiver) -> mir::Expr;

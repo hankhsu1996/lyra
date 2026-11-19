@@ -21,10 +21,7 @@
 #include "lyra/value/formation.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_value_type.hpp"
-#include "lyra/value/integral_words.hpp"
 #include "lyra/value/library_value_types.hpp"
-#include "lyra/value/queue_type.hpp"
-#include "lyra/value/runtime_queue.hpp"
 #include "lyra/value/string.hpp"
 #include "lyra/value/value_type.hpp"
 #include "tests/base/written_at.hpp"
@@ -89,26 +86,27 @@ struct ArrayWitnesses {
   static void Copy(const ValueType& type, const void* value, void* out) {
     const FixedArrayType& array = ArrayOf(type);
     array.BuildEach(out, [&](std::size_t i, void* element) {
-      ElementOf(type).Copy(array.ElementAt(value, i), element);
+      ElementOf(type).Copy(array.GetUnchecked(value, i), element);
     });
   }
-  static void Move(const ValueType& type, void* value, void* out) noexcept {
+  static void Relocate(const ValueType& type, void* value, void* out) noexcept {
     const FixedArrayType& array = ArrayOf(type);
     for (std::size_t i = 0; i < array.Count(); ++i) {
-      ElementOf(type).Move(array.ElementAt(value, i), array.ElementAt(out, i));
+      ElementOf(type).Relocate(
+          array.GetUnchecked(value, i), array.GetUnchecked(out, i));
     }
   }
   static void Destroy(const ValueType& type, void* value) noexcept {
     const FixedArrayType& array = ArrayOf(type);
     for (std::size_t i = 0; i < array.Count(); ++i) {
-      ElementOf(type).Destroy(array.ElementAt(value, i));
+      ElementOf(type).Destroy(array.GetUnchecked(value, i));
     }
   }
   static void Assign(const ValueType& type, void* storage, const void* value) {
     const FixedArrayType& array = ArrayOf(type);
     for (std::size_t i = 0; i < array.Count(); ++i) {
       ElementOf(type).Assign(
-          array.ElementAt(storage, i), array.ElementAt(value, i));
+          array.GetUnchecked(storage, i), array.GetUnchecked(value, i));
     }
   }
   static auto BitIdentical(
@@ -116,7 +114,7 @@ struct ArrayWitnesses {
     const FixedArrayType& array = ArrayOf(type);
     return Every(type, [&](std::size_t i) {
       return ElementOf(type).BitIdentical(
-          array.ElementAt(lhs, i), array.ElementAt(rhs, i));
+          array.GetUnchecked(lhs, i), array.GetUnchecked(rhs, i));
     });
   }
 
@@ -163,7 +161,7 @@ void BuildCounting(const FixedArrayType& type, void* out, std::int64_t first) {
 
 auto NumberAt(const FixedArrayType& type, const void* array, std::size_t i)
     -> std::int64_t {
-  return static_cast<const Element*>(type.ElementAt(array, i))->ToInt64();
+  return static_cast<const Element*>(type.GetUnchecked(array, i))->ToInt64();
 }
 
 auto CountingArray(const FixedArrayType& type, std::int64_t first)
@@ -216,14 +214,14 @@ class CountedElementType {
   Lifecycle* counts_;
 };
 
-// A copy and an ending are counted, a move and an assignment are the byte's
-// own, and nothing else is asked of an element here.
+// A copy and an ending are counted, a relocation and an assignment are the
+// byte's own, and nothing else is asked of an element here.
 struct CountedWitnesses : NothingAsked {
   static constexpr auto Copy = &CountedElementType::Copy;
   static constexpr auto Destroy = &CountedElementType::Destroy;
-  static constexpr auto Move = [](const ValueType&, void* value,
-                                  void* out) noexcept {
-    IntegralValueType::Of<Element>().Type().Move(value, out);
+  static constexpr auto Relocate = [](const ValueType&, void* value,
+                                      void* out) noexcept {
+    IntegralValueType::Of<Element>().Type().Relocate(value, out);
   };
   static constexpr auto Assign = [](const ValueType&, void* storage,
                                     const void* value) {
@@ -249,7 +247,7 @@ TEST(FixedArrayType, AnArrayIsItsElementsWhereItLiesAtEverySize) {
 
     const Storage array(type.Type());
     BuildCounting(type, array.Bytes(), 10);
-    EXPECT_EQ(type.ElementAt(array.Bytes(), 0), array.Bytes());
+    EXPECT_EQ(type.GetUnchecked(array.Bytes(), 0), array.Bytes());
     EXPECT_EQ(NumberAt(type, array.Bytes(), 3), 13);
     type.Type().Destroy(array.Bytes());
   }
@@ -308,7 +306,7 @@ TEST(FixedArrayType, AnIndexNamingNoElementLandsInTheDiscardedWrite) {
   Formation formed = Formation::kMade;
   EXPECT_EQ(
       type.ElementMut(array.Bytes(), 2, formed),
-      type.ElementAt(array.Bytes(), 2));
+      type.GetUnchecked(array.Bytes(), 2));
   EXPECT_EQ(formed, Formation::kExisting);
   for (const std::optional<std::int64_t> position :
        {std::optional<std::int64_t>{3}, std::optional<std::int64_t>{-1},
@@ -370,45 +368,6 @@ TEST(ElementType, BuildsItsDefaultOnceAndResetsTheDiscardedWrite) {
   EXPECT_EQ(Builds().count, 2U);
 }
 
-TEST(FixedArrayType, ASliceAssignmentWritesTheElementsItReaches) {
-  const FixedArrayType type(kArrayWitnesses, ElementTypeOf<Element>(), 5);
-  const Storage array(type.Type());
-  BuildCounting(type, array.Bytes(), 0);
-  const std::array<Element, 3> values{
-      Element::FromInt(20), Element::FromInt(21), Element::FromInt(22)};
-  const std::array<const void*, 3> replacement{
-      values.data(), &values[1], &values[2]};
-  const void* second = type.ElementAt(array.Bytes(), 1);
-
-  // Wholly inside the array: the window changes and nothing beside it does,
-  // and writing the same values again changes nothing.
-  EXPECT_TRUE(type.AssignSlice(array.Bytes(), 1, 3, replacement));
-  EXPECT_EQ(NumberAt(type, array.Bytes(), 0), 0);
-  EXPECT_EQ(NumberAt(type, array.Bytes(), 1), 20);
-  EXPECT_EQ(NumberAt(type, array.Bytes(), 3), 22);
-  EXPECT_EQ(NumberAt(type, array.Bytes(), 4), 4);
-  EXPECT_EQ(type.ElementAt(array.Bytes(), 1), second);
-  EXPECT_FALSE(type.AssignSlice(array.Bytes(), 1, 3, replacement));
-
-  // Partly past either end: each element in the array takes the replacement
-  // at its own place in the window.
-  EXPECT_TRUE(type.AssignSlice(array.Bytes(), 3, 3, replacement));
-  EXPECT_EQ(NumberAt(type, array.Bytes(), 3), 20);
-  EXPECT_EQ(NumberAt(type, array.Bytes(), 4), 21);
-  EXPECT_TRUE(type.AssignSlice(array.Bytes(), -2, 3, replacement));
-  EXPECT_EQ(NumberAt(type, array.Bytes(), 0), 22);
-  EXPECT_EQ(NumberAt(type, array.Bytes(), 1), 20);
-
-  // Wholly outside, or from a start naming no position: nothing is written.
-  EXPECT_FALSE(type.AssignSlice(array.Bytes(), 5, 3, replacement));
-  EXPECT_FALSE(type.AssignSlice(array.Bytes(), std::nullopt, 3, replacement));
-  EXPECT_EQ(NumberAt(type, array.Bytes(), 0), 22);
-  EXPECT_EQ(NumberAt(type, array.Bytes(), 2), 21);
-  EXPECT_EQ(NumberAt(type, array.Bytes(), 4), 21);
-
-  type.Type().Destroy(array.Bytes());
-}
-
 TEST(FixedArrayType, HoldsElementsThatOwnStorage) {
   const FixedArrayType type(kArrayWitnesses, ElementTypeOf<String>(), 3);
   const std::string text(200, 'a');
@@ -420,7 +379,7 @@ TEST(FixedArrayType, HoldsElementsThatOwnStorage) {
   type.Type().Copy(array.Bytes(), copy.Bytes());
   for (std::size_t i = 0; i < type.Count(); ++i) {
     EXPECT_EQ(
-        static_cast<const String*>(type.ElementAt(copy.Bytes(), i))->View(),
+        static_cast<const String*>(type.GetUnchecked(copy.Bytes(), i))->View(),
         text);
   }
 
@@ -439,7 +398,8 @@ TEST(LaidOutValue, HoldsACopyInStorageOfItsOwn) {
     EXPECT_EQ(copy.Type().AsFixedArray(), &type);
     EXPECT_NE(copy.Bytes(), laid_out.Bytes());
     EXPECT_NE(
-        type.ElementAt(copy.Bytes(), 0), type.ElementAt(laid_out.Bytes(), 0));
+        type.GetUnchecked(copy.Bytes(), 0),
+        type.GetUnchecked(laid_out.Bytes(), 0));
     EXPECT_EQ(NumberAt(type, copy.Bytes(), 3), 33);
     EXPECT_TRUE(copy.IsBitIdenticalTo(laid_out.Bytes()));
 
@@ -478,10 +438,10 @@ TEST(LaidOutValue, IsBuiltFromElementsTextAndBits) {
   EXPECT_EQ(NumberAt(type, from_string.Bytes(), 0), 'A');
   EXPECT_EQ(NumberAt(type, from_string.Bytes(), 1), 'B');
   EXPECT_TRUE(
-      static_cast<const Element*>(type.ElementAt(from_string.Bytes(), 2))
+      static_cast<const Element*>(type.GetUnchecked(from_string.Bytes(), 2))
           ->HasUnknown());
   EXPECT_TRUE(
-      static_cast<const Element*>(type.ElementAt(from_string.Bytes(), 3))
+      static_cast<const Element*>(type.GetUnchecked(from_string.Bytes(), 3))
           ->HasUnknown());
 
   const LogicVector<16> literal = LogicVector<16>::FromInt(0x4142);
@@ -499,12 +459,12 @@ TEST(LaidOutValue, AnAssignmentKeepsEveryElementWhereItLies) {
     const FixedArrayType type(kArrayWitnesses, ElementTypeOf<Element>(), count);
     LaidOutValue held = CountingArray(type, 0);
     const void* bytes = held.Bytes();
-    const void* third = type.ElementAt(held.Bytes(), 2);
+    const void* third = type.GetUnchecked(held.Bytes(), 2);
 
     const LaidOutValue source = CountingArray(type, 50);
     held = source;
     EXPECT_EQ(held.Bytes(), bytes);
-    EXPECT_EQ(type.ElementAt(held.Bytes(), 2), third);
+    EXPECT_EQ(type.GetUnchecked(held.Bytes(), 2), third);
     EXPECT_EQ(NumberAt(type, held.Bytes(), 2), 52);
     EXPECT_EQ(held.Type().AsFixedArray(), &type);
 
@@ -513,7 +473,7 @@ TEST(LaidOutValue, AnAssignmentKeepsEveryElementWhereItLies) {
     EXPECT_FALSE(held.IsBitIdenticalTo(laid_out.Bytes()));
     held.AssignBytes(laid_out.Bytes());
     EXPECT_TRUE(held.IsBitIdenticalTo(laid_out.Bytes()));
-    EXPECT_EQ(type.ElementAt(held.Bytes(), 2), third);
+    EXPECT_EQ(type.GetUnchecked(held.Bytes(), 2), third);
     EXPECT_EQ(NumberAt(type, held.Bytes(), 2), 82);
 
     // The bytes handed in may be the ones held.
@@ -533,36 +493,21 @@ TEST(LaidOutValue, LaysItsArrayOutWhereItIsAsked) {
     const Storage copied(type.Type());
     EXPECT_EQ(held.CopyInto(copied.Bytes()), copied.Bytes());
     EXPECT_NE(
-        type.ElementAt(copied.Bytes(), 0), type.ElementAt(held.Bytes(), 0));
+        type.GetUnchecked(copied.Bytes(), 0),
+        type.GetUnchecked(held.Bytes(), 0));
     EXPECT_EQ(NumberAt(type, copied.Bytes(), 3), 63);
     EXPECT_EQ(NumberAt(type, held.Bytes(), 3), 63);
 
     const Storage moved(type.Type());
-    EXPECT_EQ(std::move(held).MoveInto(moved.Bytes()), moved.Bytes());
+    EXPECT_EQ(std::move(held).RelocateInto(moved.Bytes()), moved.Bytes());
     EXPECT_EQ(NumberAt(type, moved.Bytes(), 3), 63);
     EXPECT_NE(
-        type.ElementAt(moved.Bytes(), 0), type.ElementAt(copied.Bytes(), 0));
+        type.GetUnchecked(moved.Bytes(), 0),
+        type.GetUnchecked(copied.Bytes(), 0));
 
     type.Type().Destroy(copied.Bytes());
     type.Type().Destroy(moved.Bytes());
   }
-}
-
-TEST(RuntimeQueue, HoldsTheBoundItsTypeStates) {
-  const QueueType bounded(ElementTypeOf<Element>(), 1);
-  const QueueType unbounded(ElementTypeOf<Element>(), -1);
-  const std::array<Element, 3> values{
-      Element::FromInt(1), Element::FromInt(2), Element::FromInt(3)};
-  const std::array<const void*, 3> items{values.data(), &values[1], &values[2]};
-
-  // LRM 7.10.5: no element past index 1 is kept, however the queue grows.
-  RuntimeQueue held = RuntimeQueue::FromElements(bounded, items);
-  EXPECT_EQ(held.Count(), 2U);
-  held.PushBack(&values[2]);
-  EXPECT_EQ(held.Count(), 2U);
-
-  // A queue of a type with no bound keeps every element it is built over.
-  EXPECT_EQ(RuntimeQueue::FromElements(unbounded, items).Count(), 3U);
 }
 
 }  // namespace

@@ -9,7 +9,15 @@
 // element of an unpacked array and a field of an unpacked struct are the same
 // requirement over parts that are not bit ranges: the expression's value is
 // that one part, so a write to a sibling part changes an operand of the
-// expression and not its result, which is no event.
+// expression and not its result, which is no event. A slice written over
+// several elements at once is one assignment (LRM 7.6) and the same holds of
+// each element it reaches: a wait on an element the slice changed resumes,
+// wherever in the slice that element lies, whatever part of the slice falls
+// outside the array (LRM 7.4.5), and whether the slice is of a fixed-size or a
+// dynamic array or lies within an element of another array, while a wait on an
+// element of the slice that kept its value does not. A queue's slice is the
+// elements between two positions, clamped to the queue (LRM 7.10.1), and is
+// held to the same rule.
 typedef enum logic [1:0] {Red, Green, Blue} colour_t;
 
 typedef struct {
@@ -33,6 +41,13 @@ module Top;
   int mem[0:7];
   pair_t pair;
 
+  int run_fixed[0:7];
+  int run_dynamic[] = '{0, 0, 0, 0, 0, 0, 0, 0};
+  int run_low[0:3];
+  int run_grid[0:1][0:3];
+  int run_queue[$] = '{0, 0, 0, 0, 0, 0};
+  int low = -2;
+
   time changing_at;
   int repeated_wakes;
   time repeated_last_at;
@@ -47,6 +62,18 @@ module Top;
   time offset_at;
   time mem_at;
   time pair_at;
+  time run_fixed_first_at;
+  time run_fixed_kept_at = 0;
+  time run_fixed_last_at;
+  time run_dynamic_first_at;
+  time run_dynamic_kept_at = 0;
+  time run_dynamic_last_at;
+  time run_low_at;
+  time run_grid_kept_at = 0;
+  time run_grid_last_at;
+  time run_queue_first_at;
+  time run_queue_kept_at = 0;
+  time run_queue_last_at;
 
   initial begin
     @(changing);
@@ -114,6 +141,66 @@ module Top;
   end
 
   initial begin
+    @(run_fixed[2]);
+    run_fixed_first_at = $time;
+  end
+
+  initial begin
+    @(run_fixed[3]);
+    run_fixed_kept_at = $time;
+  end
+
+  initial begin
+    @(run_fixed[4]);
+    run_fixed_last_at = $time;
+  end
+
+  initial begin
+    @(run_dynamic[1]);
+    run_dynamic_first_at = $time;
+  end
+
+  initial begin
+    @(run_dynamic[2]);
+    run_dynamic_kept_at = $time;
+  end
+
+  initial begin
+    @(run_dynamic[3]);
+    run_dynamic_last_at = $time;
+  end
+
+  initial begin
+    @(run_low[0]);
+    run_low_at = $time;
+  end
+
+  initial begin
+    @(run_grid[1][1]);
+    run_grid_kept_at = $time;
+  end
+
+  initial begin
+    @(run_grid[1][3]);
+    run_grid_last_at = $time;
+  end
+
+  initial begin
+    @(run_queue[0]);
+    run_queue_first_at = $time;
+  end
+
+  initial begin
+    @(run_queue[1]);
+    run_queue_kept_at = $time;
+  end
+
+  initial begin
+    @(run_queue[2]);
+    run_queue_last_at = $time;
+  end
+
+  initial begin
     #5;
     descending = 8'b0010_1000;
     two_dimensional[0] = 8'hFF;
@@ -132,6 +219,11 @@ module Top;
     mem[3] = 7;
     pair.watched = 7;
     repeated = 1'b1;
+    run_fixed[2:4] = '{5, 0, 6};
+    run_dynamic[1:3] = '{5, 0, 6};
+    run_low[low+:3] = '{1, 2, 3};
+    run_grid[1][1:3] = '{0, 0, 9};
+    run_queue[-2:2] = '{5, 0, 6};
     #5;
     text = "y";
     number = 1.0;
@@ -172,6 +264,32 @@ module Top;
       $fatal(1, "offset_at was %0d, expected 10", offset_at);
     if (mem_at !== 10) $fatal(1, "mem_at was %0d, expected 10", mem_at);
     if (pair_at !== 10) $fatal(1, "pair_at was %0d, expected 10", pair_at);
+    if (run_fixed_first_at !== 10 || run_fixed_last_at !== 10)
+      $fatal(1, "a fixed-size array's slice woke its first and last elements at %0d and %0d, expected 10",
+             run_fixed_first_at, run_fixed_last_at);
+    if (run_fixed_kept_at !== 0)
+      $fatal(1, "a fixed-size array's slice woke an element it kept at %0d",
+             run_fixed_kept_at);
+    if (run_dynamic_first_at !== 10 || run_dynamic_last_at !== 10)
+      $fatal(1, "a dynamic array's slice woke its first and last elements at %0d and %0d, expected 10",
+             run_dynamic_first_at, run_dynamic_last_at);
+    if (run_dynamic_kept_at !== 0)
+      $fatal(1, "a dynamic array's slice woke an element it kept at %0d",
+             run_dynamic_kept_at);
+    if (run_low_at !== 10)
+      $fatal(1, "a slice starting below the array woke its one element at %0d, expected 10",
+             run_low_at);
+    if (run_grid_last_at !== 10)
+      $fatal(1, "a slice within an element woke its last element at %0d, expected 10",
+             run_grid_last_at);
+    if (run_grid_kept_at !== 0)
+      $fatal(1, "a slice within an element woke an element it kept at %0d",
+             run_grid_kept_at);
+    if (run_queue_first_at !== 10 || run_queue_last_at !== 10)
+      $fatal(1, "a queue's slice woke its first and last elements at %0d and %0d, expected 10",
+             run_queue_first_at, run_queue_last_at);
+    if (run_queue_kept_at !== 0)
+      $fatal(1, "a queue's slice woke an element it kept at %0d", run_queue_kept_at);
     $display("All checks passed");
   end
 endmodule

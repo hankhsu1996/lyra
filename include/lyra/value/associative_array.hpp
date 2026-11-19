@@ -56,9 +56,6 @@ struct StaticKey {
 template <typename K, typename V>
 class AssociativeArray {
  public:
-  using KeyType = K;
-  using ElementType = V;
-
   AssociativeArray() = default;
 
   // LRM 7.9.11 associative literal `'{key: value, ...}`: the (key, value)
@@ -79,32 +76,6 @@ class AssociativeArray {
     AssociativeArray result;
     result.core_ = core_.WithDefault(&stated_default);
     return result;
-  }
-
-  // LRM 7.9.9, 7.10.5: an array of this type built out of one whose elements
-  // differ from `V` only in their queues' bounds: every entry, and the value
-  // an absent key reads where the source was given one, each built afresh as a
-  // `V`.
-  template <typename U>
-  [[nodiscard]] static auto FromBoundFree(
-      const AssociativeArray<K, U>& source, base::SourceLocation at)
-      -> AssociativeArray {
-    const base::SourceLocationScope bound(at);
-    AssociativeArray result;
-    source.ForEachEntry([&](const K& key, const U& element) {
-      const V converted = detail::ElementAs<V>(element);
-      result.core_.Store(key, &converted);
-    });
-    if (!source.HasStatedDefault()) {
-      return result;
-    }
-    return result.WithDefault(detail::ElementAs<V>(source.AbsentValue()));
-  }
-
-  // This array as a value of `R`, the same array with no queue in it bounded.
-  template <typename R>
-  [[nodiscard]] auto ToBoundFree(base::SourceLocation at) const -> R {
-    return R::FromBoundFree(*this, at);
   }
 
   // Whether the array was given a value of its own for an absent key, and the
@@ -224,13 +195,10 @@ class AssociativeArray {
     return Visited(std::move(probe), std::move(visited));
   }
 
-  [[nodiscard]] auto operator==(const AssociativeArray& other) const ->
-      typename StaticElem<V>::Equality {
-    return StaticElem<V>::Equality::Filled(
-        core_.Equal(other.core_, core_.Element()));
+  [[nodiscard]] auto operator==(const AssociativeArray& other) const {
+    return EqualityOf<V>::Filled(core_.Equal(other.core_, core_.Element()));
   }
-  [[nodiscard]] auto operator!=(const AssociativeArray& other) const ->
-      typename StaticElem<V>::Equality {
+  [[nodiscard]] auto operator!=(const AssociativeArray& other) const {
     return !(*this == other);
   }
   [[nodiscard]] auto CaseEqual(const AssociativeArray& other) const -> Bit {

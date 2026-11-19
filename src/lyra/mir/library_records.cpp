@@ -12,7 +12,9 @@
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/support/library_decl.hpp"
 #include "lyra/value/constant_span.hpp"
+#include "lyra/value/container_core.hpp"
 #include "lyra/value/object_ref.hpp"
+#include "lyra/value/value_type.hpp"
 
 namespace lyra::mir {
 
@@ -82,6 +84,10 @@ auto MirTypeOf(const TypePool& types) -> TypeId {
     return VoidPointer(types, Mutability::kReadOnly);
   } else if constexpr (std::is_same_v<Field, void*>) {
     return VoidPointer(types, Mutability::kMutable);
+  } else if constexpr (std::is_same_v<Field, const value::ValueType*>) {
+    // The library's own description of a type, which generated code only
+    // hands back to it.
+    return VoidPointer(types, Mutability::kReadOnly);
   } else if constexpr (std::is_same_v<Field, runtime::GcObject*>) {
     return ObjectRootPointer(types);
   } else if constexpr (std::is_same_v<Field, runtime::Scope*>) {
@@ -138,6 +144,15 @@ auto MirTypeOf(const TypePool& types) -> TypeId {
                     types),
             .ownership = PointerOwnership::kBorrowed,
             .mutability = Mutability::kReadOnly}});
+  } else if constexpr (
+      std::is_pointer_v<Field> &&
+      !std::is_const_v<std::remove_pointer_t<Field>> &&
+      !std::is_function_v<std::remove_pointer_t<Field>>) {
+    return types.Intern(
+        Type{PointerType{
+            .pointee = MirTypeOf<std::remove_pointer_t<Field>>(types),
+            .ownership = PointerOwnership::kBorrowed,
+            .mutability = Mutability::kMutable}});
   } else {
     static_assert(
         false,

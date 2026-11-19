@@ -17,7 +17,6 @@
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/library_decl.hpp"
 #include "lyra/support/movability.hpp"
-#include "lyra/support/value_operation.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_words.hpp"
 
@@ -65,6 +64,16 @@ auto StateDomainOf(IntegralStateKind state) -> value::StateDomain {
       return value::StateDomain::kTwoState;
     case IntegralStateKind::kFourState:
       return value::StateDomain::kFourState;
+  }
+  throw InternalError("mir: unknown integral state kind");
+}
+
+auto IsFourState(IntegralStateKind state) -> bool {
+  switch (state) {
+    case IntegralStateKind::kTwoState:
+      return false;
+    case IntegralStateKind::kFourState:
+      return true;
   }
   throw InternalError("mir: unknown integral state kind");
 }
@@ -325,7 +334,7 @@ auto Type::IsAggregateOrLibraryValue() const -> bool {
           [](const ErasedValueType&) { return false; },
           // A type the library declares says whether a value of it lies in
           // storage of its own its holder keeps a claim on.
-          [](const LibraryType& t) { return support::IsDomainObject(t.decl); },
+          [](const LibraryType& t) { return support::IsHeldValue(t.decl); },
 
           // A class handle is one of these and a reference owning nothing is
           // not, which LRM 8.4 Table 8-1 states directly: an unreferenced
@@ -633,35 +642,9 @@ auto IsDataType(const TypePool& types, TypeId type) -> bool {
           [](const ErasedCallableType&) { return false; }});
 }
 
-auto TypeOperationKindOf(
-    const TypePool& types, TypeId type, support::ValueOperation answers)
-    -> std::optional<TypeOperationKind> {
-  using Kind = std::optional<TypeOperationKind>;
-  const Type& stated = types.Get(type);
-  const auto passage = [&](TypeOperationKind kind) -> Kind {
-    return stated.ContainerElementType().has_value() ? Kind{kind}
-                                                     : std::nullopt;
-  };
-  if (answers == support::ValueOperation{support::BuiltinFn::kToBoundFree}) {
-    return passage(TypeOperationKind::kToBoundFree);
-  }
-  if (answers == support::ValueOperation{support::BuiltinFn::kFromBoundFree}) {
-    return passage(TypeOperationKind::kFromBoundFree);
-  }
-  const bool is_default =
-      answers == support::ValueOperation{support::BuiltinFn::kDeclaredDefault};
-  const std::optional<StructuralOperationsType> structural =
-      StructuralOperationsTypeOf(stated);
-  // An array builds its default as it builds its other operations, element by
-  // element. A tuple's is the sum of its components', as any data type's.
-  if (structural == StructuralOperationsType::kFixedArray ||
-      (structural == StructuralOperationsType::kTuple && !is_default)) {
-    return TypeOperationKind::kStructural;
-  }
-  if (is_default && IsDataType(types, type)) {
-    return TypeOperationKind::kDefault;
-  }
-  return std::nullopt;
+auto IsLaidOutContainer(const TypePool& types, TypeId type) -> bool {
+  const auto* library = types.Get(type).As<LibraryType>();
+  return library != nullptr && support::IsLaidOutByItsType(library->decl);
 }
 
 auto StructuralOperationsTypeOf(const Type& type)

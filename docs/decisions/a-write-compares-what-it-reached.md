@@ -1,6 +1,7 @@
 # A write compares what it reached
 
-Date: 2026-09-25 Status: accepted. Completes, for a write through a capability wrapper,
+Date: 2026-09-25 Status: accepted. Revised 2026-11-06: a slice write says which elements it changed.
+Completes, for a write through a capability wrapper,
 [owner-transition-and-observation](owner-transition-and-observation.md) D3 and D4 on both backends,
 over the place steps of
 [a-part-of-storage-is-reached-where-it-lies](a-part-of-storage-is-reached-where-it-lies.md).
@@ -52,13 +53,24 @@ part tells the write what forming it did.**
   program keeps, so LRM 13.5.2, which keeps a reference off a member, does not reach it. This
   revises the earlier rule that landed a member write on the union and took the member as a field
   step, which kept and compared the whole union for a write of one member.
-- **An element step and a slice step taken within a write report to it.** Forming an element can
-  change the variable whatever is then written -- an associative array entry allocated by being
-  written (LRM 7.8.7), a queue element appended at `$+1` (LRM 7.10.1) -- or reach no part of it at
-  all, where an invalid index makes the write ignored (LRM 7.4.6). The element cannot say which, so
-  the step does, and the write takes the answer from there without comparing anything. A slice write
-  compares each element before writing it and says whether one moved. A component is formed by
-  nothing, so its step has nothing to tell.
+- **An element step taken within a write reports to it.** Forming an element can change the variable
+  whatever is then written -- an associative array entry allocated by being written (LRM 7.8.7), a
+  queue element appended at `$+1` (LRM 7.10.1) -- or reach no part of it at all, where an invalid
+  index makes the write ignored (LRM 7.4.5). The element cannot say which, so the step does, and the
+  write takes the answer from there without comparing anything. A component is formed by nothing, so
+  its step has nothing to tell.
+- **A slice write within a write answers what it changed, and the write is told that answer and
+  nothing else** (revised 2026-11-06). The slice write compares each element before writing it, so
+  it alone knows which took a different value; it answers the positions from the first of them to
+  one past the last, the same position twice where none did, and an answer of no elements settles
+  the write unchanged. Its operands are where the slice starts and the values, handed on unread,
+  since how many elements it takes is its type's; a queue's slice write is handed instead the two
+  positions it clamps (LRM 7.10.1) and where the write was written, since it reports a value of
+  another count. This revises the earlier answer, whether any element moved, beside which the write
+  was told the slice's start and count read back off the call's operands -- a second reading of
+  operands the call had already handed over, and a run wider than what changed. A slice write is no
+  step: its work is the array type's own operation rather than the library's, so below MIR it is the
+  part the designation names, that operation on it, and the telling.
 - **The write and a place designated within it are two types.** The write is held by the writer and
   ended with the full-expression, which is when it reports, and it names no place itself; a
   designation -- of the whole, or of a part -- borrows the write and ends with nothing to do. Every

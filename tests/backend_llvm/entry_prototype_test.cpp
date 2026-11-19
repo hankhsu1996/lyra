@@ -631,9 +631,8 @@ auto DeclaredRealizations() -> Realizations {
     holder(op, support::AnswerTold::kNothing);
   }
   for (const lir::OpenWriteTarget::Op op :
-       {lir::OpenWriteTarget::Op::kLand,
-        lir::OpenWriteTarget::Op::kAssignElementSlice,
-        lir::OpenWriteTarget::Op::kAssignQueueSlice}) {
+       {lir::OpenWriteTarget::Op::kLand, lir::OpenWriteTarget::Op::kDesignated,
+        lir::OpenWriteTarget::Op::kMoved}) {
     holder(op, support::AnswerTold::kNothing);
   }
   // The entry building a member's storage, for each kind of storage that holds
@@ -775,7 +774,7 @@ TEST(EntryPrototypeTest, AnUnstatedRealizationIsRefused) {
       RuntimeSymbol(support::ValueDomain::kBit8, RuntimeOp::kCopy),
       InternalError);
   EXPECT_NO_THROW(
-      RuntimeSymbol(support::ValueDomain::kQueue, support::BuiltinFn::kSize));
+      RuntimeSymbol(support::ValueDomain::kLaidOut, support::BuiltinFn::kSize));
 }
 
 // The comparison refuses a declaration that leaves out a reading the prototype

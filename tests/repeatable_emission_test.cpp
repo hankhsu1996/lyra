@@ -35,8 +35,10 @@
 #include <fmt/format.h>
 
 #include "conformance/framework/case.hpp"
+#include "lyra/backend/cpp/type_operation_bodies.hpp"
 #include "lyra/compiler/compile.hpp"
 #include "lyra/compiler/lower_design.hpp"
+#include "lyra/compiler/unit_pipeline.hpp"
 #include "lyra/diag/sink.hpp"
 #include "lyra/driver/cpp_build.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -92,13 +94,20 @@ auto Emit(
   }
 
   std::filesystem::create_directories(dir);
+  const lyra::mir_transform::PassOptions passes{};
   lyra::driver::CppProjectSink project(
-      dir, lyra::driver::SourceFormatting::kOff, sink);
-  auto semantic = lyra::compiler::LowerToSemantic(
-      *design, lyra::mir_transform::PassOptions{}, sink, width,
-      [&project](lyra::mir::CompilationUnit unit) {
-        return project.Write(unit);
+      dir, lyra::driver::SourceFormatting::kOff,
+      [&](const lyra::mir::CompilationUnit& unit)
+          -> lyra::backend::cpp::BodyBuilder {
+        return [&](const lyra::mir::TypeOperationSource& source) {
+          return lyra::compiler::BuiltTypeOperationBody(
+              unit, source, passes, compilation.front.elaborated->diag_sources);
+        };
       },
+      sink);
+  auto semantic = lyra::compiler::LowerToSemantic(
+      *design, passes, sink, width,
+      [&](lyra::mir::CompilationUnit unit) { return project.Write(unit); },
       [&project](lyra::driver::EmittedUnit unit) {
         project.Collect(std::move(unit));
       });

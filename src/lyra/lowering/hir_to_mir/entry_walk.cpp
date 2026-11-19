@@ -9,6 +9,7 @@
 #include "lyra/hir/type.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
+#include "lyra/lowering/hir_to_mir/expression/calls.hpp"
 #include "lyra/lowering/hir_to_mir/select_position.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/statement/loops.hpp"
@@ -203,17 +204,10 @@ auto EntryCount(
     const auto size = static_cast<std::int64_t>(fixed->Size());
     return mir::BuildIntLiteral(unit, block, size);
   }
-  return block.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee =
-                      mir::Direct{
-                          .target = support::BuiltinFn::kSize,
-                          .receiver = PathAsPlace(
-                              unit, block, NamedIn(unit, array.path, block))},
-                  .arguments = {}},
-          .type = unit.builtins.int_type});
+  return block.Add(BuildBuiltinMethodCall(
+      unit, block, support::BuiltinFn::kSize,
+      PathAsPlace(unit, block, NamedIn(unit, array.path, block)), {},
+      unit.builtins.int_type));
 }
 
 auto BuildEntryLoopStmt(

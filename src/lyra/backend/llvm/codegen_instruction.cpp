@@ -4,8 +4,6 @@
 #include <iterator>
 #include <optional>
 #include <span>
-#include <string>
-#include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -20,7 +18,6 @@
 #include "lyra/backend/llvm/codegen_function.hpp"
 #include "lyra/backend/llvm/codegen_module.hpp"
 #include "lyra/backend/llvm/codegen_types.hpp"
-#include "lyra/backend/llvm/entry_realizations.hpp"
 #include "lyra/backend/llvm/integral_planes.hpp"
 #include "lyra/backend/llvm/llvm_fn_abi.hpp"
 #include "lyra/backend/llvm/runtime_entry.hpp"
@@ -39,6 +36,7 @@
 #include "lyra/support/float_width.hpp"
 #include "lyra/support/runtime_object.hpp"
 #include "lyra/support/value_domain.hpp"
+#include "lyra/support/value_step.hpp"
 #include "lyra/value/integral.hpp"
 
 namespace lyra::backend::llvm_backend {
@@ -129,8 +127,8 @@ auto CodeGenFunction::LowerEndAndReplaceInto(
       .address = *address,
       .type = lir::PlaceType(module_->Unit(), *fn_, replaced.place)};
   const std::array<llvm::Value*, 1> lies{place.address};
-  if (auto ended =
-          module_->EmitStep(builder_, place.type, lir::ValueStep::kEnd, lies);
+  if (auto ended = module_->EmitStep(
+          builder_, place.type, support::ValueStep::kEnd, lies);
       !ended) {
     return ended;
   }
@@ -438,9 +436,9 @@ auto CodeGenFunction::LowerUse(
             if (!module_->Types().HasAggregateEvaluationKind(place.type)) {
               return value;
             }
-            auto moved = RelocateValue(place.type, *value, place.address);
-            if (!moved) {
-              return std::unexpected(std::move(moved.error()));
+            auto relocated = RelocateValue(place.type, *value, place.address);
+            if (!relocated) {
+              return std::unexpected(std::move(relocated.error()));
             }
             return place.address;
           }},
@@ -577,23 +575,6 @@ auto CodeGenFunction::ResolvePlaceAddress(
                         if (!filled) {
                           return std::unexpected(std::move(filled.error()));
                         }
-                        if (support::RuntimeEntryOf(entry.entry.entry)
-                                .takes_the_location) {
-                          if (!element.written_at.has_value()) {
-                            throw InternalError(
-                                "llvm codegen: a write that reports where it "
-                                "was written reaches an element by a step "
-                                "stating no location -- please report this "
-                                "as a bug");
-                          }
-                          auto written_at = LowerOperand(*element.written_at);
-                          if (!written_at) {
-                            return std::unexpected(
-                                std::move(written_at.error()));
-                          }
-                          arranged.push_back(Addresses(1).front());
-                          args.push_back(*written_at);
-                        }
                         return CallEntry(
                             entry.entry.symbol, module_->Types().Ptr(),
                             std::move(arranged), args);
@@ -637,8 +618,18 @@ auto CodeGenFunction::ResolvePlaceAddress(
 auto CodeGenFunction::ArrayElementAddress(
     lir::TypeId array_type, llvm::Value* array, const OperandRef& position,
     const StepWithinArray& step) -> diag::Result<llvm::Value*> {
-  const ArrayLayout& layout = module_->Types().LayoutOfArray(array_type);
   llvm::Type* const ptr = module_->Types().Ptr();
+  llvm::Type* const byte = builder_.getInt8Ty();
+  llvm::Type* const word = builder_.getInt64Ty();
+  // How many elements there are, stated by the array's type, and where the
+  // element at the position `number` lies: that many strides past where the
+  // array starts.
+  const ArrayLayout& layout = module_->Types().LayoutOfArray(array_type);
+  llvm::Value* const count = builder_.getInt64(layout.count);
+  const auto lying_at = [&, stride = layout.stride](llvm::Value* number) {
+    return builder_.CreateInBoundsGEP(
+        byte, array, builder_.CreateMul(number, builder_.getInt64(stride)));
+  };
   // A position names an element where none of its bits is unknown and its
   // number, read unsigned so that a negative one is past every count, counts
   // one. A position held as a machine integer has no unknown bit.
@@ -653,8 +644,7 @@ auto CodeGenFunction::ArrayElementAddress(
           : LoadPosition(position);
   llvm::Value* const known = builder_.CreateIsNull(named.unknown);
   llvm::Value* const counted = builder_.CreateICmpULT(
-      named.value,
-      llvm::ConstantInt::get(named.value->getType(), layout.count));
+      builder_.CreateZExtOrTrunc(named.value, builder_.getInt64Ty()), count);
   llvm::Value* const names_one = builder_.CreateAnd(known, counted);
 
   llvm::Function* const fn = builder_.GetInsertBlock()->getParent();
@@ -668,30 +658,34 @@ auto CodeGenFunction::ArrayElementAddress(
   builder_.CreateCondBr(names_one, there, nowhere);
 
   builder_.SetInsertPoint(there);
-  llvm::Type* const byte = builder_.getInt8Ty();
-  llvm::Value* const number =
-      builder_.CreateZExtOrTrunc(named.value, builder_.getInt64Ty());
-  llvm::Value* const offset =
-      builder_.CreateMul(number, builder_.getInt64(layout.stride));
-  llvm::Value* const lying = builder_.CreateInBoundsGEP(byte, array, offset);
+  llvm::Value* const lying =
+      lying_at(builder_.CreateZExtOrTrunc(named.value, word));
   builder_.CreateBr(joined);
 
   builder_.SetInsertPoint(nowhere);
-  const LlvmFnAbi abi =
-      AtMachineTypes(*module_, step.no_element.abi, ReturnDirect{.type = ptr});
-  auto args = module_->BuildCallArgs(builder_, abi, {});
-  if (!args) {
-    return std::unexpected(std::move(args.error()));
+  auto answered = CallNoElement(step.no_element);
+  if (!answered) {
+    return std::unexpected(std::move(answered.error()));
   }
-  llvm::Value* const answered = builder_.CreateCall(
-      module_->RuntimeFunction(step.no_element.symbol, abi), *args);
   builder_.CreateBr(joined);
 
   builder_.SetInsertPoint(joined);
   llvm::PHINode* const reached = builder_.CreatePHI(ptr, 2);
   reached->addIncoming(lying, there);
-  reached->addIncoming(answered, nowhere);
+  reached->addIncoming(*answered, nowhere);
   return reached;
+}
+
+auto CodeGenFunction::CallNoElement(const EntryCall& entry)
+    -> diag::Result<llvm::Value*> {
+  const LlvmFnAbi abi = AtMachineTypes(
+      *module_, entry.abi, ReturnDirect{.type = module_->Types().Ptr()});
+  auto args = module_->BuildCallArgs(builder_, abi, {});
+  if (!args) {
+    return std::unexpected(std::move(args.error()));
+  }
+  return builder_.CreateCall(
+      module_->RuntimeFunction(entry.symbol, abi), *args);
 }
 
 // A member sits where the declaration declaring it placed it, which is the
@@ -815,6 +809,68 @@ auto CodeGenFunction::LowerBinary(
           // at all.
           [&](const MachineOperator& machine) -> Lowered {
             return LowerMachineBinary(binary, machine.signedness);
+          },
+          [&](const AddressOffset&) -> Lowered {
+            auto address = LowerOperand(binary.lhs);
+            if (!address) {
+              return std::unexpected(std::move(address.error()));
+            }
+            auto count = LowerOperand(binary.rhs);
+            if (!count) {
+              return std::unexpected(std::move(count.error()));
+            }
+            // The count widens by its own signedness, as clang widens the
+            // index of pointer arithmetic (CGExprScalar.cpp,
+            // emitPointerArithmetic), and moves by whole values of what the
+            // address points at.
+            const lir::TypePool& types = module_->Unit().types;
+            const lir::TypeId pointee = types.Get(OperandType(binary.lhs))
+                                            .Get<lir::PointerType>()
+                                            .pointee;
+            const auto is_signed = [&] {
+              switch (types.Get(OperandType(binary.rhs))
+                          .Get<lir::MachineIntType>()
+                          .signedness) {
+                case lir::Signedness::kSigned:
+                  return true;
+                case lir::Signedness::kUnsigned:
+                  return false;
+              }
+              throw InternalError("llvm codegen: unknown signedness");
+            }();
+            llvm::Value* const counted = builder_.CreateIntCast(
+                *count, builder_.getInt64Ty(), is_signed);
+            llvm::Value* const bytes = builder_.CreateMul(
+                counted, builder_.getInt64(
+                             module_->Types().LayoutOf(pointee).layout.size));
+            auto* const by = [&]() -> llvm::Value* {
+              switch (binary.op) {
+                case lir::BinaryOp::kAdd:
+                  return bytes;
+                case lir::BinaryOp::kSub:
+                  return builder_.CreateNeg(bytes);
+                case lir::BinaryOp::kMul:
+                case lir::BinaryOp::kDiv:
+                case lir::BinaryOp::kMod:
+                case lir::BinaryOp::kBitwiseAnd:
+                case lir::BinaryOp::kBitwiseOr:
+                case lir::BinaryOp::kBitwiseXor:
+                case lir::BinaryOp::kEquality:
+                case lir::BinaryOp::kInequality:
+                case lir::BinaryOp::kLessThan:
+                case lir::BinaryOp::kLessEqual:
+                case lir::BinaryOp::kGreaterThan:
+                case lir::BinaryOp::kGreaterEqual:
+                case lir::BinaryOp::kLogicalAnd:
+                case lir::BinaryOp::kLogicalOr:
+                  break;
+              }
+              throw InternalError(
+                  "llvm codegen: an address moved by an operator other than "
+                  "+ or -");
+            }();
+            return builder_.CreateInBoundsGEP(
+                builder_.getInt8Ty(), *address, by);
           },
           [&](const IdentityOperator&) -> Lowered {
             return LowerIdentityComparison(binary, result_type, out);
@@ -1448,6 +1504,38 @@ auto CodeGenFunction::LowerCall(
               return std::unexpected(std::move(assigned.error()));
             }
             return nullptr;
+          },
+          [&](const GenerationElementAddress&) -> Lowered {
+            auto data = LowerOperand(call.args.at(1));
+            if (!data) {
+              return std::unexpected(std::move(data.error()));
+            }
+            auto index = LowerOperand(call.args.at(2));
+            if (!index) {
+              return std::unexpected(std::move(index.error()));
+            }
+            const lir::TypePool& types = module_->Unit().types;
+            const lir::TypeId array =
+                types.Get(OperandType(call.args.at(0))).Pointee().value();
+            const std::uint64_t size =
+                module_->Types()
+                    .LayoutOf(*types.Get(array).ContainerElementType())
+                    .layout.size;
+            return builder_.CreateInBoundsGEP(
+                builder_.getInt8Ty(), *data,
+                builder_.CreateMul(
+                    builder_.CreateZExtOrTrunc(*index, builder_.getInt64Ty()),
+                    builder_.getInt64(size)));
+          },
+          [&](const NoElementAnswer& answer) -> Lowered {
+            return CallNoElement(answer.entry);
+          },
+          [&](const TypeRecordAddress& record) -> Lowered {
+            auto address = module_->ValueTypeRecord(record.type);
+            if (!address) {
+              return std::unexpected(std::move(address.error()));
+            }
+            return *address;
           }},
       *form);
 }
@@ -1517,13 +1605,13 @@ auto CodeGenFunction::LowerOrdinaryCall(
             return CopyValue(
                 result_type, *copied, EnsureDestination(destination));
           },
-          [&](const lir::MoveValueTarget&) -> Lowered {
-            auto moved = LowerOperand(call.args.at(0));
-            if (!moved) {
-              return std::unexpected(std::move(moved.error()));
+          [&](const lir::RelocateValueTarget&) -> Lowered {
+            auto relocated = LowerOperand(call.args.at(0));
+            if (!relocated) {
+              return std::unexpected(std::move(relocated.error()));
             }
-            return MoveValue(
-                result_type, *moved, EnsureDestination(destination));
+            return RelocateValue(
+                result_type, *relocated, EnsureDestination(destination));
           },
           [&](const lir::ValueCellTarget& t) { return called(t); },
           [&](const lir::DesignatedBitsTarget& bits) -> Lowered {
@@ -1858,10 +1946,10 @@ auto CodeGenFunction::ResolveCallee(
                 "llvm codegen: copying a value is emitted where the call is "
                 "lowered, and names no callee -- please report this as a bug");
           },
-          [&](const lir::MoveValueTarget&)
+          [&](const lir::RelocateValueTarget&)
               -> diag::Result<llvm::FunctionCallee> {
             throw InternalError(
-                "llvm codegen: moving a value is emitted where the call is "
+                "llvm codegen: relocating a value is emitted where the call is "
                 "lowered, and names no callee -- please report this as a bug");
           },
           [&](const lir::DynamicStorageTarget&)
@@ -1963,6 +2051,12 @@ auto CodeGenFunction::LowerProduct(
       return std::unexpected(std::move(component.error()));
     }
     llvm::Value* const address = ComponentAddress(result_type, out, i);
+    // Machine data is the value itself, which is stored where the component
+    // lies; any other value is copied there by its type's own step.
+    if (!module_->Unit().types.Get(layout.components[i]).HeldAs().has_value()) {
+      builder_.CreateStore(*component, address);
+      continue;
+    }
     auto copied = CopyValue(layout.components[i], *component, address);
     if (!copied) {
       return copied;

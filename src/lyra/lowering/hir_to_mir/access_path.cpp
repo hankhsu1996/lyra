@@ -18,6 +18,7 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
+#include "lyra/lowering/hir_to_mir/container_bodies.hpp"
 #include "lyra/lowering/hir_to_mir/object_change.hpp"
 #include "lyra/lowering/hir_to_mir/select_position.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
@@ -28,8 +29,11 @@
 #include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/object_operand.hpp"
 #include "lyra/mir/stmt.hpp"
+#include "lyra/mir/storage_part.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
+#include "lyra/mir/type_interface.hpp"
+#include "lyra/mir/value_parts.hpp"
 #include "lyra/mir/verify.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/library_decl.hpp"
@@ -51,25 +55,6 @@ enum class StepUse : std::uint8_t { kRead, kWrite, kDesignate, kLend };
   throw InternalError(
       "access path: only an element and a component may be passed by "
       "reference (LRM 13.5.2), and this lent target steps into neither");
-}
-
-// A queue's run of elements is read as a queue of its own (LRM 7.10.1), and
-// written by the queue's own slice write, which the store builds rather than
-// a step, as an array's run of elements is (LRM 7.6).
-auto EntryToQueueRun(StepUse use) -> support::BuiltinFn {
-  switch (use) {
-    case StepUse::kRead:
-      return support::BuiltinFn::kQueueSlice;
-    case StepUse::kWrite:
-    case StepUse::kDesignate:
-      throw InternalError(
-          "access path: a queue's slice is written by the queue's own slice "
-          "write, which the store builds, and this descent takes a step into "
-          "one for a write");
-    case StepUse::kLend:
-      RefuseReference();
-  }
-  throw InternalError("access path: unknown step use");
 }
 
 // The call that takes one step on a receiver: the entry, what its callee
@@ -94,16 +79,28 @@ struct ReferenceStep {
 // hold (LRM 7.3).
 struct MemberView {};
 
+// A step read by an operation of the type of what it is taken on, answering
+// the part as a value of its own: a run of an array's elements, which the
+// array type's own body reads, handed the positions that bound the run, each
+// by reference (LRM 7.4.6, 7.10.1). A type the operation is taken at -- a
+// fixed run's, whose count it fixes -- is named on the callee.
+struct RunRead {
+  support::BuiltinFn answers;
+  std::vector<mir::TypeId> type_arguments;
+  std::vector<mir::ExprId> positions;
+};
+
 // How one step is taken: as a field of what it is taken on, by a call
-// answering a reference to the part, by a call answering the part, or as a
-// view of a union's storage.
+// answering a reference to the part, by a call answering the part, by the
+// operation the type of what it is taken on has for it, or as a view of a
+// union's storage.
 using StepTaken = std::variant<
-    mir::ComponentFieldTarget, ReferenceStep, StepCall, MemberView>;
+    mir::ComponentFieldTarget, ReferenceStep, StepCall, RunRead, MemberView>;
 
 // An element is reached by a read form and a write form, each answering a
 // reference, since reading a position that names no element answers the
 // element default and creates nothing while writing one creates or discards it
-// (LRM 7.4.6, 7.8.6, 7.8.7); within a write in progress it is designated, and
+// (LRM 7.4.5, 7.8.6, 7.8.7); within a write in progress it is designated, and
 // on a reference it is referred to.
 auto ElementStepTaken(
     StepUse use, support::BuiltinFn read, support::BuiltinFn write,
@@ -213,24 +210,21 @@ auto TaggedMemberStep(StepUse use, base::ComponentIndex position) -> StepTaken {
   throw InternalError("access path: unknown step use");
 }
 
-// A run of elements is several elements rather than one storage (LRM 7.4.6),
-// so it is read by a step answering the run as a value of its own count, which
-// is a type of its own named on the callee, and written by its array's own
-// operation, which the store builds rather than a step. `bounds` are where the
-// run starts and how many elements it takes.
-auto ElementRunStepTaken(
-    StepUse use, const DescentStep& step, std::vector<mir::ExprId> bounds)
-    -> StepTaken {
+// A run of elements is several elements rather than one storage (LRM 7.4.6,
+// 7.10.1), so it is read by an operation of the array's type answering the run
+// as a value of its own, and written by the array's own run write, which the
+// store builds rather than a step. An array's run starts at a position and
+// takes as many elements as its type holds, which is a type named on the
+// callee; a queue's runs between two positions the running program can move,
+// and is read as a queue declaring no bound.
+auto RunStepTaken(StepUse use, RunRead read) -> StepTaken {
   switch (use) {
     case StepUse::kRead:
-      return StepCall{
-          .entry = support::BuiltinFn::kElementSlice,
-          .type_arguments = {step.part_type},
-          .arguments = std::move(bounds)};
+      return read;
     case StepUse::kWrite:
     case StepUse::kDesignate:
       throw InternalError(
-          "access path: a run of elements is written by its array's own slice "
+          "access path: a run of elements is written by its array's own run "
           "write, which the store builds, and this descent takes a step into "
           "one for a write");
     case StepUse::kLend:
@@ -265,20 +259,20 @@ auto BitsStepTaken(StepUse use, const DescentStep& step, mir::ExprId start)
 
 // A step to bits is at the type the bits are read at, which no
 // operand states; a step to a component or a member names it by position, the
-// part having a type of its own; a run of elements is handed how many it takes
-// as a machine count.
-auto StepTakenFor(
-    const mir::CompilationUnit& unit, mir::Builder block,
-    const DescentStep& step, StepUse use) -> StepTaken {
+// part having a type of its own; a run of elements is as many as its type
+// holds.
+auto StepTakenFor(const DescentStep& step, StepUse use) -> StepTaken {
   return std::visit(
       Overloaded{
           [&](const StepToBits& bits) {
             return BitsStepTaken(use, step, bits.start);
           },
           [&](const StepToElementRun& run) -> StepTaken {
-            return ElementRunStepTaken(
-                use, step,
-                {run.start, mir::BuildMachineCount(unit, block, run.count)});
+            return RunStepTaken(
+                use, RunRead{
+                         .answers = support::BuiltinFn::kElementSlice,
+                         .type_arguments = {step.part_type},
+                         .positions = {run.start}});
           },
           [&](const StepToElement& element) {
             return ElementStepTaken(
@@ -298,9 +292,11 @@ auto StepTakenFor(
             return CharacterStepTaken(use, character.position);
           },
           [&](const StepToQueueRun& run) -> StepTaken {
-            return StepCall{
-                .entry = EntryToQueueRun(use),
-                .arguments = {run.lowest, run.highest}};
+            return RunStepTaken(
+                use, RunRead{
+                         .answers = support::BuiltinFn::kQueueSlice,
+                         .type_arguments = {},
+                         .positions = {run.lowest, run.highest}});
           },
           [&](const StepToComponent& component) {
             return ComponentStep(use, component.position);
@@ -385,14 +381,39 @@ auto ReferenceStepCall(
               .referent = type, .mutability = step.mutability}}));
 }
 
-// The part a reference step reaches in `receiver`: the dereference of the
-// reference the call answers, whose referent is `type`.
+// What a reference step answers on `receiver`, whose dereference is the part
+// of type `type`: where `receiver`'s type has an operation for the step -- a
+// run-time-sized array's own body answering where the element lies, as rustc's
+// `Index::index` on a library container is a call of the container's method --
+// the call of it, and otherwise the reference the step's call answers, the
+// step being one of the type's layout.
+auto ReferenceStepAnswer(
+    const mir::CompilationUnit& unit, mir::Builder block, ReferenceStep step,
+    mir::ExprId receiver, mir::TypeId type) -> mir::Expr {
+  const mir::TypeId owner = block.Get(receiver).type;
+  const support::BuiltinFn answers =
+      mir::EntryOver(unit, step.call.entry, owner);
+  if (!mir::OperationDeclarationOf(
+           unit, mir::TypeOperationSource{.type = owner, .answers = answers})
+           .has_value()) {
+    return ReferenceStepCall(unit, block, std::move(step), receiver, type);
+  }
+  return *ContainerOperationCall(
+      unit, block, answers, receiver,
+      {ConvertToType(
+          unit, block, step.call.arguments.front(),
+          mir::PositionType(unit.types))},
+      mir::BorrowedPointerTo(unit.types, type, step.mutability));
+}
+
+// The part a reference step reaches in `receiver`: the dereference of what
+// the step answers, whose referent is `type`.
 auto ReferencedPart(
     const mir::CompilationUnit& unit, mir::Builder block, ReferenceStep step,
     mir::ExprId receiver, mir::TypeId type) -> mir::Expr {
   return mir::MakeDerefExpr(
       block.Add(
-          ReferenceStepCall(unit, block, std::move(step), receiver, type)),
+          ReferenceStepAnswer(unit, block, std::move(step), receiver, type)),
       type);
 }
 
@@ -418,7 +439,7 @@ auto BuildNamesAnElement(
       BuildConditionNot(
           unit, block,
           BuildValueOperation(
-              unit, block, support::BuiltinFn::kHasUnknown, position, {},
+              unit, block, support::UnknownItem::kHasUnknown, position, {},
               unit.builtins.machine_bool)),
       mir::BuildMachineIntComparison(
           unit, block, mir::BinaryOp::kGreaterEqual,
@@ -439,7 +460,7 @@ auto PositionsBeforeComponent(
   std::uint64_t before = 0;
   for (const mir::TypeId part :
        mir::ProductElements(unit, within)->first(position.value)) {
-    before += PositionCountOf(unit, part);
+    before += mir::PositionCountOf(unit, part);
   }
   return before;
 }
@@ -456,7 +477,7 @@ auto PositionOfStep(
     return BuildConditionNot(
         unit, block,
         BuildValueOperation(
-            unit, block, support::BuiltinFn::kHasUnknown, position, {},
+            unit, block, support::UnknownItem::kHasUnknown, position, {},
             unit.builtins.machine_bool));
   };
   // `position` counted in parts of `count` positions each.
@@ -483,7 +504,8 @@ auto PositionOfStep(
             RequireSettled(unit, block, element.position);
             return StepPosition{
                 .offset = parts_of(
-                    element.position, PositionCountOf(unit, step.part_type)),
+                    element.position,
+                    mir::PositionCountOf(unit, step.part_type)),
                 .names_a_part = BuildNamesAnElement(
                     unit, block, element.position,
                     static_cast<std::int64_t>(array->count))};
@@ -497,7 +519,7 @@ auto PositionOfStep(
             RequireSettled(unit, block, run.start);
             return StepPosition{
                 .offset = parts_of(
-                    run.start, PositionCountOf(unit, array->element_type)),
+                    run.start, mir::PositionCountOf(unit, array->element_type)),
                 .names_a_part = known(run.start)};
           },
           [&](const StepToComponent& component) -> Moved {
@@ -575,7 +597,7 @@ auto StorageBitsFor(
     const mir::CompilationUnit& unit, mir::TypeId storage, mir::TypeId part)
     -> mir::TypeId {
   return mir::PackedVectorOf(
-      unit.types, PositionCountOf(unit, part),
+      unit.types, mir::PositionCountOf(unit, part),
       unit.types.Get(storage).Integral().state_kind);
 }
 
@@ -597,6 +619,36 @@ auto MemberRead(
   return BuildFromPositions(unit, block, held, member);
 }
 
+// A run of elements read as a value of `run` (LRM 7.4.6, 7.10.1): the
+// array type's own body, handed the array and the positions bounding the run,
+// each by reference.
+auto RunReadExpr(
+    const mir::CompilationUnit& unit, mir::Builder block, RunRead read,
+    mir::ExprId receiver, mir::TypeId run) -> mir::Expr {
+  std::vector<mir::ExprId> positions;
+  positions.reserve(read.positions.size());
+  for (const mir::ExprId position : read.positions) {
+    positions.push_back(
+        mir::Borrow(
+            unit, block,
+            ConvertToType(
+                unit, block, position, mir::PositionType(unit.types))));
+  }
+  return mir::Expr{
+      .data =
+          mir::CallExpr{
+              .callee =
+                  mir::Direct{
+                      .target =
+                          mir::TypeOperationTarget{
+                              .type = block.Get(receiver).type,
+                              .answers = read.answers,
+                              .arguments = std::move(read.type_arguments)},
+                      .receiver = mir::Borrow(unit, block, receiver)},
+              .arguments = std::move(positions)},
+      .type = run};
+}
+
 // One step taken on `receiver` for `use`, answering `type`.
 auto StepExpr(
     const mir::CompilationUnit& unit, mir::Builder block,
@@ -611,6 +663,9 @@ auto StepExpr(
             return ReferencedPart(
                 unit, block, std::move(reference), receiver, type);
           },
+          [&](RunRead read) {
+            return RunReadExpr(unit, block, std::move(read), receiver, type);
+          },
           [&](StepCall call) {
             return mir::MakeBuiltinCall(
                 unit, block.Body(), call.entry, receiver, call.part,
@@ -618,7 +673,7 @@ auto StepExpr(
                 type);
           },
           [&](MemberView) { return MemberRead(unit, block, receiver, type); }},
-      StepTakenFor(unit, block, step, use));
+      StepTakenFor(step, use));
 }
 
 auto TakeStep(
@@ -1189,14 +1244,14 @@ auto StepForRead(
 auto ElementReference(
     const mir::CompilationUnit& unit, mir::Builder block,
     const DescentStep& step, mir::ExprId receiver) -> mir::Expr {
-  StepTaken taken = StepTakenFor(unit, block, step, StepUse::kRead);
+  StepTaken taken = StepTakenFor(step, StepUse::kRead);
   auto* element = std::get_if<ReferenceStep>(&taken);
   if (element == nullptr) {
     throw InternalError(
         "access path: a reference is answered by an element's read form, and "
         "this step reaches no element");
   }
-  return ReferenceStepCall(
+  return ReferenceStepAnswer(
       unit, block, std::move(*element), receiver, step.part_type);
 }
 
@@ -1451,7 +1506,8 @@ auto PositionsNamedBy(
     return EvaluatedOnce(frame, value);
   };
   const auto positions_of = [&](mir::TypeId type) {
-    return mir::BuildMachineCount(unit, block, PositionCountOf(unit, type));
+    return mir::BuildMachineCount(
+        unit, block, mir::PositionCountOf(unit, type));
   };
   const auto plus = [&](mir::ExprId lhs, mir::ExprId rhs) {
     return mir::BuildMachineIntBinary(
@@ -1488,7 +1544,7 @@ auto PositionsNamedBy(
   const mir::ExprId reaches = held(AllHold(unit, block, conditions));
   return PositionsOfPart{
       .first = first,
-      .count = PositionCountOf(unit, within),
+      .count = mir::PositionCountOf(unit, within),
       .reached_first =
           mir::BuildMachineIntConditional(unit, block, reaches, low, none),
       .reached_count =
@@ -1568,7 +1624,11 @@ auto PartNamedBy(
   // reach (LRM 7.4.6).
   if (const auto* run = std::get_if<StepToElementRun>(&step->to);
       run != nullptr && std::next(step) == path.descent.end()) {
-    named.positions = PathPositions{.first = run->start, .width = run->count};
+    named.positions = PathPositions{
+        .first = run->start,
+        .width = unit.types.Get(step->part_type)
+                     .Get<mir::UnpackedArrayType>()
+                     .Size()};
     return named;
   }
   // What is left names bits of the packed value reached, each step from the
@@ -1624,10 +1684,59 @@ auto PutCharacterExpr(
       {character.position, put}, unit.builtins.void_type);
 }
 
+// LRM 7.6, 7.10.1: `value` written over a run of the array `written` reaches:
+// the array type's own run write, `answers` at `type_arguments`, handed the
+// array, the positions bounding the run and the value, each by reference,
+// answering the positions of the elements it changed; or, on the array's
+// designation within a write in progress, the designation's own write of a
+// run, stated at the value's type, which tells the write that answer.
+auto AssignRunExpr(
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId written,
+    support::BuiltinFn answers, std::vector<mir::TypeId> type_arguments,
+    const std::vector<mir::ExprId>& positions, mir::ExprId value) -> mir::Expr {
+  std::vector<mir::ExprId> arguments;
+  arguments.reserve(positions.size() + 1);
+  for (const mir::ExprId position : positions) {
+    arguments.push_back(
+        mir::Borrow(
+            unit, block,
+            ConvertToType(
+                unit, block, position, mir::PositionType(unit.types))));
+  }
+  arguments.push_back(mir::Borrow(unit, block, value));
+  const mir::TypeId changed = mir::ChangedRangeType(unit.types);
+  const mir::TypeId reached = block.Get(written).type;
+  if (unit.types.Get(reached).Is<mir::DesignationType>()) {
+    return mir::MakeBuiltinCall(
+        unit, block.Body(), support::BuiltinFn::kAssignDesignatedRun, written,
+        std::nullopt, {block.Get(value).type}, std::move(arguments), changed);
+  }
+  const mir::ExprId array = block.Add(
+      mir::Expr{
+          .data = mir::BorrowExpr{.operand = written},
+          .type = unit.types.Intern(
+              mir::Type{mir::ReferenceType{
+                  .referent = reached,
+                  .mutability = mir::Mutability::kMutable}})});
+  return mir::Expr{
+      .data =
+          mir::CallExpr{
+              .callee =
+                  mir::Direct{
+                      .target =
+                          mir::TypeOperationTarget{
+                              .type = reached,
+                              .answers = answers,
+                              .arguments = std::move(type_arguments)},
+                      .receiver = array},
+              .arguments = std::move(arguments)},
+      .type = changed};
+}
+
 // A write of `value` into the run of elements `path` ends in: the container's
-// own slice write, the run being several elements rather than one storage (LRM
-// 7.4.6, 7.6) -- an array's from where it starts and how many it takes, a
-// queue's between the two positions it clamps (LRM 7.10.1). Absent where the
+// own run write, the run being several elements rather than one storage (LRM
+// 7.4.6, 7.6) -- an array's from where it starts, as many as the value holds,
+// a queue's between the two positions it clamps (LRM 7.10.1). Absent where the
 // path ends in no run.
 auto AssignSliceExpr(
     const mir::CompilationUnit& unit, mir::Builder block,
@@ -1635,26 +1744,21 @@ auto AssignSliceExpr(
   if (path.descent.empty()) {
     return std::nullopt;
   }
-  const auto write = [&](support::BuiltinFn entry,
-                         std::vector<mir::ExprId> bounds) {
-    bounds.push_back(value);
-    return mir::MakeBuiltinCall(
-        unit, block.Body(), entry,
-        WriteOperandOf(unit, block, path, path.descent.size() - 1),
-        std::move(bounds), unit.builtins.void_type);
+  const auto written = [&] {
+    return WriteOperandOf(unit, block, path, path.descent.size() - 1);
   };
   using Write = std::optional<mir::Expr>;
   return std::visit(
       Overloaded{
           [&](const StepToElementRun& run) -> Write {
-            return write(
-                support::BuiltinFn::kAssignElementSlice,
-                {run.start, mir::BuildMachineCount(unit, block, run.count)});
+            return AssignRunExpr(
+                unit, block, written(), support::BuiltinFn::kAssignElementSlice,
+                {block.Get(value).type}, {run.start}, value);
           },
           [&](const StepToQueueRun& run) -> Write {
-            return write(
-                support::BuiltinFn::kAssignQueueSlice,
-                {run.lowest, run.highest});
+            return AssignRunExpr(
+                unit, block, written(), support::BuiltinFn::kAssignQueueSlice,
+                {}, {run.lowest, run.highest}, value);
           },
           [](const StepToBits&) -> Write { return std::nullopt; },
           [](const StepToElement&) -> Write { return std::nullopt; },
@@ -1789,7 +1893,7 @@ auto StoreIntoUnionStorage(
       ReachedForWrite(unit, block, PrefixOf(path, at), WriteEnd::kLanded));
   const mir::TypeId storage_type = block.Get(storage).type;
   const StorageReached reached = StorageReachedBelow(
-      unit, block, path, at, PositionCountOf(unit, storage_type));
+      unit, block, path, at, mir::PositionCountOf(unit, storage_type));
   const mir::TypeId part_bits =
       StorageBitsFor(unit, storage_type, reached.part);
   const mir::ExprId start = block.Add(
@@ -1819,7 +1923,7 @@ auto StoreIntoUnionStorage(
                       ConvertToType(unit, block, run->start, position),
                       BuildConstantPosition(
                           unit, block,
-                          static_cast<std::int64_t>(PositionCountOf(
+                          static_cast<std::int64_t>(mir::PositionCountOf(
                               unit, *unit.types.Get(step.part_type)
                                          .ContainerElementType()))),
                       position));

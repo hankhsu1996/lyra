@@ -452,7 +452,9 @@ auto FileTable::ReadMemory(
       fd, T::kWidth, declared, sv_start, count,
       [&memory, &declared](std::int64_t sv_index, std::span<const char> bytes) {
         ReadBigEndian(
-            memory.RawAt(static_cast<std::size_t>(declared.ToOrdinal(sv_index)))
+            memory
+                .GetUnchecked(
+                    static_cast<std::size_t>(declared.ToOrdinal(sv_index)))
                 .AsMutableWords()
                 .MutableView(),
             bytes);

@@ -5,7 +5,6 @@
 #include <string>
 #include <string_view>
 #include <utility>
-#include <variant>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
@@ -17,7 +16,6 @@
 #include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/integral_constant_folding.hpp"
-#include "lyra/mir/stmt.hpp"
 #include "lyra/mir/storage_part.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
@@ -28,19 +26,6 @@
 namespace lyra::lowering::hir_to_mir {
 
 namespace {
-
-// An array of one kind built out of another kind's elements (LRM 7.6), or a
-// queue brought to the bound its own declaration states (LRM 7.10.5): the
-// source is the one operand, and everything else the destination's type says.
-auto BuildArrayFromArrayCall(
-    support::BuiltinFn entry, mir::ExprId src_id, mir::TypeId dst_type)
-    -> mir::Expr {
-  return mir::Expr{
-      .data =
-          mir::CallExpr{
-              .callee = mir::Direct{.target = entry}, .arguments = {src_id}},
-      .type = dst_type};
-}
 
 // A conversion into a real type, named for which conversion this is: landing a
 // machine integer (LRM 6.12.1) and reshaping across precisions are two
@@ -228,27 +213,12 @@ auto WithElement(
   RefuseConversion("an array of another element type");
 }
 
-// The entry that builds an array of `destination`'s kind out of another
-// array's elements as they are (LRM 7.6).
-auto FromArrayEntry(const mir::Type& destination) -> support::BuiltinFn {
-  if (destination.Is<mir::UnpackedArrayType>()) {
-    return support::BuiltinFn::kUnpackedArrayFromArray;
-  }
-  if (destination.IsDeclaredBy(support::LibraryDecl::kDynamicArray)) {
-    return support::BuiltinFn::kDynamicArrayFromArray;
-  }
-  if (destination.IsDeclaredBy(support::LibraryDecl::kQueue)) {
-    return support::BuiltinFn::kQueueFromArray;
-  }
-  RefuseConversion("an array of another kind");
-}
-
-// The operation `type`'s body answers, asked of `operand`, as a value of
-// `result`: the body borrows what it is asked of.
+// The operation `type`'s body answers at `arguments`, asked of `operand`, as
+// a value of `result`: the body borrows what it is asked of.
 auto CallBoundFreeOperation(
     const mir::CompilationUnit& unit, mir::Builder block,
-    support::BuiltinFn operation, mir::TypeId type, mir::ExprId operand,
-    mir::TypeId result) -> mir::Expr {
+    support::ValueOperation operation, mir::TypeId type, mir::ExprId operand,
+    mir::TypeId result, std::vector<mir::TypeId> arguments = {}) -> mir::Expr {
   const mir::ExprId borrowed = mir::Borrow(unit, block, operand);
   const bool asked_of_the_value = support::ReachesAReceiver(operation);
   return mir::Expr{
@@ -258,13 +228,48 @@ auto CallBoundFreeOperation(
                   mir::Direct{
                       .target =
                           mir::TypeOperationTarget{
-                              .type = type, .answers = operation},
+                              .type = type,
+                              .answers = operation,
+                              .arguments = std::move(arguments)},
                       .receiver = asked_of_the_value
                                       ? std::optional<mir::ExprId>{borrowed}
                                       : std::nullopt},
               .arguments = asked_of_the_value ? std::vector<mir::ExprId>{}
                                               : std::vector{borrowed}},
       .type = result};
+}
+
+// The array of `destination` taking `operand`'s elements as they are (LRM
+// 7.6), an array of its element type and of another kind, or a queue of
+// another bound, which the destination then holds to its own (LRM 7.10.5).
+// Taking another array's elements is the destination's own body, at the
+// source's type.
+auto ArrayTakingElementsOf(
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId operand,
+    mir::TypeId destination) -> mir::Expr {
+  const mir::TypeId source = block.Get(operand).type;
+  const mir::Type& to = unit.types.Get(destination);
+  if (to.IsDeclaredBy(support::LibraryDecl::kDynamicArray)) {
+    return CallBoundFreeOperation(
+        unit, block, support::BuiltinFn::kDynamicArrayFromArray, destination,
+        operand, destination, {source});
+  }
+  if (to.IsDeclaredBy(support::LibraryDecl::kQueue)) {
+    return CallBoundFreeOperation(
+        unit, block, support::BuiltinFn::kQueueFromArray, destination, operand,
+        destination, {source});
+  }
+  if (!to.Is<mir::UnpackedArrayType>()) {
+    RefuseConversion("an array of another kind");
+  }
+  const mir::Type& from = unit.types.Get(source);
+  if (!from.IsDeclaredBy(support::LibraryDecl::kDynamicArray) &&
+      !from.IsDeclaredBy(support::LibraryDecl::kQueue)) {
+    RefuseConversion("an array of another kind");
+  }
+  return CallBoundFreeOperation(
+      unit, block, support::BuiltinFn::kUnpackedArrayFromArray, destination,
+      operand, destination, {source});
 }
 
 // LRM 7.6: an array assigned to an array of another type, which the front end
@@ -289,14 +294,14 @@ auto ToArrayOfAnotherType(
   if (!AreOneKind(from, to)) {
     const mir::TypeId reshaped = WithElement(unit.types, destination, element);
     const mir::Expr built =
-        BuildArrayFromArrayCall(FromArrayEntry(to), operand, reshaped);
+        ArrayTakingElementsOf(unit, block, operand, reshaped);
     if (reshaped == destination) {
       return built;
     }
     return ToArrayOfAnotherType(unit, block, block.Add(built), destination);
   }
   if (element == *to.ContainerElementType()) {
-    return BuildArrayFromArrayCall(FromArrayEntry(to), operand, destination);
+    return ArrayTakingElementsOf(unit, block, operand, destination);
   }
   const mir::TypeId bound_free = WithoutQueueBounds(unit.types, source);
   if (bound_free != WithoutQueueBounds(unit.types, destination)) {
@@ -305,14 +310,14 @@ auto ToArrayOfAnotherType(
   const mir::ExprId freed = block.Add(
       HoldsBoundedQueueBelow(unit.types, source)
           ? CallBoundFreeOperation(
-                unit, block, support::BuiltinFn::kToBoundFree, source, operand,
-                bound_free)
+                unit, block, support::BoundFreeItem::kToBoundFree, source,
+                operand, bound_free)
           : ToArrayOfAnotherType(unit, block, operand, bound_free));
   if (!HoldsBoundedQueueBelow(unit.types, destination)) {
     return ToArrayOfAnotherType(unit, block, freed, destination);
   }
   return CallBoundFreeOperation(
-      unit, block, support::BuiltinFn::kFromBoundFree, destination, freed,
+      unit, block, support::BoundFreeItem::kFromBoundFree, destination, freed,
       destination);
 }
 

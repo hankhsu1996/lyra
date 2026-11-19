@@ -155,32 +155,19 @@ void ConstraintMembers(
 // Whether `T` is an array whose size its declaration fixes.
 template <class T>
 concept FixedSize =
-    requires { std::integral_constant<std::size_t, T::RawSize()>{}; };
+    requires { std::integral_constant<std::size_t, T::Count()>{}; };
 
 // How a random array of `T` the storage `whole` names is resized: kept as far
 // as it reaches and grown by elements at their default (LRM 7.5.1), written as
-// an assignment to it is, and put back by writing what it held.
+// an assignment to it is, and put back by writing what it held. A queue held to
+// its bound says so where the randomization was asked for, which is bound
+// around the solve, so the resize is handed no location of its own.
 template <value::LyraValue T>
 [[nodiscard]] auto ResizeOf(const ErasedReference& whole) -> ArrayResizer {
   return [whole](std::size_t count) -> std::function<void()> {
     const T& current = *static_cast<const T*>(whole.storage);
     auto before = std::make_shared<T>(current);
-    T resized = current;
-    if constexpr (requires {
-                    T::NewCopy(std::int64_t{}, current, base::SourceLocation{});
-                  }) {
-      resized = T::NewCopy(
-          static_cast<std::int64_t>(count), current, base::SourceLocation{});
-    } else {
-      while (resized.RawSize() < count) {
-        resized.PushBack(typename T::ElementType{}, base::SourceLocation{});
-      }
-      while (resized.RawSize() > count) {
-        resized.DeleteIndex(
-            value::Position::FromInt(
-                static_cast<std::int64_t>(resized.RawSize() - 1)));
-      }
-    }
+    T resized = current.Resized(count, base::SourceLocation{});
     WriteLaidOutThrough(whole, value::kValueTypeOf<T>, &resized);
     return [whole, before] {
       WriteLaidOutThrough(whole, value::kValueTypeOf<T>, before.get());
@@ -204,11 +191,12 @@ void ConstraintDeclare(
           problem, variable, ResizeOf<T>(variable), on);
     }
     T& held = *static_cast<T*>(variable.storage);
-    for (std::size_t i = 0; i < value.RawSize(); ++i) {
+    for (std::size_t i = 0; i < value.Count(); ++i) {
       ConstraintDeclare(
           problem,
-          ErasedReference{.holder = variable.holder, .storage = &held.RawAt(i)},
-          value.RawAt(i), declared, part.Into(i, on, array));
+          ErasedReference{
+              .holder = variable.holder, .storage = &held.GetUnchecked(i)},
+          value.GetUnchecked(i), declared, part.Into(i, on, array));
     }
   } else {
     ConstraintDeclareErased(
@@ -237,11 +225,12 @@ void RandomizeListParts(
           RandomizeListArrayErased(problem, variable, ResizeOf<T>(variable));
     }
     T& held = *static_cast<T*>(variable.storage);
-    for (std::size_t i = 0; i < value.RawSize(); ++i) {
+    for (std::size_t i = 0; i < value.Count(); ++i) {
       RandomizeListParts(
           problem,
-          ErasedReference{.holder = variable.holder, .storage = &held.RawAt(i)},
-          value.RawAt(i), members, array);
+          ErasedReference{
+              .holder = variable.holder, .storage = &held.GetUnchecked(i)},
+          value.GetUnchecked(i), members, array);
     }
   } else {
     RandomizeListErased(
@@ -289,7 +278,7 @@ template <value::LyraValue T>
 [[nodiscard]] auto ConstraintArraySize(
     const value::ObjectRef& problem, const VariableRef<T>& array,
     const T& value) -> std::int64_t {
-  return ConstraintArraySizeErased(problem, array.Erased(), value.RawSize());
+  return ConstraintArraySizeErased(problem, array.Erased(), value.Count());
 }
 
 // Settles what is chosen first -- the size of every random array a constraint
@@ -326,11 +315,12 @@ void RandomizeNestedOf(
   if constexpr (value::OrdinalElements<T>) {
     const bool on = enabled && RandEnabledErased(handle, path);
     T& held = *static_cast<T*>(handle.storage);
-    for (std::size_t i = 0; i < value.RawSize(); ++i) {
+    for (std::size_t i = 0; i < value.Count(); ++i) {
       RandomizeNestedOf(
           problem,
-          ErasedReference{.holder = handle.holder, .storage = &held.RawAt(i)},
-          value.RawAt(i), path.Into(i), on);
+          ErasedReference{
+              .holder = handle.holder, .storage = &held.GetUnchecked(i)},
+          value.GetUnchecked(i), path.Into(i), on);
     }
   } else {
     RandomizeNestedErased(
@@ -447,11 +437,12 @@ void ConstraintUniqueArrayOf(
     const T& value) {
   if constexpr (value::OrdinalElements<T>) {
     T& held = *static_cast<T*>(array.storage);
-    for (std::size_t i = 0; i < value.RawSize(); ++i) {
+    for (std::size_t i = 0; i < value.Count(); ++i) {
       ConstraintUniqueArrayOf(
           p, set,
-          ErasedReference{.holder = array.holder, .storage = &held.RawAt(i)},
-          value.RawAt(i));
+          ErasedReference{
+              .holder = array.holder, .storage = &held.GetUnchecked(i)},
+          value.GetUnchecked(i));
     }
   } else {
     ConstraintUniqueArrayErased(p, set, array, &value, ConstraintTypeOf<T>());
@@ -488,9 +479,10 @@ auto PositionsOf(
   }
   if constexpr (value::OrdinalElements<T>) {
     T& held = *static_cast<T*>(declared);
-    for (std::size_t i = 0; i < value.RawSize(); ++i) {
+    for (std::size_t i = 0; i < value.Count(); ++i) {
       out.push_back(i);
-      if (PositionsOf(value.RawAt(i), &held.RawAt(i), part, out)) {
+      if (PositionsOf(
+              value.GetUnchecked(i), &held.GetUnchecked(i), part, out)) {
         return true;
       }
       out.pop_back();

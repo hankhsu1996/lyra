@@ -12,6 +12,7 @@
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/mir/value_parts.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -29,37 +30,6 @@ namespace lyra::lowering::hir_to_mir {
 // value of that width; where some part's width is the running program's -- a
 // dynamic array, a queue, an associative array, a string -- it is a run of
 // bits whose length is its own (LRM 11.4.14.4).
-
-// How wide a stream is, and whether its bits carry x or z (LRM 11.4.14: a pack
-// over any 4-state part yields a 4-state stream).
-struct StreamShape {
-  std::uint64_t width;
-  mir::IntegralStateKind state_kind;
-};
-
-// The shape of the stream a value of `type` makes where the type fixes its
-// width, and nothing for a type whose bit count only the running program has,
-// or that holds no bit stream at all.
-[[nodiscard]] auto FixedStreamShapeOf(
-    const mir::CompilationUnit& unit, mir::TypeId type)
-    -> std::optional<StreamShape>;
-
-// Whether a value of `type` holds a class handle anywhere in it, whose stream
-// is the properties of the object it refers to (LRM 11.4.14.1).
-[[nodiscard]] auto HoldsClassHandle(
-    const mir::CompilationUnit& unit, mir::TypeId type) -> bool;
-
-// Whether a stream is read back into a value of `type`: an associative array
-// is illegal as a destination wherever in it one stands (LRM 6.24.3), and the
-// object a class handle refers to is not yet read back (LRM 11.4.14.3).
-[[nodiscard]] auto IsStreamDestination(
-    const mir::CompilationUnit& unit, mir::TypeId type) -> bool;
-
-// The shape of the stream a product of `parts` makes: each part's laid end to
-// end, the first most significant.
-[[nodiscard]] auto FixedStreamShapeOfParts(
-    const mir::CompilationUnit& unit, std::span<const mir::TypeId> parts)
-    -> std::optional<StreamShape>;
 
 // How many bits a value of `type` read out of a stream takes (LRM 6.24.3,
 // 11.4.14.4): `empty_width` where every part whose width the running program
@@ -128,7 +98,7 @@ void InsertIntoRun(
     mir::ExprId at, mir::ExprId count) -> mir::ExprId;
 [[nodiscard]] auto BuildRunLoad(
     const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId run,
-    mir::ExprId at, StreamShape shape) -> mir::ExprId;
+    mir::ExprId at, mir::StreamShape shape) -> mir::ExprId;
 
 // `bits_id`, an integral stream, read back as a value of `dst_type`, whose
 // type fixes its width. A stream narrower than the destination is first

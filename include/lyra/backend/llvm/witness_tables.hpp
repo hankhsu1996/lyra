@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <cstddef>
@@ -15,6 +16,7 @@
 #include "lyra/lir/type_id.hpp"
 #include "lyra/lir/value_step.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/library_trait.hpp"
 #include "lyra/support/machine_signature.hpp"
 #include "lyra/support/value_operation.hpp"
 #include "lyra/value/value_type.hpp"
@@ -56,7 +58,7 @@ struct EitherStreamForm {
 };
 
 using WitnessFilling =
-    std::variant<lir::ValueStep, OwnOperationWitness, EitherStreamForm>;
+    std::variant<support::ValueStep, OwnOperationWitness, EitherStreamForm>;
 
 // One witness of a table a type is told to the library through: the storage's
 // own lifecycle, the operations the language defines on the whole value (LRM
@@ -121,13 +123,18 @@ inline auto ValueWitnesses() {
   using support::BuiltinFn;
   using value::ValueWitnessTable;
   return std::to_array<Witness>({
-      WitnessOf("copy", &ValueWitnessTable::copy, lir::ValueStep::kCopy),
-      WitnessOf("move", &ValueWitnessTable::move, lir::ValueStep::kMove),
-      WitnessOf("destroy", &ValueWitnessTable::destroy, lir::ValueStep::kEnd),
-      WitnessOf("assign", &ValueWitnessTable::assign, lir::ValueStep::kAssign),
+      WitnessOf("copy", &ValueWitnessTable::copy, support::ValueStep::kCopy),
+      WitnessOf(
+          "relocate", &ValueWitnessTable::relocate,
+          support::ValueStep::kRelocate),
+      WitnessOf(
+          "destroy", &ValueWitnessTable::destroy, support::ValueStep::kEnd),
+      WitnessOf(
+          "assign", &ValueWitnessTable::assign, support::ValueStep::kAssign),
       WitnessOf(
           "bit_identical", &ValueWitnessTable::bit_identical,
-          OwnOperationWitness{.answers = BuiltinFn::kBitIdentical}),
+          OwnOperationWitness{
+              .answers = support::ChangeTestItem::kBitIdentical}),
   });
 }
 
@@ -136,51 +143,61 @@ static_assert(
     sizeof(value::ValueWitnessTable) ==
     (std::tuple_size_v<decltype(ValueWitnesses())> + 1) * sizeof(void*));
 
+// Whether `type` implements the library's trait `trait`, as the unit
+// states its implementation.
+inline auto ImplementsTrait(
+    const lir::CompilationUnit& unit, lir::TypeId type,
+    const support::LibraryTrait& trait) -> bool {
+  const auto found = unit.implemented_traits.find(type);
+  return found != unit.implemented_traits.end() &&
+         std::ranges::contains(found->second, &trait);
+}
+
 // Every function of the language's operations on a whole value of a type.
 inline auto OperationWitnesses() {
-  using support::BuiltinFn;
+  using support::StreamItem;
   using value::OperationFunctions;
   return std::to_array<Witness>({
       WitnessOf(
           "equal", &OperationFunctions::equal,
           OwnOperationWitness{
-              .answers = support::ValueOperator::kEquality,
+              .answers = support::EqualityItem::kEqual,
               .crossing = AnswerScalar{}}),
       WitnessOf(
           "case_equal", &OperationFunctions::case_equal,
           OwnOperationWitness{
-              .answers = BuiltinFn::kCaseEqual,
+              .answers = support::EqualityItem::kCaseEqual,
               .crossing = AnswerWhetherItHolds{}}),
       WitnessOf(
           "has_unknown", &OperationFunctions::has_unknown,
-          OwnOperationWitness{.answers = BuiltinFn::kHasUnknown}),
+          OwnOperationWitness{.answers = support::UnknownItem::kHasUnknown}),
       WitnessOf(
           "bitstream_width", &OperationFunctions::bitstream_width,
-          OwnOperationWitness{.answers = BuiltinFn::kBitstreamWidth}),
+          OwnOperationWitness{.answers = StreamItem::kBitstreamWidth}),
       WitnessOf(
           "count_bits", &OperationFunctions::count_bits,
-          OwnOperationWitness{.answers = BuiltinFn::kCountBits}),
+          OwnOperationWitness{.answers = StreamItem::kCountBits}),
       WitnessOf(
           "write_to_stream", &OperationFunctions::write_to_stream,
           EitherStreamForm{
               .fixed =
                   OwnOperationWitness{
-                      .answers = BuiltinFn::kToBitstream,
+                      .answers = StreamItem::kToBitstream,
                       .crossing = AnswerIntoStream{}},
               .run =
                   OwnOperationWitness{
-                      .answers = BuiltinFn::kToBitVec,
+                      .answers = StreamItem::kToBitVec,
                       .crossing = RunIntoStream{}}}),
       WitnessOf(
           "read_from_stream", &OperationFunctions::read_from_stream,
           EitherStreamForm{
               .fixed =
                   OwnOperationWitness{
-                      .answers = BuiltinFn::kFromBitstream,
+                      .answers = StreamItem::kFromBitstream,
                       .crossing = StreamOutOfValue{}},
               .run =
                   OwnOperationWitness{
-                      .answers = BuiltinFn::kFromBitVec,
+                      .answers = StreamItem::kFromBitVec,
                       .crossing = StreamOutOfRun{}}}),
   });
 }
@@ -193,20 +210,20 @@ static_assert(
 // read out whole, how many it has, and some of them written in -- each the
 // function of the type's own answering it.
 inline auto NetWitnesses() {
-  using support::BuiltinFn;
+  using support::PositionsItem;
   using value::NetWitnessTable;
   return std::to_array<Witness>({
       WitnessOf(
           "to_positions", &NetWitnessTable::to_positions,
           OwnOperationWitness{
-              .answers = BuiltinFn::kToPositions,
+              .answers = PositionsItem::kToPositions,
               .crossing = AnswerIntoView{}}),
       WitnessOf(
           "position_count", &NetWitnessTable::position_count,
-          OwnOperationWitness{.answers = BuiltinFn::kPositionCount}),
+          OwnOperationWitness{.answers = PositionsItem::kPositionCount}),
       WitnessOf(
           "write_positions", &NetWitnessTable::write_positions,
-          OwnOperationWitness{.answers = BuiltinFn::kWritePositions}),
+          OwnOperationWitness{.answers = PositionsItem::kWritePositions}),
   });
 }
 
@@ -216,7 +233,8 @@ static_assert(
 
 // What a value's type constant names of other types, the one list the constant
 // and the query for what a unit needs both read: an array how its elements
-// start (LRM 7.4.5), and a product the type of each component.
+// start (LRM 7.4.5), a dynamic array the same of its elements, and a product
+// the type of each component.
 struct TypeConstantReferences {
   std::optional<lir::TypeId> element_type;
   std::span<const lir::TypeId> components;
@@ -227,6 +245,9 @@ inline auto ReferencesOf(const lir::CompilationUnit& unit, lir::TypeId type)
   const lir::Type& stated = unit.types.Get(type);
   if (const auto* array = stated.As<lir::UnpackedArrayType>()) {
     return {.element_type = array->element_type, .components = {}};
+  }
+  if (stated.Is<lir::LibraryType>()) {
+    return {.element_type = stated.ContainerElementType(), .components = {}};
   }
   return {
       .element_type = std::nullopt,

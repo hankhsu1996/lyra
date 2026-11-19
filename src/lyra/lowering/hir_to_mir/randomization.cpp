@@ -35,6 +35,7 @@
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/endpoint.hpp"
+#include "lyra/lowering/hir_to_mir/expression/calls.hpp"
 #include "lyra/lowering/hir_to_mir/expression/selects.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
@@ -1352,18 +1353,10 @@ auto FoldElements(
   const mir::ExprId count =
       fixed.has_value()
           ? mir::BuildIntLiteral(unit, block, *fixed)
-          : block.Add(
-                mir::Expr{
-                    .data =
-                        mir::CallExpr{
-                            .callee =
-                                mir::Direct{
-                                    .target = BuiltinFn::kSize,
-                                    .receiver = PathValue(
-                                        unit, block,
-                                        NamedIn(unit, settled, block))},
-                            .arguments = {}},
-                    .type = unit.builtins.int_type});
+          : block.Add(BuildBuiltinMethodCall(
+                unit, block, BuiltinFn::kSize,
+                PathValue(unit, block, NamedIn(unit, settled, block)), {},
+                unit.builtins.int_type));
   const mir::LocalId position =
       w.Frame().bindings->DeclareAnonymous(unit.builtins.int_type);
 

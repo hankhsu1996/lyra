@@ -1,12 +1,14 @@
 #pragma once
 
 #include <span>
+#include <string_view>
 #include <vector>
 
 #include "lyra/backend/cpp/scope_view.hpp"
 #include "lyra/backend/cpp/target_text.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/class_id.hpp"
+#include "lyra/mir/code_source.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/local.hpp"
 
@@ -18,6 +20,31 @@ namespace lyra::backend::cpp {
 void WriteParameters(
     const mir::CompilationUnit& unit, const mir::CallableCode& code,
     std::span<const mir::LocalId> params, TargetText& out);
+
+// The implementation of the library's traits for `self_type`: a struct
+// declaring each of its items, built as MIR states them, as a static function,
+// which takes the object, where it takes one, as its first parameter.
+void RenderImpl(
+    const mir::CompilationUnit& unit, mir::TypeId self_type,
+    std::span<const mir::TypeOperationBody> items, TargetText& out);
+
+// The definition of the item `item`, a static function of the struct holding
+// its type's implementation, written in a code file every unit naming the type
+// writes alike and the project compiles once.
+void RenderImplItemDefinition(
+    const mir::CompilationUnit& unit, UnitRenderReport& report,
+    const mir::TypeOperationBody& item, TargetText& out);
+
+// A body as a free function of the file writing it, `auto name(params) -> R`,
+// its object, where it takes one, the first of its parameters: declared, and
+// defined, the definition the same text in every file stating it, since it
+// names no constant of one unit.
+void RenderFreeFunctionDeclaration(
+    const mir::CompilationUnit& unit, std::string_view name,
+    const mir::CallableCode& code, TargetText& out);
+void RenderFreeFunctionDefinition(
+    const mir::CompilationUnit& unit, UnitRenderReport& report,
+    std::string_view name, const mir::CallableCode& code, TargetText& out);
 
 // Text for the unit's headers, which other units include, and text for its code
 // file.

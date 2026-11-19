@@ -21,7 +21,8 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
-#include "lyra/support/builtin_fn.hpp"
+#include "lyra/mir/value_parts.hpp"
+#include "lyra/support/value_operation.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -47,8 +48,8 @@ auto ValueOfLabel(
   const auto* unknown = std::get_if<mir::MachineBoolLiteral>(
       &probe.exprs
            .Get(BuildValueOperation(
-               unit, probe_builder, support::BuiltinFn::kHasUnknown, value, {},
-               unit.builtins.machine_bool))
+               unit, probe_builder, support::UnknownItem::kHasUnknown, value,
+               {}, unit.builtins.machine_bool))
            .data);
   const auto* number = std::get_if<mir::MachineIntLiteral>(
       &probe.exprs.Get(BuildToInt64Call(unit, probe_builder, value)).data);
@@ -147,7 +148,7 @@ auto BuildCaseOverValues(
     in.AppendStmt(*std::move(dispatch));
     return {};
   };
-  if (CarriesUnknowns(unit, subject_type)) {
+  if (mir::CarriesUnknowns(unit, subject_type)) {
     mir::Block known;
     if (auto built = dispatch_into(chosen_builder.Into(known)); !built) {
       return std::unexpected(std::move(built.error()));
@@ -155,7 +156,7 @@ auto BuildCaseOverValues(
     const mir::ExprId all_known = BuildConditionNot(
         unit, chosen_builder,
         BuildValueOperation(
-            unit, chosen_builder, support::BuiltinFn::kHasUnknown,
+            unit, chosen_builder, support::UnknownItem::kHasUnknown,
             chosen_builder.ReadLocal(subject, subject_type), {},
             unit.builtins.machine_bool));
     chosen_builder.AppendIfThen(all_known, std::move(known));

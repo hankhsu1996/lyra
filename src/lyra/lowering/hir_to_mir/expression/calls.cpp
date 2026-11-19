@@ -22,6 +22,7 @@
 #include "lyra/lowering/hir_to_mir/call_operands.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
+#include "lyra/lowering/hir_to_mir/container_bodies.hpp"
 #include "lyra/lowering/hir_to_mir/covergroup_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/expression/array_iterator_method.hpp"
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
@@ -59,6 +60,7 @@
 #include "lyra/mir/storage_part.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
+#include "lyra/mir/type_interface.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/library_decl.hpp"
 #include "lyra/support/system_subroutine.hpp"
@@ -397,13 +399,19 @@ auto LowerBuiltinMethodCall(
   const auto call_on = [&](mir::Builder into,
                            std::optional<mir::ExprId> receiver,
                            std::vector<mir::ExprId> args) -> mir::Expr {
-    // A question asked of a whole value is asked as every such question is:
-    // through the type's own body where it has one -- a structure's or a
-    // union's method, the body a unit states for an array -- and of the
-    // library otherwise.
-    if (receiver.has_value() && IsWholeValueOperation(b.method)) {
-      return into.Get(BuildValueOperation(
-          unit, into, b.method, receiver, std::move(args), result_type));
+    // An item of a trait the receiver's type implements is asked through
+    // that type's own body -- a structure's or a union's method, the body a
+    // unit states for an array; any other entry, a container's own method
+    // included, is the entry's call, which finds a container's own body.
+    if (receiver.has_value()) {
+      const std::optional<support::ValueOperation> own =
+          mir::OperationNamedByEntry(unit, into.Get(*receiver).type, b.method);
+      if (const auto* item =
+              own.has_value() ? std::get_if<support::LibraryAnsweredItem>(&*own)
+                              : nullptr) {
+        return into.Get(BuildValueOperation(
+            unit, into, *item, receiver, std::move(args), result_type));
+      }
     }
     return BuildBuiltinMethodCall(
         unit_lowerer.Unit(), into, b.method, receiver, std::move(args),
@@ -561,6 +569,13 @@ auto BuildBuiltinMethodCall(
   // `await`, and nothing could be stopped at.
   const mir::TypeId answered =
       entry.answers_a_wait ? unit.builtins.wait : result_type;
+  // A container's operation is the body its type has for it.
+  if (receiver.has_value()) {
+    if (std::optional<mir::Expr> own = ContainerOperationCall(
+            unit, block, method, *receiver, arguments, answered)) {
+      return *std::move(own);
+    }
+  }
   return mir::MakeBuiltinCall(
       unit, block.Body(), method, receiver, std::move(arguments), answered);
 }

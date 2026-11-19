@@ -94,8 +94,8 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "destroy";
     case RuntimeOp::kCopy:
       return "copy";
-    case RuntimeOp::kMove:
-      return "move";
+    case RuntimeOp::kRelocate:
+      return "relocate";
     case RuntimeOp::kAssign:
       return "assign";
   }
@@ -118,15 +118,15 @@ auto WrapperName(WrapperKind wrapper) -> std::string_view {
   throw InternalError("llvm codegen: unknown capability wrapper");
 }
 
-auto RuntimeOpOf(lir::ValueStep step) -> RuntimeOp {
+auto RuntimeOpOf(support::ValueStep step) -> RuntimeOp {
   switch (step) {
-    case lir::ValueStep::kCopy:
+    case support::ValueStep::kCopy:
       return RuntimeOp::kCopy;
-    case lir::ValueStep::kMove:
-      return RuntimeOp::kMove;
-    case lir::ValueStep::kEnd:
+    case support::ValueStep::kRelocate:
+      return RuntimeOp::kRelocate;
+    case support::ValueStep::kEnd:
       return RuntimeOp::kDestroy;
-    case lir::ValueStep::kAssign:
+    case support::ValueStep::kAssign:
       return RuntimeOp::kAssign;
   }
   throw InternalError("llvm codegen: unknown value step");
@@ -140,17 +140,6 @@ auto KeyedElementEntries() -> ElementEntries {
       .write = {
           .entry = support::BuiltinFn::kAssocElementMut,
           .symbol = RuntimeSymbol(support::BuiltinFn::kAssocElementMut)}};
-}
-
-auto QueueElementEntries() -> ElementEntries {
-  return {
-      .read =
-          {.entry = support::BuiltinFn::kElement,
-           .symbol = RuntimeSymbol(
-               support::ValueDomain::kQueue, support::BuiltinFn::kElement)},
-      .write = {
-          .entry = support::BuiltinFn::kQueueElementMut,
-          .symbol = RuntimeSymbol(support::BuiltinFn::kQueueElementMut)}};
 }
 
 auto PositionedElementEntries(support::ValueDomain domain) -> ElementEntries {
@@ -365,7 +354,7 @@ auto OperandReadingsOf(RuntimeOp op) -> support::OperandReadings {
     case RuntimeOp::kConstruct:
     case RuntimeOp::kDestroy:
     case RuntimeOp::kCopy:
-    case RuntimeOp::kMove:
+    case RuntimeOp::kRelocate:
     case RuntimeOp::kAssign:
       return {};
   }
@@ -408,7 +397,7 @@ auto AnswerToldOf(RuntimeOp op) -> support::AnswerTold {
     case RuntimeOp::kConstruct:
     case RuntimeOp::kDestroy:
     case RuntimeOp::kCopy:
-    case RuntimeOp::kMove:
+    case RuntimeOp::kRelocate:
     case RuntimeOp::kAssign:
       return support::AnswerTold::kNothing;
   }
@@ -431,17 +420,15 @@ auto OperandReadingsOf(lir::ValueCellTarget::Op op)
 
 auto OperandReadingsOf(lir::OpenWriteTarget::Op op)
     -> support::OperandReadings {
+  using enum support::OperandReading;
   switch (op) {
     case lir::OpenWriteTarget::Op::kLand:
+    case lir::OpenWriteTarget::Op::kDesignated:
       return {};
-    // A run of elements written within a write takes what the container's own
-    // slice write takes, the designation standing for the container.
-    case lir::OpenWriteTarget::Op::kAssignElementSlice:
-      return support::RuntimeEntryOf(support::BuiltinFn::kAssignElementSlice)
-          .operands;
-    case lir::OpenWriteTarget::Op::kAssignQueueSlice:
-      return support::RuntimeEntryOf(support::BuiltinFn::kAssignQueueSlice)
-          .operands;
+    // The designation, then the positions the run write answered it changed,
+    // from the first to one past the last.
+    case lir::OpenWriteTarget::Op::kMoved:
+      return {kMachine, kPosition, kPosition};
   }
   throw InternalError("llvm codegen: unknown open-write operation");
 }

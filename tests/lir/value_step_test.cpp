@@ -54,27 +54,27 @@ struct Types {
             .mutability = Mutability::kMutable}});
   }
 
-  [[nodiscard]] auto Step(TypeId type, ValueStep step) const
-      -> StepRealization {
+  [[nodiscard]] auto Step(TypeId type, support::ValueStep step) const
+      -> StepKind {
     return StepOf(unit, type, step);
   }
 };
 
 template <typename Realization>
-auto Is(const StepRealization& realized) -> bool {
+auto Is(const StepKind& realized) -> bool {
   return std::holds_alternative<Realization>(realized);
 }
 
 // A value made only of what ends with nothing to do is its bytes for every
 // step, however it is laid out.
-TEST(ValueStepTest, AValueWithNothingToEndIsItsBytes) {
+TEST(ValueStepTest, AValueWithNothingToEndIsTrivial) {
   Types t;
   const TypeId plain = t.Record(RecordKind::kStruct, {t.integral, t.integral});
-  for (const ValueStep step :
-       {ValueStep::kCopy, ValueStep::kMove, ValueStep::kAssign,
-        ValueStep::kEnd}) {
-    EXPECT_TRUE(Is<StepIsBytes>(t.Step(t.integral, step)));
-    EXPECT_TRUE(Is<StepIsBytes>(t.Step(plain, step)));
+  for (const support::ValueStep step :
+       {support::ValueStep::kCopy, support::ValueStep::kRelocate,
+        support::ValueStep::kAssign, support::ValueStep::kEnd}) {
+    EXPECT_TRUE(Is<TrivialStep>(t.Step(t.integral, step)));
+    EXPECT_TRUE(Is<TrivialStep>(t.Step(plain, step)));
   }
   EXPECT_FALSE(NeedsEnd(t.unit, plain));
 }
@@ -83,13 +83,13 @@ TEST(ValueStepTest, AValueWithNothingToEndIsItsBytes) {
 // held as.
 TEST(ValueStepTest, ALibraryValueIsSteppedByTheLibrary) {
   Types t;
-  for (const ValueStep step :
-       {ValueStep::kCopy, ValueStep::kMove, ValueStep::kAssign,
-        ValueStep::kEnd}) {
-    const StepRealization realized = t.Step(t.string, step);
-    ASSERT_TRUE(Is<StepByLibrary>(realized));
+  for (const support::ValueStep step :
+       {support::ValueStep::kCopy, support::ValueStep::kRelocate,
+        support::ValueStep::kAssign, support::ValueStep::kEnd}) {
+    const StepKind realized = t.Step(t.string, step);
+    ASSERT_TRUE(Is<LibraryStep>(realized));
     EXPECT_EQ(
-        std::get<StepByLibrary>(realized).object,
+        std::get<LibraryStep>(realized).object,
         support::RuntimeObject{support::ValueDomain::kString});
   }
 }
@@ -97,7 +97,7 @@ TEST(ValueStepTest, ALibraryValueIsSteppedByTheLibrary) {
 // A value laid out by its type that holds something to end is stepped by its
 // own function, part by part, at every depth and whichever kind of product
 // or tagged union it is.
-TEST(ValueStepTest, AValueHoldingSomethingToEndIsSteppedByItsFunction) {
+TEST(ValueStepTest, AValueHoldingSomethingToEndIsSteppedByItsGlue) {
   Types t;
   const TypeId named = t.Record(RecordKind::kStruct, {t.integral, t.string});
   const TypeId nested = t.Tuple({t.integral, named});
@@ -107,37 +107,37 @@ TEST(ValueStepTest, AValueHoldingSomethingToEndIsSteppedByItsFunction) {
       t.Record(RecordKind::kTaggedUnion, {t.integral, t.string});
   for (const TypeId type : {named, nested, elements, tagged}) {
     EXPECT_TRUE(NeedsEnd(t.unit, type));
-    for (const ValueStep step :
-         {ValueStep::kCopy, ValueStep::kMove, ValueStep::kAssign,
-          ValueStep::kEnd}) {
-      EXPECT_TRUE(Is<StepByFunction>(t.Step(type, step)));
+    for (const support::ValueStep step :
+         {support::ValueStep::kCopy, support::ValueStep::kRelocate,
+          support::ValueStep::kAssign, support::ValueStep::kEnd}) {
+      EXPECT_TRUE(Is<GlueStep>(t.Step(type, step)));
     }
   }
 }
 
-// An owning pointer moves as the address it is and is never copied; ending it
-// ends what it points at, as its type says where the pointer ends, and through
-// the definition an object opens with where only that knows.
-// A value holding one has no copy and no move: a move leaves what it took to be
-// ended, which would give back what the moved pointer now owns. It still ends.
-TEST(ValueStepTest, AnOwningPointerMovesAndEndsButIsNeverCopied) {
+// An owning pointer relocates as the address it is and is never copied; ending
+// it ends what it points at, as its type says where the pointer ends, and
+// through the definition an object opens with where only that knows. A value
+// holding one has no copy and no write over it, and relocates as its bytes,
+// since a relocation ends nothing of what it took. It still ends.
+TEST(ValueStepTest, AnOwningPointerRelocatesAndEndsButIsNeverCopied) {
   Types t;
   const TypeId boxed = t.Owning(t.string);
-  EXPECT_TRUE(Is<StepIsBytes>(t.Step(boxed, ValueStep::kMove)));
-  EXPECT_TRUE(Is<NoSuchStep>(t.Step(boxed, ValueStep::kCopy)));
-  EXPECT_TRUE(Is<NoSuchStep>(t.Step(boxed, ValueStep::kAssign)));
-  EXPECT_TRUE(Is<StepThroughPointee>(t.Step(boxed, ValueStep::kEnd)));
+  EXPECT_TRUE(Is<TrivialStep>(t.Step(boxed, support::ValueStep::kRelocate)));
+  EXPECT_TRUE(Is<DeletedStep>(t.Step(boxed, support::ValueStep::kCopy)));
+  EXPECT_TRUE(Is<DeletedStep>(t.Step(boxed, support::ValueStep::kAssign)));
+  EXPECT_TRUE(Is<BoxStep>(t.Step(boxed, support::ValueStep::kEnd)));
 
   const ClassId cls = t.unit.classes.Add(Class{});
   const TypeId object = t.unit.types.Intern(Type{ObjectType{.class_id = cls}});
   EXPECT_TRUE(
-      Is<StepThroughDefinition>(t.Step(t.Owning(object), ValueStep::kEnd)));
+      Is<VirtualStep>(t.Step(t.Owning(object), support::ValueStep::kEnd)));
 
   const TypeId holding = t.Tuple({t.integral, boxed});
-  EXPECT_TRUE(Is<NoSuchStep>(t.Step(holding, ValueStep::kCopy)));
-  EXPECT_TRUE(Is<NoSuchStep>(t.Step(holding, ValueStep::kAssign)));
-  EXPECT_TRUE(Is<NoSuchStep>(t.Step(holding, ValueStep::kMove)));
-  EXPECT_TRUE(Is<StepByFunction>(t.Step(holding, ValueStep::kEnd)));
+  EXPECT_TRUE(Is<DeletedStep>(t.Step(holding, support::ValueStep::kCopy)));
+  EXPECT_TRUE(Is<DeletedStep>(t.Step(holding, support::ValueStep::kAssign)));
+  EXPECT_TRUE(Is<TrivialStep>(t.Step(holding, support::ValueStep::kRelocate)));
+  EXPECT_TRUE(Is<GlueStep>(t.Step(holding, support::ValueStep::kEnd)));
 }
 
 }  // namespace

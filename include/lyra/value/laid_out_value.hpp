@@ -70,10 +70,8 @@ class LaidOutValue {
     Type().Copy(Bytes(), out);
     return out;
   }
-  auto MoveInto(void* out) && -> void* {
-    Type().Move(Bytes(), out);
-    value_ = AnyValue();
-    return out;
+  auto RelocateInto(void* out) && -> void* {
+    return std::move(value_).RelocateInto(out);
   }
 
   // The value given up as the value held with its type that this keeps it as,

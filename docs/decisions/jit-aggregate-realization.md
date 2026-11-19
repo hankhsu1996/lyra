@@ -1,12 +1,15 @@
 # Aggregate values are runtime-owned opaque values on the JIT, not monomorphized
 
-Date: 2026-07-18 Status: accepted for containers, which stay runtime-owned objects behind a handle;
-superseded for unions by
+Date: 2026-07-18 Status: superseded. For unions by
 [a-union-is-one-storage-its-members-overlay](a-union-is-one-storage-its-members-overlay.md), and for
 tuples by [a-tuple-is-laid-out-by-its-type](a-tuple-is-laid-out-by-its-type.md), once every value
-came to live in its maker's frame rather than behind a handle; revised 2026-10-05 for what those
-objects hold. A container holds its elements as the element type's bytes and acts on them through
-that type's operations, as [a-value-is-its-machine-data](a-value-is-its-machine-data.md) decides.
+came to live in its maker's frame rather than behind a handle. For containers on 2026-11-05 by
+[a-containers-operations-are-built-for-its-type-over-a-core](a-containers-operations-are-built-for-its-type-over-a-core.md):
+a container is a value laid out by its type, whose operations are bodies built for the type over a
+core the library compiles once, so it is no runtime-owned object answering every operation for every
+element type. This entry's argument below -- that a run-time-sized container cannot be an LLVM
+aggregate -- still holds of the core; what it took from that, that every operation is a runtime
+call, does not.
 
 ## Why this decision matters
 

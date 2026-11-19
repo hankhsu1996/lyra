@@ -14,7 +14,6 @@
 #include "lyra/lir/record_id.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
-#include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/linkage.hpp"
 #include "lyra/support/value_operation.hpp"
 
@@ -73,7 +72,7 @@ struct PairBody {
         BasicBlock{
             .instrs = {std::move(instr)},
             .terminator = Terminator{.data = ReturnTerm{}}});
-    unit.functions.Add(std::move(fn));
+    unit.functions.Add(FunctionAttributes{}, std::move(fn));
     Verify(unit);
   }
 };
@@ -253,7 +252,8 @@ TEST(LirVerifyTest, ACallStatesWhatTheFunctionItEntersTakesAndAnswers) {
     callee.result_type = body.pair;
     callee.params.push_back(callee.values.Add(
         Local{.name = "p", .type = body.integer, .kind = LocalKind::kParam}));
-    const FunctionId called = body.unit.functions.Add(std::move(callee));
+    const FunctionId called = body.unit.functions.Add(
+        FunctionAttributes{.can_unwind = false}, std::move(callee));
     const Instr call{
         .data = AssignInstr{
             .destination = body.Transient(answered_of(body)),
@@ -300,7 +300,8 @@ TEST(LirVerifyTest, OnlyAReceiverMeetsAnAddressOfAnotherClass) {
         Local{.name = "a", .type = first, .kind = LocalKind::kParam}));
     callee.params.push_back(callee.values.Add(
         Local{.name = "b", .type = second, .kind = LocalKind::kParam}));
-    const FunctionId called = body.unit.functions.Add(std::move(callee));
+    const FunctionId called = body.unit.functions.Add(
+        FunctionAttributes{.can_unwind = false}, std::move(callee));
     const ValueId one = body.fn.values.Add(
         Local{.name = "p", .type = first_handed, .kind = LocalKind::kParam});
     const ValueId other = body.fn.values.Add(
@@ -341,7 +342,11 @@ TEST(LirVerifyTest, OnlyAReceiverMeetsAnAddressOfAnotherClass) {
             address(body, object(body, 0), PointerOwnership::kBorrowed);
         const TypeId derived =
             address(body, object(body, 1), PointerOwnership::kBorrowed);
-        return Types{base, body.integer, derived, body.integer};
+        return Types{
+            .first = base,
+            .second = body.integer,
+            .first_handed = derived,
+            .second_handed = body.integer};
       },
       "");
   calling(
@@ -350,7 +355,11 @@ TEST(LirVerifyTest, OnlyAReceiverMeetsAnAddressOfAnotherClass) {
             address(body, object(body, 0), PointerOwnership::kBorrowed);
         const TypeId shared =
             address(body, object(body, 1), PointerOwnership::kShared);
-        return Types{base, body.integer, shared, body.integer};
+        return Types{
+            .first = base,
+            .second = body.integer,
+            .first_handed = shared,
+            .second_handed = body.integer};
       },
       "of another type than its parameter");
   calling(
@@ -359,16 +368,79 @@ TEST(LirVerifyTest, OnlyAReceiverMeetsAnAddressOfAnotherClass) {
             address(body, object(body, 0), PointerOwnership::kBorrowed);
         const TypeId derived =
             address(body, object(body, 1), PointerOwnership::kBorrowed);
-        return Types{base, base, base, derived};
+        return Types{
+            .first = base,
+            .second = base,
+            .first_handed = base,
+            .second_handed = derived};
       },
       "of another type than its parameter");
+}
+
+// A callee that can be unwound out of is called as an invoke, and a function
+// declared not to unwind is left by no unwind: a call as an instruction of a
+// function so declared is accepted and of one not declared so is refused, and a
+// function so declared that goes on unwinding is refused.
+TEST(LirVerifyTest, OnlyWhatCannotUnwindIsCalledAsAnInstruction) {
+  const auto calling = [](bool callee_cannot_unwind,
+                          const std::string& because) {
+    PairBody body;
+    Function callee;
+    callee.name = "callee";
+    callee.result_type = body.unit.types.Intern(Type{VoidType{}});
+    const FunctionId called = body.unit.functions.Add(
+        FunctionAttributes{.can_unwind = !callee_cannot_unwind},
+        std::move(callee));
+    const Instr call{
+        .data = AssignInstr{
+            .destination = body.Transient(body.fn.result_type),
+            .value = CallInstr{
+                .target = FunctionTarget{.function = called}, .args = {}}}};
+    if (because.empty()) {
+      EXPECT_NO_THROW(body.VerifyRunning(call));
+    } else {
+      ExpectRefused(body, call, because);
+    }
+  };
+  calling(true, "");
+  calling(false, "called as an instruction rather than as an invoke");
+
+  CompilationUnit unit;
+  Function resuming;
+  resuming.name = "resuming";
+  resuming.result_type = unit.types.Intern(Type{VoidType{}});
+  const ValueId exception = resuming.values.Add(
+      Local{
+          .name = "e",
+          .type = unit.types.Intern(
+              Type{MachineIntType{
+                  .width = MachineIntWidth::k64,
+                  .signedness = Signedness::kUnsigned}}),
+          .kind = LocalKind::kParam});
+  resuming.params.push_back(exception);
+  resuming.blocks.push_back(
+      BasicBlock{
+          .instrs = {},
+          .terminator = Terminator{
+              .data = UnwindResumeTerm{.exception = Use{.value = exception}}}});
+  unit.functions.Add(
+      FunctionAttributes{.can_unwind = false}, std::move(resuming));
+  try {
+    Verify(unit);
+    FAIL() << "a function declared not to unwind that unwinds passed";
+  } catch (const InternalError& refused) {
+    EXPECT_NE(
+        std::string_view{refused.what()}.find("declared not to unwind"),
+        std::string_view::npos)
+        << refused.what();
+  }
 }
 
 // A type's default is reached through what the type is told to the library by,
 // so no call states what it answers.
 TEST(LirVerifyTest, ATypesDefaultAnswersAValueOfThatType) {
   const support::ValueOperation default_value =
-      support::BuiltinFn::kDeclaredDefault;
+      support::DefaultItem::kDeclaredDefault;
   CompilationUnit unit;
   const TypeId integer = unit.types.Intern(
       Type{MachineIntType{
@@ -381,7 +453,8 @@ TEST(LirVerifyTest, ATypesDefaultAnswersAValueOfThatType) {
   fn.result_type = other;
   fn.blocks.push_back(
       BasicBlock{.instrs = {}, .terminator = Terminator{.data = ReturnTerm{}}});
-  const FunctionId function = unit.functions.Add(std::move(fn));
+  const FunctionId function =
+      unit.functions.Add(FunctionAttributes{}, std::move(fn));
   unit.type_operations.emplace(
       TypeOperation{.type = integer, .answers = default_value}, function);
   try {
@@ -397,7 +470,7 @@ TEST(LirVerifyTest, ATypesDefaultAnswersAValueOfThatType) {
 // A unit leaves here complete, so a call naming a function reaches a body.
 TEST(LirVerifyTest, EveryFunctionDeclaredIsDefined) {
   CompilationUnit unit;
-  unit.functions.Declare();
+  unit.functions.Declare(FunctionAttributes{});
   try {
     Verify(unit);
     FAIL() << "a declared function with no body passed";

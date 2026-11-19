@@ -1113,7 +1113,8 @@ auto MakeForeignSignature(
       .named_locals = {},
       .body = std::nullopt,
       .span = {},
-      .caller_location = std::nullopt};
+      .caller_location = std::nullopt,
+      .can_unwind = true};
   CallableBindings bindings(unit, code);
   code.params.reserve(params.size());
   for (const auto& param : params) {

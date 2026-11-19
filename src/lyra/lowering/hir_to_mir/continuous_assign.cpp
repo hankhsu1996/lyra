@@ -42,6 +42,7 @@
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
+#include "lyra/mir/value_parts.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/callable_bounds.hpp"
 #include "lyra/support/library_decl.hpp"
@@ -392,7 +393,7 @@ auto LowerContinuousDrive(
           PathValueType(unit, resolve_block.Body(), settled);
       const mir::TypeId given = unit.types.Get(part).IsIntegral()
                                     ? part
-                                    : PositionsTypeOf(unit, part);
+                                    : mir::PositionsTypeOf(unit, part);
       const ClassField driver = AddField(
           *resolve_frame.current_class.cls,
           unit.types.Intern(mir::Type{mir::DriverType{.value = given}}));
@@ -598,7 +599,7 @@ auto LowerContinuousDrive(
     const mir::ExprId differs = BuildConditionNot(
         unit, body_block_builder,
         BuildValueOperation(
-            unit, body_block_builder, support::BuiltinFn::kBitIdentical,
+            unit, body_block_builder, support::ChangeTestItem::kBitIdentical,
             changed_value, {scheduled_value}, unit.builtins.machine_bool));
     mir::Block rescheduled;
     mir::Builder rescheduled_builder = entry.Into(rescheduled);

@@ -1,3 +1,4 @@
+#include <optional>
 #include <span>
 #include <utility>
 #include <variant>
@@ -12,6 +13,7 @@
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_declaration_ref.hpp"
 #include "lyra/mir/type_id.hpp"
+#include "lyra/mir/type_interface.hpp"
 #include "lyra/support/library_decl.hpp"
 
 namespace lyra::lowering::mir_to_lir {
@@ -82,6 +84,9 @@ auto UnitLowerer::TranslateType(mir::TypeId id) -> lir::TypeId {
       out_.types.Intern(TranslateType(mir_->types.Get(id)));
   type_memo_.emplace(id, lir_id);
   mir_type_of_.try_emplace(lir_id, id);
+  if (std::optional<mir::Impl> impl = mir::ImplOf(*mir_, id)) {
+    out_.implemented_traits.try_emplace(lir_id, std::move(impl->traits));
+  }
   return lir_id;
 }
 

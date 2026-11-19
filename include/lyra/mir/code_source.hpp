@@ -5,6 +5,7 @@
 #include <optional>
 #include <string>
 #include <variant>
+#include <vector>
 
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/class_id.hpp"
@@ -24,10 +25,21 @@ struct CompilationUnit;
 struct TypeOperationSource {
   TypeId type;
   support::ValueOperation answers;
+  std::vector<TypeId> arguments = {};
 
   auto operator<=>(const TypeOperationSource&) const
       -> std::strong_ordering = default;
 };
+
+// A body built for an operation of a type no declaration states it for, at
+// the type it answers it at: what a target resolving types where a call is
+// written renders apart from the unit, where the other target lowers it with
+// the unit.
+struct TypeOperationBody {
+  TypeOperationSource source;
+  CallableCode code;
+};
+
 struct ForeignScopeEntrySource {
   std::string foreign_name;
 

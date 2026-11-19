@@ -167,6 +167,16 @@ cc_test(
 )
 
 cc_test(
+    name = "value_container_core_test",
+    srcs = ["value/container_core_test.cpp"],
+    copts = LYRA_COPTS,
+    deps = [
+        "//:value",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
     name = "value_small_box_test",
     srcs = ["value/small_box_test.cpp"],
     copts = LYRA_COPTS,
@@ -245,6 +255,17 @@ cc_test(
 cc_test(
     name = "mir_referenced_declarations_test",
     srcs = ["mir/referenced_declarations_test.cpp"],
+    copts = LYRA_COPTS,
+    deps = [
+        "//:mir",
+        "//:support",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "mir_type_interface_test",
+    srcs = ["mir/type_interface_test.cpp"],
     copts = LYRA_COPTS,
     deps = [
         "//:mir",

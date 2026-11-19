@@ -44,10 +44,6 @@ auto ValueDomainName(ValueDomain domain) -> std::string_view {
       return "unmanagedref";
     case ValueDomain::kLaidOut:
       return "laidout";
-    case ValueDomain::kDynArray:
-      return "dynarray";
-    case ValueDomain::kQueue:
-      return "queue";
     case ValueDomain::kAssocArray:
       return "assocarray";
     case ValueDomain::kManagedRef:
@@ -79,8 +75,6 @@ auto IsLaidOutByItsType(ValueDomain domain) -> bool {
     case ValueDomain::kReal:
     case ValueDomain::kShortReal:
     case ValueDomain::kUnmanagedRef:
-    case ValueDomain::kDynArray:
-    case ValueDomain::kQueue:
     case ValueDomain::kAssocArray:
     case ValueDomain::kManagedRef:
       return false;

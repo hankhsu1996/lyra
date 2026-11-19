@@ -4,7 +4,6 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
-#include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type_id.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -24,10 +23,10 @@ namespace lyra::lowering::hir_to_mir {
 // structurally different operations -- each has its own primitive and is
 // materialized directly at its producer, not through this helper.
 //
-// `block` is the destination scope for any intermediate `ExprId` the helper
+// `outer` is the destination scope for any intermediate `ExprId` the helper
 // interns when a conversion nests another call.
 [[nodiscard]] auto BuildValueConversion(
-    const mir::CompilationUnit& unit, mir::Builder block,
+    const mir::CompilationUnit& unit, mir::Builder outer,
     mir::ExprId operand_id, mir::TypeId dst_type) -> mir::Expr;
 
 // The conversion LRM 11.8.2 puts on a context-determined operand, which differs

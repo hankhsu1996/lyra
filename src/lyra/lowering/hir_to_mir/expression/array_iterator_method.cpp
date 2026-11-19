@@ -19,6 +19,7 @@
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
+#include "lyra/lowering/hir_to_mir/container_bodies.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/entry_walk.hpp"
 #include "lyra/lowering/hir_to_mir/expression/calls.hpp"
@@ -35,8 +36,11 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/stmt.hpp"
+#include "lyra/mir/storage_part.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
+#include "lyra/mir/type_interface.hpp"
+#include "lyra/mir/value_parts.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/callable_bounds.hpp"
 #include "lyra/support/library_decl.hpp"
@@ -336,7 +340,7 @@ auto LowerMinMax(
         const std::array compared{key_type, key_type};
         const mir::ExprId lhs = b.ReadLocal(held, key_type);
         const mir::ExprId rhs = b.ReadLocal(best, key_type);
-        const mir::TypeId answer_type = OneBitAnswerType(unit, compared);
+        const mir::TypeId answer_type = mir::OneBitAnswerType(unit, compared);
         const mir::ExprId comes_first = ReduceToCondition(
             unit, b,
             b.Add(BuildMirBinaryExpr(
@@ -469,18 +473,10 @@ auto LowerMap(
       sized_while_running
           ? DeclareLocal(
                 steps.Frame(),
-                body.Add(
-                    mir::Expr{
-                        .data =
-                            mir::CallExpr{
-                                .callee =
-                                    mir::Direct{
-                                        .target = support::BuiltinFn::
-                                            kDynamicArrayNew},
-                                .arguments = {BuildToInt64Call(
-                                    unit, body,
-                                    EntryCount(unit, body, *array))}},
-                        .type = result_type}))
+                body.Add(BuildDynamicArrayNew(
+                    unit, body, result_type,
+                    BuildToInt64Call(
+                        unit, body, EntryCount(unit, body, *array)))))
           : DeclareDefault(unit, steps.Frame(), result_type);
   auto walked = AppendKeyLoop(
       lowerer, ref, steps, *array, WalkOrder::kFromFirst,
@@ -506,68 +502,15 @@ auto LowerMap(
   return steps.Build(body.ReadLocal(mapped, result_type));
 }
 
-// The order a sort puts the entries in, as a closure answering whether the
-// entry at one position comes before the one at another: whether the first's
-// entry of `sequence` compares by `comparison` with the second's, an entry
-// carrying x or z comparing as not before (LRM 7.12.2). It is the `is_less`
-// Rust's sort is handed. The library that applies it borrows it, so it never
-// outlives the call, and it refers to `sequence` where it lies rather than
-// copying it -- the keys the sort gathered, or the array itself where the call
-// writes no clause and the elements are compared.
-auto BuildIsLess(
-    UnitLowerer& unit_lowerer, const WalkFrame& frame,
-    const AccessPath& sequence, mir::TypeId entry_type,
-    hir::BinaryOp comparison) -> mir::ExprId {
-  mir::CompilationUnit& unit = unit_lowerer.Unit();
-  mir::Builder block = frame.Builder();
-  ClosureBuilder is_less(unit, frame, support::ClosureKind::kFn);
-  mir::Builder body = is_less.Body();
-  const BodyBindingRef held = SnapshotBindingIntoClosure(
-      unit_lowerer, frame, is_less, PathReference(unit, block, sequence));
-  const mir::TypeId position = unit.builtins.machine_int64;
-  const auto entry_at = [&](mir::LocalId at) {
-    const mir::ExprId reached = body.Add(
-        mir::MakeBuiltinCall(
-            unit, body.Body(), support::BuiltinFn::kIntegralFromInt,
-            std::nullopt, {body.ReadLocal(at, position)},
-            mir::PositionType(unit.types)));
-    return PathValue(
-        unit, body,
-        DescendInto(
-            AccessPath{
-                .owner =
-                    body.Add(is_less.Bindings().MakeBindingPlace(held, body)),
-                .descent = {}},
-            DescentStep{
-                .to = StepToElement{.position = reached},
-                .part_type = entry_type}));
-  };
-  const mir::LocalId first = is_less.AddParam(position);
-  const mir::LocalId second = is_less.AddParam(position);
-  const std::array compared{entry_type, entry_type};
-  const mir::ExprId lhs = entry_at(first);
-  const mir::ExprId rhs = entry_at(second);
-  const mir::TypeId answer_type = OneBitAnswerType(unit, compared);
-  const mir::ExprId before = ReduceToCondition(
-      unit, body,
-      body.Add(
-          BuildMirBinaryExpr(unit, body, comparison, lhs, rhs, answer_type)));
-  const mir::ExprId made = block.Add(is_less.Build(before));
-  const mir::TypeId closure_type = block.Get(made).type;
-  return BuildBorrowedClosure(
-      unit, block, block.LocalPlace(DeclareLocal(frame, made), closure_type));
-}
-
-// LRM 7.12.2 `sort` / `rsort`: the library told to put the entries in the
-// order of their keys, which it is handed as a comparison of two entries by
-// `comparison` -- `<` for `sort` and `>` for `rsort`, so one library entry
-// sorts both ways, as Rust sorts descending by `sort_by` --
-// of the keys the loop gathered in order where the call writes a clause, and
-// of the elements themselves where it writes none, which the library reads
-// only while it decides the order and before it moves anything. The array is
-// changed where the source named it; one lying where another member of an
-// untagged union may have written is sorted in a copy read as its type holds
-// a value, which is then written back (LRM 7.3.2).
+// LRM 7.12.2 `sort` / `rsort`: the positions of the keys in the order
+// `comparison` -- `<` for `sort` and `>` for `rsort` -- puts them, which the
+// library answers by comparing the keys as the kind of value they are, then
+// the array's elements put in that order by its type's own body. The keys are
+// the ones the loop gathered in order where the call writes a clause, and the
+// elements themselves where it writes none. The array is changed where the
+// source named it; one lying where another member of an untagged union may
+// have written is sorted in a copy read as its type holds a value, which is
+// then written back (LRM 7.3.2).
 template <ExprLowerer Lowerer>
 auto LowerSort(
     Lowerer& lowerer, const WalkFrame& frame, const hir::CallExpr& c,
@@ -622,12 +565,39 @@ auto LowerSort(
   }();
   if (!compared) return std::unexpected(std::move(compared.error()));
 
-  const mir::ExprId order =
-      BuildIsLess(unit_lowerer, steps.Frame(), *compared, key_type, comparison);
-  const mir::ExprId sorted = body.Add(BuildBuiltinMethodCall(
-      unit_lowerer.Unit(), body, support::BuiltinFn::kSort,
-      PathPlace(unit, body, NamedIn(unit, array.path, body)), {order},
-      unit.builtins.void_type));
+  const mir::ExprId sorted = [&] {
+    const mir::ExprId held_keys = PathValue(unit, body, *compared);
+    const mir::TypeId keys_type = mir::DynamicArrayOf(unit.types, key_type);
+    const mir::ExprId keys =
+        EvaluatedOnce(
+            steps.Frame(),
+            body.Add(
+                mir::Expr{
+                    .data =
+                        mir::CallExpr{
+                            .callee =
+                                mir::Direct{
+                                    .target =
+                                        mir::TypeOperationTarget{
+                                            .type = keys_type,
+                                            .answers = support::BuiltinFn::
+                                                kDynamicArrayFromArray,
+                                            .arguments =
+                                                {body.Get(held_keys).type}}},
+                            .arguments = {mir::Borrow(unit, body, held_keys)}},
+                    .type = keys_type}));
+    const mir::ExprId positions = body.Add(
+        mir::MakeBuiltinCall(
+            unit, body.Body(), support::BuiltinFn::kSortOrder, std::nullopt,
+            {mir::Borrow(unit, body, keys),
+             BuildMachineBool(
+                 unit, body, comparison == hir::BinaryOp::kGreaterThan)},
+            mir::SortOrderType(unit.types)));
+    return body.Add(BuildBuiltinMethodCall(
+        unit_lowerer.Unit(), body, support::BuiltinFn::kApplyOrder,
+        PathPlace(unit, body, NamedIn(unit, array.path, body)), {positions},
+        unit.builtins.void_type));
+  }();
   if (!written_back.has_value()) {
     return steps.Build(sorted);
   }

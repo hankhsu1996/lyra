@@ -58,8 +58,6 @@
 #include "lyra/value/object_ref.hpp"
 #include "lyra/value/real.hpp"
 #include "lyra/value/runtime_associative_array.hpp"
-#include "lyra/value/runtime_dynamic_array.hpp"
-#include "lyra/value/runtime_queue.hpp"
 #include "lyra/value/string.hpp"
 #include "lyra/value/unmanaged_ref.hpp"
 #include "lyra/value/value_type.hpp"
@@ -231,10 +229,6 @@ constexpr auto WithValueClass(ValueDomain domain, F f)
       return f.template operator()<value::UnmanagedRef>();
     case ValueDomain::kLaidOut:
       return f.template operator()<value::LaidOutValue>();
-    case ValueDomain::kDynArray:
-      return f.template operator()<value::RuntimeDynamicArray>();
-    case ValueDomain::kQueue:
-      return f.template operator()<value::RuntimeQueue>();
     case ValueDomain::kAssocArray:
       return f.template operator()<value::RuntimeAssociativeArray>();
     case ValueDomain::kManagedRef:

@@ -85,6 +85,11 @@ auto IsErasedFunction(const TypePool& types, TypeId id) -> bool;
 // that says what was assumed.
 auto ErasedPointer(const TypePool& types) -> TypeId;
 
+// An address of `pointee` owning nothing, through which it is read, or also
+// written where `mutability` says, as Rust's `&T` and `&mut T` are.
+auto BorrowedPointerTo(
+    const TypePool& types, TypeId pointee, Mutability mutability) -> TypeId;
+
 // A box of `value`: a pointer uniquely owning storage of dynamic duration
 // holding one, as Rust's `Box` is.
 auto BoxOf(const TypePool& types, TypeId value) -> TypeId;

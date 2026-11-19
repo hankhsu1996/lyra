@@ -10,6 +10,7 @@
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
+#include "lyra/lowering/hir_to_mir/container_bodies.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/entry_walk.hpp"
 #include "lyra/lowering/hir_to_mir/equivalence_identity.hpp"
@@ -23,6 +24,7 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/stmt.hpp"
+#include "lyra/mir/storage_part.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -51,7 +53,7 @@ auto EntryCall(
 // what its own bound admits, so what it discards is never built (LRM 7.10.5);
 // an associative array keeps the value its absent indexes read (LRM 7.9.11).
 auto ConversionBody(
-    const mir::CompilationUnit& unit, support::BuiltinFn answers,
+    const mir::CompilationUnit& unit, support::BoundFreeItem answers,
     mir::TypeId from, mir::TypeId to) -> mir::CallableCode {
   mir::CallableCode code = mir::CallableCode::Defined(diag::SourceSpan{});
   CallableBindings bindings(unit, code);
@@ -84,9 +86,20 @@ auto ConversionBody(
         to_type.Get<mir::LibraryType>().Bound());
     const mir::LocalId kept = DeclareLocal(
         frame,
-        EntryCall(
-            unit, block, support::BuiltinFn::kQueueFromArray, std::nullopt,
-            {block.AsValue(unit.types, source)}, kept_type));
+        block.Add(
+            mir::Expr{
+                .data =
+                    mir::CallExpr{
+                        .callee =
+                            mir::Direct{
+                                .target =
+                                    mir::TypeOperationTarget{
+                                        .type = kept_type,
+                                        .answers =
+                                            support::BuiltinFn::kQueueFromArray,
+                                        .arguments = {from}}},
+                        .arguments = {mir::Borrow(unit, block, source)}},
+                .type = kept_type}));
     source = block.LocalPlace(kept, kept_type);
   }
 
@@ -95,11 +108,9 @@ auto ConversionBody(
   const mir::LocalId built = DeclareLocal(
       frame,
       to_type.IsDeclaredBy(support::LibraryDecl::kDynamicArray)
-          ? EntryCall(
-                unit, block, support::BuiltinFn::kDynamicArrayNew, std::nullopt,
-                {BuildToInt64Call(
-                    unit, block, EntryCount(unit, block, walked))},
-                to)
+          ? block.Add(BuildDynamicArrayNew(
+                unit, block, to,
+                BuildToInt64Call(unit, block, EntryCount(unit, block, walked))))
           : block.Add(BuildDefaultValueExpr(unit, block, to)));
 
   auto loop = BuildEntryLoopStmt(
@@ -162,14 +173,14 @@ auto ConversionBody(
 auto BuildToBoundFreeBody(const mir::CompilationUnit& unit, mir::TypeId type)
     -> mir::CallableCode {
   return ConversionBody(
-      unit, support::BuiltinFn::kToBoundFree, type,
+      unit, support::BoundFreeItem::kToBoundFree, type,
       WithoutQueueBounds(unit.types, type));
 }
 
 auto BuildFromBoundFreeBody(const mir::CompilationUnit& unit, mir::TypeId type)
     -> mir::CallableCode {
   return ConversionBody(
-      unit, support::BuiltinFn::kFromBoundFree,
+      unit, support::BoundFreeItem::kFromBoundFree,
       WithoutQueueBounds(unit.types, type), type);
 }
 

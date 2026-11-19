@@ -35,16 +35,14 @@
 #include "lyra/value/any_value.hpp"
 #include "lyra/value/associative_array.hpp"
 #include "lyra/value/bit_vec.hpp"
+#include "lyra/value/container_class.hpp"
+#include "lyra/value/container_core.hpp"
 #include "lyra/value/dpi_canonical.hpp"
 #include "lyra/value/dpi_open_array.hpp"
-#include "lyra/value/dynamic_array.hpp"
 #include "lyra/value/format.hpp"
 #include "lyra/value/index_order.hpp"
 #include "lyra/value/object_ref.hpp"
-#include "lyra/value/queue.hpp"
 #include "lyra/value/runtime_associative_array.hpp"
-#include "lyra/value/runtime_dynamic_array.hpp"
-#include "lyra/value/runtime_queue.hpp"
 #include "lyra/value/string.hpp"
 #include "lyra/value/unmanaged_ref.hpp"
 
@@ -76,13 +74,17 @@ constexpr auto StorageEnclosing() -> support::ObjectLayout {
 
 // The classes built in one storage a declaration or the IR states: `Built`,
 // which the library's own entries build there and the execution backend calls
-// them to, and `Written`, which the C++ backend writes there. They are one
-// class but where the C++ backend writes a class template over the type's
-// arguments -- written here over a string, since such a class holds its
-// elements elsewhere and is laid out alike whatever they are -- or a class of
-// its own for the same value.
+// them to, and `Written`, the class the C++ backend's code uses there. They
+// are one class but where the C++ backend names a class template over the
+// type's arguments -- named here over a string, since such a class holds its
+// elements elsewhere and is laid out alike whatever they are -- or the
+// library's container class for the same value.
 template <typename Built, typename Written = Built>
 struct BuiltIn {};
+
+// The implementation a container class is laid out over here, declared by
+// none: the class's layout is its core's whatever its implementation is.
+struct NoImpl;
 
 // Hands `visit` each declaration of the library's whose object is laid out as
 // a class: by value where a holder gives the object storage of its own, which
@@ -105,10 +107,11 @@ constexpr void ForEachDeclaredObjectClass(const Visit& visit) {
   visit(
       LibraryDecl::kDynamicArray,
       BuiltIn<
-          value::RuntimeDynamicArray, value::DynamicArray<value::String>>{});
+          value::DynamicArrayCore,
+          value::Container<value::DynamicArrayCore, NoImpl>>{});
   visit(
       LibraryDecl::kQueue,
-      BuiltIn<value::RuntimeQueue, value::Queue<value::String>>{});
+      BuiltIn<value::QueueCore, value::Container<value::QueueCore, NoImpl>>{});
   visit(
       LibraryDecl::kAssociativeArray,
       BuiltIn<

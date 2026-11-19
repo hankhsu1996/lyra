@@ -10,8 +10,6 @@
 #include "lyra/value/object_ref.hpp"
 #include "lyra/value/real.hpp"
 #include "lyra/value/runtime_associative_array.hpp"
-#include "lyra/value/runtime_dynamic_array.hpp"
-#include "lyra/value/runtime_queue.hpp"
 #include "lyra/value/string.hpp"
 #include "lyra/value/unmanaged_ref.hpp"
 #include "lyra/value/value_type.hpp"
@@ -31,8 +29,6 @@ extern const ValueType lyra_rt_bitvec_value_type;
 extern const ValueType lyra_rt_real_value_type;
 extern const ValueType lyra_rt_shortreal_value_type;
 extern const ValueType lyra_rt_unmanagedref_value_type;
-extern const ValueType lyra_rt_dynarray_value_type;
-extern const ValueType lyra_rt_queue_value_type;
 extern const ValueType lyra_rt_assocarray_value_type;
 extern const ValueType lyra_rt_managedref_value_type;
 
@@ -45,8 +41,6 @@ extern const OperationFunctions lyra_rt_real_operation_functions;
 extern const OperationFunctions lyra_rt_shortreal_operation_functions;
 extern const OperationFunctions lyra_rt_unmanagedref_operation_functions;
 extern const OperationFunctions lyra_rt_managedref_operation_functions;
-extern const OperationFunctions lyra_rt_dynarray_operation_functions;
-extern const OperationFunctions lyra_rt_queue_operation_functions;
 extern const OperationFunctions lyra_rt_assocarray_operation_functions;
 extern const ValueOperations lyra_rt_string_value_operations;
 extern const ValueOperations lyra_rt_real_value_operations;
@@ -74,10 +68,6 @@ template <typename T>
     return lyra_rt_shortreal_value_type;
   } else if constexpr (std::is_same_v<T, UnmanagedRef>) {
     return lyra_rt_unmanagedref_value_type;
-  } else if constexpr (std::is_same_v<T, RuntimeDynamicArray>) {
-    return lyra_rt_dynarray_value_type;
-  } else if constexpr (std::is_same_v<T, RuntimeQueue>) {
-    return lyra_rt_queue_value_type;
   } else if constexpr (std::is_same_v<T, RuntimeAssociativeArray>) {
     return lyra_rt_assocarray_value_type;
   } else {

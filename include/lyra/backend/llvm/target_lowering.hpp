@@ -1,6 +1,5 @@
 #pragma once
 
-#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -8,7 +7,6 @@
 #include <variant>
 #include <vector>
 
-#include "lyra/backend/llvm/entry_realizations.hpp"
 #include "lyra/backend/llvm/fn_abi.hpp"
 #include "lyra/backend/llvm/runtime_entry.hpp"
 #include "lyra/diag/diagnostic.hpp"
@@ -45,31 +43,54 @@ struct CellStore {
   runtime::HeldContents contents;
 };
 
+// Where the element at a position of a dynamic array's new storage lies: the
+// storage's address and that many elements of the element type's size after
+// it, as the core lays them.
+struct GenerationElementAddress {};
+// Where a position naming no element reads or writes, asked of the library for
+// the element type the call is at, as the element step of a fixed-size array
+// asks it.
+struct NoElementAnswer {
+  EntryCall entry;
+};
+// Where the record the library keeps of `type` lies, which this target emits
+// itself rather than asking the library.
+struct TypeRecordAddress {
+  lir::TypeId type;
+};
+
 // How a call of the layer above is carried out, the role of clang's `CGCallee`:
 // on the entry or the body it names; as the operand it was handed, where a
 // unique pointer is the address of the storage it takes over, as a Rust `Box`
-// is; or where a value cell states its value lies.
+// is; where a value cell states its value lies; where a dynamic array's new
+// storage places an element; where a position naming no element reaches; or
+// where a type's record lies.
 struct OrdinaryCall {};
 struct ForwardedOperand {};
 struct CellLoad {
   support::ValueDomain domain;
 };
-using CallForm =
-    std::variant<OrdinaryCall, ForwardedOperand, CellLoad, CellStore>;
+using CallForm = std::variant<
+    OrdinaryCall, ForwardedOperand, CellLoad, CellStore,
+    GenerationElementAddress, NoElementAnswer, TypeRecordAddress>;
 
 // How an operator is carried out on operands of a type: by the machine, on
-// addresses or machine integers; on identities of references owning nothing;
-// on the floats a real is; on the words of an integral value; or by the entry
-// the library realizes for the type's domain.
+// addresses or machine integers; an address moved by a count of the values it
+// points at, as C's pointer arithmetic moves one, which reads what it moves
+// by and which way off the operation itself, as clang's
+// `emitPointerArithmetic` reads them off the expression; on identities of
+// references owning nothing; on the floats a real is; on the words of an
+// integral value; or by the entry the library realizes for the type's domain.
 struct MachineOperator {
   lir::Signedness signedness;
 };
+struct AddressOffset {};
 struct IdentityOperator {};
 struct RealOperator {};
 struct IntegralOperator {};
 using OperatorForm = std::variant<
-    MachineOperator, IdentityOperator, RealOperator, IntegralOperator,
-    EntryCall>;
+    MachineOperator, AddressOffset, IdentityOperator, RealOperator,
+    IntegralOperator, EntryCall>;
 
 // Which way a place is reached for, which is what a position naming nothing
 // answers and which entry a container is asked through. A step into a container
@@ -101,9 +122,11 @@ struct AddressStore {};
 using StoreForm =
     std::variant<WrapperStore, CellEntryStore, CellStore, AddressStore>;
 
-// How a step into one element is taken: arithmetic within a fixed-size unpacked
-// array, with what a position naming no element is answered by (LRM 7.4.5), or
-// the entry its container is asked through and how each coordinate crosses.
+// How a step into one element is taken: arithmetic within a fixed-size
+// unpacked array, of the count its type states, with what a position naming no
+// element is answered by (LRM 7.4.5), or the entry its container is asked
+// through and how each coordinate crosses. A run-time-sized array's element is
+// where its own body says.
 struct StepWithinArray {
   EntryCall no_element;
 };
@@ -180,6 +203,12 @@ class TargetLowering {
       const lir::CallInstr& call, lir::TypeId result_type) const -> bool;
 
  private:
+  // How each of `coordinates` crosses to `entry`, which reads the one after
+  // its receiver first.
+  [[nodiscard]] auto CoordinatesCrossing(
+      support::BuiltinFn entry, std::span<const lir::Operand> coordinates) const
+      -> std::vector<PassMode>;
+
   // The construction of a value of type `result`: its entry, how that entry
   // reads the operands the construction states, the realization it enters,
   // none where the library realizes it once, and what the entry is told of
@@ -193,13 +222,12 @@ class TargetLowering {
   [[nodiscard]] auto ConstructionOf(
       const lir::CallInstr& call, lir::TypeId result) const
       -> diag::Result<Construction>;
-  // The same for a type the library declares, whose declaration names
-  // `constructor` as what builds one, each entry reached as the shared entry
+  // The same for a type the library declares, whose declaration names what
+  // builds one in `declaring`, each entry reached as the shared entry
   // declaration names it.
   [[nodiscard]] auto ConstructorEntryOf(
-      const support::LibraryConstructor& constructor,
-      const lir::CallInstr& call, lir::TypeId result) const
-      -> diag::Result<Construction>;
+      const support::LibraryConstructor& declaring, const lir::CallInstr& call,
+      lir::TypeId result) const -> diag::Result<Construction>;
 
   // A call's operands as the values of their types they are.
   [[nodiscard]] auto StatedOperands(const lir::CallInstr& call) const

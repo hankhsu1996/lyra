@@ -18,6 +18,7 @@
 #include "lyra/lir/constant_id.hpp"
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/function_id.hpp"
+#include "lyra/lir/function_registry.hpp"
 #include "lyra/lir/integral_constant.hpp"
 #include "lyra/lir/record_id.hpp"
 #include "lyra/lir/referent.hpp"
@@ -27,16 +28,19 @@
 #include "lyra/support/class_name.hpp"
 #include "lyra/support/def_path.hpp"
 #include "lyra/support/library_decl.hpp"
+#include "lyra/support/library_trait.hpp"
 #include "lyra/support/linkage.hpp"
 #include "lyra/support/value_operation.hpp"
+#include "lyra/support/value_step.hpp"
 
 namespace lyra::lir {
 
-// An operation of a type no declaration states it for: the type, and which
-// operation.
+// An operation of a type no declaration states it for: the type, which
+// operation, and the types it is instantiated at.
 struct TypeOperation {
   TypeId type;
   support::ValueOperation answers;
+  std::vector<TypeId> arguments = {};
   auto operator<=>(const TypeOperation&) const = default;
 };
 
@@ -265,7 +269,11 @@ struct CompilationUnit {
   base::Registry<Class, ClassId> classes;
   base::Registry<Closure, ClosureId> closures;
   base::Registry<RecordDecl, RecordId> records;
-  base::Registry<Function, FunctionId> functions;
+  // The types of the members of each structure of the runtime library, by its
+  // declaration, in the order the library declares them, as the unit this one
+  // was lowered from states them.
+  std::map<support::LibraryDecl, std::vector<TypeId>> library_records;
+  FunctionRegistry functions;
   // Each operation of a type no declaration states it for that the unit needs,
   // with the function answering it -- an array's operations on a whole value
   // (LRM 7.4.2), an array's element default (LRM 7.4.5, 7.5.1). None where the
@@ -276,7 +284,12 @@ struct CompilationUnit {
   // ending a value of the type does, built from its parts. A step of a value
   // calls it, and code compiled before the type existed reaches it through
   // the type's table.
-  std::map<std::pair<TypeId, ValueStep>, FunctionId> type_steps;
+  std::map<std::pair<TypeId, support::ValueStep>, FunctionId> type_steps;
+  // The library's traits each type implements, as the unit this one was
+  // lowered from states the type's implementation; a type implementing none
+  // has no entry.
+  std::map<TypeId, std::vector<const support::LibraryTrait*>>
+      implemented_traits;
   std::vector<StaticStorage> static_storage;
   // The definition of each class the unit defines, which the runtime library
   // reads of it, under the class's definition symbol and linked as the class
@@ -373,8 +386,8 @@ struct CompilationUnit {
 
 // The parts a component step reaches in a value of `type`, by position: a
 // structure's components -- an untagged union's one storage among them -- a
-// tagged union's members, or a tuple's components; nothing for any other
-// type.
+// tagged union's members, a tuple's components, or the members of a structure
+// of the runtime library; nothing for any other type.
 [[nodiscard]] inline auto ComponentTypes(
     const CompilationUnit& unit, TypeId type)
     -> std::optional<std::span<const TypeId>> {
@@ -384,6 +397,12 @@ struct CompilationUnit {
   }
   if (const RecordId* record = RecordOf(t)) {
     return RecordElements(unit, *record);
+  }
+  if (const auto* library = t.As<LibraryType>()) {
+    if (const auto found = unit.library_records.find(library->decl);
+        found != unit.library_records.end()) {
+      return std::span<const TypeId>{found->second};
+    }
   }
   return std::nullopt;
 }

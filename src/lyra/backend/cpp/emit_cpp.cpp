@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cstddef>
 #include <map>
 #include <optional>
 #include <set>
@@ -15,6 +16,7 @@
 #include "lyra/backend/cpp/render_constant.hpp"
 #include "lyra/backend/cpp/render_decl.hpp"
 #include "lyra/backend/cpp/render_type.hpp"
+#include "lyra/backend/cpp/render_type_operations.hpp"
 #include "lyra/backend/cpp/scope_view.hpp"
 #include "lyra/backend/cpp/target_text.hpp"
 #include "lyra/base/internal_error.hpp"
@@ -205,6 +207,21 @@ auto HeaderOf(
   return std::move(file).Into(std::move(relpath));
 }
 
+// Lays out `text` as the file `relpath`, after what `file` starts with,
+// outside every namespace, where a container type's operations are written,
+// since no unit owns it: the runtime, then what the text said it needs
+// included and declared ahead of it, then the text.
+auto GlobalFileOf(
+    const mir::CompilationUnit& unit, ProjectFile file, std::string relpath,
+    const TargetText& text) -> CppArtifact {
+  WriteInclude(file.text, support::kRuntimePreludeHeader);
+  WriteRequiredIncludes(file, text, relpath);
+  file.text += "\n";
+  WriteForwardDeclarations(file, text, unit);
+  file.text += text.View();
+  return std::move(file).Into(std::move(relpath));
+}
+
 // A unit becomes one C++ namespace, named after it, and each body of it is
 // written across these files, `Body` being the body's name, which is the
 // unit's for the unit's first body:
@@ -218,9 +235,17 @@ auto HeaderOf(
 //                           block declared inside the class of the scope
 //                           holding it, each defined there
 //   Body.cpp                every other class, and every other definition
+//   impl.<hash>.hpp         one per run-time-sized container type the unit
+//                           names, outside every namespace: the struct
+//                           holding its implementation of the library's
+//                           traits
+//   impl.<hash>.cpp         the definition of each of its items and of the
+//                           free functions they call, which the project
+//                           compiles once
 //
 // Every body states the unit's declarations alike, so every file but the two
-// named after the body is the same text from each.
+// named after the body is the same text from each, and a container type's
+// two files are the same text from every unit naming the type.
 //
 // A declaration has a file of its own only where a declaration of another unit
 // needs it complete ahead of its own: a class another class may extend, a
@@ -241,8 +266,8 @@ auto HeaderOf(
 // defines, what the class keeps for its own bodies -- so changing it
 // recompiles no other unit.
 auto RenderUnitFiles(
-    const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals)
-    -> CppUnitArtifacts {
+    const mir::CompilationUnit& unit, const TypeOperationBodies& bodies,
+    diag::DiagnosticSink& refusals) -> CppUnitArtifacts {
   // Every body is written before the constants are, since the ones the code
   // file defines are the ones those bodies turn out to name.
   UnitRenderReport report{.refusals = &refusals, .constants_named = {}};
@@ -255,6 +280,17 @@ auto RenderUnitFiles(
   const UnitClosures closures = RenderUnitClosures(unit, report);
   TargetText foreign_symbols;
   RenderForeignScopeSymbols(unit, report, foreign_symbols);
+  // A container type's class and its operations are written before the
+  // constants are too, and name none of the unit's: each is the same text from
+  // every unit naming the type.
+  const std::size_t constants_before = report.constants_named.size();
+  const TypeOperationTexts containers =
+      RenderTypeOperations(unit, bodies, report);
+  if (report.constants_named.size() != constants_before) {
+    throw InternalError(
+        "backend::cpp: a container's operation names a constant of the unit "
+        "-- please report this as a bug");
+  }
   const NamedConstants constants = RenderNamedConstants(unit, report);
   const SourceName unit_namespace = UnitNamespaceOf(unit.name);
   // `text` placed where what only this body states is: in the unit's
@@ -269,6 +305,17 @@ auto RenderUnitFiles(
   };
 
   std::vector<CppArtifact> declarations;
+  std::vector<CppArtifact> shared_code;
+  for (const TypeOperationFileText& header : containers.headers) {
+    ProjectFile file;
+    file.text += "#pragma once\n";
+    declarations.push_back(
+        GlobalFileOf(unit, std::move(file), header.relpath, header.text));
+  }
+  for (const TypeOperationFileText& code : containers.code_files) {
+    shared_code.push_back(
+        GlobalFileOf(unit, ProjectFile{}, code.relpath, code.text));
+  }
   for (const UnitRecord& declared : records.declared) {
     declarations.push_back(HeaderOf(
         unit,
@@ -363,20 +410,34 @@ auto RenderUnitFiles(
   for (const std::string& required : callables.of_body.code.RequiredFiles()) {
     include_once(required);
   }
+  for (const TargetText* container :
+       {&containers.declarations, &containers.definitions}) {
+    for (const std::string& required : container->RequiredFiles()) {
+      include_once(required);
+    }
+  }
   code.text += "\n";
   TargetText named;
+  named += containers.declarations;
   named += realized;
   named += callables.of_body.code;
+  named += containers.definitions;
   WriteForwardDeclarations(code, named, unit);
+  // The functions MIR builds for the unit's types are declared ahead of every
+  // body that may call them, and defined after them, outside every namespace,
+  // where the struct holding a type's implementation is.
+  code.text += containers.declarations.View();
   OpenNamespace(code.text, unit_namespace);
   code.text += realized.View();
   CloseNamespace(code.text, unit_namespace);
   AppendSectionInNamespace(
       code.text, unit_namespace, in_body(callables.of_body.code));
+  code.text += containers.definitions.View();
 
   return {
       .declarations = std::move(declarations),
-      .code = std::move(code).Into(std::move(code_file))};
+      .code = std::move(code).Into(std::move(code_file)),
+      .shared_code = std::move(shared_code)};
 }
 
 // `main.cpp`: hands the root unit's `sv_create` entry to the runtime, which
@@ -406,10 +467,10 @@ auto RenderHostMain(const mir::CompilationUnit& root) -> CppArtifact {
 }  // namespace
 
 auto EmitCppUnit(
-    const mir::CompilationUnit& unit, diag::DiagnosticSink& refusals)
-    -> CppUnitArtifacts {
+    const mir::CompilationUnit& unit, const TypeOperationBodies& bodies,
+    diag::DiagnosticSink& refusals) -> CppUnitArtifacts {
   mir::RequireLegalized(unit, "backend::cpp");
-  return RenderUnitFiles(unit, refusals);
+  return RenderUnitFiles(unit, bodies, refusals);
 }
 
 auto EmitCppHostMain(const mir::CompilationUnit& root) -> CppArtifact {

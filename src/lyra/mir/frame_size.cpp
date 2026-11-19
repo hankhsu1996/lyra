@@ -60,10 +60,13 @@ auto StatedLayoutOf(const support::RuntimeObject& object) -> support::Layout {
   return stated->layout;
 }
 
-// A value of a type the library declares: the storage stated for the object a
-// frame holds it as by value, and the word a frame names it by where it is
-// kept elsewhere.
+// A value of a type the library declares: the storage its declaration states
+// for a value laid out by its type or for the object a frame holds it as by
+// value, and the word a frame names it by where it is kept elsewhere.
 auto LayoutOfLibraryType(support::LibraryDecl decl) -> support::Layout {
+  if (support::IsLaidOutByItsType(decl)) {
+    return support::ObjectStorageOf(decl)->layout;
+  }
   return support::ObjectOf(decl).transform(StatedLayoutOf).value_or(kAddress);
 }
 

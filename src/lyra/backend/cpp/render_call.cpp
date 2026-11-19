@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <string>
 #include <string_view>
 #include <variant>
 #include <vector>
@@ -10,12 +11,15 @@
 #include "lyra/backend/cpp/naming.hpp"
 #include "lyra/backend/cpp/render_expr.hpp"
 #include "lyra/backend/cpp/render_type.hpp"
+#include "lyra/backend/cpp/render_type_operations.hpp"
 #include "lyra/backend/cpp/scope_view.hpp"
 #include "lyra/backend/cpp/target_text.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/closure_signature.hpp"
+#include "lyra/mir/code_source.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/type.hpp"
 #include "lyra/mir/type_declaration_ref.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/callable_bounds.hpp"
@@ -259,25 +263,18 @@ void WriteEntryCallee(
                 "a placement new-expression reaches -- please report this as "
                 "a bug");
           },
+          [](const support::ReservedPlacementForm&) {
+            throw InternalError(
+                "Direct call: a call names the reserved placement form, which "
+                "only a placement new-expression reaches -- please report "
+                "this as a bug");
+          },
           [](const support::Constructor&) {
             throw InternalError(
                 "Direct call: a call names a constructor, which only a "
                 "construction reaches -- please report this as a bug");
           }},
       entry.declaration);
-}
-
-// Whether the library's member answering `operation` on a value is generic
-// over the type it answers, as its runtime entry declares: the answer's type is
-// then the member's template argument, which only this backend instantiates.
-auto OperationTakesATypeArgument(support::ValueOperation operation) -> bool {
-  return std::visit(
-      Overloaded{
-          [](support::ValueOperator) { return false; },
-          [](support::BuiltinFn fn) {
-            return support::RuntimeEntryOf(fn).takes_a_type_argument;
-          }},
-      operation);
 }
 
 // The name of a callable this unit declares, by who declares it, which also
@@ -351,40 +348,73 @@ void WriteCallableCallee(
 // The name of a callee fixed at compile time: a callable of the unit, by who
 // declares it, an entry of the runtime library, or an operation of a type.
 void WriteDirectCallee(
-    const ScopeView& view, const mir::Direct& direct, mir::TypeId result_type,
-    CallWriter& callee) {
+    const ScopeView& view, const mir::CallExpr& call, const mir::Direct& direct,
+    mir::TypeId result_type, CallWriter& callee) {
   std::visit(
       Overloaded{
           [&](const mir::CallableTarget& t) {
             WriteCallableCallee(view.Unit(), t.callable, callee);
           },
+          // A run written within a write is the designation's own write,
+          // handed the function MIR builds for the array type's slice write:
+          // `d.AssignSlice<&sv_type_1a2b_...>(start, v)`.
           [&](const support::BuiltinFn& id) {
+            if (id == support::BuiltinFn::kAssignDesignatedRun) {
+              const mir::TypeOperationTarget run =
+                  mir::DesignatedRunWrite(view.Unit(), view.Block(), call);
+              const mir::TypeOperationSource written{
+                  .type = run.type,
+                  .answers = run.answers,
+                  .arguments = run.arguments};
+              if (!IsNonMemberBody(view.Unit(), written)) {
+                throw InternalError(
+                    "backend::cpp: a run written within a write is an "
+                    "operation MIR builds no function for -- please report "
+                    "this as a bug");
+              }
+              callee.Named(
+                  ReceiverPlacement::kIntoCalleeName,
+                  CppValueOperationMemberName(run.answers), "<&",
+                  VerbatimName{.text = TypeFunctionName(view.Unit(), written)},
+                  ">");
+              return;
+            }
             WriteEntryCallee(
                 view, support::RuntimeEntryOf(id), direct, result_type, callee);
           },
-          // An operation a fixed-size array answers is the library
-          // template's own member, which the host compiler instantiates for
-          // the type where the call is written:
-          // `a.lyra::value::UnpackedArray<T, 4>::operator==(b)`. A member that
-          // is itself generic over what it answers is called at the answer
-          // the call states:
-          // `a.UnpackedArray<T, 4>::template ToBitstream<R>()`. A backend that
-          // resolves no type where the call is written is handed a body built
-          // below MIR for the operation.
+          // A type's operation is a static function of the struct holding
+          // the type's implementation of the library's traits, where it is
+          // one of its items, handed the object first:
+          // `sv_type_1a2b_impl::GetUnchecked(a, i)`; the free function built
+          // for
+          // it, where MIR builds it for the type -- a container's other
+          // operations, a fixed-size array's, a tuple's -- named by the types
+          // it is instantiated at:
+          // `sv_type_1a2b_dynamic_array_from_array_3c4d(a)`, declared in
+          // every code file that calls it; and otherwise the type's default,
+          // which its class declares, `S::DeclaredDefault()`.
           [&](const mir::TypeOperationTarget& t) {
-            const std::vector<TemplateArgument> answered =
-                OperationTakesATypeArgument(t.answers)
-                    ? std::vector<TemplateArgument>{CppType(
-                          view.Unit(), result_type)}
-                    : std::vector<TemplateArgument>{};
+            const mir::TypeOperationSource source{
+                .type = t.type, .answers = t.answers, .arguments = t.arguments};
+            if (IsImplItem(view.Unit(), source)) {
+              callee.Named(
+                  ReceiverPlacement::kIntoArgumentList,
+                  CppImplStruct{.unit = &view.Unit(), .type = t.type},
+                  "::", CppImplItemName(t.answers));
+              return;
+            }
+            if (IsNonMemberBody(view.Unit(), source)) {
+              const std::string function =
+                  TypeFunctionName(view.Unit(), source);
+              callee.Named(
+                  ReceiverPlacement::kIntoArgumentList,
+                  VerbatimName{.text = function});
+              return;
+            }
             callee.Named(
                 ReceiverPlacement::kIntoCalleeName,
-                CppType(view.Unit(), t.type), "::",
-                OperationName{
-                    .unit = &view.Unit(),
-                    .identifier = CppValueOperationMemberName(t.answers).text,
-                    .arguments = answered,
-                    .reached = NameReachedThrough::kAValue});
+                CppType(view.Unit(), t.type),
+                "::", CppValueOperationMemberName(t.answers));
           },
           // One of another unit's bring-up entries:
           // `::Pkg::sv_initialize_namespace_storage`.
@@ -403,7 +433,7 @@ void WriteCallee(
   std::visit(
       Overloaded{
           [&](const mir::Direct& d) {
-            WriteDirectCallee(view, d, result_type, callee);
+            WriteDirectCallee(view, call, d, result_type, callee);
           },
           [&](const mir::Indirect& i) { callee.Computed(i.code); },
           // The library's dispatch, told the introducer's table and the

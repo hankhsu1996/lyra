@@ -102,6 +102,10 @@ class CodeGenModule {
   auto Types() -> CodeGenTypes& {
     return types_;
   }
+  // Where the record the library keeps of `type` lies.
+  auto ValueTypeRecord(lir::TypeId type) -> diag::Result<llvm::Constant*> {
+    return value_types_.GetAddrOfValueType(type);
+  }
   auto Unit() const -> const lir::CompilationUnit& {
     return *unit_;
   }
@@ -156,7 +160,7 @@ class CodeGenModule {
   // the library carries out fails where a type it has to be handed is one it
   // does not realize.
   auto EmitStep(
-      llvm::IRBuilderBase& builder, lir::TypeId type, lir::ValueStep step,
+      llvm::IRBuilderBase& builder, lir::TypeId type, support::ValueStep step,
       std::span<llvm::Value* const> args) -> diag::Result<void>;
   // Defines the constant `value` under `symbol`, linked as `linkage` says and
   // kept at `align`, which every reference made to a declaration of that
@@ -278,7 +282,7 @@ class CodeGenModule {
   // taking where the values the step reads and writes lie, as every step does.
   auto EmitLibraryStep(
       llvm::IRBuilderBase& builder, lir::TypeId type,
-      const support::RuntimeObject& object, lir::ValueStep step,
+      const support::RuntimeObject& object, support::ValueStep step,
       std::span<llvm::Value* const> args) -> diag::Result<void>;
   // Ends the object at `object` through its class's definition, which ends it
   // as the class it was created as and gives its storage back.

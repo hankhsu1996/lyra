@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <tuple>
 
 #include "lyra/base/source_location.hpp"
 #include "lyra/base/time.hpp"
@@ -711,6 +712,14 @@ constexpr void ForEachField(
   visit(names);
   visit(width);
   visit(four_state);
+}
+
+// A structure the library states its members' order of itself.
+template <typename Record, typename Visit>
+  requires requires(const Record& record) { Record::Tie(record); }
+constexpr void ForEachField(const Record& record, const Visit& visit) {
+  std::apply(
+      [&](const auto&... field) { (visit(field), ...); }, Record::Tie(record));
 }
 
 // Where `member` stands among the members of `Record`: the one `ForEachField`

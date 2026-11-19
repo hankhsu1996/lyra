@@ -54,10 +54,10 @@ class String {
   [[nodiscard]] static auto FromByteArray(
       const UnpackedArray<Element, N>& bytes) -> String {
     std::string out;
-    out.reserve(bytes.RawSize());
-    for (std::size_t i = 0; i < bytes.RawSize(); ++i) {
+    out.reserve(bytes.Count());
+    for (std::size_t i = 0; i < bytes.Count(); ++i) {
       const auto byte =
-          static_cast<unsigned char>(bytes.RawAt(i).ToInt64() & 0xFF);
+          static_cast<unsigned char>(bytes.GetUnchecked(i).ToInt64() & 0xFF);
       out.push_back(static_cast<char>(byte));
     }
     return String{std::move(out)};

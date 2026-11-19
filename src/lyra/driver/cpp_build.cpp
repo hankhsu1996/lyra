@@ -1186,8 +1186,9 @@ auto CppProjectSink::Write(const mir::CompilationUnit& unit) const
   const profiling::TimeTraceScope span(
       "emit C++", [&] { return unit.body_name; });
   diag::DiagnosticSink refused;
-  const backend::cpp::CppUnitArtifacts artifacts =
-      backend::cpp::EmitCppUnit(unit, refused);
+  const backend::cpp::CppUnitArtifacts artifacts = backend::cpp::EmitCppUnit(
+      unit, backend::cpp::TypeOperationBodiesOf(unit, body_builder_for_(unit)),
+      refused);
   if (refused.HasErrors()) {
     status::Errors(refused.Diagnostics().size());
     return RefusedUnit{.refusals = refused.Diagnostics()};
@@ -1209,24 +1210,55 @@ auto CppProjectSink::Write(const mir::CompilationUnit& unit) const
            .source_name = unit.source_name,
            .includes = artifacts.code.includes},
       .dpi_fragment = dpi::AbiFragmentOf(unit),
-      .declarations = artifacts.declarations};
+      .declarations = artifacts.declarations,
+      .shared_code = artifacts.shared_code};
+}
+
+auto CppProjectSink::FirstStated(
+    const WrittenUnit& written, const backend::cpp::CppArtifact& file) -> bool {
+  const stable_hash::Fingerprint says =
+      stable_hash::FingerprintOfText(file.content);
+  const auto [stated, first] = stated_.try_emplace(file.relpath, says);
+  if (!first && stated->second != says) {
+    throw InternalError(
+        std::format(
+            "backend::cpp: '{}' states '{}' differently from another body "
+            "-- please report this as a bug",
+            written.body_name, file.relpath));
+  }
+  return first;
+}
+
+void CppProjectSink::WriteSharedCode(WrittenUnit& written) {
+  std::vector<support::Artifact> recorded;
+  for (const backend::cpp::CppArtifact& code : written.shared_code) {
+    if (!FirstStated(written, code)) {
+      continue;
+    }
+    if (auto r = WriteArtifact(code); !r) {
+      refusals_->Report(std::move(r.error()));
+      continue;
+    }
+    written_.push_back(code.relpath);
+    translation_units_.push_back(
+        TranslationUnit{
+            .relpath = code.relpath,
+            .source_name = {},
+            .includes = code.includes});
+    recorded.push_back(
+        support::Artifact{
+            .kind = support::ArtifactKind::kCppSource,
+            .name = code.relpath,
+            .bytes = code.content.size(),
+            .made = true});
+  }
+  support::RecordBody(written.body_name, std::move(recorded));
 }
 
 void CppProjectSink::WriteDeclarations(WrittenUnit& written) {
   std::vector<support::Artifact> recorded;
   for (const backend::cpp::CppArtifact& declaration : written.declarations) {
-    const stable_hash::Fingerprint says =
-        stable_hash::FingerprintOfText(declaration.content);
-    const auto [stated, first] =
-        declared_.try_emplace(declaration.relpath, says);
-    if (!first) {
-      if (stated->second != says) {
-        throw InternalError(
-            std::format(
-                "backend::cpp: '{}' states '{}' differently from another body "
-                "of its unit -- please report this as a bug",
-                written.body_name, declaration.relpath));
-      }
+    if (!FirstStated(written, declaration)) {
       continue;
     }
     if (auto r = WriteArtifact(declaration); !r) {
@@ -1250,6 +1282,7 @@ void CppProjectSink::Collect(EmittedUnit unit) {
       Overloaded{
           [&](WrittenUnit& written) {
             WriteDeclarations(written);
+            WriteSharedCode(written);
             written_.insert(
                 written_.end(), std::make_move_iterator(written.files.begin()),
                 std::make_move_iterator(written.files.end()));
@@ -1291,7 +1324,8 @@ auto CppProjectSink::Finish(const mir::CompilationUnit& root)
                .source_name = {},
                .includes = host_main.includes},
           .dpi_fragment = std::nullopt,
-          .declarations = {}});
+          .declarations = {},
+          .shared_code = {}});
   if (formatting_ == SourceFormatting::kOn) {
     return FormatSources(written_, dir_);
   }

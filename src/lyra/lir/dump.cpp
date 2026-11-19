@@ -545,7 +545,9 @@ class LirDumper {
             },
             [](const EndValueTarget&) -> std::string { return "end"; },
             [](const CopyValueTarget&) -> std::string { return "copy"; },
-            [](const MoveValueTarget&) -> std::string { return "move"; },
+            [](const RelocateValueTarget&) -> std::string {
+              return "relocate";
+            },
             [](const DynamicStorageTarget& d) -> std::string {
               return std::string{DynamicStorageOpName(d.op)};
             },
@@ -595,11 +597,8 @@ class LirDumper {
                     m.member.slot.value);
               },
               [&](const ElementProjection& e) {
-                out += std::format(
-                    ".element({}{})", FormatOperands(e.coordinates),
-                    e.written_at.has_value()
-                        ? std::format(" at {}", FormatOperand(*e.written_at))
-                        : "");
+                out +=
+                    std::format(".element({})", FormatOperands(e.coordinates));
               },
               [&](const ComponentProjection& c) {
                 out += std::format(".component({})", c.index.value);

@@ -7,6 +7,7 @@
 #include <variant>
 
 #include "lyra/backend/cpp/naming.hpp"
+#include "lyra/backend/cpp/render_type_operations.hpp"
 #include "lyra/backend/cpp/target_text.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
@@ -137,6 +138,28 @@ void WriteOne(TargetText& out, const CppConstQualifier& qualifier) {
   throw InternalError("backend::cpp: unknown Mutability");
 }
 
+void WriteLibraryClass(
+    TargetText& out, const mir::CompilationUnit& unit,
+    const mir::LibraryType& type) {
+  const support::LibraryDeclData& declaration =
+      support::DeclarationOf(type.decl);
+  out += declaration.cpp_spelling;
+  if (!declaration.cpp_spelling_takes_args) {
+    return;
+  }
+  out += "<";
+  WriteSeparated(out, type.args, ", ", [&](const mir::LibraryType::Arg& arg) {
+    std::visit(
+        Overloaded{
+            [&](mir::TypeId t) { Write(out, CppType(unit, t)); },
+            [&](const support::QueueBound& bound) {
+              WriteNumber(out, support::LibraryBoundOf(bound), 10);
+            }},
+        arg);
+  });
+  out += ">";
+}
+
 void WriteOne(TargetText& out, const CppType& spelling) {
   const mir::CompilationUnit& unit = spelling.Unit();
   const mir::TypeId type_id = spelling.Type();
@@ -201,28 +224,20 @@ void WriteOne(TargetText& out, const CppType& spelling) {
           },
           [&](const mir::RecordType& r) { record(r.declaration); },
           // The class its declaration names, written over its arguments
-          // where they make it different classes. A queue's bound (LRM
-          // 7.10.5) is a value of the class template.
+          // where they make it different classes; a run-time-sized
+          // container's is the library's class over its core and the struct
+          // holding the type's implementation of the library's traits,
+          // `lyra::value::Container<lyra::value::QueueCore,
+          // sv_type_1a2b_impl>`, which the type's own header declares.
           [&](const mir::LibraryType& l) {
-            const support::LibraryDeclData& declaration =
-                support::DeclarationOf(l.decl);
-            out += declaration.cpp_spelling;
-            if (!declaration.cpp_spelling_takes_args) {
+            if (!mir::IsLaidOutContainer(unit.types, type_id)) {
+              WriteLibraryClass(out, unit, l);
               return;
             }
-            out += "<";
-            WriteSeparated(
-                out, l.args, ", ", [&](const mir::LibraryType::Arg& arg) {
-                  std::visit(
-                      Overloaded{
-                          [&](mir::TypeId t) { Write(out, type(t)); },
-                          [&](const support::QueueBound& bound) {
-                            WriteNumber(
-                                out, support::LibraryBoundOf(bound), 10);
-                          }},
-                      arg);
-                });
-            out += ">";
+            Write(
+                out, "lyra::value::Container<",
+                support::DeclarationOf(l.decl).cpp_spelling, ", ",
+                CppImplStruct{.unit = &unit, .type = type_id}, ">");
           },
           [&](const mir::CoroutineType& c) {
             Write(out, "lyra::runtime::Coroutine<", type(c.payload), ">");
@@ -870,6 +885,11 @@ void WriteOne(TargetText& out, const CppCallSignature& signature) {
   Write(out, CppType(unit, erased.result), "(");
   WriteTypeList(out, unit, erased.params);
   out += ")";
+}
+
+void WriteOne(TargetText& out, const CppImplStruct& impl) {
+  out += ImplStructName(*impl.unit, impl.type);
+  out.Require(ImplHeaderFile(*impl.unit, impl.type));
 }
 
 void WriteOne(TargetText& out, const CppClassRef& ref) {

@@ -1,7 +1,10 @@
 # Value-type concepts (composable LRM operator contracts)
 
 Date: 2026-06-17 Status: accepted. Revised 2026-10-30: `LyraValue` asks only what every holder of a
-value asks, and `==`, `!=` and the unknown-bit test left it.
+value asks, and `==`, `!=` and the unknown-bit test left it. Revised 2026-11-12: `DynamicArray<T>`
+and `Queue<T>` are gone; a dynamic array and a queue are each the library's one container class over
+its core, whose operations are the type's own bodies
+([a-containers-operations-are-built-for-its-type-over-a-core](a-containers-operations-are-built-for-its-type-over-a-core.md)).
 
 ## Context
 

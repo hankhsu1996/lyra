@@ -302,6 +302,18 @@ Rules:
         Scope: HIR-to-MIR, MIR, MIR-to-LIR, LIR and the backends, sources
         and headers.
 
+  A031  Neither backend decides which operations a type has, or what one
+        takes. Both read the implementation of the library's traits MIR
+        states for a type, and the operations their code names; a backend
+        asking for a type's whole interface is choosing among its operations,
+        which then has to be chosen again, differently, by the other backend.
+        A backend also asks no operation's declaration, which it is handed with
+        the operation's body; only the lowering to LIR declares a function for
+        an operation before its body is built, as code generation asks an
+        item's signature.
+        Scope: src/lyra/backend/, include/lyra/backend/,
+        src/lyra/lowering/mir_to_lir/, include/lyra/lowering/mir_to_lir/.
+
 When a rule fires, the printed message includes a fixed reminder that the
 fix is to change the ownership boundary, NOT to rename the function.
 
@@ -1601,6 +1613,35 @@ def check_a030(repo_root: Path) -> list[str]:
     return errors
 
 
+# Rule A031
+A031_ROOTS = (
+    "src/lyra/backend", "include/lyra/backend",
+    "src/lyra/lowering/mir_to_lir", "include/lyra/lowering/mir_to_lir")
+A031_PATTERN = re.compile(r"\bTypeInterfaceOf\s*\(")
+A031_BACKEND_ROOTS = ("src/lyra/backend", "include/lyra/backend")
+A031_DECLARATION_PATTERN = re.compile(r"\bOperationDeclarationOf\s*\(")
+
+
+def check_a031(repo_root: Path) -> list[str]:
+    errors = []
+    for path, rel in iter_files(repo_root, *A031_ROOTS):
+        for lineno, line in enumerate(path.read_text().splitlines(), 1):
+            if A031_PATTERN.search(strip_comment(line)):
+                errors.append(
+                    f"  {rel}:{lineno}: A031 a backend or the lowering to LIR "
+                    f"asks for a type's whole interface, and so chooses which "
+                    f"of its operations exist; read the implementation MIR "
+                    f"states instead")
+    for path, rel in iter_files(repo_root, *A031_BACKEND_ROOTS):
+        for lineno, line in enumerate(path.read_text().splitlines(), 1):
+            if A031_DECLARATION_PATTERN.search(strip_comment(line)):
+                errors.append(
+                    f"  {rel}:{lineno}: A031 a backend asks an operation's "
+                    f"declaration, which it is handed with the operation's "
+                    f"body")
+    return errors
+
+
 # Self-tests
 def run_self_tests() -> bool:
     def expect(cond, msg):
@@ -2204,6 +2245,19 @@ def run_self_tests() -> bool:
                  "A030 lookup")
     ok &= expect(not A030_LOOKUP_PATTERN.search("FindEvaluator(e)"),
                  "A030 false-pos")
+    # A031
+    ok &= expect(
+        A031_PATTERN.search("mir::TypeInterfaceOf(unit, type)"),
+        "A031 a backend asking for a type's interface is reported")
+    ok &= expect(
+        not A031_PATTERN.search("mir::ImplOf(unit, type)"),
+        "A031 reading a type's implementation is not reported")
+    ok &= expect(
+        A031_DECLARATION_PATTERN.search("mir::OperationDeclarationOf(unit, s)"),
+        "A031 a backend asking an operation's declaration is reported")
+    ok &= expect(
+        not A031_DECLARATION_PATTERN.search("mir::ImplOf(unit, type)"),
+        "A031 reading a type's implementation is no declaration asked")
     return ok
 
 
@@ -2240,6 +2294,7 @@ CHECKS = [
     ("A028 conformance suite depends on Lyra", check_a028),
     ("A029 HIR text field not classed", check_a029),
     ("A030 declaration found by name below AST-to-HIR", check_a030),
+    ("A031 backend chooses a type's operations", check_a031),
 ]
 
 

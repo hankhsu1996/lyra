@@ -11,8 +11,23 @@
 
 namespace lyra::support {
 
-auto IsDomainObject(LibraryDecl decl) -> bool {
-  return std::holds_alternative<DomainObject>(DeclarationOf(decl).holding);
+auto IsHeldValue(LibraryDecl decl) -> bool {
+  const LibraryHolding& holding = DeclarationOf(decl).holding;
+  return std::holds_alternative<DomainObject>(holding) ||
+         std::holds_alternative<LaidOutByType>(holding);
+}
+
+auto IsLaidOutByItsType(LibraryDecl decl) -> bool {
+  return std::holds_alternative<LaidOutByType>(DeclarationOf(decl).holding);
+}
+
+auto TraitsOf(LibraryDecl decl) -> std::span<const TraitImplementation> {
+  const auto* laid_out =
+      std::get_if<LaidOutByType>(&DeclarationOf(decl).holding);
+  if (laid_out == nullptr) {
+    return {};
+  }
+  return laid_out->implements;
 }
 
 auto IsAddressOnly(LibraryDecl decl) -> bool {

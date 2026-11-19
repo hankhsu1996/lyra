@@ -6,11 +6,11 @@
 
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/operator.hpp"
-#include "lyra/lir/value_step.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/declared_member_storage.hpp"
 #include "lyra/support/runtime_object.hpp"
 #include "lyra/support/value_domain.hpp"
+#include "lyra/support/value_step.hpp"
 
 namespace lyra::backend::llvm_backend {
 
@@ -32,14 +32,12 @@ struct StepEntry {
 // with the element as it is, and the one answering with the storage a write
 // lands in. An associative array is reached by a key, which is an entry of its
 // own serving every one, and every other container by a position, realized per
-// value domain it is held in (LRM 7.8, 7.4.5). A queue's write has an entry of
-// its own too, the one that can report (LRM 7.10.5).
+// value domain it is held in (LRM 7.8, 7.4.5).
 struct ElementEntries {
   StepEntry read;
   StepEntry write;
 };
 auto KeyedElementEntries() -> ElementEntries;
-auto QueueElementEntries() -> ElementEntries;
 auto PositionedElementEntries(support::ValueDomain domain) -> ElementEntries;
 
 // How this target realizes an instruction or a construction the layer above it
@@ -111,7 +109,7 @@ enum class RuntimeOp : std::uint8_t {
   kConstruct,
   kDestroy,
   kCopy,
-  kMove,
+  kRelocate,
   kAssign,
 };
 
@@ -121,7 +119,7 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view;
 
 // The operation of the library's that carries out `step` on a value it
 // realizes.
-auto RuntimeOpOf(lir::ValueStep step) -> RuntimeOp;
+auto RuntimeOpOf(support::ValueStep step) -> RuntimeOp;
 
 // The symbol of the type of a value held in `domain`, which the library
 // defines once per kind of value it holds as an object of its own and
@@ -151,6 +149,10 @@ inline constexpr std::string_view kIntegralOperationFunctionsSymbol =
     "lyra_rt_integral_operation_functions";
 inline constexpr std::string_view kFixedArrayPartsWitnessTableSymbol =
     "lyra_rt_fixed_array_parts_witness_table";
+inline constexpr std::string_view kDynamicArrayPartsWitnessTableSymbol =
+    "lyra_rt_dynamic_array_parts_witness_table";
+inline constexpr std::string_view kQueuePartsWitnessTableSymbol =
+    "lyra_rt_queue_parts_witness_table";
 inline constexpr std::string_view kTypeLacksOperationSymbol =
     "lyra_rt_type_lacks_operation";
 

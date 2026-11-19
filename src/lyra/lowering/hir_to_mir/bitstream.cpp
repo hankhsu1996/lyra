@@ -1,11 +1,9 @@
 #include "lyra/lowering/hir_to_mir/bitstream.hpp"
 
-#include <algorithm>
 #include <cstdint>
 #include <optional>
 #include <span>
 #include <string>
-#include <utility>
 #include <vector>
 
 #include "lyra/base/diag_message.hpp"
@@ -21,20 +19,13 @@
 #include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
+#include "lyra/mir/value_parts.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/library_decl.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
 namespace {
-
-auto WidenedWith(StreamShape shape, StreamShape part) -> StreamShape {
-  return StreamShape{
-      .width = shape.width + part.width,
-      .state_kind = part.state_kind == mir::IntegralStateKind::kFourState
-                        ? mir::IntegralStateKind::kFourState
-                        : shape.state_kind};
-}
 
 // What a stream's parts take together, the first part whose width the program
 // decides filling for all of them.
@@ -78,7 +69,7 @@ auto PaddedTo(
 // `dst_type`, whose type fixes that width.
 auto FromFixedRun(
     const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId run,
-    StreamShape shape, mir::TypeId dst_type) -> mir::ExprId {
+    mir::StreamShape shape, mir::TypeId dst_type) -> mir::ExprId {
   return BuildFromBitstream(
       unit, block,
       BuildRunLoad(
@@ -86,99 +77,7 @@ auto FromFixedRun(
       dst_type);
 }
 
-// Whether `type`, or any type a value of it holds -- a member, an element --
-// is one `holds` answers for.
-template <typename Holds>
-auto HoldsAnywhere(
-    const mir::CompilationUnit& unit, mir::TypeId type, const Holds& holds)
-    -> bool {
-  const mir::Type& resolved = unit.types.Get(type);
-  if (holds(resolved)) {
-    return true;
-  }
-  if (const mir::RecordId* record = mir::RecordOf(resolved)) {
-    return std::ranges::any_of(
-        mir::MembersOf(unit.GetRecord(*record)), [&](mir::TypeId element) {
-          return HoldsAnywhere(unit, element, holds);
-        });
-  }
-  if (const std::optional<mir::TypeId> element =
-          resolved.ContainerElementType()) {
-    return HoldsAnywhere(unit, *element, holds);
-  }
-  return false;
-}
-
 }  // namespace
-
-auto HoldsClassHandle(const mir::CompilationUnit& unit, mir::TypeId type)
-    -> bool {
-  return HoldsAnywhere(unit, type, [](const mir::Type& part) {
-    return part.Is<mir::ManagedRefType>();
-  });
-}
-
-auto IsStreamDestination(const mir::CompilationUnit& unit, mir::TypeId type)
-    -> bool {
-  return !HoldsAnywhere(unit, type, [](const mir::Type& part) {
-    return part.Is<mir::ManagedRefType>() || part.IndexType().has_value();
-  });
-}
-
-auto FixedStreamShapeOfParts(
-    const mir::CompilationUnit& unit, std::span<const mir::TypeId> parts)
-    -> std::optional<StreamShape> {
-  StreamShape shape{
-      .width = 0, .state_kind = mir::IntegralStateKind::kTwoState};
-  for (const mir::TypeId component : parts) {
-    const std::optional<StreamShape> part = FixedStreamShapeOf(unit, component);
-    if (!part.has_value()) {
-      return std::nullopt;
-    }
-    shape = WidenedWith(shape, *part);
-  }
-  return shape;
-}
-
-auto FixedStreamShapeOf(const mir::CompilationUnit& unit, mir::TypeId type)
-    -> std::optional<StreamShape> {
-  const mir::Type& resolved = unit.types.Get(type);
-  if (resolved.IsIntegral()) {
-    const mir::IntegralType& integral = resolved.Integral();
-    return StreamShape{
-        .width = integral.bit_width, .state_kind = integral.state_kind};
-  }
-  if (const auto* tuple = resolved.As<mir::TupleType>()) {
-    return FixedStreamShapeOfParts(unit, tuple->elements);
-  }
-  // A structure streams its members end to end, an untagged union as its first
-  // member, and a tagged union not at all (LRM 11.4.14.1).
-  if (const mir::RecordId* record = mir::RecordOf(resolved)) {
-    const std::span<const mir::TypeId> members =
-        mir::MembersOf(unit.GetRecord(*record));
-    switch (mir::RecordKindOf(unit, *record)) {
-      case mir::RecordKind::kStruct:
-        return FixedStreamShapeOfParts(unit, members);
-      case mir::RecordKind::kUnion:
-        return FixedStreamShapeOf(unit, members.front());
-      case mir::RecordKind::kTaggedUnion:
-        return std::nullopt;
-    }
-    throw InternalError("FixedStreamShapeOf: unknown record kind");
-  }
-  if (resolved.Is<mir::UnpackedArrayType>()) {
-    const auto& array = resolved.Get<mir::UnpackedArrayType>();
-    const std::optional<StreamShape> element =
-        FixedStreamShapeOf(unit, array.element_type);
-    if (!element.has_value()) {
-      return std::nullopt;
-    }
-    return StreamShape{
-        .width = array.Size() * element->width,
-        .state_kind = element->state_kind};
-  }
-  return std::nullopt;
-}
 
 // LRM 11.4.14.4: a part whose type fixes its width takes that many bits; a
 // string takes whole characters (LRM 6.24.3); a dynamic array or a queue takes
@@ -187,7 +86,8 @@ auto FixedStreamShapeOf(const mir::CompilationUnit& unit, mir::TypeId type)
 // width is the program's filling for all.
 auto StreamFillOf(const mir::CompilationUnit& unit, mir::TypeId type)
     -> StreamFill {
-  if (const std::optional<StreamShape> fixed = FixedStreamShapeOf(unit, type)) {
+  if (const std::optional<mir::StreamShape> fixed =
+          mir::FixedStreamShapeOf(unit, type)) {
     return StreamFill{
         .empty_width = fixed->width, .first_element = 0, .multiplier = 0};
   }
@@ -197,8 +97,8 @@ auto StreamFillOf(const mir::CompilationUnit& unit, mir::TypeId type)
   }
   if (resolved.IsLibrarySequence()) {
     const mir::TypeId element = *resolved.ContainerElementType();
-    if (const std::optional<StreamShape> fixed =
-            FixedStreamShapeOf(unit, element)) {
+    if (const std::optional<mir::StreamShape> fixed =
+            mir::FixedStreamShapeOf(unit, element)) {
       return StreamFill{
           .empty_width = 0, .first_element = 0, .multiplier = fixed->width};
     }
@@ -243,15 +143,16 @@ auto BuildToBitstream(
   if (type == unit.builtins.bit_vec) {
     return value_id;
   }
-  if (HoldsClassHandle(unit, type)) {
+  if (mir::HoldsClassHandle(unit, type)) {
     return diag::Fail(
         span, diag::DiagCode::kUnsupportedExpressionForm,
         "streaming the object a class handle refers to is not yet supported");
   }
-  const std::optional<StreamShape> shape = FixedStreamShapeOf(unit, type);
+  const std::optional<mir::StreamShape> shape =
+      mir::FixedStreamShapeOf(unit, type);
   if (!shape.has_value()) {
     return BuildValueOperation(
-        unit, block, support::BuiltinFn::kToBitVec, value_id, {},
+        unit, block, support::StreamItem::kToBitVec, value_id, {},
         unit.builtins.bit_vec);
   }
   const mir::TypeId stream =
@@ -261,7 +162,7 @@ auto BuildToBitstream(
     return AtType(unit, block, value_id, stream);
   }
   return BuildValueOperation(
-      unit, block, support::BuiltinFn::kToBitstream, value_id, {}, stream);
+      unit, block, support::StreamItem::kToBitstream, value_id, {}, stream);
 }
 
 auto BuildRunOf(
@@ -367,7 +268,7 @@ auto BuildRunExtract(
 
 auto BuildRunLoad(
     const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId run,
-    mir::ExprId at, StreamShape shape) -> mir::ExprId {
+    mir::ExprId at, mir::StreamShape shape) -> mir::ExprId {
   const mir::TypeId bits =
       mir::PackedVectorOf(unit.types, shape.width, shape.state_kind);
   return block.Add(
@@ -383,7 +284,8 @@ auto BuildFromBitstream(
   // for it cannot fail; only the destination can be a type with no stream.
   const mir::IntegralType stream =
       unit.types.Get(block.Get(bits_id).type).Integral();
-  const std::optional<StreamShape> target = FixedStreamShapeOf(unit, dst_type);
+  const std::optional<mir::StreamShape> target =
+      mir::FixedStreamShapeOf(unit, dst_type);
   if (!target.has_value()) {
     throw InternalError(
         "BuildFromBitstream: an integral stream is read back into a type whose "
@@ -424,7 +326,7 @@ auto BuildFromBitstream(
       unit, block, filled,
       mir::PackedVectorOf(unit.types, target->width, target->state_kind));
   return BuildValueOperation(
-      unit, block, support::BuiltinFn::kFromBitstream, std::nullopt,
+      unit, block, support::StreamItem::kFromBitstream, std::nullopt,
       {stream_id}, dst_type);
 }
 
@@ -432,7 +334,8 @@ auto BuildFromStreamAssigned(
     const mir::CompilationUnit& unit, const WalkFrame& frame,
     mir::ExprId bits_id, mir::TypeId dst_type) -> mir::ExprId {
   mir::Builder block = frame.Builder();
-  const std::optional<StreamShape> fixed = FixedStreamShapeOf(unit, dst_type);
+  const std::optional<mir::StreamShape> fixed =
+      mir::FixedStreamShapeOf(unit, dst_type);
   if (block.Get(bits_id).type != unit.builtins.bit_vec) {
     if (fixed.has_value()) {
       return BuildFromBitstream(unit, block, bits_id, dst_type);
@@ -510,7 +413,8 @@ auto BuildFromBitstreamCast(
     const mir::CompilationUnit& unit, const WalkFrame& frame,
     mir::ExprId bits_id, mir::TypeId dst_type) -> mir::ExprId {
   mir::Builder block = frame.Builder();
-  const std::optional<StreamShape> fixed = FixedStreamShapeOf(unit, dst_type);
+  const std::optional<mir::StreamShape> fixed =
+      mir::FixedStreamShapeOf(unit, dst_type);
   if (block.Get(bits_id).type != unit.builtins.bit_vec) {
     if (fixed.has_value()) {
       return BuildFromBitstream(unit, block, bits_id, dst_type);
@@ -548,7 +452,7 @@ auto BuildFromBitVec(
             std::nullopt, {held}, dst_type));
   }
   return BuildValueOperation(
-      unit, block, support::BuiltinFn::kFromBitVec, std::nullopt, {held},
+      unit, block, support::StreamItem::kFromBitVec, std::nullopt, {held},
       dst_type);
 }
 

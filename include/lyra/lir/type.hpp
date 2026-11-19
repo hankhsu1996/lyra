@@ -442,6 +442,10 @@ class Type {
   // True for a queue (LRM 7.10), the one such container holding to a bound.
   [[nodiscard]] auto IsQueue() const -> bool;
 
+  // True for a run-time-sized container whose core its type lays out and
+  // whose every step is the body built for its type.
+  [[nodiscard]] auto IsLaidOutContainer() const -> bool;
+
   // The type an associative array is indexed by (LRM 7.8), and nothing for a
   // type whose elements are reached by position.
   [[nodiscard]] auto IndexType() const -> std::optional<TypeId>;
@@ -456,9 +460,11 @@ class Type {
 
   // The declaration of the class of the runtime's a value of this type is an
   // object of, where it is one rather than a class some unit declares or no
-  // object at all.
+  // object at all; and whether the type is the one the library declares as
+  // `decl`.
   [[nodiscard]] auto RuntimeClassOf() const
       -> std::optional<support::LibraryDecl>;
+  [[nodiscard]] auto IsDeclaredBy(support::LibraryDecl decl) const -> bool;
 
   template <typename T>
   [[nodiscard]] auto Is() const -> bool {

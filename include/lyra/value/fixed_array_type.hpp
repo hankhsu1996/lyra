@@ -3,9 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
-#include <span>
 #include <type_traits>
-#include <vector>
 
 #include "lyra/value/element_type.hpp"
 #include "lyra/value/formation.hpp"
@@ -47,11 +45,12 @@ class FixedArrayType {
     return *element_;
   }
 
-  // The element at storage position `position`, counted from the left, of the
-  // array lying at `array`.
-  [[nodiscard]] auto ElementAt(const void* array, std::size_t position) const
+  // The element at the index `index`, counted from the left, of the array
+  // lying at `array`, which holds one there; an index naming none is a bug of
+  // whoever asked, which this reports.
+  [[nodiscard]] auto GetUnchecked(const void* array, std::size_t index) const
       -> const void*;
-  [[nodiscard]] auto ElementAt(void* array, std::size_t position) const
+  [[nodiscard]] auto GetUnchecked(void* array, std::size_t index) const
       -> void*;
 
   // LRM 7.4.5: the element `position` names in the array lying at `array` as
@@ -59,23 +58,6 @@ class FixedArrayType {
   [[nodiscard]] auto ElementMut(
       void* array, std::optional<std::int64_t> position,
       Formation& formed) const -> void*;
-
-  // LRM 7.4.5 / 7.4.6: the `count` elements from `start`, each the element
-  // default where it lies outside the array, every one of them where `start`
-  // names no position.
-  [[nodiscard]] auto SliceElements(
-      const void* array, std::optional<std::int64_t> start,
-      std::size_t count) const -> std::vector<const void*>;
-
-  // LRM 7.6: the window takes `replacement`, element for element; an element
-  // outside the array is skipped and a start naming no position writes
-  // nothing. Answers whether any element took a different value (LRM 4.3).
-  auto AssignSlice(
-      void* array, std::optional<std::int64_t> start, std::size_t count,
-      std::span<const void* const> replacement) const -> bool;
-
-  // LRM 7.12.2: puts the value that was at `order[k]` at position `k`.
-  void Permute(void* array, std::span<const std::size_t> order) const;
 
   // Where the type states its count and the address of its element's type,
   // past the numbers every type states.
@@ -157,9 +139,9 @@ struct FixedArrayView {
   [[nodiscard]] auto ElementType() const -> const value::ElementType& {
     return type->ElementType();
   }
-  // The element at storage position `position`, counted from the left.
-  [[nodiscard]] auto ElementAt(std::size_t position) const -> const void* {
-    return type->ElementAt(bytes, position);
+  // The element at the index `index`, counted from the left.
+  [[nodiscard]] auto GetUnchecked(std::size_t index) const -> const void* {
+    return type->GetUnchecked(bytes, index);
   }
 };
 

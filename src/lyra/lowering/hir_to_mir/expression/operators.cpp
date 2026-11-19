@@ -35,6 +35,7 @@
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/mir/unary_op.hpp"
+#include "lyra/mir/value_parts.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/value_operation.hpp"
 
@@ -285,7 +286,7 @@ auto BuildMirBinaryExpr(
     return block.Add(
         mir::MakeBuiltinCall(
             unit, block.Body(), support::BuiltinFn::kWildcardEquals, lhs, {rhs},
-            OneBitAnswerType(unit, std::array{lhs_type, rhs_type})));
+            mir::OneBitAnswerType(unit, std::array{lhs_type, rhs_type})));
   };
 
   // A handle is compared with one of a class it extends or implements, the
@@ -305,10 +306,10 @@ auto BuildMirBinaryExpr(
         .rhs = OperandAtHandleType(unit, block, rhs_named, compared_at)};
   };
   // LRM 11.4.5 `==` and `!=`.
-  const auto logical_equality = [&](support::ValueOperator comparison) {
+  const auto logical_equality = [&](support::EqualityItem item) {
     const Comparands compared = comparands();
     return block.Get(BuildEquality(
-        unit, block, comparison, compared.lhs, compared.rhs, result_type));
+        unit, block, item, compared.lhs, compared.rhs, result_type));
   };
   // LRM 11.4.5 `===` over any data type, an aggregate included. The clause
   // makes the result always a known 1'b0 or 1'b1, so the question answers with
@@ -334,9 +335,9 @@ auto BuildMirBinaryExpr(
     case hir::BinaryOp::kLessThan:
       return apply(LowerBinaryOp(op));
     case hir::BinaryOp::kEquality:
-      return logical_equality(support::ValueOperator::kEquality);
+      return logical_equality(support::EqualityItem::kEqual);
     case hir::BinaryOp::kInequality:
-      return logical_equality(support::ValueOperator::kInequality);
+      return logical_equality(support::EqualityItem::kNotEqual);
     case hir::BinaryOp::kCaseEquality:
       return at_result_type(case_equality());
     case hir::BinaryOp::kCaseInequality:
@@ -366,7 +367,8 @@ auto BuildMirBinaryExpr(
       return at_result_type(block.Add(
           mir::MakeBuiltinCall(
               unit, block.Body(), support::BuiltinFn::kLogicalEquivalence, lhs,
-              {rhs}, OneBitAnswerType(unit, std::array{lhs_type, rhs_type}))));
+              {rhs},
+              mir::OneBitAnswerType(unit, std::array{lhs_type, rhs_type}))));
     }
     case hir::BinaryOp::kLogicalAnd:
     case hir::BinaryOp::kLogicalOr:

@@ -4,7 +4,8 @@ Date: 2026-10-16 Status: accepted. Revises the form of the table in
 [a-tuple-is-laid-out-by-its-type](a-tuple-is-laid-out-by-its-type.md) and of the type constant in
 [a-fixed-array-is-laid-out-by-its-type](a-fixed-array-is-laid-out-by-its-type.md) D4; where the
 table is told and what fills it are unchanged. Revised 2026-10-30: D2 narrows the table to what
-every holder of a value asks, and D4 and D5 say where the rest goes.
+every holder of a value asks, and D4 and D5 say where the rest goes. Revised 2026-11-12: D1 names
+the two bodies a dynamic array's and a queue's type record holds.
 
 ## Context
 
@@ -33,7 +34,13 @@ the library both read.** It holds the address of the type's table, the size and 
 value, and which of the records the library reads a type through it opens. A record adding numbers
 of its own -- a tuple type's components, a fixed-size array type's count and element type, an
 integral type's shape -- opens with it, so the type's address is the record's. The code generator
-places each field at the offset the declaration gives it.
+places each field at the offset the declaration gives it. A dynamic array type's and a queue type's
+record also hold the addresses of two of the type's own bodies: where a write through a position
+lands, and the array made a count long. The library's steps within a write and through a reference,
+and randomization's resize, are handed only the array's type, and what each does to the array is the
+type's own code
+([a-containers-operations-are-built-for-its-type-over-a-core](a-containers-operations-are-built-for-its-type-over-a-core.md)
+D5, D9).
 
 **D2. The table is a record of function pointers, each handed the type first, and it holds what
 every holder of a value asks of it: a copy, a move, an end, a write over a value already there, and
@@ -118,8 +125,15 @@ may be waited on, and only that.
   names to track it.
 - **Generic library code compiled per type by the compiler**, rustc's `core`. It removes most uses
   of a type's table rather than its shape, since what stays prebuilt still needs this record.
-  Whether to move a container's algorithms there is a question of run time against code size, not of
-  this layout.
+  Whether to move a container's algorithms there was left as a question of run time against code
+  size, not of this layout. It was answered on 2026-11-05 by splitting them
+  ([a-containers-operations-are-built-for-its-type-over-a-core](a-containers-operations-are-built-for-its-type-over-a-core.md)):
+  what touches an element is a body the compiler builds per container type, and the storage
+  management stays prebuilt, told the element's record. A dynamic array's and a queue's per-call
+  work -- reaching an element, every write through a position, putting and taking elements -- is
+  bodies as well, and a queue's core keeps no element type. Neither changed this record's layout; a
+  dynamic array's and a queue's type record holds the addresses of two of the type's own bodies
+  (D1).
 
 ## Consequences
 

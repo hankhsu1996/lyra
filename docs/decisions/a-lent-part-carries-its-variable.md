@@ -61,7 +61,7 @@ reference to its whole.**
   knows the type of what it reaches.
 - **A step reports what forming the part did.** Binding a reference to an associative entry that
   does not exist creates it (LRM 7.8.7), which is a change of the variable at the bind, reported
-  there. An index naming no element names storage that belongs to nothing (LRM 7.4.6).
+  there. An index naming no element names storage that belongs to nothing (LRM 7.4.5).
 - **Below MIR, each step is one library call on a reference, as the C++ library's
   `Ref::ReferElement` is for clang.** On the execution backend a reference is a library object of 32
   bytes, held by value like any other, reached by address, copied where it is kept.

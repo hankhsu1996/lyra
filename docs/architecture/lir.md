@@ -73,16 +73,17 @@ below LIR, at LIR-to-LLVM.
   where it lies -- a tagged union whose live member changes -- is one statement doing both, so the
   storage holds nothing only within it. Both are stated, so nothing below works out which a write is
   from the shape of its place, as SIL states `store [init]` beside `store [assign]`.
-- What each step of a value's life does for each type -- a copy into storage holding nothing, a move
-  out of a value whose holder still ends it, a write over a value already there, an end -- and
-  whether ending a value of a type does anything, answered once by one query: the value's bytes, the
-  library's entry for what it is held as, a function the unit states built from the type's parts (a
-  product's components in order, an array's elements, a tagged union's live member, a closure's
-  captures), the definition a value opens with, or, for an owning pointer's end, what it points at,
-  ended where the pointer ends. And for each class the unit defines that a value is built of, how
-  the parts it places begin and end and how an object of it is created whole and given its class,
-  and ended. The step is stated as an operation -- a copy, a value built of parts, a value put in
-  storage -- and the query says what it does, as rustc's `Drop` names a type's drop glue.
+- What each step of a value's life does for each type -- a copy into storage holding nothing, a
+  relocation into such storage, which ends nothing of its source, a write over a value already
+  there, an end -- and whether ending a value of a type does anything, answered once by one query:
+  the value's bytes, the library's entry for what it is held as, a function the unit states built
+  from the type's parts (a product's components in order, an array's elements, a tagged union's live
+  member, a closure's captures), the body built for a run-time-sized container's type over the
+  library's core, the definition a value opens with, or, for an owning pointer's end, what it points
+  at, ended where the pointer ends. And for each class the unit defines that a value is built of,
+  how the parts it places begin and end and how an object of it is created whole and given its
+  class, and ended. The step is stated as an operation -- a copy, a value built of parts, a value
+  put in storage -- and the query says what it does, as rustc's `Drop` names a type's drop glue.
 - Who ends a value a pointer owns: a uniquely owning pointer is an owned value with no copy, moved
   wherever it is handed on -- into a slot, to a caller, to a callee -- and ended by its last holder,
   which ends what it points at and gives the storage back. Storage of dynamic duration for a value
@@ -131,6 +132,13 @@ below LIR, at LIR-to-LLVM.
   -- is below LIR. The two are kept apart because the second is entered by another language's
   convention and no departure comes out of it, though the release of a stack waiting beneath it
   unwinds through it, so both are called as calls that can be unwound out of.
+- What each function of the unit is said to be where it is declared, before its body exists: whether
+  a call of it can be unwound out of, as LLVM's `nounwind` is an attribute of a function's
+  declaration and rustc's `FnAbi::can_unwind` a fact of a callee apart from its body. A function
+  lowered from a body takes what MIR declares of that body, and one this layer builds can be unwound
+  out of unless it hands its place to an operation that cannot; a call of one that cannot is no
+  invoke, and the unit's verification holds every call that can be to being one, and every function
+  that cannot to calling nothing that can and starting no unwind of its own.
 - The boundary protocol to the scheduling runtime (entry, suspend, resume, abandonment, completion).
 - Where in the source each instruction and terminator came from, as rustc's MIR statements and
   terminators carry a span: that of the innermost MIR node naming one whose lowering emitted it, so
@@ -138,9 +146,8 @@ below LIR, at LIR-to-LLVM.
 - Where a call that can fail the design was written: the address of the unit's constant for that
   location, which is data like any other constant of the unit, read as a value of the library's
   location type, the one word the value is, as the call's last operand, ahead of what the target
-  adds after every operand. A write into an element that can grow what it reaches holds that operand
-  on its element step, which is realized as such a call. A statement's location may also be an
-  ordinary operand, which keys a coverage goal or names a procedure.
+  adds after every operand. A statement's location may also be an ordinary operand, which keys a
+  coverage goal or names a procedure.
 
 ## Does Not Own
 
@@ -369,12 +376,12 @@ it and locates whatever its base and projections reach at that moment, while the
 retains is the value address-of yields (`storage.md`). Assignability and place-ness are different
 questions, and which parts of a value are storage of their own is the language's answer rather than
 this layer's. An element of an array, queue or associative array, and a member of an unpacked
-structure, each have an identity a second name may denote (`storage.md`), so each is a place: a step
-into it extends the place holding its value, a load reads it where it lies, and a store writes into
-the object already there. rustc's place steps index only an array or a slice and reach an element of
-a `Vec` by a call of `Index::index`; an element of a queue or an associative array is a step here
-because a name may denote it in place, so the place it is reached by is the identity that name
-holds. Value semantics hold because a copy of the aggregate copies its parts, so no two values share
+structure, each have an identity a second name may denote (`storage.md`), so each is a place, which
+a load reads where it lies and a store writes into the object already there. A member, and an
+element of a fixed-size array or an associative array, is a step extending the place holding its
+value; an element of a dynamic array or a queue is the dereference of the address its type's own
+body answers, as rustc reaches an element of a `Vec` by a call of `Index::index`, and its place is
+the identity a name of it holds. Value semantics hold because a copy of the aggregate copies its parts, so no two values share
 one and a write through one is seen through no other. An untagged union is a structure of one
 component, its storage, and a member is no part of it: MIR states a read of one as the storage's
 bits made into the member's type and a write as a store of the member's bits into the storage, so
@@ -394,21 +401,24 @@ can each name, and some bits of a value are none of those alone. A part reaches 
 part it is taken in, and a start that names no position writes nothing; both are outcomes of the
 insertion the store is realized by, never control flow or a test stated here. A step's direction is
 the access's: reading a missing element reads the default, and writing one allocates or discards it
-by the container's own rule, which the library applies when the step is realized. A write in
-progress is not a place but a value: the write itself, which the writer owns and ends and which
-names no place, and each place designated within it -- the whole of what it was opened on, and each
-part reached from there -- which borrows the write. Each step MIR takes within a write is one call
-on a designation answering with the next, and what the step does to the write -- an element step
-tells it what forming the element did -- is the library's, as it is in the C++ rendering of the same
-MIR. Where the write lands is a call on a designation, stated before anything is written there, that
-answers with the part's address; the part is then storage like any other. A run of elements written
-within a write is a call on the container's designation. Bits written within one are one call on the
-designation of the value they lie in, naming the same parts and bits a store at a place names; the
-write keeps what those bits held and hears which of them moved. That is how the variable learns
-whether the write changed it (LRM 4.3). Which library entry realizes a step, and whether it is an
-instruction or a call at all, is a realization question answered below LIR; it never decides which
-node the step is expressed as. A mutating method on a receiver -- a container's `delete`, a queue's
-`push` -- changes the storage the receiver names in place.
+by the container's own rule, which whatever realizes the step applies -- arithmetic within a
+fixed-size array's layout, the library for an associative array, or, for a dynamic array or a queue,
+the body the unit states for the container's type, which the library's steps within a write reach
+through the type's record. A write in progress is not a place but a value: the write itself, which
+the writer owns and ends and which names no place, and each place designated within it -- the whole
+of what it was opened on, and each part reached from there -- which borrows the write. Each step MIR
+takes within a write is one call on a designation answering with the next, and what the step does to
+the write -- an element step tells it what forming the element did -- is the library's, as it is in
+the C++ rendering of the same MIR. Where the write lands is a call on a designation, stated before
+anything is written there, that answers with the part's address; the part is then storage like any
+other. A run of elements written within a write is a call on the container's designation. Bits
+written within one are one call on the designation of the value they lie in, naming the same parts
+and bits a store at a place names; the write keeps what those bits held and hears which of them
+moved. That is how the variable learns whether the write changed it (LRM 4.3). Which library entry
+realizes a step, and whether it is an instruction or a call at all, is a realization question
+answered below LIR; it never decides which node the step is expressed as. A mutating method on a
+receiver -- a container's `delete`, a queue's `push` -- changes the storage the receiver names in
+place.
 
 LIR states an integral type as MIR does: its width, its signedness, and whether it is two-state or
 four-state. It names an operation on one by the language's operator and carries a constant of one as

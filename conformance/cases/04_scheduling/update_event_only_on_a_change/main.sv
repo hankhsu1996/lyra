@@ -13,7 +13,7 @@
 // assigning to Q[$+1] appends to the queue (LRM 7.10.1): each changes the
 // variable even where the value written is the element type's default, which
 // is what the new element would hold anyway. An index outside the array, on
-// the other hand, makes the write ignored (LRM 7.4.6, 7.10.1), so it changes
+// the other hand, makes the write ignored (LRM 7.4.5, 7.10.1), so it changes
 // nothing whatever value it carried.
 module Top;
   typedef struct {

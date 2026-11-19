@@ -1,4 +1,4 @@
-// A slice of an unpacked array selects contiguous elements (LRM 7.4.6), and an
+// A slice of an unpacked array selects contiguous elements (LRM 7.4.5), and an
 // index outside the array reads as the element type's default and is not
 // written (LRM 7.4.5, Table 7-1). What a slice that reaches past the end does
 // the standard does not say. Lyra takes each position beyond the end as an

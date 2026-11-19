@@ -811,13 +811,12 @@ class UnitLowerer {
   // Defines every record a value of `type` holds, as `DefineRecord` does.
   void DefineRecordsWithin(hir::TypeId type);
 
-  // Declares the methods of the struct or the union `id` from `source`, over
-  // values of `type`, the interned type naming it, before any record's bodies
-  // are built, since a body reaches the methods of its members' records; then
-  // states their bodies, of a record this unit declares, which another unit's
+  // Declares the methods of the struct or the union `id`, over values of
+  // `type`, the interned type naming it, before any record's bodies are built,
+  // since a body reaches the methods of its members' records; then states their
+  // bodies from `source`, of a record this unit declares, which another unit's
   // states for its own.
-  void DeclareRecordMethods(
-      const hir::Type& source, mir::RecordId id, mir::TypeId type);
+  void DeclareRecordMethods(mir::RecordId id, mir::TypeId type);
   void DefineRecordMethods(
       const hir::Type& source, mir::RecordId id, mir::TypeId type);
 

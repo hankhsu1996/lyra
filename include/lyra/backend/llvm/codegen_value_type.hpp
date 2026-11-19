@@ -6,8 +6,6 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
-#include <utility>
-#include <vector>
 
 #include <llvm/ADT/ArrayRef.h>
 #include <llvm/IR/GlobalValue.h>
@@ -106,10 +104,6 @@ class CodeGenValueTypes {
   // defines one per other such type it hands over.
   auto GetAddrOfElementType(lir::TypeId element)
       -> diag::Result<llvm::Constant*>;
-  // The constant that states the queue type `queue` to the library: the
-  // constant stating its elements' type, and the bound it declares (LRM
-  // 7.10.5). The module defines one per queue type it hands over.
-  auto GetAddrOfQueueType(lir::TypeId queue) -> diag::Result<llvm::Constant*>;
 
   // The type of every struct and union this unit declares, and what another
   // unit hands the library of one -- its operations, how a value of it starts,
@@ -172,6 +166,13 @@ class CodeGenValueTypes {
   // failing where there is no such function.
   auto WitnessFromOperation(
       lir::TypeId type, const Witness& witness, const OwnOperationWitness& own)
+      -> llvm::Constant*;
+  // A body a run-time-sized array's type record holds, named `witness` and
+  // taking and answering as `signature` says: the type's own function
+  // answering `answers`.
+  auto OwnBodyWitness(
+      lir::TypeId type, support::ValueOperation answers,
+      std::string_view witness, const support::MachineSignature& signature)
       -> llvm::Constant*;
   // A body doing what a type's own function does where the two differ in how
   // one integral value crosses, opened and left for its caller to fill: it
@@ -243,7 +244,6 @@ class CodeGenValueTypes {
   std::map<std::string, llvm::GlobalVariable*> operation_functions_of_;
   std::map<std::string, llvm::Constant*> operations_of_;
   std::unordered_map<lir::TypeId, llvm::Constant*> element_types_;
-  std::unordered_map<lir::TypeId, llvm::GlobalVariable*> queue_types_;
 };
 
 }  // namespace lyra::backend::llvm_backend

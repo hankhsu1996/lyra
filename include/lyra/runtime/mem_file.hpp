@@ -13,13 +13,13 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/base/source_location.hpp"
 #include "lyra/value/associative_array.hpp"
-#include "lyra/value/dynamic_array.hpp"
+#include "lyra/value/container_class.hpp"
 #include "lyra/value/enumeration.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_words.hpp"
-#include "lyra/value/queue.hpp"
 #include "lyra/value/string.hpp"
 #include "lyra/value/tuple.hpp"
 #include "lyra/value/unpacked_array.hpp"
@@ -254,10 +254,11 @@ void ReadMemZeroBased(
     unsigned base, std::optional<std::int64_t> start,
     std::optional<std::int64_t> finish, const WordValues& values) {
   ReadMemGridCore(
-      runtime, filename, base, 0, static_cast<std::int64_t>(dest.RawSize()) - 1,
+      runtime, filename, base, 0, static_cast<std::int64_t>(dest.Count()) - 1,
       1, start, finish, values,
       [&dest, base](std::int64_t address, std::size_t, std::string_view token) {
-        StoreParsed(dest.RawAt(static_cast<std::size_t>(address)), token, base);
+        StoreParsed(
+            dest.GetUnchecked(static_cast<std::size_t>(address)), token, base);
       });
 }
 
@@ -267,10 +268,10 @@ void WriteMemZeroBased(
     const value::String& filename, unsigned base,
     std::optional<std::int64_t> start, std::optional<std::int64_t> finish) {
   WriteMemGridCore(
-      runtime, filename, base, 0, static_cast<std::int64_t>(src.RawSize()) - 1,
-      1, start, finish, [&src, base](std::int64_t address, std::size_t) {
+      runtime, filename, base, 0, static_cast<std::int64_t>(src.Count()) - 1, 1,
+      start, finish, [&src, base](std::int64_t address, std::size_t) {
         return RenderedMemoryWord(
-            src.RawAt(static_cast<std::size_t>(address)), base);
+            src.GetUnchecked(static_cast<std::size_t>(address)), base);
       });
 }
 
@@ -339,50 +340,45 @@ void WriteMemMultidim(
       });
 }
 
+// A dynamic array and a queue are memories of the same entry a fixed-size
+// array is, handed no dimension: each is addressed from 0 across the elements
+// it holds.
+inline void RequireNoDimension(std::span<const std::int64_t> bounds) {
+  if (!bounds.empty()) {
+    throw InternalError(
+        "a dynamic array or a queue is read as a memory of dimensions -- "
+        "please report this as a bug");
+  }
+}
+
 }  // namespace detail
 
 // The load and the dump of each kind of memory. A run with no window is one
 // with no finish.
-template <value::IntegralValue T>
+template <typename Self>
+  requires value::RunTimeSizedArray<Self> &&
+           value::IntegralValue<value::ElementOf<Self>>
 auto LoadMemory(
-    RuntimeEffects& runtime, const value::DynamicArray<T>& memory,
-    const WordValues& values, const value::String& filename, std::int64_t base,
-    std::int64_t start, std::optional<std::int64_t> finish)
-    -> MemoryLoad<value::DynamicArray<T>> {
-  MemoryLoad<value::DynamicArray<T>> load(memory);
+    RuntimeEffects& runtime, const Self& memory, const WordValues& values,
+    const value::String& filename, std::span<const std::int64_t> bounds,
+    std::int64_t base, std::int64_t start, std::optional<std::int64_t> finish)
+    -> MemoryLoad<Self> {
+  detail::RequireNoDimension(bounds);
+  MemoryLoad<Self> load(memory);
   detail::ReadMemZeroBased(
       runtime, load.template Component<0>(), filename,
       static_cast<unsigned>(base), start, finish, values);
   return load;
 }
 
-template <value::IntegralValue T>
+template <typename Self>
+  requires value::RunTimeSizedArray<Self> &&
+           value::IntegralValue<value::ElementOf<Self>>
 void DumpMemory(
-    RuntimeEffects& runtime, const value::DynamicArray<T>& src,
-    const value::String& filename, std::int64_t base, std::int64_t start,
+    RuntimeEffects& runtime, const Self& src, const value::String& filename,
+    std::span<const std::int64_t> bounds, std::int64_t base, std::int64_t start,
     std::optional<std::int64_t> finish) {
-  detail::WriteMemZeroBased(
-      runtime, src, filename, static_cast<unsigned>(base), start, finish);
-}
-
-template <value::IntegralValue T, std::int64_t kBound>
-auto LoadMemory(
-    RuntimeEffects& runtime, const value::Queue<T, kBound>& memory,
-    const WordValues& values, const value::String& filename, std::int64_t base,
-    std::int64_t start, std::optional<std::int64_t> finish)
-    -> MemoryLoad<value::Queue<T, kBound>> {
-  MemoryLoad<value::Queue<T, kBound>> load(memory);
-  detail::ReadMemZeroBased(
-      runtime, load.template Component<0>(), filename,
-      static_cast<unsigned>(base), start, finish, values);
-  return load;
-}
-
-template <value::IntegralValue T, std::int64_t kBound>
-void DumpMemory(
-    RuntimeEffects& runtime, const value::Queue<T, kBound>& src,
-    const value::String& filename, std::int64_t base, std::int64_t start,
-    std::optional<std::int64_t> finish) {
+  detail::RequireNoDimension(bounds);
   detail::WriteMemZeroBased(
       runtime, src, filename, static_cast<unsigned>(base), start, finish);
 }

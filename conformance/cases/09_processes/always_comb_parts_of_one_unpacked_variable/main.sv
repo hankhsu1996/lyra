@@ -9,7 +9,9 @@
 // part is not run again by a write to a sibling part, and that holds whether
 // the part is an element, a member, an element of an inner dimension, bits of
 // one element, a member of an element, or a part read inside a function the
-// block calls. Each procedure below counts its runs, and the count moves only
+// block calls. A slice is one assignment to the elements it names (LRM 7.6),
+// so an element it leaves as it was is no update of that element. Each
+// procedure below counts its runs, and the count moves only
 // when something on its own list changed. An unpacked union is one storage
 // (LRM 7.3), so a write to a member runs a reader of the whole, unless it
 // leaves the member as it was; how its members lie in that storage the
@@ -257,6 +259,8 @@ module Top;
   int cut_low_before, cut_low_after_outside, cut_low_after_inside;
   int cut_low_after_other_slice;
   int cut3_before, cut3_after_other_slice;
+  int cut_low_before_ends_kept, cut3_before_ends_kept;
+  int cut_low_after_ends_kept, cut3_after_ends_kept;
 
   typedef union {
     logic [7:0]  narrow;
@@ -353,6 +357,14 @@ module Top;
     cut[0:1] = '{4'h6, 4'h7};
     #1;
     cut3_after_other_slice = cut_runs3;
+    // Only the middle element of this slice changes: the one at each end is
+    // written with what it holds.
+    cut_low_before_ends_kept = cut_low_runs;
+    cut3_before_ends_kept = cut_runs3;
+    cut[1:3] = '{4'h7, 4'h8, 4'h5};
+    #1;
+    cut_low_after_ends_kept = cut_low_runs;
+    cut3_after_ends_kept = cut_runs3;
   end
 
   initial begin
@@ -415,6 +427,11 @@ module Top;
     if (cut3_after_other_slice !== cut3_before)
       $fatal(1, "a slice written beside an element ran its reader %0d times",
              cut3_after_other_slice - cut3_before);
+    if (cut_low_after_ends_kept !== cut_low_before_ends_kept ||
+        cut3_after_ends_kept !== cut3_before_ends_kept)
+      $fatal(1, "a slice keeping its end elements ran their readers %0d and %0d times",
+             cut_low_after_ends_kept - cut_low_before_ends_kept,
+             cut3_after_ends_kept - cut3_before_ends_kept);
     if (elem_out0 !== 4'h5 || elem_out1 !== 4'hc)
       $fatal(1, "elements were %h and %h, expected 5 and c", elem_out0,
              elem_out1);
