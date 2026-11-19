@@ -1360,16 +1360,18 @@ class ArrayBodies : public OperationBodies {
           const mir::ExprId view_end = mir::BuildMachineIntBinary(
               Unit(), block, mir::BinaryOp::kAdd, CountNow(block, write.start),
               CountNow(block, write.count));
-          const mir::ExprId past_last_element = mir::BuildMachineIntBinary(
-              Unit(), block, mir::BinaryOp::kDiv,
+          const mir::LocalId past_last_element = DeclaredCount(
+              code, block,
               mir::BuildMachineIntBinary(
-                  Unit(), block, mir::BinaryOp::kAdd, view_end,
-                  CountLiteral(block, per_element - 1)),
-              CountLiteral(block, per_element));
+                  Unit(), block, mir::BinaryOp::kDiv,
+                  mir::BuildMachineIntBinary(
+                      Unit(), block, mir::BinaryOp::kAdd, view_end,
+                      CountLiteral(block, per_element - 1)),
+                  CountLiteral(block, per_element)));
           ForEachIndexBetween(
               code, block, first_element,
               mir::BuildMachineIntMin(
-                  Unit(), block, past_last_element,
+                  Unit(), block, CountNow(block, past_last_element),
                   CountLiteral(block, FixedCount())),
               [&](mir::Builder body, mir::LocalId index) {
                 // The element's position, held so that the read of the
@@ -1397,12 +1399,16 @@ class ArrayBodies : public OperationBodies {
   }
 
   // A fixed-size array's positions are its elements', the one at position 0
-  // first.
+  // first; a run-time-sized array is one position, held whole, so a run naming
+  // any of it takes all of it.
   auto TakePositions() -> mir::CallableCode {
     return BodyOf(
         support::PositionsItem::kTakePositions,
         [&](mir::CallableCode& code, mir::Builder block,
             const std::vector<mir::LocalId>& p) {
+          if (!IsFixedSize()) {
+            return block.AsValue(Unit().types, Read(block, p[1]));
+          }
           const HeldRun run = HoldRun(code, block, p[2], p[3]);
           const std::uint64_t per_element =
               mir::PositionCountOf(Unit(), ElementType());
@@ -4238,12 +4244,8 @@ auto ContainerOperationCall(
   if (!declared.has_value() || !declared->receiver.has_value()) {
     return std::nullopt;
   }
-  const mir::ExprId object = ReceiverAsDeclared(unit, block, receiver, method);
-  std::vector<mir::ExprId> arguments;
-  arguments.reserve(operands.size());
-  for (const mir::ExprId operand : operands) {
-    arguments.push_back(mir::Borrow(unit, block, operand));
-  }
+  PassedOperands passed =
+      PassedAsDeclared(unit, block, *declared, receiver, operands);
   return mir::Expr{
       .data =
           mir::CallExpr{
@@ -4252,8 +4254,8 @@ auto ContainerOperationCall(
                       .target =
                           mir::TypeOperationTarget{
                               .type = type, .answers = method},
-                      .receiver = object},
-              .arguments = std::move(arguments)},
+                      .receiver = passed.receiver},
+              .arguments = std::move(passed.arguments)},
       .type = result_type};
 }
 

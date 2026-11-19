@@ -208,6 +208,24 @@ auto HasPositions(const CompilationUnit& unit, TypeId type) -> bool {
   return false;
 }
 
+auto TakenWhole(const CompilationUnit& unit, TypeId type) -> bool {
+  const Type& t = unit.types.Get(type);
+  if (t.IsIntegral() || t.Is<UnpackedArrayType>() || t.Is<TupleType>()) {
+    return false;
+  }
+  if (const std::optional<RecordKind> kind = RecordKindOf(unit, type)) {
+    switch (*kind) {
+      case RecordKind::kStruct:
+      case RecordKind::kUnion:
+        return false;
+      case RecordKind::kTaggedUnion:
+        return true;
+    }
+    throw InternalError("TakenWhole: unknown record kind");
+  }
+  return true;
+}
+
 auto TagPositionCountOf(std::size_t members) -> std::uint64_t {
   return members <= 1 ? 0 : std::bit_width(members - 1);
 }

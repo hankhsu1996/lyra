@@ -397,8 +397,11 @@ constexpr std::array kForLandings{
     RealizedFor{.domains = kOneWordIntegral | kBodyObjects | kLaidOutByType},
     RealizedFor{
         .domains = kWideIntegral, .told = ToldWidthMetadata{.after = 0}}};
-// What a write designates is reached and told what moved the same way
-// whatever the value is, so nothing of its type is told.
+// What a write designates is told the value's type, by which what a run of its
+// elements may change is kept before the run is written. What moved is told
+// the same way whatever the value is, so nothing of its type is told then.
+constexpr std::array kForDesignatedParts{
+    RealizedFor{.domains = kLaidOutByType}};
 constexpr std::array kForDesignatedRuns{
     RealizedFor{.domains = kLaidOutByType, .told = ToldNothing{}}};
 // A designation of any integral value is told how wide it is where a write of
@@ -701,6 +704,7 @@ auto RealizationsOf(lir::OpenWriteTarget::Op op)
     case lir::OpenWriteTarget::Op::kLand:
       return kForLandings;
     case lir::OpenWriteTarget::Op::kDesignated:
+      return kForDesignatedParts;
     case lir::OpenWriteTarget::Op::kMoved:
       return kForDesignatedRuns;
   }

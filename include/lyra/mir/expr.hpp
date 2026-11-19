@@ -771,10 +771,19 @@ struct CompilationUnit;
 // The operation a run of elements written within a write in progress, the
 // call `call` of `block` names, is carried out by: the run write of the array
 // type the write designates -- a queue's own, or any other array's at the type
-// of the value written.
+// of the value written. Either way the call's first operand is the position
+// the run starts at, by reference.
 [[nodiscard]] auto DesignatedRunWrite(
     const CompilationUnit& unit, const Block& block, const CallExpr& call)
     -> TypeOperationTarget;
+
+// How many elements the run write `run` writes, where the type of what it is
+// handed fixes them: a fixed-size run's count (LRM 7.4.6). A queue's slice
+// lies between two positions the running program computes (LRM 7.10.1), so
+// its type fixes none.
+[[nodiscard]] auto RunWriteElementCount(
+    const CompilationUnit& unit, const TypeOperationTarget& run)
+    -> std::optional<std::uint64_t>;
 
 // The object the call dispatches on, absent for a call that dispatches on
 // nothing. The one place the question is answered, so no consumer works out

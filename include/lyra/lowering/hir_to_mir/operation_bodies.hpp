@@ -40,12 +40,20 @@
 
 namespace lyra::lowering::hir_to_mir {
 
-// `object` handed to the operation `answers` of its type as the operation's
-// declaration takes it: the place it lies in, to write through, where the
-// operation changes it, and to read otherwise.
-[[nodiscard]] auto ReceiverAsDeclared(
-    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId object,
-    support::ValueOperation answers) -> mir::ExprId;
+// The receiver and the operands of a call of the operation `declared`
+// declares, each handed as its parameter takes it: borrowed where it takes a
+// reference, mutably where the operation writes through it, and as the value
+// where it takes the value. The operands follow the receiver among the
+// parameters, and where the operation reports where it was called the call
+// names that last.
+struct PassedOperands {
+  std::optional<mir::ExprId> receiver;
+  std::vector<mir::ExprId> arguments;
+};
+[[nodiscard]] auto PassedAsDeclared(
+    const mir::CompilationUnit& unit, mir::Builder block,
+    const mir::CallableCode& declared, std::optional<mir::ExprId> receiver,
+    std::vector<mir::ExprId> operands) -> PassedOperands;
 
 // A call of the body `target` names, which answers `answers` of `type`, handing
 // it each value as the operation's declaration takes it: borrowed where it
@@ -91,31 +99,6 @@ class OperationBodies {
             .type = type});
   }
 
-  // Whether a run of positions reaching any of a value of `type` takes all of
-  // it: a value no select names part of -- a real (LRM 11.5.1), a tagged union,
-  // whose tag decides which member lies there (LRM 7.3.2), and a value held
-  // whole as one position.
-  static auto TakenWhole(const mir::CompilationUnit& unit, mir::TypeId type)
-      -> bool {
-    const mir::Type& t = unit.types.Get(type);
-    if (t.IsIntegral() || t.Is<mir::UnpackedArrayType>() ||
-        t.Is<mir::TupleType>()) {
-      return false;
-    }
-    if (const std::optional<mir::RecordKind> kind =
-            mir::RecordKindOf(unit, type)) {
-      switch (*kind) {
-        case mir::RecordKind::kStruct:
-        case mir::RecordKind::kUnion:
-          return false;
-        case mir::RecordKind::kTaggedUnion:
-          return true;
-      }
-      throw InternalError("hir_to_mir: unknown record kind");
-    }
-    return true;
-  }
-
   // A value of `type` with the `count` positions from `start` of `into` taken
   // from `from`, both of that type, where the run names at least one position.
   // `start` and `count` are where the two machine numbers lie, which a type's
@@ -125,7 +108,7 @@ class OperationBodies {
       const mir::CompilationUnit& unit, mir::Builder block, mir::TypeId type,
       mir::ExprId into, mir::ExprId from, mir::ExprId start, mir::ExprId count)
       -> mir::ExprId {
-    if (TakenWhole(unit, type)) {
+    if (mir::TakenWhole(unit, type)) {
       return block.AsValue(unit.types, from);
     }
     return BuildValueOperation(

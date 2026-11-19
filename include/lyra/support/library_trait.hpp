@@ -4,7 +4,6 @@
 #include <cstdint>
 #include <span>
 
-#include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/value_operation.hpp"
 #include "lyra/support/value_step.hpp"
 
@@ -50,6 +49,13 @@ inline constexpr LibraryTrait kElementAccess{
 inline constexpr auto kResizeRequirements =
     std::to_array<ValueOperation>({ResizeItem::kResized});
 inline constexpr LibraryTrait kResize{.requirements = kResizeRequirements};
+
+// A takeover: some positions of a value taken from another, which a procedural
+// continuous assignment holding part or all of a variable asks (LRM 10.6.2). A
+// value held whole is one position, so taking any of it takes all of it.
+inline constexpr auto kTakeoverRequirements =
+    std::to_array<ValueOperation>({PositionsItem::kTakePositions});
+inline constexpr LibraryTrait kTakeover{.requirements = kTakeoverRequirements};
 
 // The questions about a whole value a library holding values of any type asks
 // of each one: its equality (LRM 11.4.5), its case equality and whether it

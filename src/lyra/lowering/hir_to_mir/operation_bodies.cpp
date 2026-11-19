@@ -17,26 +17,6 @@ namespace lyra::lowering::hir_to_mir {
 
 namespace {
 
-auto CallOf(
-    mir::Builder block, mir::Direct callee, std::vector<mir::ExprId> arguments,
-    mir::TypeId result) -> mir::ExprId {
-  return block.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee = std::move(callee),
-                  .arguments = std::move(arguments)},
-          .type = result});
-}
-
-// The declaration MIR states for `answers` of `type`, where it states one.
-auto DeclarationOf(
-    const mir::CompilationUnit& unit, mir::TypeId type,
-    support::ValueOperation answers) -> std::optional<mir::CallableCode> {
-  return mir::OperationDeclarationOf(
-      unit, mir::TypeOperationSource{.type = type, .answers = answers});
-}
-
 // `value` handed to a parameter of type `taken`: borrowed where the parameter
 // is a reference, mutably where it writes through it, and as its value where
 // the parameter takes the value itself.
@@ -59,16 +39,36 @@ auto PassedAs(
 
 }  // namespace
 
-auto ReceiverAsDeclared(
-    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId object,
-    support::ValueOperation answers) -> mir::ExprId {
-  const std::optional<mir::CallableCode> declared =
-      DeclarationOf(unit, block.Get(object).type, answers);
-  if (!declared.has_value() || !declared->receiver.has_value()) {
-    return mir::Borrow(unit, block, object);
+auto PassedAsDeclared(
+    const mir::CompilationUnit& unit, mir::Builder block,
+    const mir::CallableCode& declared, std::optional<mir::ExprId> receiver,
+    std::vector<mir::ExprId> operands) -> PassedOperands {
+  if (receiver.has_value() != declared.receiver.has_value()) {
+    throw InternalError(
+        "hir_to_mir: a call of a type's operation hands a receiver where its "
+        "declaration takes none, or none where it takes one -- please report "
+        "this as a bug");
   }
-  return PassedAs(
-      unit, block, object, declared->locals.Get(*declared->receiver).type);
+  std::vector<mir::TypeId> taken;
+  for (const mir::LocalId param : declared.params) {
+    if (param != declared.receiver && param != declared.caller_location) {
+      taken.push_back(declared.locals.Get(param).type);
+    }
+  }
+  if (operands.size() != taken.size()) {
+    throw InternalError(
+        "hir_to_mir: a call of a type's operation hands it other operands "
+        "than its declaration takes -- please report this as a bug");
+  }
+  for (std::size_t i = 0; i < operands.size(); ++i) {
+    operands[i] = PassedAs(unit, block, operands[i], taken[i]);
+  }
+  return PassedOperands{
+      .receiver = receiver.transform([&](mir::ExprId object) {
+        return PassedAs(
+            unit, block, object, declared.locals.Get(*declared.receiver).type);
+      }),
+      .arguments = std::move(operands)};
 }
 
 auto OwnOperationCall(
@@ -76,31 +76,25 @@ auto OwnOperationCall(
     mir::DirectTarget target, support::ValueOperation answers,
     std::optional<mir::ExprId> receiver, std::vector<mir::ExprId> operands,
     mir::TypeId result) -> mir::ExprId {
-  // The operands follow the receiver among the declared parameters, where the
-  // operation was called last where it reports there.
-  const std::optional<mir::CallableCode> declared =
-      DeclarationOf(unit, type, answers);
-  std::vector<mir::TypeId> taken;
-  if (declared.has_value()) {
-    for (const mir::LocalId param : declared->params) {
-      if (param != declared->receiver && param != declared->caller_location) {
-        taken.push_back(declared->locals.Get(param).type);
-      }
-    }
+  const std::optional<mir::CallableCode> declared = mir::OperationDeclarationOf(
+      unit, mir::TypeOperationSource{.type = type, .answers = answers});
+  if (!declared.has_value()) {
+    throw InternalError(
+        "hir_to_mir: a call names an operation of a type that declares none "
+        "such -- please report this as a bug");
   }
-  for (std::size_t i = 0; i < operands.size(); ++i) {
-    operands[i] = i < taken.size()
-                      ? PassedAs(unit, block, operands[i], taken[i])
-                      : mir::Borrow(unit, block, operands[i]);
-  }
-  return CallOf(
-      block,
-      mir::Direct{
-          .target = std::move(target),
-          .receiver = receiver.transform([&](mir::ExprId object) {
-            return ReceiverAsDeclared(unit, block, object, answers);
-          })},
-      std::move(operands), result);
+  PassedOperands passed =
+      PassedAsDeclared(unit, block, *declared, receiver, std::move(operands));
+  return block.Add(
+      mir::Expr{
+          .data =
+              mir::CallExpr{
+                  .callee =
+                      mir::Direct{
+                          .target = std::move(target),
+                          .receiver = passed.receiver},
+                  .arguments = std::move(passed.arguments)},
+          .type = result});
 }
 
 }  // namespace lyra::lowering::hir_to_mir

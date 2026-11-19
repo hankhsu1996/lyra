@@ -95,6 +95,12 @@ struct StreamShape {
 [[nodiscard]] auto PositionCountOf(const CompilationUnit& unit, TypeId type)
     -> std::uint64_t;
 
+// Whether a run of positions reaching any of a value of `type` takes all of
+// it: a value no select names part of -- a real (LRM 11.5.1), a tagged union,
+// whose tag decides which member lies there (LRM 7.3.2), and a value held
+// whole as one position.
+[[nodiscard]] auto TakenWhole(const CompilationUnit& unit, TypeId type) -> bool;
+
 // How many positions the widest of `members` has, which every member of a
 // union lies within from the first (LRM 7.3, 7.3.2).
 [[nodiscard]] auto WidestPositionCountOf(

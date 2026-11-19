@@ -11,11 +11,11 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/operator.hpp"
-#include "lyra/lir/value_step.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/declared_member_storage.hpp"
 #include "lyra/support/runtime_object.hpp"
 #include "lyra/support/value_domain.hpp"
+#include "lyra/support/value_step.hpp"
 
 namespace lyra::backend::llvm_backend {
 
@@ -423,8 +423,11 @@ auto OperandReadingsOf(lir::OpenWriteTarget::Op op)
   using enum support::OperandReading;
   switch (op) {
     case lir::OpenWriteTarget::Op::kLand:
-    case lir::OpenWriteTarget::Op::kDesignated:
       return {};
+    // The designation, then where the run written next starts and how many
+    // elements it takes.
+    case lir::OpenWriteTarget::Op::kDesignated:
+      return {kMachine, kPosition, kMachine};
     // The designation, then the positions the run write answered it changed,
     // from the first to one past the last.
     case lir::OpenWriteTarget::Op::kMoved:

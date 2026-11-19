@@ -284,15 +284,16 @@ struct ValueCellTarget {
 // designated within it. `kLand` is where the write lands: the part designated,
 // whose value from before the write the write keeps where anything will ask
 // whether the write changed the variable (LRM 4.3); it answers with where the
-// part lies. `kDesignated` answers where the part designated lies and keeps
-// nothing of it, for an operation that writes the part itself and then tells
-// the write what it changed; `kMoved` is that telling: the positions the
-// operation answered it changed, from the first to one past the last. `value`
-// is what the part or the container holds, and the domain it is realized in
-// names the runtime entry. A LIR-only target with no MIR twin: MIR states the
-// landing as a dereference and a run's write as the array's own run write on
-// the designation, and a place is named by an address here, so each is a call
-// on the designation.
+// part lies. `kDesignated` answers where the part designated lies, for an
+// operation that writes a run of the part's elements itself and then tells
+// the write what it changed; it is handed where that run starts and how many
+// elements its type fixes, and keeps first what the run may change. `kMoved`
+// is that telling: the positions the operation answered it changed, from the
+// first to one past the last. `value` is what the part or the container
+// holds, and the domain it is realized in names the runtime entry. A LIR-only
+// target with no MIR twin: MIR states the landing as a dereference and a run's
+// write as the array's own run write on the designation, and a place is named
+// by an address here, so each is a call on the designation.
 struct OpenWriteTarget {
   enum class Op : std::uint8_t { kLand, kDesignated, kMoved };
   Op op;

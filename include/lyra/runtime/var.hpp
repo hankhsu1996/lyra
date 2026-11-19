@@ -245,7 +245,7 @@ template <typename Container, typename Key>
     -> bool {
   if constexpr (detail::AppendsPastItsLastByKind<Container>) {
     return StepTo<Container>(key) ==
-           PartPath::Element(value::ReadPosition(container.Size()));
+           PartPath::Element(static_cast<std::int64_t>(container.Count()));
   } else {
     return detail::kIsAssociative<Container>;
   }
@@ -2010,18 +2010,26 @@ class Designation {
   }
 
   // A run of the part's elements written over (LRM 7.6) by `kAssign`, the
-  // part's own operation, handed `operands` as they are. The assignment
-  // compares each element before writing it and answers the positions it
-  // changed, and that answer is what the write is told and what this answers.
-  template <auto kAssign, typename... Operands>
-  auto AssignSlice(const Operands&... operands) {
-    return Tell(kAssign(*part_, operands...));
+  // part's own operation: a run of the run type's count from the position
+  // `start`, and a queue's slice from `lo` through `hi` (LRM 7.10.1), each
+  // reporting where it was written, `at`. The assignment compares each element
+  // before writing it and answers the positions it changed, and that answer is
+  // what the write is told and what this answers. What it may change is
+  // announced first, so a run written and written back leaves the part
+  // unchanged (LRM 9.2.2.2).
+  template <auto kAssign, typename Start, typename Run>
+  auto AssignSlice(
+      const Start& start, const Run& run, base::SourceLocation at) {
+    BeforeModifySlice(
+        value::ReadPosition(start), static_cast<std::int64_t>(Run::Count()));
+    return Tell(kAssign(*part_, start, run, at));
   }
-  // The same by the part's own member, for a part whose class states it, at
-  // the type of the values written, which the member is called at too.
-  template <typename Value, typename... Operands>
-  auto AssignSlice(const Operands&... operands) {
-    return Tell(part_->template AssignSlice<Value>(operands...));
+  template <auto kAssign, typename Position, typename Run>
+  auto AssignSlice(
+      const Position& lo, const Position& hi, const Run& run,
+      base::SourceLocation at) {
+    BeforeModifySlice(value::ReadPosition(lo), 0);
+    return Tell(kAssign(*part_, lo, hi, run, at));
   }
 
   auto operator*() -> Part& {
@@ -2039,6 +2047,26 @@ class Designation {
   }
 
  private:
+  // What a run write of `count` elements from `first` may change, announced
+  // before it writes: the whole of a part whose size changes, since such a
+  // write may move its elements and an announced element would lie in storage
+  // the part gives back, and of a fixed-size array each element the run
+  // reaches, where it lies, a bound naming no position writing nothing (LRM
+  // 7.4.5).
+  void BeforeModifySlice(
+      std::optional<std::int64_t> first, std::int64_t count) {
+    if constexpr (detail::ChangesSizeByKind<Part>) {
+      write_->BeforeModifyPart(*part_);
+    } else if (write_->Announces()) {
+      for (const std::int64_t ordinal : PositionsASliceWrites(
+               first, count, static_cast<std::int64_t>(part_->Count()))) {
+        write_->BeforeModifyPart(
+            part_->GetUnchecked(static_cast<std::size_t>(ordinal)),
+            PartPath::Element(ordinal));
+      }
+    }
+  }
+
   // The positions a run write answers it changed, told to the write.
   template <typename Changed>
   auto Tell(const Changed& changed) -> Changed {

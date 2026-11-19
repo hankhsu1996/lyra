@@ -112,6 +112,7 @@
 #include "lyra/value/unmanaged_ref.hpp"
 #include "lyra/value/unpacked_array.hpp"
 #include "lyra/value/unpacked_range.hpp"
+#include "lyra/value/value_type_kind.hpp"
 #include "lyra/value/wide.hpp"
 #include "lyra/value/witnessed_elem.hpp"
 #include "svdpi.h"
@@ -7580,8 +7581,28 @@ auto lyra_rt_shortreal_land(const void* designation) noexcept -> void* {
 auto lyra_rt_unmanagedref_land(const void* designation) noexcept -> void* {
   return LandDesignation<UnmanagedRef>(designation);
 }
-auto lyra_rt_laidout_designated(const void* designation) noexcept -> void* {
-  return DesignationAt(designation).part;
+auto lyra_rt_laidout_designated(
+    const void* designation, const void* first, std::int64_t count,
+    const void* value_type) noexcept -> void* {
+  const ErasedDesignation& designated = DesignationAt(designation);
+  const lyra::value::ValueType& type = lyra::runtime::TypeAt(value_type);
+  void* const part = designated.part;
+  if (lyra::value::ChangesSizeAtRunTime(type.Kind())) {
+    designated.write->BeforeModifyLaidOut(type, part);
+    return part;
+  }
+  if (!designated.write->Announces()) {
+    return part;
+  }
+  for (const std::int64_t ordinal : lyra::runtime::PositionsASliceWrites(
+           PositionNamedAt(first), count,
+           static_cast<std::int64_t>(type.PartCount(part)))) {
+    designated.write->BeforeModifyLaidOut(
+        type.PartType(part),
+        type.PartAt(part, static_cast<std::size_t>(ordinal)),
+        lyra::runtime::PartPath::Element(ordinal));
+  }
+  return part;
 }
 
 void lyra_rt_laidout_moved(

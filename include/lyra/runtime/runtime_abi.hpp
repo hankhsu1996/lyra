@@ -2685,11 +2685,16 @@ auto lyra_rt_bitvec_land(const void* designation) noexcept -> void*;
 auto lyra_rt_real_land(const void* designation) noexcept -> void*;
 auto lyra_rt_shortreal_land(const void* designation) noexcept -> void*;
 auto lyra_rt_unmanagedref_land(const void* designation) noexcept -> void*;
-// Where the part a write designates lies, nothing of it kept; and the write
-// told the positions a write of a run of its elements changed, from the first
-// at `begin` to one past the last at `end`, the same position twice where none
-// changed.
-auto lyra_rt_laidout_designated(const void* designation) noexcept -> void*;
+// Where the part a write designates lies, of `value_type`, a run of whose
+// `count` elements from the position at `first` is then written. What that
+// write may change is kept first: the whole of a value whose size changes,
+// since the write may move its elements, and of a fixed-size array each
+// element the run reaches (LRM 7.6, 7.10.1). Then the write told the positions
+// that run write changed, from the first at `begin` to one past the last at
+// `end`, the same position twice where none changed.
+auto lyra_rt_laidout_designated(
+    const void* designation, const void* first, std::int64_t count,
+    const void* value_type) noexcept -> void*;
 void lyra_rt_laidout_moved(
     const void* designation, const void* begin, const void* end) noexcept;
 auto lyra_rt_laidout_land(

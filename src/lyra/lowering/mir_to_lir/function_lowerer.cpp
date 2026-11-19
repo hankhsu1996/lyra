@@ -3195,6 +3195,28 @@ auto FunctionLowerer::LowerRunWrittenOnDesignation(
   if (!designation) {
     return std::unexpected(std::move(designation.error()));
   }
+  std::vector<lir::Operand> operands;
+  for (const mir::ExprId argument : call.arguments) {
+    auto lowered = LowerArgument(block, argument);
+    if (!lowered) {
+      return std::unexpected(std::move(lowered.error()));
+    }
+    operands.push_back(*std::move(lowered));
+  }
+  // The part is told the run written next, by where it starts -- the run
+  // write's first operand, the position it takes by reference -- and how many
+  // elements its type fixes it to take. A queue's slice keeps the whole queue,
+  // so a count its type fixes none of is never read.
+  const lir::Operand first = Load(
+      StorageAt(operands.front()),
+      unit_->TranslateType(mir::PositionType(unit_->Mir().types)));
+  const lir::Operand count = lir::IntConst{
+      .value =
+          lir::IntegralConstant{
+              .value_words =
+                  {mir::RunWriteElementCount(unit_->Mir(), target).value_or(0)},
+              .state_words = {}},
+      .type = unit_->TranslateType(unit_->Mir().builtins.machine_int64)};
   const lir::TypeId part_type = unit_->TranslateType(unit_->Mir().types.Intern(
       mir::Type{mir::ReferenceType{
           .referent = value, .mutability = mir::Mutability::kMutable}}));
@@ -3202,18 +3224,12 @@ auto FunctionLowerer::LowerRunWrittenOnDesignation(
       lir::OpenWriteTarget{
           .op = lir::OpenWriteTarget::Op::kDesignated,
           .value = unit_->TranslateType(value)},
-      {*designation}, part_type);
+      {*designation, first, count}, part_type);
   if (!part) {
     return std::unexpected(std::move(part.error()));
   }
   std::vector<lir::Operand> args{*std::move(part)};
-  for (const mir::ExprId argument : call.arguments) {
-    auto lowered = LowerArgument(block, argument);
-    if (!lowered) {
-      return std::unexpected(std::move(lowered.error()));
-    }
-    args.push_back(*std::move(lowered));
-  }
+  args.insert(args.end(), operands.begin(), operands.end());
   const lir::TypeId changed_type = unit_->TranslateType(type);
   auto changed = EmitCallTo(
       lir::FunctionTarget{.function = unit_->TypeOperationFunction(target)},

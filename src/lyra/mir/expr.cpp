@@ -1,5 +1,6 @@
 #include "lyra/mir/expr.hpp"
 
+#include <cstdint>
 #include <optional>
 #include <variant>
 
@@ -155,6 +156,17 @@ auto DesignatedRunWrite(
       .type = designated->value,
       .answers = support::BuiltinFn::kAssignElementSlice,
       .arguments = {direct->type_arguments.front()}};
+}
+
+auto RunWriteElementCount(
+    const CompilationUnit& unit, const TypeOperationTarget& run)
+    -> std::optional<std::uint64_t> {
+  // A run of a fixed count is taken at that run's type; a queue's slice at
+  // none.
+  if (run.arguments.empty()) {
+    return std::nullopt;
+  }
+  return unit.types.Get(run.arguments.front()).Get<UnpackedArrayType>().count;
 }
 
 }  // namespace lyra::mir

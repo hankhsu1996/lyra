@@ -606,14 +606,15 @@ constexpr auto FindDeclaration(LibraryDecl decl) -> const LibraryDeclData* {
 
   // What the library asks of a run-time-sized array laid out by its type,
   // wherever its own code holds one: its value's life, its change test, its
-  // elements, being made a count long, the questions asked of a whole value,
-  // and, where its elements stream, its stream.
+  // elements, being made a count long, being taken over whole, the questions
+  // asked of a whole value, and, where its elements stream, its stream.
   static constexpr auto kRunTimeSizedArrayTraits =
       std::to_array<TraitImplementation>({
           {.trait = &kValueLife, .where = ImplementedWhere::kAlways},
           {.trait = &kChangeTest, .where = ImplementedWhere::kAlways},
           {.trait = &kElementAccess, .where = ImplementedWhere::kAlways},
           {.trait = &kResize, .where = ImplementedWhere::kAlways},
+          {.trait = &kTakeover, .where = ImplementedWhere::kAlways},
           {.trait = &kWholeValueQuestions, .where = ImplementedWhere::kAlways},
           {.trait = &kStream, .where = ImplementedWhere::kItStreams},
       });
