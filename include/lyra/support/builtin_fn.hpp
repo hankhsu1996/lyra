@@ -914,10 +914,13 @@ enum class BuiltinFn : std::uint16_t {
   // LRM 9.4.2 / 9.4.2.2 value-change wait -- an `@(...)`, an `@*` -- built on
   // one trigger per watched leaf, so a stop reached again stops at the same
   // wait; and the wait of an `always_comb` or `always_latch` on the implicit
-  // list a report settled (LRM 9.2.2.2.1), woken by what an event's execution
-  // leaves changed of it. Each answers the wait.
+  // list a report settled (LRM 9.2.2.2.1), woken by each change of what it
+  // watches, or, coalescing, woken by the net change an execution of another
+  // such procedure leaves on it and by each write no such execution
+  // accumulated. Each answers the wait.
   kWaitOn,
-  kWaitOnImplicitList,
+  kWaitPerChangeOnImplicitList,
+  kWaitPerIntervalOnImplicitList,
   // LRM 4.9.1 / 4.9.2 the wait of a continuous assignment or a procedural
   // continuous assignment, on one trigger per source element of its
   // expression: a change the process makes itself while it runs evaluates it

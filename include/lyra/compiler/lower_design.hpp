@@ -131,7 +131,10 @@ auto LowerToSemantic(
             .made = lowering::hir_to_mir::LoweringMade::Of(lowered),
             .produced = std::nullopt};
         if (!lowered.compiles_its_body) return out;
-        auto unit = LowerUnitToSemantic(lowered.body, passes, *design.sources);
+        auto unit = LowerUnitToSemantic(
+            lowered.body,
+            design.combinational_updates.Of(lowered.body.definition.library),
+            passes, *design.sources);
         if (!unit) {
           return std::unexpected(std::move(unit.error()));
         }
@@ -158,7 +161,8 @@ auto LowerToSemantic(
     const profiling::StageScope stage("design root");
     return SynthesizeDesignRoot(
         design.units.Tops(), design.units.Signatures(),
-        std::move(instantiations), passes, *design.sources);
+        std::move(instantiations), design.combinational_updates, passes,
+        *design.sources);
   }();
   if (!root) {
     sink.Report(std::move(root.error()));

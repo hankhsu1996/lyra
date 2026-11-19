@@ -63,10 +63,10 @@ template class Coroutine<value::UnmanagedRef>;
 template class Coroutine<value::ObjectRef>;
 template class Coroutine<value::Tuple<>>;
 
-template class KeptPart<value::String>;
-template class KeptPart<value::Real>;
-template class KeptPart<value::ShortReal>;
-template class KeptPart<value::UnmanagedRef>;
-template class KeptPart<value::ObjectRef>;
+template class WriteOriginal<value::String>;
+template class WriteOriginal<value::Real>;
+template class WriteOriginal<value::ShortReal>;
+template class WriteOriginal<value::UnmanagedRef>;
+template class WriteOriginal<value::ObjectRef>;
 
 }  // namespace lyra::runtime

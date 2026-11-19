@@ -48,6 +48,7 @@ using conformance::framework::RunShellScript;
 using conformance::framework::RunUnderAddressLimit;
 using conformance::framework::TimedOut;
 using lyra::test::ReadJson;
+using lyra::test::ResolveDeclaredInput;
 using lyra::test::ResolveLyra;
 using lyra::test::RunLyraFrom;
 using lyra::test::WriteTrivialSource;
@@ -4867,6 +4868,174 @@ TEST(LyraCommandLine, NamesWhichOptionalRewritesOfMirRun) {
   const std::set<std::string> asked_back =
       spans_of("-InstSimplify,+InstSimplify");
   EXPECT_TRUE(asked_back.contains("InstSimplify"));
+}
+
+// Two always_comb procedures each assigning a default and then a value, each
+// reading the other's output.
+constexpr std::string_view kDefaultsReadEachOther =
+    "module Test;\n"
+    "  logic go = 1'b1;\n"
+    "  logic x;\n"
+    "  logic y;\n"
+    "  always_comb begin\n"
+    "    x = 1'b0;\n"
+    "    if (go || y) x = 1'b1;\n"
+    "  end\n"
+    "  always_comb begin\n"
+    "    y = 1'b0;\n"
+    "    if (x) y = 1'b1;\n"
+    "  end\n"
+    "  initial #1 $display(\"x=%b y=%b\", x, y);\n"
+    "endmodule\n";
+
+// Built as the standard reads, the two wake each other for ever, and the run
+// says which option makes them settle; built with it, they settle.
+TEST(LyraCoalescedCombUpdates, AnUnsettledSlotNamesTheOption) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  const auto src = *tmp_or / "test.sv";
+  std::ofstream(src) << kDefaultsReadEachOther;
+  const std::string store = "--cache-dir=" + (*tmp_or / "store").string();
+
+  const auto strict = RunChildProcess(
+      lyra, std::vector<std::string>{
+                "run", "--backend", "llvm", store, src.string()});
+  EXPECT_THAT(strict, ExitedWithCode(Ne(0))) << strict.stdout_text;
+  EXPECT_NE(strict.stderr_text.find("time never advances"), std::string::npos)
+      << strict.stderr_text;
+  EXPECT_NE(
+      strict.stderr_text.find("build with '--coalesce-comb-updates'"),
+      std::string::npos)
+      << strict.stderr_text;
+
+  const auto coalesced = RunChildProcess(
+      lyra, std::vector<std::string>{
+                "run", "--backend", "llvm", store, "--coalesce-comb-updates",
+                src.string()});
+  EXPECT_THAT(coalesced, ExitedWithCode(0)) << coalesced.stderr_text;
+  EXPECT_NE(coalesced.stdout_text.find("x=1 y=1"), std::string::npos)
+      << coalesced.stdout_text;
+}
+
+// Each library is compiled in the dialect it states, one stating nothing in
+// the standard's, whatever the library using it states; the command line's
+// answer, either way, is every library's.
+TEST(LyraCoalescedCombUpdates, EachLibraryIsBuiltAsItStates) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  const std::string store = "--cache-dir=" + (*tmp_or / "store").string();
+  WriteFile(
+      *tmp_or / "pair" / "pair.sv",
+      "module Pair;\n"
+      "  logic go = 1'b1;\n"
+      "  logic x;\n"
+      "  logic y;\n"
+      "  always_comb begin\n"
+      "    x = 1'b0;\n"
+      "    if (go || y) x = 1'b1;\n"
+      "  end\n"
+      "  always_comb begin\n"
+      "    y = 1'b0;\n"
+      "    if (x) y = 1'b1;\n"
+      "  end\n"
+      "endmodule\n");
+  WriteFile(
+      *tmp_or / "app" / "top.sv",
+      "module Top;\n"
+      "  Pair p ();\n"
+      "  initial #1 $display(\"x=%b y=%b\", p.x, p.y);\n"
+      "endmodule\n");
+  constexpr std::string_view kCoalesces =
+      "\n[compile]\ncoalesce_comb_updates = true\n";
+
+  struct Build {
+    std::string_view root;
+    std::string_view pair;
+    std::string_view option;
+    bool settles;
+  };
+  static constexpr std::array<Build, 4> kBuilds = {
+      {{.root = kCoalesces, .pair = "", .option = "", .settles = false},
+       {.root = "", .pair = kCoalesces, .option = "", .settles = true},
+       {.root = "",
+        .pair = kCoalesces,
+        .option = "--coalesce-comb-updates=false",
+        .settles = false},
+       {.root = "",
+        .pair = "",
+        .option = "--coalesce-comb-updates",
+        .settles = true}}};
+
+  for (const Build& build : kBuilds) {
+    WriteFile(
+        *tmp_or / "pair" / "lyra.toml",
+        std::format(
+            "[library]\nname = \"pair\"\nfiles = [\"pair.sv\"]\n{}",
+            build.pair));
+    WriteFile(
+        *tmp_or / "app" / "lyra.toml",
+        std::format(
+            "[library]\nname = \"app\"\nfiles = [\"top.sv\"]\n"
+            "\n[design]\ntop = [\"Top\"]\n{}"
+            "\n[dependencies]\npair = {{ path = \"../pair\" }}\n",
+            build.root));
+    const auto ran = RunLyraFrom(
+        lyra, *tmp_or / "app",
+        std::format("run --backend llvm {} {}", store, build.option));
+    const std::string what = std::format(
+        "root '{}', pair '{}', '{}'", build.root, build.pair, build.option);
+    if (build.settles) {
+      EXPECT_THAT(ran, ExitedWithCode(0)) << what << ": " << ran.stderr_text;
+      EXPECT_NE(ran.stdout_text.find("x=1 y=1"), std::string::npos)
+          << what << ": " << ran.stdout_text;
+    } else {
+      EXPECT_THAT(ran, ExitedWithCode(Ne(0))) << what << ": settled";
+      EXPECT_NE(ran.stderr_text.find("time never advances"), std::string::npos)
+          << what << ": " << ran.stderr_text;
+    }
+  }
+
+  // The root's own answer reaches its own procedures, whatever its units'
+  // library is named where they are compiled.
+  WriteFile(
+      *tmp_or / "solo" / "lyra.toml",
+      std::format(
+          "[library]\nname = \"solo\"\nfiles = [\"pair.sv\"]\n"
+          "\n[design]\ntop = [\"Pair\"]\n{}",
+          kCoalesces));
+  std::filesystem::copy_file(
+      *tmp_or / "pair" / "pair.sv", *tmp_or / "solo" / "pair.sv");
+  for (const std::string_view named : {"", "--defaultLibName=work"}) {
+    const auto ran = RunLyraFrom(
+        lyra, *tmp_or / "solo",
+        std::format("run --backend llvm {} {}", store, named));
+    EXPECT_THAT(ran, ExitedWithCode(0))
+        << "the root's own procedures, '" << named << "': " << ran.stderr_text;
+  }
+}
+
+// What a design built with the option does, on both backends.
+TEST(LyraCoalescedCombUpdates, AReaderIsToldTheNetChange) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  const auto src = ResolveDeclaredInput("tests/coalesced_comb_updates/main.sv");
+  const std::string store = "--cache-dir=" + (*tmp_or / "store").string();
+
+  for (const char* backend : {"cpp", "llvm"}) {
+    const auto ran = RunChildProcess(
+        lyra, std::vector<std::string>{
+                  "run", "--backend", backend, store, "--coalesce-comb-updates",
+                  "--top", "Top", src.string()});
+    EXPECT_THAT(ran, ExitedWithCode(0)) << backend << ": " << ran.stderr_text;
+    EXPECT_NE(ran.stdout_text.find("All checks passed"), std::string::npos)
+        << backend << ": " << ran.stdout_text;
+  }
 }
 
 // A command line that names no command Lyra has is refused by what it named,

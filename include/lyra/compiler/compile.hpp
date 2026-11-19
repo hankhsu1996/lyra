@@ -11,17 +11,21 @@
 #include "lyra/diag/source_manager.hpp"
 #include "lyra/frontend/load.hpp"
 #include "lyra/lowering/ast_to_hir/declared_design.hpp"
+#include "lyra/support/combinational_updates.hpp"
 #include "lyra/support/lowering_policy.hpp"
 
 namespace lyra::compiler {
 
 // The design once every unit has declared itself: which units the design
 // begins at, and what each unit declared and published, together with the
-// elaborated AST their bodies are lowered from and the front end's answers
-// about the source, which the lowering asks for whatever a program reads of it.
+// elaborated AST their bodies are lowered from, the front end's answers about
+// the source, which the lowering asks for whatever a program reads of it, and
+// what triggers a combinational procedure of each library, which lowering each
+// body reads.
 struct ElaboratedDesign {
   lowering::ast_to_hir::DeclaredDesign units;
   const diag::SourceManager* sources;
+  support::CombinationalUpdatesByLibrary combinational_updates;
 };
 
 // What the front end answered with, and its own account of answering. The

@@ -52,7 +52,10 @@ auto DeclareUnits(
   if (!units) {
     return std::nullopt;
   }
-  return ElaboratedDesign{.units = *std::move(units), .sources = &sources};
+  return ElaboratedDesign{
+      .units = *std::move(units),
+      .sources = &sources,
+      .combinational_updates = policy.combinational_updates};
 }
 
 }  // namespace lyra::compiler

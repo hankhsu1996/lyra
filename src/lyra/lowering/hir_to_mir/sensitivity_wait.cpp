@@ -701,13 +701,21 @@ auto HoldImplicitList(
   ActOnReport(
       unit, block, pointer, support::BuiltinFn::kReadReportSettleAsImplicitList,
       {});
+  const support::BuiltinFn waiting = [&] {
+    switch (lowerer.Owner().CombinationalUpdates()) {
+      case support::CombinationalUpdates::kPerChange:
+        return support::BuiltinFn::kWaitPerChangeOnImplicitList;
+      case support::CombinationalUpdates::kPerInterval:
+        return support::BuiltinFn::kWaitPerIntervalOnImplicitList;
+    }
+    throw InternalError("HoldImplicitList: unknown combinational updates");
+  }();
   return DeclareLocal(
-      frame,
-      block.Add(
-          mir::MakeCallExpr(
-              mir::Direct{.target = support::BuiltinFn::kWaitOnImplicitList},
-              {block.ReadLocal(pointer, unit.builtins.read_report_ptr)},
-              unit.builtins.wait)));
+      frame, block.Add(
+                 mir::MakeCallExpr(
+                     mir::Direct{.target = waiting},
+                     {block.ReadLocal(pointer, unit.builtins.read_report_ptr)},
+                     unit.builtins.wait)));
 }
 
 // One instantiation per lowering a wait is built in.

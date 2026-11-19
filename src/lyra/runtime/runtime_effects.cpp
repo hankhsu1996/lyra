@@ -17,10 +17,10 @@
 #include "lyra/base/source_location.hpp"
 #include "lyra/runtime/assertion_control.hpp"
 #include "lyra/runtime/closure.hpp"
-#include "lyra/runtime/combinational_awaiter.hpp"
 #include "lyra/runtime/coroutine.hpp"
 #include "lyra/runtime/delay.hpp"
 #include "lyra/runtime/diagnostic.hpp"
+#include "lyra/runtime/interval_accumulator.hpp"
 #include "lyra/runtime/loop_blocks.hpp"
 #include "lyra/runtime/observable.hpp"
 #include "lyra/runtime/program_threads.hpp"
@@ -28,11 +28,14 @@
 #include "lyra/runtime/runtime.hpp"
 #include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/sampled_value.hpp"
+#include "lyra/runtime/scope_exit.hpp"
 #include "lyra/runtime/source_follower.hpp"
 #include "lyra/runtime/timer.hpp"
+#include "lyra/runtime/value_change_wait.hpp"
 #include "lyra/runtime/value_dump.hpp"
 #include "lyra/runtime/wait.hpp"
 #include "lyra/support/assertion_control.hpp"
+#include "lyra/support/combinational_updates.hpp"
 #include "lyra/value/format.hpp"
 
 namespace lyra::runtime {
@@ -452,8 +455,9 @@ class TellingAnOccurrence {
 
 }  // namespace
 
-void RuntimeEffects::TellWrite(
-    IntrusiveList<WaitMembership>& members, const Change& change, bool kept) {
+void RuntimeEffects::TellChange(
+    IntrusiveList<WaitMembership>& members, const Change& change,
+    bool accumulated) {
   const TellingAnOccurrence telling(AsRuntime(*this).occurrences_being_told_);
   members.ForEach([&](WaitMembership& membership) {
     if (change.KnownUnchanged(membership.reads)) {
@@ -466,8 +470,13 @@ void RuntimeEffects::TellWrite(
                 Wake(woken);
               }
             },
-            [&](CombinationalAwaiter* awaiter) {
-              awaiter->Reached(*this, membership, kept);
+            [&](PerIntervalAwaiter* awaiter) {
+              if (accumulated) {
+                return;
+              }
+              if (Activation* woken = awaiter->WokenBy(membership)) {
+                Wake(woken);
+              }
             },
             [](SampledValue* sampled) { sampled->Reached(); },
             [](SourceFollower* follower) { follower->Reached(); },
@@ -481,25 +490,31 @@ void RuntimeEffects::TellWrite(
 }
 
 // An occurrence that is no write of a place -- an event triggered, an object's
-// property written, an object expiring -- keeps nothing to judge it by.
+// property written, an object expiring -- no interval accumulated.
 void RuntimeEffects::WakeParkedOn(
     IntrusiveList<WaitMembership>& members, const Change& change) {
-  const bool kept = false;
-  TellWrite(members, change, kept);
+  const bool accumulated = false;
+  TellChange(members, change, accumulated);
   RunWokenAtTheOccurrence();
 }
 
 void RuntimeEffects::WakeParkedOn(
     Observable& place, const PartPath& written, const Change& change) {
+  const bool accumulated = false;
+  WakeParkedOn(place, written, change, accumulated);
+}
+
+void RuntimeEffects::WakeParkedOn(
+    Observable& place, const PartPath& written, const Change& change,
+    bool accumulated) {
   {
     const TellingAnOccurrence telling(AsRuntime(*this).occurrences_being_told_);
-    place.WakeAffectedBy(
-        *this, written, change, place.KeepsWhatWasWritten(written, change));
+    place.TellChange(*this, written, change, accumulated);
   }
   RunWokenAtTheOccurrence();
 }
 
-void RuntimeEffects::TellWhatTheEventLeft(
+void RuntimeEffects::TellIntervalChange(
     IntrusiveList<WaitMembership>& members, const Change& change) {
   members.ForEach([&](WaitMembership& membership) {
     if (change.KnownUnchanged(membership.reads)) {
@@ -507,7 +522,11 @@ void RuntimeEffects::TellWhatTheEventLeft(
     }
     std::visit(
         Overloaded{
-            [&](CombinationalAwaiter* awaiter) { awaiter->LeftChanged(*this); },
+            [&](PerIntervalAwaiter* awaiter) {
+              if (Activation* woken = awaiter->WokenBy(membership)) {
+                Wake(woken);
+              }
+            },
             [](Awaiter*) {}, [](SampledValue*) {}, [](SourceFollower*) {},
             [](ProgramThreads*) {}, [](PropertyEvaluation*) {},
             [](DumpWatch*) {}},
@@ -515,12 +534,73 @@ void RuntimeEffects::TellWhatTheEventLeft(
   });
 }
 
-void RuntimeEffects::JudgeOnceTheEventIsExecuted(CombinationalWatch& watch) {
-  AsRuntime(*this).kept_originals_.PushBack(watch);
+// What runs on no thread -- a deferred effect, a timer -- or nothing at all
+// runs no combinational procedure, so in no interval.
+auto RuntimeEffects::IntervalOpen() const -> bool {
+  const Runner* const running =
+      AsRuntime(*this).running_.load(std::memory_order_relaxed);
+  if (running == nullptr) {
+    return false;
+  }
+  const std::optional<support::CombinationalUpdates>& updates =
+      running->Context().combinational_updates;
+  if (!updates.has_value()) {
+    return false;
+  }
+  switch (*updates) {
+    case support::CombinationalUpdates::kPerChange:
+      return false;
+    case support::CombinationalUpdates::kPerInterval:
+      return true;
+  }
+  throw InternalError(
+      "RuntimeEffects::IntervalOpen: unknown combinational updates");
 }
 
-void RuntimeEffects::AskOnceTheEventIsExecuted(ReachedWait& reached) {
-  AsRuntime(*this).reached_waits_.PushBack(reached);
+auto RuntimeEffects::StorageForEffects() -> EffectStorage& {
+  return AsRuntime(*this).effect_storage_;
+}
+
+void RuntimeEffects::SetRunningCombinationalUpdates(
+    support::CombinationalUpdates updates) {
+  auto* const execution = dynamic_cast<ProcessExecution*>(
+      AsRuntime(*this).running_.load(std::memory_order_relaxed));
+  if (execution == nullptr) {
+    throw InternalError(
+        "RuntimeEffects::SetRunningCombinationalUpdates: a combinational "
+        "procedure begins where no process runs -- please report this as a "
+        "bug");
+  }
+  execution->SetCombinationalUpdates(updates);
+}
+
+void RuntimeEffects::JoinInterval(IntervalAccumulator& accumulator) {
+  AsRuntime(*this).interval_accumulators_.PushBack(accumulator);
+}
+
+// Telling queues what it wakes and runs nothing, so a wait woken here runs
+// after the execution, wherever the interval ends. An accumulator leaves the
+// list before it is told and is emptied however telling ends, so one a telling
+// raised in is left keeping nothing and linked nowhere.
+void RuntimeEffects::EndInterval() {
+  Runtime& runtime = AsRuntime(*this);
+  while (IntervalAccumulator* accumulator =
+             runtime.interval_accumulators_.PopFront()) {
+    const ScopeExit emptied([accumulator] {
+      accumulator->parts.clear();
+      accumulator->bits.clear();
+    });
+    for (const PartOriginalAt& kept : accumulator->parts) {
+      if (const std::optional<Change> change = kept.original->Changed()) {
+        accumulator->place->TellIntervalChange(*this, kept.at, *change);
+      }
+    }
+    for (BitsOriginalAt& kept : accumulator->bits) {
+      if (const std::optional<Change> change = kept.bits.Changed()) {
+        accumulator->place->TellIntervalChange(*this, kept.at, *change);
+      }
+    }
+  }
 }
 
 auto RuntimeEffects::Bound() -> BoundMembers& {

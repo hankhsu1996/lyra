@@ -238,10 +238,17 @@ void RuntimeProcess::Suspend() {
   if (suspended_ || terminated_ || termination_requested_ || EndedTheRun()) {
     return;
   }
-  // Take the leaf off whatever could resume it -- the awaiter it is parked on
-  // or the queue it sits in. The awaiter itself stays, because starting the
-  // process again waits for that same thing.
-  execution_->Leaf()->Withdraw();
+  // The wait it is parked on is told first, while the process still listens
+  // there, and whatever that wakes, the process is stopped as it then stands:
+  // woken, it is stopped ready to run (LRM 9.7). Then the leaf comes off
+  // whatever could resume it -- the awaiter it is parked on or the queue it
+  // sits in. The awaiter itself stays, because starting the process again
+  // waits for that same thing.
+  Activation* const leaf = execution_->Leaf();
+  if (Awaiter* awaiter = leaf->awaiter) {
+    awaiter->Suspending();
+  }
+  leaf->Withdraw();
   suspended_ = true;
 }
 
@@ -256,8 +263,9 @@ void RuntimeProcess::Resume(RuntimeEffects& effects) {
   // -- says that it has nothing left to wait for. One owed a departure has
   // nothing left to wait for either: it resumes only to take it.
   Awaiter* const awaiter = leaf->awaiter;
-  const bool waits_again = awaiter != nullptr && !DepartureIsDue() &&
-                           Arrange(effects, leaf, *awaiter, awaiter->Again());
+  const bool waits_again =
+      awaiter != nullptr && !DepartureIsDue() &&
+      Arrange(effects, leaf, *awaiter, awaiter->Resuming());
   if (!waits_again) {
     effects.Wake(leaf);
   }

@@ -231,8 +231,10 @@ private headers are not. Nothing else crosses: no define, no setting of `[compil
 The gap is refused rather than papered over. The front end reads one build under one language
 version and one default time scale, so a dependency declaring another `std` or `timescale` than the
 root would be read under the root's answer -- a different library from the one its own build makes.
-`assertions` is not on that list: eliding an assertion changes nothing the design computes, so the
-root's choice covers the build.
+`coalesce_comb_updates` is not on that list: each unit is lowered under its own library's answer,
+which is the library its own build makes, and one stating nothing is read as the standard reads
+(`combinational-updates-are-coalesced-where-a-build-asks.md`). Nor is `assertions`: eliding an
+assertion changes nothing the design computes, so the root's choice covers the build.
 
 **A cell is spelled two ways, and that is left.** A unit is named `cell` in the build's default
 library and `library.cell` in any other (`specialization-identity.md` F8), so a library's cell has
@@ -357,6 +359,7 @@ std         = "1800-2023"                            # selection
 timescale   = "1ns/1ps"                              # selection
 single_unit = true                                   # selection
 assertions  = "check"                                # selection: "check" or "skip"
+coalesce_comb_updates = false                        # selection: the dialect the library is written in
 ```
 
 The nine keys from `files` to `dpi_incdir` are one thing, a source set: source text and what reading
@@ -421,15 +424,18 @@ person adds a field under the rule rather than re-deriving the line:
   dependency, with its search order. A library map file (LRM 33.3.1) and a `-L` order have no field.
 - **The dialect knobs** -- legacy protect envelopes, translate-off formats, ignored directives,
   keyword-version mapping, local-include and include-order behaviour. Design material, because each
-  changes what program the source text denotes. Absent because nothing has needed one.
+  changes what program the source text denotes. Absent because nothing has needed one. The first
+  dialect knob of Lyra's own lowering is `coalesce_comb_updates`
+  (`combinational-updates-are-coalesced-where-a-build-asks.md`), which OpenPiton needed: a design is
+  written for combinational updates coalesced or not, and does not alternate between them.
 
 ## One table per question the design answers, not per consumer
 
 `[compile]` holds `std`, `timescale` and `single_unit`, which the front end reads, beside
-`assertions`, which Lyra's own lowering reads. Organizing by ownership would split them, and that is
-the wrong axis for a file a person writes: from the design's side, "compiled as SV-2023, as a single
-unit, with its assertions skipped" is one statement, and which component acts on each part is an
-implementation fact the writer has no reason to know.
+`assertions` and `coalesce_comb_updates`, which Lyra's own lowering reads. Organizing by ownership
+would split them, and that is the wrong axis for a file a person writes: from the design's side,
+"compiled as SV-2023, as a single unit, with its assertions skipped" is one statement, and which
+component acts on each part is an implementation fact the writer has no reason to know.
 
 ## A policy field is named for the construct family, and admitted by one test
 
@@ -441,6 +447,8 @@ computes.** LRM 16 assertions pass: an assertion observes and never drives. LRM 
 it: `get_coverage` and `$get_coverage` hand the design what was counted (LRM 19.8, 19.9), so a
 design reading them computes something else once coverage is elided. A family that fails it does not
 get a policy at any spelling, because the option would then be a way to ask for a different answer.
+`coalesce_comb_updates` is no policy in this sense: it is a different answer, asked for as the
+dialect the design is written in, and admitted as a dialect knob rather than by this test.
 
 **Each family gets its own field and its own values; there is no shared on-off switch.** The values
 are not the same question across families, and forcing them onto one `on|off` is a tag beside spare
@@ -449,13 +457,14 @@ families spelled identically are not evidence for unifying them; three consumers
 
 ## Precedence, worked
 
-| Field                              | Kind      | `lyra.toml` says | command line says   | result      |
-| ---------------------------------- | --------- | ---------------- | ------------------- | ----------- |
-| `defines`, `incdir`, `searchdir`   | material  | `TRACE`          | `-D DEBUG`          | both        |
-| `files`, `dpi`                     | material  | the source list  | (D7: none)          | the file's  |
-| `dpi_defines`, `dpi_incdir`        | material  | `MODEL_TRACE`    | (none)              | the file's  |
-| `top`                              | selection | `soc_tb`         | `--top alu`         | `alu` alone |
-| `std`, `single_unit`, `assertions` | selection | `check`          | `--assertions skip` | `skip`      |
+| Field                              | Kind      | `lyra.toml` says | command line says               | result      |
+| ---------------------------------- | --------- | ---------------- | ------------------------------- | ----------- |
+| `defines`, `incdir`, `searchdir`   | material  | `TRACE`          | `-D DEBUG`                      | both        |
+| `files`, `dpi`                     | material  | the source list  | (D7: none)                      | the file's  |
+| `dpi_defines`, `dpi_incdir`        | material  | `MODEL_TRACE`    | (none)                          | the file's  |
+| `top`                              | selection | `soc_tb`         | `--top alu`                     | `alu` alone |
+| `std`, `single_unit`, `assertions` | selection | `check`          | `--assertions skip`             | `skip`      |
+| `coalesce_comb_updates`            | selection | `true`           | `--coalesce-comb-updates=false` | `false`     |
 
 The test that assigns a field is whether a second value adds to the first or chooses instead of it.
 A second include directory searches both; a second define defines both, and a second definition of
@@ -479,6 +488,8 @@ assertion policy is a named value on the command line rather than a flag, becaus
 what Lyra refuses is a real thing to do on one run and not on the next. `single_unit` needs no
 negative spelling: a design is written for one compilation-unit model and does not alternate between
 them, and LRM 3.12.1 requires a tool to offer both models, not a caller to switch per run.
+`--coalesce-comb-updates` takes `=false` as well as `=true`: its answer is every library's, and a
+library of the build may state the other.
 
 ## Where the file is, and what a path in it means
 

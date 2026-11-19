@@ -52,6 +52,7 @@ enum class LyraOption : std::uint8_t {
   kNoColor,
   kFormat,
   kAssertions,
+  kCoalesceCombUpdates,
   kConfig,
   kOptimization,
   kLinkTime,
@@ -122,10 +123,14 @@ constexpr OptionSet kReadsADesign = {
 constexpr OptionSet kLowersADesign =
     kReadsADesign | OptionSet{LyraOption::kAssertions};
 // What every command taking the design to MIR and past it acts on besides:
-// which of MIR's optional rewrites run, and how often the result is checked.
+// what triggers a combinational procedure, which the wait MIR states for it
+// says, which of MIR's optional rewrites run, and how often the result is
+// checked.
 constexpr OptionSet kRewritesMir =
     kLowersADesign |
-    OptionSet{LyraOption::kMirEnablePasses, LyraOption::kMirVerifyEach};
+    OptionSet{
+        LyraOption::kCoalesceCombUpdates, LyraOption::kMirEnablePasses,
+        LyraOption::kMirVerifyEach};
 // What building the design's program acts on besides.
 constexpr OptionSet kBuildsAProgram =
     kRewritesMir | OptionSet{LyraOption::kOptimization, LyraOption::kLinkTime,
@@ -250,6 +255,8 @@ auto Spelling(LyraOption option) -> std::string_view {
       return "--format";
     case LyraOption::kAssertions:
       return "--assertions";
+    case LyraOption::kCoalesceCombUpdates:
+      return "--coalesce-comb-updates";
     case LyraOption::kConfig:
       return "--config";
     case LyraOption::kOptimization:
@@ -320,6 +327,8 @@ auto IsGiven(
       return opts.format.has_value();
     case LyraOption::kAssertions:
       return opts.assertions.has_value();
+    case LyraOption::kCoalesceCombUpdates:
+      return opts.coalesce_comb_updates.has_value();
     case LyraOption::kConfig:
       return opts.config.has_value();
     case LyraOption::kOptimization:
@@ -623,6 +632,11 @@ void RegisterCliOptions(slang::CommandLine& cmd, CliOptions& opts) {
       "--assertions", opts.assertions,
       "hold the design to its assertions, or leave them out of the build",
       "check|skip");
+  cmd.add(
+      "--coalesce-comb-updates", opts.coalesce_comb_updates,
+      "trigger an always_comb or always_latch by the net change an execution "
+      "of another leaves, not by each change it makes, so a value written and "
+      "written back is no change");
   cmd.add(
       "--config", opts.config,
       "read this lyra.toml instead of searching for one", "<file>",
@@ -1106,8 +1120,20 @@ auto ApplyDeclarations(
   return {};
 }
 
+namespace {
+
+// The dialect `coalesce_comb_updates` names, as a library or the command line
+// states it.
+auto DialectOf(bool coalesces) -> support::CombinationalUpdates {
+  return coalesces ? support::CombinationalUpdates::kPerInterval
+                   : support::CombinationalUpdates::kPerChange;
+}
+
+}  // namespace
+
 auto ResolveCliOptions(
-    const CliOptions& opts, const Declarations* declared, CommandKind cmd,
+    const CliOptions& opts, const Declarations* declared,
+    std::string_view root_library, CommandKind cmd,
     std::span<const std::string> simulation_args) -> diag::Result<ParsedArgs> {
   ParsedArgs out;
   out.simulation_args.assign(simulation_args.begin(), simulation_args.end());
@@ -1167,9 +1193,22 @@ auto ResolveCliOptions(
                 .path = path, .preprocessing = preprocessing});
       }
     };
+    // What triggers a combinational procedure is how each library's units
+    // are compiled, so each library's own answer is kept for its units, under
+    // the library they are compiled in.
+    const auto state_dialect = [&](const Manifest& library,
+                                   std::string_view compiled_in) {
+      if (library.coalesce_comb_updates.has_value()) {
+        out.combinational_updates.by_library.insert_or_assign(
+            std::string{compiled_in},
+            DialectOf(*library.coalesce_comb_updates));
+      }
+    };
     for (const Manifest& reached : declared->dependencies) {
       link(reached.library.sources);
+      state_dialect(reached, reached.library.name);
     }
+    state_dialect(root, root_library);
     link(root.library.sources);
     link(root.design.sources);
     // Whether an assertion is checked changes nothing the design computes, so
@@ -1200,6 +1239,10 @@ auto ResolveCliOptions(
           *opts.assertions);
     }
     out.assertions = *policy;
+  }
+  if (opts.coalesce_comb_updates.has_value()) {
+    out.combinational_updates.every_library =
+        DialectOf(*opts.coalesce_comb_updates);
   }
 
   if (opts.backend) {

@@ -1204,7 +1204,8 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kObservationOfWatchQualified:
     case support::BuiltinFn::kObservationFires:
     case support::BuiltinFn::kWaitOn:
-    case support::BuiltinFn::kWaitOnImplicitList:
+    case support::BuiltinFn::kWaitPerChangeOnImplicitList:
+    case support::BuiltinFn::kWaitPerIntervalOnImplicitList:
     case support::BuiltinFn::kWaitContinuouslyOn:
     case support::BuiltinFn::kWaitOnPropertyEvaluation:
     case support::BuiltinFn::kAttemptsOf:

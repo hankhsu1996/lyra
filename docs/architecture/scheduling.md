@@ -47,13 +47,14 @@ procedure's timing control asks afresh at its next stop, since it waits only for
 it is reached (LRM 9.4.2); a continuous assignment or a procedural continuous assignment is
 sensitive whenever it executes, its own update included (LRM 4.9.1, 4.9.2), so its wait keeps a
 change the process makes itself while it runs, and its next stop places it again in the Active
-region of its set. An `always_comb` or `always_latch` is triggered by what an event's execution
-leaves changed of what it reads -- an event's execution being whatever the engine runs of one event
-before it gets control back, a process up to its stop, one deferred update, one timer firing (LRM
-4.5) -- so a variable it watches keeps the value of each part the execution writes from before its
-first write to it, the execution's end compares the two, and a value written and written back in one
-execution wakes nothing; every other wait is told of each change as it is made (LRM 4.3, 4.7,
-9.2.2.2).
+region of its set. Every write is told to every wait as it is made (LRM 4.3, 4.7), with one
+exception a build asks for: in a design built to coalesce combinational updates, where an
+`always_comb` or `always_latch` writes what another reads, the reader is triggered by the net change
+the writer's execution leaves of it: each execution is an interval, a variable it watches keeps the
+original of each part the interval modifies, and the two are compared, and what moved told, when the
+interval ends -- as the execution ends, and whenever such a reader begins or stops listening, armed,
+stopped or started again, or moved by a force or a release; a value written and written back within
+one interval wakes nothing (LRM 9.2.2.2).
 
 A task is enabled with `co_await`: enabling a time-consuming task suspends the enabling process
 until the task completes (LRM 13.3). The scheduler resumes the innermost suspended frame, and each

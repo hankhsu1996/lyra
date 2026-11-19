@@ -1229,8 +1229,8 @@ void VerifyWritesLandInWritableStorage(
         }
         // Storage a capability wrapper stands for is written through a write
         // opened on the wrapper, which is what tells whoever waits on it and
-        // keeps what an event's execution changed (LRM 4.3, 9.2.2.2); a write
-        // landing in it any other way would do neither.
+        // keeps what an interval needs of it (LRM 4.3, 9.2.2.2); a
+        // write landing in it any other way would do neither.
         if (through.IsCapabilityWrapper()) {
           throw InternalError(
               std::format(

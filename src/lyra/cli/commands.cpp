@@ -179,7 +179,8 @@ auto DesignOf(const CommandContext& ctx)
       std::move(ctx.elaborated->compilation),
       support::LoweringPolicy{
           .assertions = ctx.args->assertions,
-          .force_targets = ctx.elaborated->force_targets},
+          .force_targets = ctx.elaborated->force_targets,
+          .combinational_updates = ctx.args->combinational_updates},
       *ctx.sink, ctx.elaborated->diag_sources);
 }
 
@@ -938,7 +939,8 @@ auto ResolveRequest(const Invocation& invocation) -> std::optional<Request> {
   }
 
   auto parsed = ResolveCliOptions(
-      *invocation.options, declared, invocation.command,
+      *invocation.options, declared,
+      driver.options.defaultLibName.value_or(std::string{}), invocation.command,
       invocation.simulation_args);
   if (!parsed) {
     report(parsed.error());
@@ -1104,7 +1106,7 @@ auto RunEmitCommand(const Invocation& invocation) -> int {
 auto RunCacheClear(const Invocation& invocation) -> int {
   const Reporter& report = *invocation.report;
   auto parsed = ResolveCliOptions(
-      *invocation.options, nullptr, invocation.command,
+      *invocation.options, nullptr, std::string_view{}, invocation.command,
       invocation.simulation_args);
   if (!parsed) {
     report(parsed.error());

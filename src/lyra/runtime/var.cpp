@@ -98,14 +98,14 @@ auto WatchedPlace::ReportedTo() const -> Observable* {
   return std::bit_cast<Observable*>(word_);
 }
 
-void ErasedReference::Report(
-    const PartPath& within, const Change& change) const {
+void ErasedReference::AfterModify(
+    const PartPath& within, const Change& change, bool accumulated) const {
   std::visit(
       Overloaded{
           [](std::monostate) {},
           [&](VariableCell* variable) {
             current_runtime().WakeParkedOn(
-                *variable, part.Join(within), change);
+                *variable, part.Join(within), change, accumulated);
           },
           [](GcObject* object) { object->PublishChange(); },
           // What a net shows moves as the net resolves, and the net tells its
@@ -193,35 +193,33 @@ void ExchangeLaidOut(const value::ValueType& type, void* live, void* kept) {
   type.Assign(kept, held.Bytes());
 }
 
-void OriginalKeeper::KeepBits(
+auto WrittenPart::BeforeModifyBits(
     const PartPath& within, value::IntegralView live,
-    value::BitPositions bits) const {
-  if (place == nullptr) {
-    return;
-  }
-  place->KeepBitsOriginal(named.Join(within), live, bits);
+    value::BitPositions bits) const -> bool {
+  return place != nullptr &&
+         place->BeforeModifyBits(at.Join(within), live, bits);
 }
 
-// Only a variable keeps anything: a class object's properties are never what
-// an `always_comb` or `always_latch` is triggered by (LRM 9.2.2.2.1), and a
-// net's shown value moves as the net resolves.
-auto KeeperThrough(const ErasedReference& lent) -> OriginalKeeper {
+// Only a variable keeps an original: a class object's properties are never
+// what an `always_comb` or `always_latch` is triggered by (LRM 9.2.2.2.1), and
+// a net's shown value moves as the net resolves.
+auto WrittenPartThrough(const ErasedReference& lent) -> WrittenPart {
   VariableCell* const* variable = std::get_if<VariableCell*>(&lent.holder);
   if (variable == nullptr || !lent.NamesItsPart()) {
     return {};
   }
-  return {.place = *variable, .named = lent.part};
+  return {.place = *variable, .at = lent.part};
 }
 
 auto ErasedReference::Part(
-    void* storage, value::Formation formed, const PartPath& within) const
-    -> ErasedReference {
+    void* storage, value::Formation formed, const PartPath& within,
+    bool accumulated) const -> ErasedReference {
   switch (formed) {
     case value::Formation::kExisting:
       return {.holder = holder, .storage = storage, .part = part.Join(within)};
     case value::Formation::kMade:
       if (Watched()) {
-        Report(PartPath{}, Change::Whole());
+        AfterModify(PartPath{}, Change::Whole(), accumulated);
       }
       return {.holder = holder, .storage = storage, .part = part.Join(within)};
     case value::Formation::kNowhere:

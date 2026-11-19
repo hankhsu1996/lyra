@@ -14,7 +14,8 @@
 // with the front end's options listed for it, the way someone who cannot edit
 // it would build it, so what stands behind that text is still reached. The list
 // is held the way the record is, so an option the design no longer needs fails
-// until it goes.
+// until it goes. A design written in a dialect of Lyra's is built with Lyra's
+// option selecting it, listed apart.
 
 #include "tests/framework/external_design.hpp"
 
@@ -29,6 +30,7 @@
 #include <gtest/gtest.h>
 #include <iostream>
 #include <iterator>
+#include <map>
 #include <memory>
 #include <optional>
 #include <ostream>
@@ -165,31 +167,35 @@ auto LyraCommand(
       "{} {}{}", ShellQuoted(lyra.string()), command, QuotedWords(options));
 }
 
-// The build of a case, from the directory its declaration is written to. A
-// design of this size draws warnings by the thousand, and what stops it is an
-// error, so only errors are asked for.
+// The build of a case, from the directory its declaration is written to, with
+// the front end's `options` and Lyra's `build_options`. A design of this size
+// draws warnings by the thousand, and what stops it is an error, so only
+// errors are asked for.
 auto BuildCommand(
-    const std::filesystem::path& lyra, const std::vector<std::string>& options)
-    -> std::string {
+    const std::filesystem::path& lyra, const std::vector<std::string>& options,
+    const std::vector<std::string>& build_options) -> std::string {
+  std::vector<std::string> given = build_options;
+  std::ranges::copy(options, std::back_inserter(given));
   return LyraCommand(
       lyra,
       std::format(
           "build --backend llvm --progress=none -Wnone -j {} --cache-dir cache "
           "-o sim",
           kBuildWidth),
-      options);
+      given);
 }
 
-// Builds the case in `work` with the front end's `options`, and runs it there
-// as the suite would, ending at the first step that fails. The run's output is
-// kept where the suite's check reads it.
+// Builds the case in `work` with the front end's `options` and Lyra's
+// `build_options`, and runs it there as the suite would, ending at the first
+// step that fails. The run's output is kept where the suite's check reads it.
 auto Carry(
     const std::filesystem::path& lyra, const DesignCase& design,
-    const std::vector<std::string>& options, const std::filesystem::path& work)
-    -> std::optional<DesignStop> {
+    const std::vector<std::string>& options,
+    const std::vector<std::string>& build_options,
+    const std::filesystem::path& work) -> std::optional<DesignStop> {
   const std::filesystem::path run = LayOutDesign(design, work);
-  const auto built =
-      RunFrom(DesignStep::kBuild, work, BuildCommand(lyra, options));
+  const auto built = RunFrom(
+      DesignStep::kBuild, work, BuildCommand(lyra, options, build_options));
   if (ExitCodeOf(built) != 0) {
     return DesignStop{
         .at = DesignStep::kBuild, .said = Said(DesignStep::kBuild, built)};
@@ -317,13 +323,15 @@ auto LoadCorpus() -> DesignCorpus {
 
 namespace lyra::test {
 
-// One case with what is recorded of it and the front end's options its design
-// is built with. The test framework finds how to print a parameter by the
-// parameter's own namespace, which is why this one has a name.
+// One case with what is recorded of it and the front end's options and Lyra's
+// build options its design is built with. The test framework finds how to
+// print a parameter by the parameter's own namespace, which is why this one
+// has a name.
 struct DesignSubject {
   DesignCase design;
   std::optional<DesignStop> recorded;
   std::vector<std::string> options;
+  std::vector<std::string> build_options;
 
   friend auto PrintTo(const DesignSubject& subject, std::ostream* out) -> void {
     *out << subject.design.name;
@@ -341,16 +349,20 @@ auto Subjects() -> std::vector<DesignSubject> {
   std::vector<DesignSubject> subjects;
   for (const DesignCase& design : corpus.cases) {
     const auto recorded = corpus.recorded.find(design.name);
-    const auto options = corpus.options.find(design.design_name);
+    const auto listed =
+        [&](const std::map<std::string, std::vector<std::string>>& lists) {
+          const auto found = lists.find(design.design_name);
+          return found == lists.end() ? std::vector<std::string>{}
+                                      : found->second;
+        };
     subjects.push_back(
         DesignSubject{
             .design = design,
             .recorded = recorded == corpus.recorded.end()
                             ? std::nullopt
                             : std::optional{recorded->second},
-            .options = options == corpus.options.end()
-                           ? std::vector<std::string>{}
-                           : options->second});
+            .options = listed(corpus.options),
+            .build_options = listed(corpus.build_options)});
   }
   return subjects;
 }
@@ -376,8 +388,8 @@ TEST_P(Design, GetsAsFarAsIsRecordedOfIt) {
 
   const DesignSubject& subject = GetParam();
   const auto began = std::chrono::steady_clock::now();
-  const std::optional<DesignStop> stop =
-      Carry(lyra, subject.design, subject.options, *work);
+  const std::optional<DesignStop> stop = Carry(
+      lyra, subject.design, subject.options, subject.build_options, *work);
   const auto took = std::chrono::duration_cast<std::chrono::seconds>(
       std::chrono::steady_clock::now() - began);
   // Written as each case ends, so a run that is cut short has still said how
@@ -401,7 +413,9 @@ TEST_P(Design, GetsAsFarAsIsRecordedOfIt) {
                   << (stop
                           ? std::format(
                                 "\nIt is built from the directory above by\n{}",
-                                BuildCommand(lyra, subject.options))
+                                BuildCommand(
+                                    lyra, subject.options,
+                                    subject.build_options))
                           : std::string());
   }
   for (const std::string& option : NotNeeded(lyra, subject.options, *work)) {

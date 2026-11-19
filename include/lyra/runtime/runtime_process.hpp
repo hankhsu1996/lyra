@@ -15,6 +15,7 @@
 #include "lyra/runtime/rng.hpp"
 #include "lyra/runtime/running_state.hpp"
 #include "lyra/runtime/wait.hpp"
+#include "lyra/support/combinational_updates.hpp"
 
 namespace lyra::runtime {
 
@@ -106,6 +107,11 @@ class ProcessExecution : public Runner {
   // inside and whether it ended the run. None where nothing of it outlives
   // one.
   [[nodiscard]] virtual auto HeldState() const -> const RunningState* = 0;
+
+  // Takes on the dialect the wait of the `always_comb` or `always_latch` it
+  // executes states, as that procedure begins (LRM 9.2.2.2, 9.2.2.3).
+  virtual void SetCombinationalUpdates(
+      support::CombinationalUpdates updates) = 0;
 };
 
 // A process (LRM 9.5, 9.7): a node of the dynamic process lineage, the object
@@ -435,6 +441,9 @@ class CoroutineThread final : public ProcessExecution {
   }
   [[nodiscard]] auto Process() -> RuntimeProcess* override {
     return process_;
+  }
+  void SetCombinationalUpdates(support::CombinationalUpdates updates) override {
+    context_.combinational_updates = updates;
   }
 
   // The final procedures are calls one thread makes in turn (LRM 9.2.3), each

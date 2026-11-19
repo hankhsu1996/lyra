@@ -301,7 +301,11 @@ edit the design builds it, and what stands behind the text is still measured. Th
 the text means one thing under every reading the option could give it and the option lets nothing
 else in the design through; where the meaning would depend on the reading, the case stops there. The
 options each design is built with are listed in `tests/external_design_options.yaml`, and one a
-design no longer needs fails the run until it is taken out.
+design no longer needs fails the run until it is taken out. A design written in a dialect of
+execution Lyra offers as a build option
+([`language_conformance.md`](../architecture/language_conformance.md) consequence 7) is built with
+that option, listed in `tests/external_design_build_options.yaml`; whether it is still needed takes
+a whole build to answer, so no run asks it.
 
 A build that takes more than half an hour, a run or a check that takes more than five minutes, or a
 step that asks for more memory than the smallest machine these run on holds, stops the case there.

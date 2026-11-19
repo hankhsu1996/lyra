@@ -21,9 +21,11 @@ it every cycle.
 The variable has to answer exactly. An event control compares its own expression against its own
 baseline and filters a wake that changed nothing (LRM 9.4.2), but an implicit sensitivity -- an
 `@*`, a `wait`, a continuous assignment -- is woken by being reached and has no value of its own to
-compare, and the wait of an `always_comb` or `always_latch` is decided by what the part an event's
-execution wrote holds once it ends (`an-always-comb-is-triggered-by-what-a-run-leaves.md`), which is
-only as exact as what the write says it reached. A wake with no change runs its body again.
+compare, and in a design built to coalesce combinational updates the wait of an `always_comb` or
+`always_latch` is decided, for a write of an execution of such a procedure, by what the part it
+wrote holds when the execution's interval ends
+(`combinational-updates-are-coalesced-where-a-build-asks.md`), which is only as exact as what the
+write says it reached. A wake with no change runs its body again.
 
 ## Decision
 

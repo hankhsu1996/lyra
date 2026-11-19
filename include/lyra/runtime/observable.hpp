@@ -3,8 +3,8 @@
 #include <memory>
 #include <vector>
 
+#include "lyra/runtime/interval_accumulator.hpp"
 #include "lyra/runtime/intrusive_list.hpp"
-#include "lyra/runtime/kept_original.hpp"
 #include "lyra/runtime/part_path.hpp"
 #include "lyra/runtime/wait.hpp"
 #include "lyra/value/integral_words.hpp"
@@ -54,9 +54,9 @@ class Observable {
 
   // Enrols `membership` at the part `path` leads to, the whole of this place
   // where the path is empty, for its awaiter's whole life. The node is made if
-  // no wait has needed it yet. The membership of an `always_comb` or
-  // `always_latch` has the place keep, from then on, what the first write of
-  // each event's execution to a part of it changes.
+  // no wait has needed it yet. A per-interval observer's membership has the
+  // place keep, from then on, the original of each part an interval
+  // modifies.
   void Enrol(const PartPath& path, WaitMembership& membership);
 
   // Tells the waits a write to the part at `written` reached, `change` being
@@ -67,51 +67,50 @@ class Observable {
   // those inside elements the change shows untouched excepted. No other wait
   // of the place is visited. Where the path is inexact the write was at or
   // inside the part, so every wait on it and inside it is told only that.
-  // `kept` says whether what the place kept holds all the write changed, as
-  // it was before the event's execution, which is how a wait triggered by
-  // what an execution leaves is judged once it ends.
-  void WakeAffectedBy(
+  // `accumulated` says whether the open interval holds the original of
+  // what the write modified, so that a per-interval observer is told the write
+  // only by the interval's net change when it ends.
+  void TellChange(
       RuntimeEffects& effects, const PartPath& written, const Change& change,
-      bool kept);
+      bool accumulated);
 
   // Tells the waits on the part at `at`, on each part holding it and on each
-  // part inside it that an event's execution left the part changed, `change`
-  // being what became of it measured from what it held before the execution.
-  void TellWhatWasLeft(
+  // part inside it that an interval left the part changed, `change`
+  // being what became of it measured from its original.
+  void TellIntervalChange(
       RuntimeEffects& effects, const PartPath& at, const Change& change);
 
-  // Whether an `always_comb` or `always_latch` watches the place, which is
-  // when the first write of an event's execution to a part keeps what the part
-  // held before it.
-  // Written here because every watched write asks it.
-  [[nodiscard]] auto WatchedCombinationally() const noexcept -> bool {
-    return combinational_ != nullptr;
+  // Whether a per-interval observer has enrolled on the place, which it goes on
+  // answering for the place's life, and which is when a modification of it may
+  // keep an original. Written here because every watched write asks it.
+  [[nodiscard]] auto WatchedPerInterval() const noexcept -> bool {
+    return accumulator_ != nullptr;
   }
 
-  // Has the place keep what the part at `at` holds, which `make` copies,
-  // before the event's execution under way first changes it -- where an
-  // `always_comb` or `always_latch` watches the place, and nothing the
-  // execution kept here holds the part already. Asked by a write before it
-  // changes the part. A part an inexact path reaches is not kept, since what
-  // such a path names is more than the part.
-  template <class Make>
-  void KeepOriginal(const PartPath& at, Make make) {
-    if (WatchedCombinationally()) {
-      KeepOriginalBy(at, OriginalMadeBy(make));
+  // Asked by every modification of the part at `at` immediately before it
+  // changes the part, with no code run in between: has the open interval keep
+  // the part's original, which `copy` makes, where none of a part holding it is
+  // kept already, and answers whether the interval accumulated the modification
+  // -- an interval is open, a per-interval observer watches the place, and the
+  // original of the part or of a part holding it is kept. A part an inexact
+  // path reaches is never kept itself, since what such a path names is more
+  // than the part; it is accumulated only where a part holding it is. Where no
+  // per-interval observer watches, which is every place of a design built
+  // without the dialect, it is a null test.
+  template <class Copy>
+  [[nodiscard]] auto BeforeModify(const PartPath& at, Copy copy) -> bool {
+    if (accumulator_ == nullptr) {
+      return false;
     }
+    return Accumulate(at, CopyOriginalBy(copy));
   }
   // The same of the bits `bits` of the integral value at `at`, whose words
   // `live` names: only the words they lie in are kept, so a write of a few bits
-  // of a wide value keeps those few.
-  void KeepBitsOriginal(
-      const PartPath& at, value::IntegralView live, value::BitPositions bits);
-
-  // Whether what the event's execution under way kept here holds all that a
-  // write to the part at `written` changed, as `change` says, so that what the
-  // write did can be judged once the execution ends: the part, or each element
-  // a write of elements reached.
-  [[nodiscard]] auto KeepsWhatWasWritten(
-      const PartPath& written, const Change& change) const -> bool;
+  // of a wide value keeps those few. Out of line, since only a write that found
+  // a per-interval observer enrolled on the place as it opened asks it.
+  [[nodiscard]] auto BeforeModifyBits(
+      const PartPath& at, value::IntegralView live, value::BitPositions bits)
+      -> bool;
 
   // One wait enrolled here, with the path of the part it is enrolled at.
   struct Enrolled {
@@ -133,17 +132,14 @@ class Observable {
   template <class Tell>
   void TellAround(const PartPath& at, const Change& change, Tell tell);
 
-  void KeepOriginalBy(const PartPath& at, MakeOriginal make);
-  // Whether what the event's execution under way kept here holds the part at
-  // `written` from before the execution.
-  [[nodiscard]] auto KeepsOriginalOf(const PartPath& written) const -> bool;
+  [[nodiscard]] auto Accumulate(const PartPath& at, CopyOriginal copy) -> bool;
 
   // The waits on the whole place: the root of the tree.
   IntrusiveList<WaitMembership> members_;
   // The nodes one step down, none until a wait is enrolled on a part.
   std::unique_ptr<Children> children_;
-  // None until an `always_comb` or `always_latch` enrols here.
-  std::unique_ptr<CombinationalWatch> combinational_;
+  // None until a per-interval observer enrols here.
+  std::unique_ptr<IntervalAccumulator> accumulator_;
 };
 
 }  // namespace lyra::runtime

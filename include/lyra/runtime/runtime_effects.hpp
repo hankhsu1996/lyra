@@ -27,12 +27,13 @@ namespace lyra::runtime {
 class AssertionControl;
 class AssertionControls;
 class CancellationTarget;
-struct CombinationalWatch;
 class DiagnosticDispatcher;
 class FileTable;
 class LoopBlocks;
+struct IntervalAccumulator;
 class CommandLine;
 class BoundMembers;
+class EffectStorage;
 class VariableCell;
 class EvaluationAttempts;
 class CoroutineThread;
@@ -42,7 +43,6 @@ class Scope;
 class Timer;
 class ValueDumps;
 class RandomizeSettings;
-struct ReachedWait;
 class RuntimeEffects;
 
 // The runtime capability surface reachable from generated code. Every side
@@ -96,11 +96,9 @@ class RuntimeEffects {
   // untouched is passed over, and every other one asks its awaiter what is
   // parked there now and whether this was an event for it: an event control
   // whose evaluation only reads storage by what its expression is worth now, a
-  // wait for a state by whether that state holds, the wait of an
-  // `always_comb` or `always_latch` by what the event's execution under way
-  // leaves, asked once it ends, and every other wait by having been reached at
-  // all, its process deciding once it runs (LRM 4.5, 9.2.2.2, 9.2.2.2.1, 9.4.2,
-  // 15.5.1). Waking only queues and leaves every membership
+  // wait for a state by whether that state holds, and every other wait by
+  // having been reached at all, its process deciding once it runs (LRM 4.5,
+  // 9.2.2.2.1, 9.4.2, 15.5.1). Waking only queues and leaves every membership
   // where it is, so each activation is woken as it is found; what is woken to
   // run at the occurrence runs once every membership has been asked, so no
   // code of the design runs while the list is walked.
@@ -110,32 +108,58 @@ class RuntimeEffects {
   // The same for a write to the part of `place` at `written`, `change` being
   // what the write did to that part: the waits on the part, on each part
   // holding it and on each part inside it are asked, and no other wait of the
-  // place is visited.
+  // place is visited. `accumulated` says whether the open interval
+  // accumulated the write, in which case a per-interval observer is told only
+  // the interval's net change when it ends (LRM 9.2.2.2).
+  void WakeParkedOn(
+      Observable& place, const PartPath& written, const Change& change,
+      bool accumulated);
+  // The same of an occurrence no interval accumulated: a net resolving,
+  // an event triggered, any write a variable's own write path did not make.
   void WakeParkedOn(
       Observable& place, const PartPath& written, const Change& change);
 
   // Asks each wait on `members`, the waits on one part of a place a write
   // reached, whether `change` was an event for it, and runs nothing woken.
-  // `kept` says whether what the place kept holds all the write changed, as
-  // it was before the event's execution.
-  void TellWrite(
-      IntrusiveList<WaitMembership>& members, const Change& change, bool kept);
+  // `accumulated` says whether the open interval accumulated the write,
+  // which a per-interval observer is then told of only by the interval's net
+  // change when it ends.
+  void TellChange(
+      IntrusiveList<WaitMembership>& members, const Change& change,
+      bool accumulated);
 
-  // Tells the waits on `members` what the event's execution that ended left
-  // changed there. Each write of the execution told every other wait as it
-  // landed, so only an `always_comb`'s or `always_latch`'s is told.
-  void TellWhatTheEventLeft(
+  // Tells the waits on `members` the net change an interval left
+  // there. Each write of it told every other wait as it landed, so only a
+  // per-interval observer is told. The procedure making the execution is not
+  // parked on its own wait while the interval is open, since it is running,
+  // and a change it makes while running is no event for it (LRM 9.4.2).
+  void TellIntervalChange(
       IntrusiveList<WaitMembership>& members, const Change& change);
 
-  // What the event's execution under way -- a process up to its stop, one
-  // deferred update, one timer firing (LRM 4.5) -- leaves is judged once it
-  // hands control back: `watch` keeps what the parts of its place the
-  // execution wrote held before it, and `reached` is a wait a write of the
-  // execution reached while a process was parked on it, or one that began
-  // watching in the middle of it. Each leaves the run's list as it ends, so one
-  // that ends first is asked nothing.
-  void JudgeOnceTheEventIsExecuted(CombinationalWatch& watch);
-  void AskOnceTheEventIsExecuted(ReachedWait& reached);
+  // `accumulator` keeps the originals of the parts of its place the open
+  // interval modified, and their net change is told when the interval ends.
+  // It leaves the list as the interval ends, so one that ends first is asked
+  // nothing.
+  void JoinInterval(IntervalAccumulator& accumulator);
+
+  // Ends the open interval: tells the per-interval observers the net
+  // change of every part it modified, measured from each part's original, and
+  // a new interval begins. Run when an execution ends, and whenever a
+  // per-interval observer begins or stops listening -- arming its wait, started
+  // again, stopped, or moved to other storage -- so none is told what changed
+  // before it listened, nor misses what changed while it did.
+  void EndInterval();
+
+  // Whether what runs now is an execution of an `always_comb` or
+  // `always_latch` whose updates coalesce, which is an interval.
+  [[nodiscard]] auto IntervalOpen() const -> bool;
+  // The process running begins an `always_comb` or `always_latch` in the
+  // dialect `updates`, which its executions run in from then on.
+  void SetRunningCombinationalUpdates(support::CombinationalUpdates updates);
+
+  // Where the run's deferred effects, and the originals an interval
+  // keeps, get their bytes.
+  [[nodiscard]] auto StorageForEffects() -> EffectStorage&;
 
   // The members of scopes that references were bound into, which a force on
   // one acts through (LRM 10.6.2).

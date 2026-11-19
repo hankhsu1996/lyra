@@ -275,9 +275,10 @@ there again whenever anything moved meanwhile; that is what makes LRM 9.7 resens
 
 Sensitivity that names variables rather than an expression -- `always_comb` and `always_latch` (LRM
 9.2.2.2.1) -- arms an observation whose detector fires on any candidate, and its wait is decided by
-what the event's execution making the candidates left
-(`an-always-comb-is-triggered-by-what-a-run-leaves.md`). It is one alternative of the same detector
-set, not the absence of one.
+what the execution making the candidates left, where the design is built to coalesce combinational
+updates and that execution is of such a procedure too
+(`combinational-updates-are-coalesced-where-a-build-asks.md`). It is one alternative of the same
+detector set, not the absence of one.
 
 ### D7. Information that narrows which observations to evaluate is optimization only
 

@@ -14,6 +14,11 @@ auto ResolveLyra() -> std::filesystem::path;
 // Where the examples a reader is handed are, as this run was given them.
 auto ResolveShippedExamples() -> std::filesystem::path;
 
+// Where this run was given something the test declared it needs, named from the
+// workspace root.
+auto ResolveDeclaredInput(std::string_view workspace_path)
+    -> std::filesystem::path;
+
 // The symbol lister of the LLVM release Lyra links, as this run was given it.
 // The shipped runtime carries that release's bitcode beside its machine code,
 // and a host's `nm` may read it through whatever release's plugin the host has,
