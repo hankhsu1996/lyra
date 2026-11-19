@@ -1448,8 +1448,7 @@ class ArrayBodies : public OperationBodies {
 
   // Whether this is a fixed-size array, whose count its type fixes, rather
   // than a run-time-sized one, whose core holds its count (LRM 7.4, 7.5,
-  // 7.10): a default, and a value read out of a run of bits, are each kind's
-  // own.
+  // 7.10).
   [[nodiscard]] auto IsFixedSize() const -> bool {
     return std::holds_alternative<FixedSizeKind>(kind_);
   }
@@ -2889,44 +2888,34 @@ class ArrayBodies : public OperationBodies {
   // ambiguous, combined element by element -- an element the arms are known
   // to agree on survives, and one they disagree on, or cannot know, takes the
   // element default (Table 7-1). Arms of unequal size put no elements in
-  // correspondence, so the result is the array of no elements.
+  // correspondence, so the result is the array of no elements; a fixed-size
+  // array's arms are as long as its type says.
   auto MergeConditional() -> mir::CallableCode {
     return Defined(
         Declaration(support::UnknownItem::kMergeConditional),
         [&](mir::CallableCode& code, mir::Builder block,
             const std::vector<mir::LocalId>& p) {
+          const auto merged = [&](mir::Builder body, mir::LocalId index) {
+            return MergedElement(body, p, index);
+          };
+          if (IsFixedSize()) {
+            block.AppendStmt(
+                mir::ReturnStmt{.value = Assembled(code, block, merged)});
+            return;
+          }
           const mir::ExprId same_count = mir::BuildMachineIntComparison(
               Unit(), block, mir::BinaryOp::kEquality,
               ElementCount(Unit(), block, WholeType(), Read(block, p[0])),
               ElementCount(Unit(), block, WholeType(), Read(block, p[1])));
           mir::Block paired;
           mir::Builder at = block.Into(paired);
-          const mir::ExprId merged = Built(
-              code, at, ParameterArray(p[0], mir::Mutability::kReadOnly),
-              ElementCount(Unit(), at, WholeType(), Read(at, p[0])),
-              [&](mir::Builder body, mir::LocalId index) {
-                const auto element = [&](mir::LocalId arm) {
-                  return GetUnchecked(body, Read(body, arm), index);
-                };
-                const mir::ExprId agree = ReduceToCondition(
-                    Unit(), body,
-                    body.Add(BuildMirBinaryExpr(
-                        Unit(), body, hir::BinaryOp::kEquality, element(p[0]),
-                        element(p[1]),
-                        mir::OneBitAnswerType(
-                            Unit(), std::array{ElementType()}))));
-                return body.Add(
-                    mir::Expr{
-                        .data =
-                            mir::ConditionalExpr{
-                                .condition = agree,
-                                .then_value =
-                                    body.AsValue(Unit().types, element(p[0])),
-                                .else_value = body.Add(BuildDefaultValueExpr(
-                                    Unit(), body, ElementType()))},
-                        .type = ElementType()});
-              });
-          at.AppendStmt(mir::ReturnStmt{.value = merged});
+          at.AppendStmt(
+              mir::ReturnStmt{
+                  .value = Built(
+                      code, at,
+                      ParameterArray(p[0], mir::Mutability::kReadOnly),
+                      ElementCount(Unit(), at, WholeType(), Read(at, p[0])),
+                      merged)});
           block.AppendStmt(
               mir::IfStmt{
                   .condition = same_count,
@@ -2934,6 +2923,32 @@ class ArrayBodies : public OperationBodies {
                   .else_scope = std::nullopt});
           block.AppendStmt(mir::ReturnStmt{.value = Empty(block)});
         });
+  }
+
+  // The element at the machine index `index` of the arms `p[0]` and `p[1]`
+  // combined: the first arm's where the two are known to agree on it, and the
+  // element default where they are not.
+  auto MergedElement(
+      mir::Builder body, const std::vector<mir::LocalId>& p, mir::LocalId index)
+      -> mir::ExprId {
+    const auto element = [&](mir::LocalId arm) {
+      return GetUnchecked(body, Read(body, arm), index);
+    };
+    const mir::ExprId agree = ReduceToCondition(
+        Unit(), body,
+        body.Add(BuildMirBinaryExpr(
+            Unit(), body, hir::BinaryOp::kEquality, element(p[0]),
+            element(p[1]),
+            mir::OneBitAnswerType(Unit(), std::array{ElementType()}))));
+    return body.Add(
+        mir::Expr{
+            .data =
+                mir::ConditionalExpr{
+                    .condition = agree,
+                    .then_value = body.AsValue(Unit().types, element(p[0])),
+                    .else_value = body.Add(
+                        BuildDefaultValueExpr(Unit(), body, ElementType()))},
+            .type = ElementType()});
   }
 
   // LRM 7.5.3, 7.10.2.3: the array holding no elements.

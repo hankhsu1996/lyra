@@ -6,22 +6,10 @@
 #include <utility>
 #include <vector>
 
-// LRM 7.12.2 ordering, written once over items. A method answers with the
-// position each element comes from once the order is applied, and the
-// container then moves its own elements, so nothing here knows what an element
-// is; what orders two of them is handed in.
+// LRM 7.12.2 ordering, written once over items: the position each element
+// comes from once ordered, so nothing here knows what an element is; what
+// orders two of them is handed in.
 namespace lyra::value::detail {
-
-// LRM 7.12.2 reverse: the position each element comes from once the order is
-// reversed.
-[[nodiscard]] inline auto ReversedPositions(std::size_t count)
-    -> std::vector<std::size_t> {
-  std::vector<std::size_t> order(count);
-  for (std::size_t k = 0; k < count; ++k) {
-    order[k] = count - 1 - k;
-  }
-  return order;
-}
 
 // `items` put in the order `comes_first` says, which is told two items and
 // answers whether the first comes before the second, equal ones keeping their
@@ -82,43 +70,3 @@ template <typename Before>
 }
 
 }  // namespace lyra::value::detail
-
-namespace lyra::value {
-
-// The LRM 7.12.2 ordering methods of a fixed-size unpacked array, whose index
-// is the ordinal position, as the library's template states them: reversing
-// it, and putting it in an order a sort answered. How the elements move is the
-// array's own.
-template <typename Self>
-class OrdinalArrayMethods {
- public:
-  auto Reverse() -> void {
-    MutableThis().Permute(detail::ReversedPositions(Count()));
-  }
-  // The elements put in the order `order`, an array of positions a sort
-  // answered, holds: the one at each position becoming the one that was at
-  // the position `order` holds there.
-  template <typename Order>
-  auto ApplyOrder(const Order& order) -> void {
-    std::vector<std::size_t> positions;
-    positions.reserve(order.Count());
-    for (std::size_t k = 0; k < order.Count(); ++k) {
-      positions.push_back(
-          static_cast<std::size_t>(order.GetUnchecked(k).ToInt64()));
-    }
-    MutableThis().Permute(positions);
-  }
-
- private:
-  friend Self;
-  OrdinalArrayMethods() = default;
-
-  [[nodiscard]] auto MutableThis() -> Self& {
-    return static_cast<Self&>(*this);
-  }
-  [[nodiscard]] auto Count() const -> std::size_t {
-    return static_cast<const Self&>(*this).Count();
-  }
-};
-
-}  // namespace lyra::value

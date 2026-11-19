@@ -183,8 +183,7 @@ void AddImplItems(
   if (!impl.has_value()) {
     return;
   }
-  const std::vector<support::ValueOperation> items = impl->Items();
-  operations.insert(operations.end(), items.begin(), items.end());
+  operations.insert(operations.end(), impl->items.begin(), impl->items.end());
 }
 
 // A type an operation takes or answers, named relative to the type `self` it
@@ -781,21 +780,66 @@ auto InterfaceOf(
 }
 
 // A fixed-size array's (LRM 7.4): each operation on its whole value its
-// elements decide, and its own methods.
+// elements decide, the two arms of a conditional with an ambiguous condition
+// combined element by element (LRM 11.4.11), and its own methods.
 auto FixedArrayInterface(const CompilationUnit& unit, TypeId array)
     -> TypeInterface {
   std::vector<support::ValueOperation> operations = WholeValueOperations();
+  operations.emplace_back(support::UnknownItem::kMergeConditional);
   AddOptionalOperations(operations, OptionalOperationsOfArray(unit, array));
   return InterfaceOf(array, std::move(operations), kFixedArrayMethods);
 }
 
+// The library's traits a fixed-size array may implement: each asked of a
+// value the library holds, whatever its type.
+constexpr auto kFixedSizeArrayTraits =
+    std::to_array<const support::LibraryTrait*>(
+        {&support::kValueLife, &support::kChangeTest,
+         &support::kWholeValueQuestions, &support::kTakeover,
+         &support::kNetPositions, &support::kFixedStream, &support::kStream});
+
+// The implementation of the library's traits for a fixed-size array, which no
+// declaration lists. Its steps are its elements', so it states no value's
+// life; the library asks each other item of a value apart from the rest, and
+// answers one a type lacks with its failing of it, so each operation of the
+// array's interface that some trait requires is an item, and the array
+// implements each trait all of whose requirements are among them, as a
+// generic impl of rustc's exists where its type arguments meet its bounds.
+auto FixedArrayImpl(const CompilationUnit& unit, TypeId array) -> Impl {
+  const TypeInterface interface = FixedArrayInterface(unit, array);
+  const auto required = [](support::ValueOperation operation) {
+    return std::ranges::any_of(
+        kFixedSizeArrayTraits, [&](const support::LibraryTrait* trait) {
+          return std::ranges::contains(trait->requirements, operation);
+        });
+  };
+  Impl impl{.self_type = array, .traits = {}, .items = {}};
+  for (const support::ValueOperation operation : interface.operations) {
+    if (required(operation)) {
+      impl.items.push_back(operation);
+    }
+  }
+  for (const support::LibraryTrait* trait : kFixedSizeArrayTraits) {
+    if (std::ranges::all_of(
+            trait->requirements, [&](support::ValueOperation requirement) {
+              return Declares(interface, requirement);
+            })) {
+      impl.traits.push_back(trait);
+    }
+  }
+  return impl;
+}
+
 // A run-time-sized container's (LRM 7.5, 7.10): each item of the library's
-// traits it implements, its default among them, and its own methods.
+// traits it implements, its default among them, the two arms of a
+// conditional with an ambiguous condition combined element by element (LRM
+// 11.4.11), and its own methods.
 auto ContainerInterface(
     const CompilationUnit& unit, TypeId container,
     std::span<const support::BuiltinFn> methods) -> TypeInterface {
   std::vector<support::ValueOperation> operations;
   AddImplItems(unit, container, operations);
+  operations.emplace_back(support::UnknownItem::kMergeConditional);
   return InterfaceOf(container, std::move(operations), methods);
 }
 
@@ -810,16 +854,10 @@ auto PartsInterface(TypeId type, const OptionalOperations& had)
 
 }  // namespace
 
-auto Impl::Items() const -> std::vector<support::ValueOperation> {
-  std::vector<support::ValueOperation> items;
-  for (const support::LibraryTrait* trait : traits) {
-    items.insert(
-        items.end(), trait->requirements.begin(), trait->requirements.end());
-  }
-  return items;
-}
-
 auto ImplOf(const CompilationUnit& unit, TypeId type) -> std::optional<Impl> {
+  if (unit.types.Get(type).Is<UnpackedArrayType>()) {
+    return FixedArrayImpl(unit, type);
+  }
   const auto* library = unit.types.Get(type).As<LibraryType>();
   if (library == nullptr) {
     return std::nullopt;
@@ -829,7 +867,7 @@ auto ImplOf(const CompilationUnit& unit, TypeId type) -> std::optional<Impl> {
   if (implemented.empty()) {
     return std::nullopt;
   }
-  Impl impl{.self_type = type, .traits = {}};
+  Impl impl{.self_type = type, .traits = {}, .items = {}};
   for (const support::TraitImplementation& implementation : implemented) {
     switch (implementation.where) {
       case support::ImplementedWhere::kAlways:
@@ -841,6 +879,9 @@ auto ImplOf(const CompilationUnit& unit, TypeId type) -> std::optional<Impl> {
         break;
     }
     impl.traits.push_back(implementation.trait);
+    impl.items.insert(
+        impl.items.end(), implementation.trait->requirements.begin(),
+        implementation.trait->requirements.end());
   }
   return impl;
 }

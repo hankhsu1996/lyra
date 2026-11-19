@@ -7,7 +7,10 @@ declaration apart from its body, from the type alone, and verifies every call ag
 no signature was stated before the body, because every caller is compiler output, which still holds
 but leaves the verifier nothing to hold a call to and lets each builder state the signature again.
 Revised 2026-11-16: the C++ backend renders the same bodies, where it called the library template's
-members, so both backends carry out one definition of each operation.
+members, so both backends carry out one definition of each operation. Revised 2026-11-18: a
+fixed-size array implements the library's traits its interface meets, and the C++ class asks those
+items, so every question a library template asks of an array reaches the same bodies; the library's
+merge of two arms under an ambiguous condition goes, the array's own body answering it.
 
 ## Context
 
@@ -76,8 +79,9 @@ structure's methods follow.
 - The body is a loop over the positions, the element's operation applied at each; its count is a
   constant of the body.
 - The call takes each value by reference, as a structure's method does. Each backend carries out the
-  same body: the C++ backend renders it as a function of the code file calling it, named by the type
-  and the operation, `sv_type_1a2b_equality(a, b)`, and the execution backend compiles each body
+  same body: the C++ backend renders it as an item of the type's implementation of the library's
+  traits, defined in the type's code file, `sv_type_1a2b_impl::Equal(a, b)`, or, for the array's own
+  methods, as a function of the code file calling it, and the execution backend compiles each body
   stated, none of which another unit names, into the records handed to whatever asks one
   ([a-type-is-told-to-the-library-as-a-record-both-sides-read](a-type-is-told-to-the-library-as-a-record-both-sides-read.md)
   D4), and fills the type's table with its copy, relocation, assignment and ending, each taking
@@ -87,13 +91,14 @@ structure's methods follow.
   a structure, and otherwise a body the unit states from each component's default, stated only where
   every component has one (no declaration holds a wildcard index, LRM 7.8.1).
 - What the prebuilt library keeps is what needs no knowledge of the type: reaching an element, a run
-  of them and their order by position, building an array from its elements and merging two under an
-  ambiguous condition, for each of which the array's constant states a count and the element's
-  table.
-- The C++ library template is the array's representation: its storage, and what C++ does with every
-  value of it with no call naming it -- building, copying, assigning and ending, each element's.
-  Every operation a call names is a body of the unit's, on both backends, as rustc monomorphizes
-  `impl<T, U, const N: usize> PartialEq<[U; N]> for [T; N]` for every backend alike.
+  of them and their order by position, and building an array from its elements, for each of which
+  the array's constant states a count and the element's table.
+- The C++ library template is the array's representation: its storage, what C++ does with every
+  value of it with no call naming it -- building, copying, assigning and ending, each element's --
+  and each question a library template asks of the array, which it asks of the item of the type's
+  implementation answering it. Every operation a call names is a body of the unit's, on both
+  backends, as rustc monomorphizes `impl<T, U, const N: usize> PartialEq<[U; N]> for [T; N]` for
+  every backend alike.
 
 ## Rejected
 
@@ -144,8 +149,8 @@ structure's methods follow.
   template.
 - A body is internal to its module, so one nothing refers to an optimizer can remove.
 - `lyra dump mir` shows no such body, since MIR holds none; `lyra dump lir` shows each.
-- The library's whole-value array entries go. Its array type keeps element access, and building an
-  array from its elements or merging two, told the count and the element's table.
+- The library's whole-value array entries go. Its array type keeps element access and building an
+  array from its elements, told the count and the element's table.
 - A unit's count of distinct constants can fall where a constant an array's body states coincides in
   value with another; a measurement comparing two sizes chooses sizes where it does not.
 

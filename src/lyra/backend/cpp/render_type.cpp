@@ -208,10 +208,15 @@ void WriteOne(TargetText& out, const CppType& spelling) {
             out += ")>";
           },
           [&](const mir::RealType& r) { out += RealCppType(r); },
+          // The library's class of a fixed-size array at its element type, its
+          // count and the struct holding the type's implementation of the
+          // library's traits, `lyra::value::UnpackedArray<E, 4,
+          // sv_type_1a2b_impl>`, which the type's own header declares.
           [&](const mir::UnpackedArrayType& ua) {
             Write(
                 out, "lyra::value::UnpackedArray<", type(ua.element_type), ", ",
-                ua.Size(), ">");
+                ua.Size(), ", ", CppImplStruct{.unit = &unit, .type = type_id},
+                ">");
           },
           // No C++ class is every object implementing an interface,
           // so an object seen as one is the root every object is.

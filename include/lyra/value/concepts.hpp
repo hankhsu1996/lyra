@@ -144,19 +144,6 @@ concept NetResolvable =
                        } -> std::same_as<bool>;
                      });
 
-// LRM 11.4.11: where a conditional operator's condition is ambiguous it selects
-// neither arm, evaluates both, and combines them. A type made of parts that can
-// agree apart from each other defines how -- an integral bit by bit (Table
-// 11-20), an array other than an associative one element by element -- and a
-// type with no such parts does not satisfy this: its two arms are compared
-// whole, and it takes the Table 7-1 default of its own shape where they
-// differ.
-template <typename T>
-concept ConditionallyMergeable =
-    LyraValue<T> && requires(const T& a, const T& b) {
-      { a.MergeConditional(b) } -> std::same_as<T>;
-    };
-
 // LRM 11.4.4 relational `<` / `<=` / `>` / `>=` (Integral, real /
 // shortreal, `String`).
 template <typename T>

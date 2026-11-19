@@ -1815,12 +1815,6 @@ auto lyra_rt_laidout_from_elements(
     -> void*;
 auto lyra_rt_laidout_size(const void* array, const void* array_type, void* out)
     -> void*;
-// The value a conditional whose arms disagree yields (LRM 11.4.11): an element
-// the arms agree on survives and one they differ on takes the element default
-// (Table 7-1).
-auto lyra_rt_laidout_merge_conditional(
-    const void* lhs, const void* rhs, const void* array_operations, void* out)
-    -> void*;
 // LRM 5.9: a string literal's bytes assigned to an unpacked array of bytes,
 // left-justified; `answer_type` is the array's own.
 auto lyra_rt_byte_array_from_bits(

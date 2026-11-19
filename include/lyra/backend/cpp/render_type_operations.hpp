@@ -1,7 +1,6 @@
 #pragma once
 
 #include <string>
-#include <string_view>
 #include <vector>
 
 #include "lyra/backend/cpp/scope_view.hpp"
@@ -9,7 +8,6 @@
 #include "lyra/backend/cpp/type_operation_bodies.hpp"
 #include "lyra/mir/code_source.hpp"
 #include "lyra/mir/compilation_unit.hpp"
-#include "lyra/support/value_operation.hpp"
 
 namespace lyra::backend::cpp {
 
@@ -54,7 +52,8 @@ struct TypeOperationFileText {
 };
 
 // What the unit writes of the operations MIR builds for its types: the header
-// declaring each container type's implementation; the code file defining its
+// declaring each type's implementation of the library's traits; the code file
+// defining its
 // items and the free functions they call; and, for the unit's code file, its
 // own free functions declared ahead of every body, then defined after them.
 struct TypeOperationTexts {

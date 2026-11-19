@@ -57,15 +57,22 @@ inline constexpr auto kTakeoverRequirements =
     std::to_array<ValueOperation>({PositionsItem::kTakePositions});
 inline constexpr LibraryTrait kTakeover{.requirements = kTakeoverRequirements};
 
+// What a net of a type asks of a value of it, which it resolves position by
+// position from its drivers (LRM 6.7.1): its positions read out whole, how
+// many it has, and some of them written in.
+inline constexpr auto kNetPositionsRequirements = std::to_array<ValueOperation>(
+    {PositionsItem::kToPositions, PositionsItem::kPositionCount,
+     PositionsItem::kWritePositions});
+inline constexpr LibraryTrait kNetPositions{
+    .requirements = kNetPositionsRequirements};
+
 // The questions about a whole value a library holding values of any type asks
-// of each one: its equality (LRM 11.4.5), its case equality and whether it
-// holds an unknown bit (LRM 11.4.6), and the value a conditional with an
-// unknown condition answers (LRM 11.4.11).
+// of each one: its equality (LRM 11.4.5), and its case equality and whether
+// it holds an unknown bit (LRM 11.4.6).
 inline constexpr auto kWholeValueQuestionsRequirements =
     std::to_array<ValueOperation>(
         {EqualityItem::kEqual, EqualityItem::kNotEqual,
-         EqualityItem::kCaseEqual, UnknownItem::kHasUnknown,
-         UnknownItem::kMergeConditional});
+         EqualityItem::kCaseEqual, UnknownItem::kHasUnknown});
 inline constexpr LibraryTrait kWholeValueQuestions{
     .requirements = kWholeValueQuestionsRequirements};
 
@@ -75,6 +82,14 @@ inline constexpr auto kStreamRequirements = std::to_array<ValueOperation>(
     {StreamItem::kBitstreamWidth, StreamItem::kCountBits, StreamItem::kToBitVec,
      StreamItem::kFromBitVec});
 inline constexpr LibraryTrait kStream{.requirements = kStreamRequirements};
+
+// The same for a value whose stream has a width its type fixes: the value as
+// exactly that many bits and back.
+inline constexpr auto kFixedStreamRequirements = std::to_array<ValueOperation>(
+    {StreamItem::kBitstreamWidth, StreamItem::kCountBits,
+     StreamItem::kToBitstream, StreamItem::kFromBitstream});
+inline constexpr LibraryTrait kFixedStream{
+    .requirements = kFixedStreamRequirements};
 
 // When a type of a library declaration implements a trait: always, or
 // where a value of it has a stream of bits (LRM 6.24.3), as a Rust impl may

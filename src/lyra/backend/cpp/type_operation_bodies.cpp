@@ -136,7 +136,7 @@ class Collector {
       }
       ImplInProgress& of = at->second;
       of.impl = *std::move(impl);
-      for (const support::ValueOperation item : of.impl.Items()) {
+      for (const support::ValueOperation item : of.impl.items) {
         const mir::TypeOperationSource source{.type = type, .answers = item};
         mir::CallableCode code = Built(source);
         ReadBlock(code.Body(), of.functions);

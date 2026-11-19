@@ -165,16 +165,16 @@ namespace detail {
 // the same traversal, so it needs no form of its own.
 template <typename T>
 struct IsMemoryLevel : std::bool_constant<value::IntegralValue<T>> {};
-template <typename U, std::size_t N>
-struct IsMemoryLevel<value::UnpackedArray<U, N>> : std::true_type {};
+template <typename U, std::size_t N, typename Impl>
+struct IsMemoryLevel<value::UnpackedArray<U, N, Impl>> : std::true_type {};
 
 // The packed word a memory level of type `T` bottoms out at.
 template <typename T>
 struct MemoryWordOf {
   using Type = T;
 };
-template <typename U, std::size_t N>
-struct MemoryWordOf<value::UnpackedArray<U, N>> {
+template <typename U, std::size_t N, typename Impl>
+struct MemoryWordOf<value::UnpackedArray<U, N, Impl>> {
   using Type = typename MemoryWordOf<U>::Type;
 };
 
@@ -304,9 +304,9 @@ void WriteMemAssociative(
   WriteMemKeyedCore(runtime, filename, base, start, finish, entries);
 }
 
-template <typename Inner, std::size_t N>
+template <typename Inner, std::size_t N, typename Impl>
 void ReadMemMultidim(
-    RuntimeEffects& runtime, value::UnpackedArray<Inner, N>& dest,
+    RuntimeEffects& runtime, value::UnpackedArray<Inner, N, Impl>& dest,
     const value::String& filename, std::span<const value::UnpackedRange> dims,
     unsigned base, std::optional<std::int64_t> start,
     std::optional<std::int64_t> finish, const WordValues& values) {
@@ -322,9 +322,9 @@ void ReadMemMultidim(
       });
 }
 
-template <typename Inner, std::size_t N>
+template <typename Inner, std::size_t N, typename Impl>
 void WriteMemMultidim(
-    RuntimeEffects& runtime, const value::UnpackedArray<Inner, N>& src,
+    RuntimeEffects& runtime, const value::UnpackedArray<Inner, N, Impl>& src,
     const value::String& filename, std::span<const value::UnpackedRange> dims,
     unsigned base, std::optional<std::int64_t> start,
     std::optional<std::int64_t> finish) {
@@ -409,15 +409,15 @@ void DumpMemory(
 // dimension, the first being the addressed dimension and the rest describing
 // the leaves each address expands to, so a one-dimensional memory is the
 // one-element case of the same traversal.
-template <typename Inner, std::size_t N>
+template <typename Inner, std::size_t N, typename Impl>
   requires detail::IsMemoryLevel<Inner>::value
 auto LoadMemory(
-    RuntimeEffects& runtime, const value::UnpackedArray<Inner, N>& memory,
+    RuntimeEffects& runtime, const value::UnpackedArray<Inner, N, Impl>& memory,
     const WordValues& values, const value::String& filename,
     std::span<const std::int64_t> bounds, std::int64_t base, std::int64_t start,
     std::optional<std::int64_t> finish)
-    -> MemoryLoad<value::UnpackedArray<Inner, N>> {
-  MemoryLoad<value::UnpackedArray<Inner, N>> load(memory);
+    -> MemoryLoad<value::UnpackedArray<Inner, N, Impl>> {
+  MemoryLoad<value::UnpackedArray<Inner, N, Impl>> load(memory);
   detail::ReadMemMultidim(
       runtime, load.template Component<0>(), filename,
       value::UnpackedRangesOf(bounds), static_cast<unsigned>(base), start,
@@ -425,10 +425,10 @@ auto LoadMemory(
   return load;
 }
 
-template <typename Inner, std::size_t N>
+template <typename Inner, std::size_t N, typename Impl>
   requires detail::IsMemoryLevel<Inner>::value
 void DumpMemory(
-    RuntimeEffects& runtime, const value::UnpackedArray<Inner, N>& src,
+    RuntimeEffects& runtime, const value::UnpackedArray<Inner, N, Impl>& src,
     const value::String& filename, std::span<const std::int64_t> bounds,
     std::int64_t base, std::int64_t start, std::optional<std::int64_t> finish) {
   detail::WriteMemMultidim(

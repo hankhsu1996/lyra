@@ -11,7 +11,6 @@
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/container_lease.hpp"
 #include "lyra/value/element_policy.hpp"
-#include "lyra/value/element_sequence.hpp"
 #include "lyra/value/formation.hpp"
 #include "lyra/value/index_order.hpp"
 #include "lyra/value/integral.hpp"

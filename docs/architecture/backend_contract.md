@@ -332,11 +332,13 @@ method of its trait, and what a type's constant names of other types is one list
 operation the query did not ask for is a compile-time defect at emission, never a failure at run
 time, and one the language does not give the type fills its slot with the library's failing of it.
 The C++ backend writes a type's implementation of the library's traits, as MIR states it, as a
-struct declaring each item, and the type is the library's class over its core at that struct
-(invariant 10); each item is defined once in the type's own code file, and every other operation of
-a type -- a container's, a fixed-size array's, a tuple's -- is a function the code file calling it
-defines, each a definition every unit states alike. Neither backend asks for a type's whole
-interface, which would be choosing among its operations.
+struct declaring each item, and the type is the library's class at that struct -- over its core for
+a run-time-sized container, over its elements in place for a fixed-size array -- whose members ask
+each item and state no algorithm of their own (invariant 10); each item is defined once in the
+type's own code file, and every other operation of a type -- a container's or a fixed-size array's
+own methods, a tuple's -- is a function the code file calling it defines, each a definition every
+unit states alike. Neither backend asks for a type's whole interface, which would be choosing among
+its operations.
 
 The canonical write rule for any value-emission entry: write it as if the target were LLVM IR. If
 you cannot write a mechanical translation rule for it -- if your draft contains an `if` whose arms

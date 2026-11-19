@@ -241,11 +241,11 @@ class FileTable {
   // caller always supplies `sv_start` and `count`, materializing the lowest
   // declared index and the whole remaining range where the SV call leaves them
   // out, so one entry serves every form the source may write.
-  template <value::IntegralValue T, std::size_t N>
+  template <value::IntegralValue T, std::size_t N, typename Impl>
   auto ReadMemory(
-      const value::UnpackedArray<T, N>& dest, std::int64_t fd,
+      const value::UnpackedArray<T, N, Impl>& dest, std::int64_t fd,
       std::span<const std::int64_t> bounds, std::int64_t sv_start,
-      std::int64_t count) -> BinaryRead<value::UnpackedArray<T, N>>;
+      std::int64_t count) -> BinaryRead<value::UnpackedArray<T, N, Impl>>;
 
   // LRM 21.3.5 $fseek. `operation` is 0/1/2 for SEEK_SET / SEEK_CUR /
   // SEEK_END. Returns 0 on success or -1 on error. Per LRM, any pending
@@ -439,14 +439,14 @@ auto FileTable::Read(const T& dest, std::int64_t fd) -> BinaryRead<T> {
   return answer;
 }
 
-template <value::IntegralValue T, std::size_t N>
+template <value::IntegralValue T, std::size_t N, typename Impl>
 auto FileTable::ReadMemory(
-    const value::UnpackedArray<T, N>& dest, std::int64_t fd,
+    const value::UnpackedArray<T, N, Impl>& dest, std::int64_t fd,
     std::span<const std::int64_t> bounds, std::int64_t sv_start,
-    std::int64_t count) -> BinaryRead<value::UnpackedArray<T, N>> {
+    std::int64_t count) -> BinaryRead<value::UnpackedArray<T, N, Impl>> {
   // The memory is read into where the answer keeps it.
-  BinaryRead<value::UnpackedArray<T, N>> answer(value::Int{}, dest);
-  value::UnpackedArray<T, N>& memory = answer.template Component<1>();
+  BinaryRead<value::UnpackedArray<T, N, Impl>> answer(value::Int{}, dest);
+  value::UnpackedArray<T, N, Impl>& memory = answer.template Component<1>();
   const value::UnpackedRange declared = value::UnpackedRangesOf(bounds).front();
   answer.template Component<0>() = value::Int::FromInt(ReadMemoryWords(
       fd, T::kWidth, declared, sv_start, count,

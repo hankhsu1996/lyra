@@ -180,10 +180,6 @@ constexpr std::array kForBitstreams{
 constexpr std::array kForRunsOfBits{
     RealizedFor{.domains = kLibraryContainers, .told = ToldOperations{}},
     RealizedFor{.domains = DomainSet{Domain::kString}}};
-// What two arms of a value laid out by its type are merged by, the
-// operations of its type, which name its parts'.
-constexpr std::array kForLaidOutValuesByOperations{
-    RealizedFor{.domains = kLaidOutByType, .told = ToldOperations{}}};
 // An entry over a value laid out by its type -- a fixed-size array built of
 // its elements, and a step into an element of a fixed-size array, a dynamic
 // array or a queue, on a reference or
@@ -922,6 +918,7 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     // fixed-size array -- which code compiled for the type answers, and
     // nothing the library holds does; an integral value's is its own entry.
     case support::BuiltinFn::kToBitstream:
+    case support::BuiltinFn::kMergeConditional:
     case support::BuiltinFn::kTakePositions:
     case support::BuiltinFn::kToPositions:
     case support::BuiltinFn::kWritePositions:
@@ -930,8 +927,6 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     // for the type answers whatever the outer kind.
     case support::BuiltinFn::kToBoundFree:
       return NamedByValue{.realized = {}};
-    case support::BuiltinFn::kMergeConditional:
-      return NamedByValue{.realized = kForLaidOutValuesByOperations};
     // What a structure's declaration states, which the structure's own
     // generated body answers and nothing the library holds does.
     case support::BuiltinFn::kDeclaredDefault:

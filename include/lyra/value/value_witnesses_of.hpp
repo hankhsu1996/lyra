@@ -7,7 +7,6 @@
 
 #include "lyra/base/source_location.hpp"
 #include "lyra/value/concepts.hpp"
-#include "lyra/value/element_policy.hpp"
 #include "lyra/value/element_type.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_words.hpp"
@@ -168,10 +167,6 @@ struct OperationsOf {
          std::uint64_t filled) -> std::uint64_t {
     if constexpr (WritesBitStream<T>) {
       return Of(value).WriteToStream(stream, filled);
-    } else if constexpr (requires {
-                           Of(value).ToBitVec(base::SourceLocation{});
-                         }) {
-      return StaticElem<T>::WriteToStream(value, stream, filled);
     } else if constexpr (kIsBitStreamType<T>) {
       StreamNotYetSupported();
     } else {
@@ -183,10 +178,6 @@ struct OperationsOf {
          std::uint64_t taken, std::uint64_t until, void* out) -> std::uint64_t {
     if constexpr (ReadsBitStream<T>) {
       return static_cast<T*>(out)->ReadFromStream(stream, taken, until);
-    } else if constexpr (requires(const BitVec& run) {
-                           T::FromBitVec(run, base::SourceLocation{});
-                         }) {
-      return StaticElem<T>::ReadFromStream(stream, taken, until, out);
     } else if constexpr (kIsBitStreamType<T>) {
       StreamNotYetSupported();
     } else {

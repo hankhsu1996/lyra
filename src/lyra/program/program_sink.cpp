@@ -1241,7 +1241,6 @@ void BindValueEntries(const auto& add) {
       &lyra_rt_managedref_attach_whole_driver);
   add("lyra_rt_managedref_driver_get", &lyra_rt_managedref_driver_get);
   add("lyra_rt_managedref_driver_set", &lyra_rt_managedref_driver_set);
-  add("lyra_rt_laidout_merge_conditional", &lyra_rt_laidout_merge_conditional);
   add("lyra_rt_byte_array_from_bits", &lyra_rt_byte_array_from_bits);
 }
 

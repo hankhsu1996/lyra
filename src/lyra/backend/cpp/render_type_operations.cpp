@@ -103,8 +103,7 @@ auto IsImplItem(
     return false;
   }
   const std::optional<mir::Impl> impl = mir::ImplOf(unit, source.type);
-  return impl.has_value() &&
-         std::ranges::contains(impl->Items(), source.answers);
+  return impl.has_value() && std::ranges::contains(impl->items, source.answers);
 }
 
 auto IsNonMemberBody(
@@ -112,12 +111,11 @@ auto IsNonMemberBody(
     -> bool {
   const std::optional<mir::TypeOperationKind> kind =
       mir::TypeOperationKindOf(unit, source.type, source.answers);
-  if (!kind.has_value()) {
+  if (!kind.has_value() || IsImplItem(unit, source)) {
     return false;
   }
   switch (*kind) {
     case mir::TypeOperationKind::kContainer:
-      return !IsImplItem(unit, source);
     case mir::TypeOperationKind::kToBoundFree:
     case mir::TypeOperationKind::kFromBoundFree:
     case mir::TypeOperationKind::kStructural:

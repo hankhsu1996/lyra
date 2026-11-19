@@ -33,11 +33,12 @@ it needs, and neither backend decides which items the type has.**
 - A trait is what the library asks of every value of a type implementing it, by name: a value's life
   (its default, a copy, an assignment over a value, its end), its change test, its elements (at a
   machine index, to read and to write, and where a write through a position lands), being made a
-  count long, the questions asked of a whole value, and its stream. A requirement is answered by the
-  type's own operation of the same name, as a Rust trait's required method is by an impl's. Several
-  traits rather than one list, because a holder asks for some and not others, and a type implements
-  a trait only where it can: a container's stream only where its elements stream, as a Rust impl
-  holds only where its type arguments meet a bound.
+  count long, being taken over, the positions a net reads and writes, the questions asked of a whole
+  value, and its stream, at a width the running program or its type decides. A requirement is
+  answered by the type's own operation of the same name, as a Rust trait's required method is by an
+  impl's. Several traits rather than one list, because a holder asks for some and not others, and a
+  type implements a trait only where it can: a container's stream only where its elements stream, as
+  a Rust impl holds only where its type arguments meet a bound.
 - Each trait's items are a closed set of their own, and an operation asked of a type is such an
   item, one of the type's own methods, a step of its value's life, or a conversion into the form of
   its type with no queue bounded and back, which every type holding elements has. rustc tells a
@@ -60,7 +61,11 @@ it needs, and neither backend decides which items the type has.**
 - The library declaration of a dynamic array and of a queue lists the traits their types implement.
   MIR states a type's implementation from it -- the type and the traits it implements -- as rustc
   resolves an impl for a type by query rather than holding a copy per crate. A type's interface
-  lists the items among its operations.
+  lists the items among its operations. A fixed-size array, which no declaration states, has as
+  items each operation of its interface some trait requires, since the library asks each item of a
+  value apart from the rest and answers one a type lacks with its failing of it; its class is the
+  library's class over its elements in place at the struct holding them,
+  `lyra::value::UnpackedArray<T, 4, sv_type_1a2b_impl>`.
 - What is unified is the binding of a requirement to an operation, never a target's layout. The
   lowering to LIR carries each type's implemented traits with the unit, as MIR states them, and the
   execution backend's record of the type holds the items its library reads, at offsets its own
@@ -74,7 +79,7 @@ it needs, and neither backend decides which items the type has.**
   ask the items of the other traits. It carries out no operation of the language.
 - Every item of a type's implementation is defined in the type's code file, which every unit naming
   the type writes alike. Every other operation of a type is a function of the code file calling it,
-  on both backends the same body, a fixed-size array's and a tuple's included
+  on both backends the same body, a fixed-size array's own methods and a tuple's operations included
   ([a-fixed-arrays-operations-are-stated-per-unit](a-fixed-arrays-operations-are-stated-per-unit.md)).
 - No file of either backend, nor of the lowering to LIR, asks for a type's whole interface, since
   doing so is choosing among its operations; each reads the implementation MIR states and the
@@ -121,7 +126,7 @@ it needs, and neither backend decides which items the type has.**
   the type is named; the questions no longer have files of their own that only a unit holding the
   type as an element writes.
 - A fixed-size array's and a tuple's operations are rendered by the C++ backend from the bodies the
-  execution backend compiles; the library's array template is no longer instantiated for them.
+  execution backend compiles; the library's array class carries out none of them.
 - A new trait is a declaration in the library and a line in each library declaration implementing
   it, and reaches both backends at once.
 

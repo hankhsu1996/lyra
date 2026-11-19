@@ -94,9 +94,6 @@ class WitnessedOperations {
   [[nodiscard]] static auto CaseAnswer(bool holds) -> Bit {
     return Bit::FromBool(holds);
   }
-  [[nodiscard]] auto Agree(const void* lhs, const void* rhs) const -> bool {
-    return Holds(Equal(lhs, rhs));
-  }
   [[nodiscard]] auto HasUnknown(const void* value) const -> bool {
     return Functions().has_unknown(*operations_, value);
   }

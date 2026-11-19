@@ -186,11 +186,14 @@ what the construct means.
   that a target's library asks of a value of the type wherever its own code holds one. A type the
   unit only names has none, and a call is well formed without one.
 - Which of a type's operations the runtime library asks of it by name: the library declares its
-  traits -- a value's life, its change test, its elements, being made a count long, the questions
-  asked of a whole value, its stream -- each the operations it requires, a library declaration lists
-  the traits its types implement, and MIR states a type's implementation from it, the type and the
-  traits, as rustc resolves an impl of a trait for a type. Each target's library asks the items it
-  needs, however it is told of them, and no target decides which items the type has.
+  traits -- a value's life, its change test, its elements, being made a count long, being taken
+  over, a net's positions, the questions asked of a whole value, its stream at a width the program
+  or its type decides -- each the operations it requires, a library declaration lists the traits its
+  types implement, and MIR states a type's implementation from it, the type and the traits, as rustc
+  resolves an impl of a trait for a type. A fixed-size array, which no declaration states, has as
+  items each operation of its interface some trait requires, since the library asks each item of a
+  value apart from the rest. Each target's library asks the items it needs, however it is told of
+  them, and no target decides which items the type has.
 - For an array of any kind holding a bounded queue below its outermost dimension, a value of it
   taken into the form of its type with no queue bounded, and a value of that form built as one of
   it, each element built afresh. Every type equivalent to it has that form (a bound is no part of

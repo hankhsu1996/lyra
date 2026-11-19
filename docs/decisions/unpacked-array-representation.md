@@ -35,6 +35,15 @@ consequence that a prototype reaches a backend as an operand of the construction
 kind: what an element holds before it is written is stated once for the element's type
 ([an-arrays-element-default-is-its-element-types](an-arrays-element-default-is-its-element-types.md)).
 
+**Amended 2026-11-18: the C++ class states no operation on the array's whole value.** It is
+`UnpackedArray<T, N, Impl>`, the struct holding the type's implementation of the library's traits
+being its third argument, and every question a library template asks of the array -- its change
+test, its equalities and unknowns, its stream, its positions -- calls the item answering it, the
+body MIR builds for the type, which the execution backend reaches through the type's record. The
+class kept those algorithms as templates over `T` beside the bodies, so each was implemented twice
+and the two backends ran different ones; what is left is the storage, the element step and the
+conversions of a byte array, which no other operation of the type's states.
+
 ## Why this decision matters
 
 SystemVerilog has multiple array families. The packed family is handled by

@@ -167,11 +167,6 @@ class StaticElem {
   [[nodiscard]] static auto CaseAnswer(bool holds) -> Bit {
     return Bit::FromBool(holds);
   }
-  // LRM 11.4.11: whether the two arms of an ambiguous conditional agree on an
-  // element, which only an equality known to hold says.
-  [[nodiscard]] static auto Agree(const void* lhs, const void* rhs) -> bool {
-    return Holds(Of(lhs) == Of(rhs));
-  }
   [[nodiscard]] static auto BitIdentical(const void* lhs, const void* rhs)
       -> bool {
     return Of(lhs).IsBitIdentical(Of(rhs));
@@ -203,9 +198,10 @@ class StaticElem {
   }
 
   // The element written into a stream below its `filled` most significant
-  // positions, answering how many are filled after it. A structure states its
-  // stream as a value of its own -- a run of bits where a part's width is the
-  // running program's -- and an array writes its elements in turn.
+  // positions, answering how many are filled after it. A structure or a
+  // fixed-size array states its stream as a value of its own -- a run of bits
+  // where a part's width is the running program's -- and an associative array
+  // writes its elements in turn.
   static auto WriteToStream(
       const void* value, const IntegralView& stream, std::uint64_t filled)
       -> std::uint64_t {
@@ -268,13 +264,6 @@ class StaticElem {
       });
       return after;
     }
-  }
-
-  // How many positions an element takes where every part of it whose width
-  // the running program decides is empty, which is what each of those after
-  // the first such part takes (LRM 11.4.14.4).
-  [[nodiscard]] static auto EmptyStreamWidth() -> std::uint64_t {
-    return static_cast<std::uint64_t>(BitstreamWidth(Default()));
   }
 
  private:

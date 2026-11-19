@@ -16,25 +16,23 @@
 
 namespace lyra::mir {
 
-// The implementation, for the type `self_type`, of the library's traits its
-// declaration lists, as rustc's impl of a trait for a type names its items:
-// each trait the type implements, and so each operation of the type's
-// answering one of their requirements. A run-time-sized container's value's
-// life is one of them, its elements being no parts a type lays out; any other
-// type's steps follow from its parts, and it implements none. Each target's
-// library asks the items it needs, however it is told of them, and no target
-// decides which items the type has.
+// The implementation, for the type `self_type`, of the library's traits, as
+// rustc's impl of a trait for a type names its items: each trait the type
+// implements, and each operation of the type's answering a requirement of
+// one. A library declaration lists the traits its types implement, a
+// run-time-sized container's value's life among them, its elements being no
+// parts a type lays out. A fixed-size array, which no declaration states, has
+// as items each operation of its interface some trait requires, since the
+// library asks each of a value apart from the rest; its steps follow from its
+// parts. Each target's library asks the items it needs, however it is told
+// of them, and no target decides which items the type has.
 struct Impl {
   TypeId self_type;
   std::vector<const support::LibraryTrait*> traits;
-
-  // Each operation answering a requirement of a trait the type implements,
-  // in the order the traits list them.
-  [[nodiscard]] auto Items() const -> std::vector<support::ValueOperation>;
+  std::vector<support::ValueOperation> items;
 };
 
-// The implementation of the library's traits for `type`, where its
-// declaration lists any.
+// The implementation of the library's traits for `type`, where it has one.
 [[nodiscard]] auto ImplOf(const CompilationUnit& unit, TypeId type)
     -> std::optional<Impl>;
 

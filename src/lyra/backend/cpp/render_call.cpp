@@ -19,7 +19,6 @@
 #include "lyra/mir/closure_signature.hpp"
 #include "lyra/mir/code_source.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/type.hpp"
 #include "lyra/mir/type_declaration_ref.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/callable_bounds.hpp"
@@ -386,10 +385,9 @@ void WriteDirectCallee(
           // the type's implementation of the library's traits, where it is
           // one of its items, handed the object first:
           // `sv_type_1a2b_impl::GetUnchecked(a, i)`; the free function built
-          // for
-          // it, where MIR builds it for the type -- a container's other
-          // operations, a fixed-size array's, a tuple's -- named by the types
-          // it is instantiated at:
+          // for it, where MIR builds it for the type -- a container's or a
+          // fixed-size array's own methods, a tuple's operations -- named by
+          // the types it is instantiated at:
           // `sv_type_1a2b_dynamic_array_from_array_3c4d(a)`, declared in
           // every code file that calls it; and otherwise the type's default,
           // which its class declares, `S::DeclaredDefault()`.

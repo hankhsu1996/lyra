@@ -114,7 +114,6 @@
 #include "lyra/value/unpacked_range.hpp"
 #include "lyra/value/value_type_kind.hpp"
 #include "lyra/value/wide.hpp"
-#include "lyra/value/witnessed_elem.hpp"
 #include "svdpi.h"
 
 namespace lyra::runtime {
@@ -5821,25 +5820,6 @@ auto lyra_rt_laidout_from_elements(
   }
   type.BuildEach(out, [&](std::size_t i, void* built) {
     type.ElementType().Type().Copy(handles[i % handles.size()], built);
-  });
-  return out;
-}
-
-auto lyra_rt_laidout_merge_conditional(
-    const void* lhs, const void* rhs, const void* array_operations, void* out)
-    -> void* {
-  const lyra::value::ValueOperations& operations =
-      lyra::runtime::OperationsAt(array_operations);
-  const lyra::value::FixedArrayType& type = *operations.type->AsFixedArray();
-  const lyra::value::FixedArrayView left{.type = &type, .bytes = lhs};
-  const lyra::value::FixedArrayView right{.type = &type, .bytes = rhs};
-  const lyra::value::ElementType& element = left.ElementType();
-  const lyra::value::WitnessedOperations compared(*operations.element);
-  type.BuildEach(out, [&](std::size_t i, void* built) {
-    const bool agree =
-        compared.Agree(left.GetUnchecked(i), right.GetUnchecked(i));
-    element.Type().Copy(
-        agree ? left.GetUnchecked(i) : element.Default(), built);
   });
   return out;
 }

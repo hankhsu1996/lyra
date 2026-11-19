@@ -190,18 +190,18 @@ class Container final : public Core {
     return Impl::HasUnknown(*this);
   }
   template <typename... Args>
-  [[nodiscard]] auto MergeConditional(Args&&... args) const -> decltype(auto) {
-    return Impl::MergeConditional(*this, std::forward<Args>(args)...);
+    requires requires(const Container& c, Args&&... args) {
+      Impl::BitstreamWidth(c, std::forward<Args>(args)...);
+    }
+  [[nodiscard]] auto BitstreamWidth(Args&&... args) const -> decltype(auto) {
+    return Impl::BitstreamWidth(*this, std::forward<Args>(args)...);
   }
-  [[nodiscard]] auto BitstreamWidth() const -> decltype(auto)
-    requires requires(const Container& c) { Impl::BitstreamWidth(c); }
-  {
-    return Impl::BitstreamWidth(*this);
-  }
-  [[nodiscard]] auto CountBits() const -> decltype(auto)
-    requires requires(const Container& c) { Impl::CountBits(c); }
-  {
-    return Impl::CountBits(*this);
+  template <typename... Args>
+    requires requires(const Container& c, Args&&... args) {
+      Impl::CountBits(c, std::forward<Args>(args)...);
+    }
+  [[nodiscard]] auto CountBits(Args&&... args) const -> decltype(auto) {
+    return Impl::CountBits(*this, std::forward<Args>(args)...);
   }
   template <typename... Args>
     requires requires(const Container& c, Args&&... args) {

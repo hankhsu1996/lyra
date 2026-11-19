@@ -1121,8 +1121,6 @@ static_assert(Ordered<Int>);
 static_assert(Ordered<LogicVector<8>>);
 static_assert(BitstreamSizable<Int>);
 static_assert(BitstreamSizable<LogicVector<8>>);
-static_assert(ConditionallyMergeable<Int>);
-static_assert(ConditionallyMergeable<LogicVector<8>>);
 static_assert(NetResolvable<LogicVector<8>>);
 
 }  // namespace lyra::value
