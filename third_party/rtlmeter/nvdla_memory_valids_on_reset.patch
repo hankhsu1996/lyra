@@ -1,0 +1,23 @@
+NVDLA's testbench memory model, `axi_memory`, declares `rvalid` and `bvalid`
+as output variables with no initial value and does not set them on reset, so
+both are x until the memory first answers (IEEE 1800-2023 6.8, Table 6-7).
+NVDLA's read path takes that x into the clock gating of its latency FIFOs, and
+once the read DMA is enabled its read request goes x and no read is made, so
+the run never ends. Clear both on reset; under two states they start at 0
+already, so Verilator's run is unchanged.
+The original testbench's AXI slave (nvdla/hw `verif/synth_tb/axi_slave.v`)
+clears both on reset the same way.
+
+Sent to the suite as https://github.com/verilator/rtlmeter/pull/71
+
+--- a/designs/NVDLA/src/axi_memory.v
++++ b/designs/NVDLA/src/axi_memory.v
+@@ -100,6 +100,8 @@
+   always @(posedge clk) begin
+     if (!reset) begin
+       wempty <= 1'b1;
++      rvalid <= 1'b0;
++      bvalid <= 1'b0;
+       cycle <= 64'd0;
+       if (wqueue.size() != 0) $error("wqueue not empty at reset");
+       if (bqueue.size() != 0) $error("bqueue not empty at reset");
