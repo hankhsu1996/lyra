@@ -28,7 +28,6 @@
 #include "lyra/runtime/runtime.hpp"
 #include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/sampled_value.hpp"
-#include "lyra/runtime/scope_exit.hpp"
 #include "lyra/runtime/source_follower.hpp"
 #include "lyra/runtime/timer.hpp"
 #include "lyra/runtime/value_change_wait.hpp"
@@ -586,10 +585,6 @@ void RuntimeEffects::EndInterval() {
   Runtime& runtime = AsRuntime(*this);
   while (IntervalAccumulator* accumulator =
              runtime.interval_accumulators_.PopFront()) {
-    const ScopeExit emptied([accumulator] {
-      accumulator->parts.clear();
-      accumulator->bits.clear();
-    });
     for (const PartOriginalAt& kept : accumulator->parts) {
       if (const std::optional<Change> change = kept.original->Changed()) {
         accumulator->place->TellIntervalChange(*this, kept.at, *change);
@@ -600,6 +595,8 @@ void RuntimeEffects::EndInterval() {
         accumulator->place->TellIntervalChange(*this, kept.at, *change);
       }
     }
+    accumulator->parts.clear();
+    accumulator->bits.clear();
   }
 }
 

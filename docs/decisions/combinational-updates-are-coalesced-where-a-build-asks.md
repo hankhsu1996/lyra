@@ -126,8 +126,10 @@ it lands, a per-interval observer's included.
   triggers the procedure, because the first left it changed.
 - **Only one interval is open at a time.** Only one process runs at a time, and the one way a
   process runs inside another's execution -- one woken at an occurrence -- never runs a
-  combinational procedure; that is checked where it happens. So each variable keeps the originals of
-  the one open interval itself, and their storage is reused from one interval to the next.
+  combinational procedure: every execution one starts takes a context stating no dialect, and only
+  an `always_comb` or `always_latch` states one. So each variable keeps the originals of the one
+  open interval itself, and their storage is reused from one interval to the next. A telling that
+  raises at an interval's end ends the run, so no later interval meets what it left kept.
 - **What is kept lies in storage the simulation already holds.** An original is made in the bytes
   the storage for deferred effects hands out and given back when the interval ends, and the
   originals a variable keeps are listed in a vector it keeps from one interval to the next, so an
