@@ -1919,28 +1919,6 @@ auto AnswersReferenceToContents(const mir::CallExpr& call) -> bool {
     case support::EntryAnswer::kReferenceToSampledContents:
     case support::EntryAnswer::kReadOnlyReferenceIntoTheReceiver:
     case support::EntryAnswer::kMutableReferenceIntoTheReceiver:
-    case support::EntryAnswer::kExecution:
-      return false;
-  }
-  throw InternalError("mir_to_lir: unknown entry answer");
-}
-
-// Whether a call names a library entry answering with an execution it built
-// itself, where a call of a body answering one builds the body's frame for the
-// execution to be entered on.
-auto EntryBuildsExecution(const mir::CallExpr& call) -> bool {
-  const std::optional<support::BuiltinFn> fn = mir::DirectBuiltinFn(call);
-  if (!fn.has_value()) {
-    return false;
-  }
-  switch (support::RuntimeEntryOf(*fn).answer) {
-    case support::EntryAnswer::kExecution:
-      return true;
-    case support::EntryAnswer::kNewValue:
-    case support::EntryAnswer::kReadOnlyReferenceIntoTheReceiver:
-    case support::EntryAnswer::kMutableReferenceIntoTheReceiver:
-    case support::EntryAnswer::kReferenceToContents:
-    case support::EntryAnswer::kReferenceToSampledContents:
       return false;
   }
   throw InternalError("mir_to_lir: unknown entry answer");
@@ -2165,11 +2143,12 @@ auto FunctionLowerer::ReferenceValue(
                 "mir_to_lir: a class's definition is read whole, where only "
                 "its address is ever taken -- please report this as a bug");
           },
-          // Read as a value, a body is its address.
+          // Only a constant names a body -- a class's definition, a
+          // reaction's -- and a constant is data rather than a body.
           [&](const mir::FunctionRef&) -> diag::Result<lir::Operand> {
-            return lir::Operand{lir::AddressConst{
-                .to = unit_->ReferentOf(target, type),
-                .type = unit_->TranslateType(type)}};
+            throw InternalError(
+                "mir_to_lir: a body reads the address of a body -- please "
+                "report this as a bug");
           },
           // Only a class's definition holds one, and a definition is data
           // rather than a body.
@@ -2856,10 +2835,8 @@ auto FunctionLowerer::LowerCallInto(
 
   // Reached where nothing awaits the execution -- a process handed to the
   // scheduler. Such a body finishes with no value, so there is nothing for it
-  // to complete into; the awaiting form supplies that storage itself. A library
-  // entry building the execution is called as any entry is.
-  if (unit_->Mir().types.Get(type).Is<mir::CoroutineType>() &&
-      !EntryBuildsExecution(call)) {
+  // to complete into; the awaiting form supplies that storage itself.
+  if (unit_->Mir().types.Get(type).Is<mir::CoroutineType>()) {
     return settled(EnterCoroutine(block, call, type, std::nullopt));
   }
 

@@ -38,12 +38,12 @@ auto RunningFiberSlot() -> Fiber*& {
   return running;
 }
 
-// The process whose foreign call is running on this thread right now. The
+// The thread whose foreign call is running on this host thread right now. The
 // exported-task driver reaches it here because foreign C hands it no engine
-// handle. Guarded so a nested foreign call restores its caller's process.
-auto ForeignProcessSlot() -> RuntimeProcess*& {
-  static thread_local RuntimeProcess* process = nullptr;
-  return process;
+// handle. Guarded so a nested foreign call restores its caller's.
+auto ForeignThreadSlot() -> CoroutineThread*& {
+  static thread_local CoroutineThread* thread = nullptr;
+  return thread;
 }
 
 // A program built to check its memory links the address sanitizer, which keeps
@@ -276,24 +276,24 @@ void YieldForeignExecution() {
   RunningFiberSlot()->Yield();
 }
 
-ForeignProcessGuard::ForeignProcessGuard(RuntimeProcess& process)
-    : previous_process_(std::exchange(ForeignProcessSlot(), &process)) {
+ForeignThreadGuard::ForeignThreadGuard(CoroutineThread& thread)
+    : previous_thread_(std::exchange(ForeignThreadSlot(), &thread)) {
 }
 
-ForeignProcessGuard::~ForeignProcessGuard() {
-  ForeignProcessSlot() = previous_process_;
+ForeignThreadGuard::~ForeignThreadGuard() {
+  ForeignThreadSlot() = previous_thread_;
 }
 
-void DriveOnForeignStack(Activation& frame) {
+void DriveOnForeignStack(FrameActivation& frame) {
   frame.coroutine.resume();
   while (!frame.coroutine.done()) {
     YieldForeignExecution();
-    frame.Process().CurrentLeaf()->coroutine.resume();
+    frame.Thread().Leaf()->coroutine.resume();
   }
 }
 
-auto CurrentForeignProcess() -> RuntimeProcess& {
-  if (ForeignProcessSlot() == nullptr) {
+auto CurrentForeignThread() -> CoroutineThread& {
+  if (ForeignThreadSlot() == nullptr) {
     // LRM 35.5.3.
     const base::SourceLocationScope bound(
         ImportCallWrittenAt(AmbientRunContext::Current().Effects()));
@@ -302,13 +302,13 @@ auto CurrentForeignProcess() -> RuntimeProcess& {
         "subroutine runs as the process that entered the foreign call, so "
         "there must be one");
   }
-  return *ForeignProcessSlot();
+  return *ForeignThreadSlot();
 }
 
 auto RunForeignTaskOnFiber(
     RuntimeEffects& effects,
     OwnedClosure<support::EffectSignature> foreign_call) -> bool {
-  return !effects.CurrentProcess().EnterForeignExecution(
+  return !effects.RunningThread().EnterForeignExecution(
       MakeForeignExecution(std::move(foreign_call)));
 }
 

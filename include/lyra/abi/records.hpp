@@ -11,14 +11,16 @@
 #include "lyra/support/random_qualifier.hpp"
 #include "lyra/support/scope_execution.hpp"
 #include "lyra/support/scope_kind.hpp"
+#include "lyra/support/start_kind.hpp"
 #include "lyra/value/constant_span.hpp"
 #include "lyra/value/enumeration.hpp"
 #include "lyra/value/object_ref.hpp"
 
 // The structures the runtime library reads out of constants a compiled design
 // states: what each class is, what a scope of the design hierarchy is and the
-// data objects it declares, how each object of the design is constructed,
-// where an operation was written, and an enumeration's members. Each is
+// data objects it declares, how each object of the design is constructed, each
+// static process an instance starts, where an operation was written, and an
+// enumeration's members. Each is
 // declared once, here, or for the last two in the layer that reads them -- the
 // base layer's reports and the value layer -- and both sides read the
 // declaration: the library to read a constant, and the compiler, which is built
@@ -449,6 +451,42 @@ struct ConstructionTable {
   value::ConstantSpan<GeneratePlaces> generates;
 };
 
+// A static process as compiled (Annex P): what kind of process it is, which
+// says when it starts with its instance and what created its thread (LRM 9.2,
+// 9.7), and where the source writes it. Every instance starting the process
+// shares it, as does every process alike in kind and place, since a unit
+// holds each distinct constant once. The kind is held as the number a constant
+// record writes.
+struct ProcessDefinition {
+  std::uint8_t kind = 0;
+  const base::SourceLocation::Impl* written_at = nullptr;
+
+  [[nodiscard]] auto Kind() const -> support::StartKind {
+    return static_cast<support::StartKind>(kind);
+  }
+};
+
+// A part of a process that stops only at the head of its loop, entered on the
+// object the process belongs to and on the wait the run keeps for it, both
+// erased, since one run serves the processes of every class. A pass answers
+// whether the wait has still to end; a setup answers what its form says.
+using ReactionPart = bool (*)(void* receiver, void* wait);
+
+// How a static process whose body runs to its end each time it is triggered
+// is compiled: the setup that builds the wait it stops at, the pass that runs
+// the loop's statements once (each a part), and the form saying how the run
+// calls them. A body that never stops is its setup alone, and states no pass.
+// The form is held as the number a constant record writes.
+struct ReactionDefinition {
+  ReactionPart setup = nullptr;
+  ReactionPart pass = nullptr;
+  std::uint8_t form = 0;
+
+  [[nodiscard]] auto Form() const -> support::ReactionForm {
+    return static_cast<support::ReactionForm>(form);
+  }
+};
+
 // Hands each member of a record to `visit`, in the order the record declares
 // them, as Boost.PFR's `for_each_field` does. A structured binding names every
 // member, so a record gaining or losing one stops these from compiling until
@@ -565,6 +603,23 @@ constexpr void ForEachField(const ScopeCallable& record, const Visit& visit) {
   const auto& [name, entry] = record;
   visit(name);
   visit(entry);
+}
+
+template <typename Visit>
+constexpr void ForEachField(
+    const ProcessDefinition& record, const Visit& visit) {
+  const auto& [kind, written_at] = record;
+  visit(kind);
+  visit(written_at);
+}
+
+template <typename Visit>
+constexpr void ForEachField(
+    const ReactionDefinition& record, const Visit& visit) {
+  const auto& [setup, pass, form] = record;
+  visit(setup);
+  visit(pass);
+  visit(form);
 }
 
 template <typename Visit>

@@ -24,6 +24,8 @@ constexpr void ForEachLibraryRecord(const Visit& visit) {
   visit.template operator()<LexicalScopeRecord>(Decl::kLexicalScopeRecord);
   visit.template operator()<ScopeDeclarations>(Decl::kScopeDeclarations);
   visit.template operator()<ScopeCallable>(Decl::kScopeCallable);
+  visit.template operator()<ProcessDefinition>(Decl::kProcessDefinition);
+  visit.template operator()<ReactionDefinition>(Decl::kReactionDefinition);
   visit.template operator()<ClassObjectInfo>(Decl::kClassObjectInfo);
   visit.template operator()<InterfaceRow>(Decl::kInterfaceRow);
   visit.template operator()<InterfaceReach>(Decl::kInterfaceReach);

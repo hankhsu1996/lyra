@@ -76,9 +76,9 @@ The accurate framing, which documentation must not overstate into a final value 
    storage, or a process-persistent local.
 
 2. **A handle that must outlive the call is explicitly consumed, copied, or promoted by a runtime
-   API into longer-lived storage.** For example, `register_initial` consumes the coroutine wrapper;
-   the persistent object is the `Coroutine` moved into the `RuntimeProcess`, not the transient
-   wrapper the arena held.
+   API into longer-lived storage.** For example, `register_coroutine` consumes the coroutine
+   wrapper; the persistent object is the `Coroutine` moved into the thread that executes its
+   process, not the transient wrapper the arena held.
 
 3. **A future cross-suspension local value does not live in `GeneratedCallScope`.** That class of
    value needs an activation frame / process frame; if it carries a managed edge, that storage is

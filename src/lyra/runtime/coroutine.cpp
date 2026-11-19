@@ -8,6 +8,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/runtime/cancellation.hpp"
 #include "lyra/runtime/intrusive_list.hpp"
+#include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/wait.hpp"
 
 namespace lyra::runtime {
@@ -16,6 +17,17 @@ Activation::Activation() {
   queued.activation = this;
 }
 Activation::~Activation() = default;
+
+FrameActivation::FrameActivation() = default;
+FrameActivation::~FrameActivation() = default;
+
+void Activation::RunAtTheOccurrence(RuntimeEffects& effects) {
+  if (!Run(effects) || effects.TryRunning() == nullptr) {
+    return;
+  }
+  RecordRunningEndedTheRun(effects);
+  RaiseUnclaimableEffect();
+}
 
 Cancelled::Cancelled(std::exception_ptr effect) : effect(std::move(effect)) {
 }
@@ -50,7 +62,7 @@ void Activation::Withdraw() noexcept {
   }
 }
 
-auto Activation::ContinuationAfterCompletion() const noexcept
+auto FrameActivation::ContinuationAfterCompletion() const noexcept
     -> std::coroutine_handle<> {
   if (continuation) {
     return continuation;
@@ -58,12 +70,13 @@ auto Activation::ContinuationAfterCompletion() const noexcept
   return std::noop_coroutine();
 }
 
-auto Activation::Process() const -> RuntimeProcess& {
-  if (process == nullptr) {
+auto FrameActivation::Thread() const -> CoroutineThread& {
+  if (thread == nullptr) {
     throw InternalError(
-        "Activation::Process: no RuntimeProcess back-pointer set");
+        "FrameActivation::Thread: a frame runs in no thread -- please report "
+        "this as a bug");
   }
-  return *process;
+  return *thread;
 }
 
 CompletionSlot<void>::CompletionSlot() = default;

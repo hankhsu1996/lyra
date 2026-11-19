@@ -2036,7 +2036,6 @@ using lyra::abi::ConstructionTable;
 using lyra::abi::ElaboratedScopeRecord;
 using lyra::abi::ObjectDefinition;
 using lyra::abi::ScopeDeclarations;
-using lyra::runtime::Activation;
 using lyra::runtime::AdoptClosure;
 using lyra::runtime::AdoptObject;
 using lyra::runtime::AllocateValueCell;
@@ -2070,9 +2069,10 @@ using lyra::runtime::ClosureValue;
 using lyra::runtime::Compared;
 using lyra::runtime::ControlEffect;
 using lyra::runtime::Coroutine;
+using lyra::runtime::CoroutineThread;
 using lyra::runtime::current_runtime;
 using lyra::runtime::CurrentExportScope;
-using lyra::runtime::CurrentForeignProcess;
+using lyra::runtime::CurrentForeignThread;
 using lyra::runtime::DeferredEffects;
 using lyra::runtime::Delay;
 using lyra::runtime::DelayReal;
@@ -2116,6 +2116,7 @@ using lyra::runtime::FileTable;
 using lyra::runtime::FindExportEntry;
 using lyra::runtime::ForkWaitAll;
 using lyra::runtime::ForkWaitFirst;
+using lyra::runtime::FrameActivation;
 using lyra::runtime::GcObject;
 using lyra::runtime::GeneratedCallScope;
 using lyra::runtime::HandleTo;
@@ -2191,7 +2192,6 @@ using lyra::runtime::RunDesignRoot;
 using lyra::runtime::RunHostCommand;
 using lyra::runtime::RunNullHostCommand;
 using lyra::runtime::RuntimeEffects;
-using lyra::runtime::RuntimeProcess;
 using lyra::runtime::SampledHistory;
 using lyra::runtime::ScalarPropagationDelay;
 using lyra::runtime::Scope;
@@ -2502,34 +2502,11 @@ auto lyra_rt_enter_coroutine(void* frame, void* out) noexcept -> void* {
       out, lyra::runtime::GeneratedCoroutine(frame));
 }
 
-auto lyra_rt_enter_reaction_running_first(
-    void* receiver, bool (*setup)(void*, void*), bool (*pass)(void*, void*),
-    void* out) noexcept -> void* {
-  return std::construct_at(
-      static_cast<Coroutine<void>*>(out),
-      lyra::runtime::EnterReactionRunningFirst(receiver, setup, pass));
-}
-
-auto lyra_rt_enter_run_to_completion(
-    void* receiver, void (*body)(void*), void* out) noexcept -> void* {
-  return std::construct_at(
-      static_cast<Coroutine<void>*>(out),
-      lyra::runtime::EnterRunToCompletion(receiver, body));
-}
-
-auto lyra_rt_enter_reaction_stopping_first(
-    void* receiver, bool (*setup)(void*, void*), bool (*pass)(void*, void*),
-    void* out) noexcept -> void* {
-  return std::construct_at(
-      static_cast<Coroutine<void>*>(out),
-      lyra::runtime::EnterReactionStoppingFirst(receiver, setup, pass));
-}
-
 auto lyra_rt_await_coroutine(void* runtime, void* activation) -> bool {
   auto& svc = *static_cast<RuntimeEffects*>(runtime);
-  lyra::runtime::RuntimeProcess& process = svc.CurrentProcess();
-  Activation* const caller = process.CurrentLeaf();
-  Activation* const called = process.PushActivation(
+  CoroutineThread& thread = svc.RunningThread();
+  FrameActivation* const caller = thread.Leaf();
+  FrameActivation* const called = thread.PushActivation(
       std::move(*static_cast<Coroutine<void>*>(activation)));
   called->coroutine.resume();
   // An activation that consumed no time is over before its caller could have
@@ -2543,15 +2520,15 @@ auto lyra_rt_await_coroutine(void* runtime, void* activation) -> bool {
 }
 
 void lyra_rt_release_coroutine(void* runtime) {
-  lyra::runtime::RuntimeProcess& process =
-      static_cast<RuntimeEffects*>(runtime)->CurrentProcess();
+  CoroutineThread& thread =
+      static_cast<RuntimeEffects*>(runtime)->RunningThread();
   // A run-time error that left the called body was stored rather than allowed
   // to travel, because a coroutine's promise stores whatever escapes the body
   // it drives. The call is one statement of this thread, so it continues from
   // here -- taken before the activation is released, which destroys the promise
   // holding it.
-  std::exception_ptr raised = process.TakeInnermostRaisedError();
-  process.PopActivation();
+  std::exception_ptr raised = thread.TakeInnermostRaisedError();
+  thread.PopActivation();
   if (raised) {
     std::rethrow_exception(raised);
   }
@@ -3959,46 +3936,24 @@ auto lyra_rt_dist_erlang(
           seed, stages, mean, SourceLocationAt(location)));
 }
 
-void lyra_rt_register_initial(
-    void* self, void* unit_instance, void* coroutine, const void* written_at) {
-  RegisterInitialProcess(
-      static_cast<Scope*>(self), static_cast<Scope*>(unit_instance),
-      std::move(*static_cast<Coroutine<void>*>(coroutine)),
-      SourceLocationAt(written_at));
-}
-
-void lyra_rt_register_always(
-    void* self, void* unit_instance, void* coroutine, const void* written_at) {
-  RegisterAlwaysProcess(
-      static_cast<Scope*>(self), static_cast<Scope*>(unit_instance),
-      std::move(*static_cast<Coroutine<void>*>(coroutine)),
-      SourceLocationAt(written_at));
-}
-
-void lyra_rt_register_observing(
-    void* self, void* unit_instance, void* coroutine, const void* written_at) {
-  RegisterObservingProcess(
-      static_cast<Scope*>(self), static_cast<Scope*>(unit_instance),
-      std::move(*static_cast<Coroutine<void>*>(coroutine)),
-      SourceLocationAt(written_at));
-}
-
-void lyra_rt_register_continuous_driver(
-    void* self, void* unit_instance, void* runs_as, void* coroutine,
-    const void* written_at) {
-  RegisterContinuousDriver(
+void lyra_rt_register_coroutine(
+    void* self, void* unit_instance, void* runs_as, const void* definition,
+    void* coroutine) {
+  RegisterCoroutine(
       static_cast<Scope*>(self), static_cast<Scope*>(unit_instance),
       static_cast<Scope*>(runs_as),
-      std::move(*static_cast<Coroutine<void>*>(coroutine)),
-      SourceLocationAt(written_at));
+      static_cast<const lyra::abi::ProcessDefinition*>(definition),
+      std::move(*static_cast<Coroutine<void>*>(coroutine)));
 }
 
-void lyra_rt_register_triggered(
-    void* self, void* unit_instance, void* coroutine, const void* written_at) {
-  RegisterTriggeredProcess(
+void lyra_rt_register_reaction(
+    void* self, void* unit_instance, void* runs_as, const void* definition,
+    const void* reaction, void* object) {
+  RegisterReaction(
       static_cast<Scope*>(self), static_cast<Scope*>(unit_instance),
-      std::move(*static_cast<Coroutine<void>*>(coroutine)),
-      SourceLocationAt(written_at));
+      static_cast<Scope*>(runs_as),
+      static_cast<const lyra::abi::ProcessDefinition*>(definition),
+      static_cast<const lyra::abi::ReactionDefinition*>(reaction), object);
 }
 
 void lyra_rt_register_final(
@@ -4106,8 +4061,8 @@ void lyra_rt_run_exported_task_to_completion(void* activation) {
   // reached here is one: it runs in the thread that entered the foreign call
   // (LRM 9.5), so entering it is what makes a delay inside it park the right
   // frame rather than the one that called out.
-  RuntimeProcess& process = CurrentForeignProcess();
-  Activation* const called = process.PushActivation(
+  CoroutineThread& thread = CurrentForeignThread();
+  FrameActivation* const called = thread.PushActivation(
       std::move(*static_cast<Coroutine<void>*>(activation)));
   DriveOnForeignStack(*called);
   // A run-time error that left the body was stored rather than allowed to
@@ -4115,8 +4070,8 @@ void lyra_rt_run_exported_task_to_completion(void* activation) {
   // the entry's own region receives it before it can reach the foreign frame
   // above. Taken before the activation is released, which destroys what holds
   // it.
-  std::exception_ptr raised = process.TakeInnermostRaisedError();
-  process.PopActivation();
+  std::exception_ptr raised = thread.TakeInnermostRaisedError();
+  thread.PopActivation();
   if (raised) {
     std::rethrow_exception(raised);
   }

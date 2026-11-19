@@ -66,11 +66,11 @@ Concretely:
    behavior handle).
 5. **Process ownership moves to the runtime.** A process is kept by whoever started it: a process
    keeps its children (LRM 9.5), a program its initial procedures (LRM 24.3), and the runtime every
-   other execution no process started. The `RegisterInitial` / `RegisterFinal` MIR builtins become
-   namespace-qualified free functions (`lyra::runtime::RegisterInitialProcess(scope, coro)`) that
-   hand the process to its keeper through ambient reach. What a process started is reached from it
-   (LRM 9.6.1 `wait fork`, LRM 9.6.3 `disable fork`), and no index by scope stands beside that; `%m`
-   reads the scope tree, never a process.
+   other execution no process started. The registration MIR builtins become namespace-qualified free
+   functions (`lyra::runtime::RegisterCoroutine(scope, ..., coro)`) that hand the process to its
+   keeper through ambient reach. What a process started is reached from it (LRM 9.6.1 `wait fork`,
+   LRM 9.6.3 `disable fork`), and no index by scope stands beside that; `%m` reads the scope tree,
+   never a process.
 6. **Design tree is a distinct type.** `Design { unique_ptr<Scope> root_ }` is the single nominal
    type for "an elaborated scope tree". `Runtime::BindDesign` takes `unique_ptr<Design>`, so a
    mid-tree `Scope` cannot be mistaken for the whole design. Tree-global traversal (`ForEachScope`)
@@ -192,8 +192,8 @@ incidentally coupled under the module-only design; they are semantically indepen
   inspection code and elaboration phases run outside a generated-call boundary yet still need the
   runtime; the per-call guard would either add overhead (a guard per call) or force every such site
   to install one manually. Runtime-attachment lifetime matches the ambient pattern for
-  current-process / current-scope publication, and mirrors the existing `current_process` and
-  `current_time` lifetime.
+  current-process / current-scope publication, and mirrors the lifetime of what is published as
+  running and of `current_time`.
 
 - **Publishing an ambient scope alongside the ambient process.** The receiver-based scheme reached
   the executing scope through `self`, and its replacement kept a scope published beside the process
@@ -214,15 +214,16 @@ incidentally coupled under the module-only design; they are semantically indepen
   `Runtime final : public RuntimeEffects` adds `BindDesign` / `Run` and holds every mutable
   simulation datum. `Design` owns the elaborated scope tree. `Scope` is a pure structural node (no
   scheduler state). Every process is kept by the process, the program or the runtime that started
-  it. `ProcessExecutionGuard` publishes the ambient process at each resume, and the elaboration
-  walks publish nothing. `CurrentRuntimeGuard` publishes on Runtime construction, restores the prior
-  value on destruction so nested constructions in tests cannot leave dangling TLS.
+  it. Whatever runs -- a thread of frames, a reaction, code on no thread -- publishes itself as the
+  one thing running while it runs, and the elaboration walks publish nothing. `CurrentRuntimeGuard`
+  publishes on Runtime construction, restores the prior value on destruction so nested constructions
+  in tests cannot leave dangling TLS.
 
 - Backends: C++ renders `current_runtime()` as `lyra::runtime::current_runtime()` in the
   `lyra::runtime` namespace group. LLVM binds it to a zero-argument runtime symbol
   `lyra_rt_current_runtime`. Both backends translate mechanically with no per-body-kind branching.
-  `RegisterInitial` / `RegisterFinal` render as free-function calls
-  `lyra::runtime::RegisterInitialProcess(scope, coro)`, not as receiver methods.
+  The registrations render as free-function calls `lyra::runtime::RegisterCoroutine(scope, ...)`,
+  not as receiver methods.
 
 - HIR-to-MIR: `BuildCurrentRuntimeCallExpr(unit)` (zero frame dependency) is the site every
   runtime-effect lowering calls to obtain the runtime handle. The receiver-based construction helper

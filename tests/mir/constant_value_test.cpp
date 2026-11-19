@@ -100,6 +100,11 @@ TEST(MirConstantValueTest, ATableIsWhatItHolds) {
   const ConstantId location = InternSourceLocation(
       unit, diag::SourcePosition{.file = "a.sv", .line = 1, .column = 2});
   const TypeId record = unit.builtins.source_location_record;
+  const TypeId entry = unit.types.Intern(
+      Type{PointerType{
+          .pointee = record,
+          .ownership = PointerOwnership::kBorrowed,
+          .mutability = Mutability::kReadOnly}});
   const auto table_of = [&](std::uint32_t entries) {
     ArrayValue array;
     for (std::uint32_t i = 0; i < entries; ++i) {
@@ -109,8 +114,7 @@ TEST(MirConstantValueTest, ATableIsWhatItHolds) {
     }
     return unit.constants.Intern(
         ConstantDecl{
-            .type = MachineArrayOf(
-                unit.types, unit.builtins.source_location_record_ptr, entries),
+            .type = MachineArrayOf(unit.types, entry, entries),
             .value = ConstantValue{std::move(array)}});
   };
   EXPECT_EQ(table_of(2), table_of(2));

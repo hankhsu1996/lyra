@@ -15,6 +15,7 @@ class ProgramThreads;
 class RuntimeProcess;
 class ReadReport;
 class Scope;
+struct Activation;
 
 // Where an execution woken by what it waits for is placed: in the Active region
 // of its region set, in the slot the occurrence happened in, as every thread
@@ -148,9 +149,10 @@ struct ExecutionContext {
 // subroutine body is compiled once and reached from more than one runner, so
 // each is read from whatever is running rather than passed in.
 //
-// A process owns one for its whole life, so two foreign calls suspended on
-// different processes never share a chain. Code that runs on no thread owns
-// one for its single run, which is why this is not state of a process: a
+// A thread of frames owns one for its whole life, so two foreign calls
+// suspended on different threads never share a chain. A reaction holds one for
+// each run and code that runs on no thread one for its single run, which is
+// why this is not state of a process: a
 // variable declaration assignment runs before any procedure starts (LRM 10.5,
 // 26.2), and a `$strobe` argument is evaluated after every process of its time
 // step has run (LRM 21.2.2), and both can reach every one of them.
@@ -164,7 +166,8 @@ struct RunningState {
   // split of `object_seeds` where there is one -- a static initializer's
   // object is seeded from its instance's initialization RNG (LRM 18.14.1) --
   // and of `generator` otherwise, as a thread seeds the objects it makes.
-  // `owner` is the process this is the state of, or null for code on no
+  // `owner` is the process whose thread this is the state of, or null for what
+  // never stops inside a disable target: a reaction's run, and code on no
   // thread.
   RunningState(
       DrawRng& generator, InitializationRng* object_seeds,
@@ -208,6 +211,38 @@ struct RunningState {
   bool ended_the_run = false;
 };
 
+// What is running: the frames of a process's thread, a reaction, or code on
+// no thread. The runtime holds one at a time, and the code running reads from
+// it what is in force, what it runs in and the process it is (LRM 9.5); a stop
+// it makes parks its leaf. Each installs itself where it starts to run and
+// puts back what it displaced where it stops, so a run started inside another
+// -- a frame a reaction's pass starts, code on no thread an effect enters --
+// leaves the outer one in place on its return.
+class Runner {
+ public:
+  Runner();
+  Runner(const Runner&) = delete;
+  auto operator=(const Runner&) -> Runner& = delete;
+  Runner(Runner&&) = delete;
+  auto operator=(Runner&&) -> Runner& = delete;
+  virtual ~Runner();
+
+  // What is in force while it runs.
+  [[nodiscard]] virtual auto State() -> RunningState& = 0;
+  // What it runs in: its region set, its procedure, what created its thread.
+  // Read by a run stopped from outside, so it may not throw.
+  [[nodiscard]] virtual auto Context() const noexcept
+      -> const ExecutionContext& = 0;
+  // The activation a stop made now parks: the innermost frame of a thread, or
+  // a reaction. None for code on no thread, which never stops.
+  [[nodiscard]] virtual auto Leaf() -> Activation* = 0;
+  // The process it runs as, where that has an object: none for code on no
+  // thread, and none yet for a reaction the language has not asked about.
+  [[nodiscard]] virtual auto ProcessIfMade() -> RuntimeProcess* = 0;
+  // The same, its object made now where the language asks for it.
+  [[nodiscard]] virtual auto Process() -> RuntimeProcess* = 0;
+};
+
 // What the design's code runs in where no thread runs it: a static
 // initialization, before any procedure starts, and a deferred body that
 // evaluates what the source wrote once its region runs it. It answers what the
@@ -215,33 +250,41 @@ struct RunningState {
 // and carries what it displaced so that leaving restores whatever was running
 // before. Its place never moves, since its state draws from the generator
 // beside it.
-struct NoThreadRun {
+class NoThreadRun final : public Runner {
+ public:
   NoThreadRun(
       DrawRng generator, InitializationRng* object_seeds,
-      const ExecutionContext& context, RunningState* displaced,
-      const ProcedureContext* displaced_procedure)
-      : generator(generator),
-        state(this->generator, object_seeds, nullptr),
-        context(context),
-        displaced(displaced),
-        displaced_procedure(displaced_procedure) {
+      const ExecutionContext& context, Runner* displaced)
+      : generator_(generator),
+        state_(generator_, object_seeds, nullptr),
+        context_(context),
+        displaced_(displaced) {
   }
   NoThreadRun(const NoThreadRun&) = delete;
   auto operator=(const NoThreadRun&) -> NoThreadRun& = delete;
   NoThreadRun(NoThreadRun&&) = delete;
   auto operator=(NoThreadRun&&) -> NoThreadRun& = delete;
-  ~NoThreadRun() = default;
+  ~NoThreadRun() override;
 
-  DrawRng generator;
-  RunningState state;
-  // What the code runs in, which a deferred assertion it reaches takes its
-  // action's context from. No initial or always procedure created it and it
-  // belongs to no program.
-  ExecutionContext context;
-  // Null where nothing was running before this one started.
-  RunningState* displaced = nullptr;
-  // The procedure in force before this one started.
-  const ProcedureContext* displaced_procedure;
+  [[nodiscard]] auto State() -> RunningState& override;
+  // What a deferred assertion it reaches takes its action's context from. No
+  // initial or always procedure created it and it belongs to no program.
+  [[nodiscard]] auto Context() const noexcept
+      -> const ExecutionContext& override;
+  [[nodiscard]] auto Leaf() -> Activation* override;
+  [[nodiscard]] auto ProcessIfMade() -> RuntimeProcess* override;
+  [[nodiscard]] auto Process() -> RuntimeProcess* override;
+
+  // What was running before this started, none where nothing was.
+  [[nodiscard]] auto Displaced() const -> Runner* {
+    return displaced_;
+  }
+
+ private:
+  DrawRng generator_;
+  RunningState state_;
+  ExecutionContext context_;
+  Runner* displaced_;
 };
 
 // What a deferred body that evaluates what the source wrote takes where it is

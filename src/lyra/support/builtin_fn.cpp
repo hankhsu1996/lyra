@@ -2587,36 +2587,19 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "static_constraint_mode_get",
           .declaration = RuntimeFunction("StaticConstraintModeGet"),
           .takes_the_location = false};
-    case BuiltinFn::kRegisterAlways:
+    case BuiltinFn::kRegisterCoroutine:
       return {
-          .name = "register_always",
-          .declaration = RuntimeFunction("RegisterAlwaysProcess"),
+          .name = "register_coroutine",
+          .declaration = RuntimeFunction("RegisterCoroutine"),
           .takes_the_location = false,
-          .callables = {kStartedPastTheCaller}};
-    case BuiltinFn::kRegisterObserving:
+          .callables = {kStartedPastTheCaller},
+          .hands_the_run_a_body = HandsTheRunABody{
+              .body_at = 4, .as_a_reaction = BuiltinFn::kRegisterReaction}};
+    case BuiltinFn::kRegisterReaction:
       return {
-          .name = "register_observing",
-          .declaration = RuntimeFunction("RegisterObservingProcess"),
-          .takes_the_location = false,
-          .callables = {kStartedPastTheCaller}};
-    case BuiltinFn::kRegisterContinuousDriver:
-      return {
-          .name = "register_continuous_driver",
-          .declaration = RuntimeFunction("RegisterContinuousDriver"),
-          .takes_the_location = false,
-          .callables = {kStartedPastTheCaller}};
-    case BuiltinFn::kRegisterInitial:
-      return {
-          .name = "register_initial",
-          .declaration = RuntimeFunction("RegisterInitialProcess"),
-          .takes_the_location = false,
-          .callables = {kStartedPastTheCaller}};
-    case BuiltinFn::kRegisterTriggered:
-      return {
-          .name = "register_triggered",
-          .declaration = RuntimeFunction("RegisterTriggeredProcess"),
-          .takes_the_location = false,
-          .callables = {kStartedPastTheCaller}};
+          .name = "register_reaction",
+          .declaration = RuntimeFunction("RegisterReaction"),
+          .takes_the_location = false};
     case BuiltinFn::kRegisterFinal:
       return {
           .name = "register_final",
@@ -2629,27 +2612,6 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .declaration = RuntimeFunction("RunAssertionAction"),
           .takes_the_location = false,
           .callables = {kStartedPastTheCaller}};
-    case BuiltinFn::kEnterReactionRunningFirst:
-      return {
-          .name = "enter_reaction_running_first",
-          .declaration = RuntimeFunction("EnterReactionRunningFirst"),
-          .takes_the_location = false,
-          .ending = CallEnding::kReturns,
-          .answer = EntryAnswer::kExecution};
-    case BuiltinFn::kEnterReactionStoppingFirst:
-      return {
-          .name = "enter_reaction_stopping_first",
-          .declaration = RuntimeFunction("EnterReactionStoppingFirst"),
-          .takes_the_location = false,
-          .ending = CallEnding::kReturns,
-          .answer = EntryAnswer::kExecution};
-    case BuiltinFn::kEnterRunToCompletion:
-      return {
-          .name = "enter_run_to_completion",
-          .declaration = RuntimeFunction("EnterRunToCompletion"),
-          .takes_the_location = false,
-          .ending = CallEnding::kReturns,
-          .answer = EntryAnswer::kExecution};
     case BuiltinFn::kEnterScopeStaticInit:
       return {
           .name = "enter_scope_static_init",

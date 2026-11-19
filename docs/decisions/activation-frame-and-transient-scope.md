@@ -39,10 +39,10 @@ Four concepts, one name each. Storage is named after the architecture's **activa
 word **activation** is reserved for the control identity; and the per-stretch transient store keeps
 its own name.
 
-- **`RuntimeProcess` is the lineage / scheduler node.** It carries process identity and the
-  parent-child process lineage (LRM 9.5), and it owns the frames of the activation it currently
-  runs. `activation.md` forbids a lineage node whose lifetime is its execution's, so the node
-  outlives the frame it once held -- the code already does this. `RuntimeProcess` is not a
+- **`RuntimeProcess` is the lineage node.** It carries process identity and the parent-child process
+  lineage (LRM 9.5); the scheduler's node is the activation, and the frames belong to the thread
+  that executes a process made with one. `activation.md` forbids a lineage node whose lifetime is
+  its execution's, so the node outlives the execution it once had. `RuntimeProcess` is not a
   value-storage concept.
 
 - **"activation" names the control identity only.** The scheduler token (an `Activation*`, which a

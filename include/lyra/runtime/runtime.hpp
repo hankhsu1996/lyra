@@ -38,6 +38,7 @@
 #include "lyra/runtime/plusargs.hpp"
 #include "lyra/runtime/program_threads.hpp"
 #include "lyra/runtime/randomization.hpp"
+#include "lyra/runtime/reaction.hpp"
 #include "lyra/runtime/region.hpp"
 #include "lyra/runtime/rng.hpp"
 #include "lyra/runtime/running_state.hpp"
@@ -45,9 +46,12 @@
 #include "lyra/runtime/time_slot.hpp"
 #include "lyra/runtime/value_dumps.hpp"
 #include "lyra/support/callable_bounds.hpp"
+#include "lyra/support/start_kind.hpp"
 #include "lyra/value/format.hpp"
 
 namespace lyra::abi {
+struct ProcessDefinition;
+struct ReactionDefinition;
 struct ScopeDeclarations;
 }  // namespace lyra::abi
 
@@ -63,10 +67,10 @@ struct RuntimeOptions {
   std::vector<std::string> command_line;
 };
 
-// The kinds of process that start at time zero. They start in turn, in the
-// order written here, each turn once the one before it has run to its first
-// waits. The standard leaves the order of one slot's processes open (LRM 4.7),
-// and this is the one a design can lean on either way:
+// The turn a kind of process starts in at time zero. The kinds start in turn,
+// each turn once the one before it has run to its first waits. The standard
+// leaves the order of one slot's processes open (LRM 4.7), and this is the one
+// a design can lean on either way:
 //
 // - An `always` procedure is waiting before a continuous driver first
 //   evaluates, so the first value a driver gives a name is a change the
@@ -79,32 +83,23 @@ struct RuntimeOptions {
 // - An execution of the scope that is no procedure and runs inside each
 //   occurrence of what it waits for starts in the always procedures' turn, so
 //   it is waiting, as they are, before anything it waits for can occur.
-enum class StartKind : std::uint8_t {
-  kAlwaysProcedure,
-  kObserver,
-  kContinuousDriver,
-  kInitialProcedure,
-  kTriggeredProcedure,
-};
-
-// The turn a kind of process starts in at time zero.
-constexpr auto TurnOf(StartKind kind) -> std::size_t {
+constexpr auto TurnOf(support::StartKind kind) -> std::size_t {
   switch (kind) {
-    case StartKind::kAlwaysProcedure:
-    case StartKind::kObserver:
+    case support::StartKind::kAlwaysProcedure:
+    case support::StartKind::kObserver:
       return 0;
-    case StartKind::kContinuousDriver:
+    case support::StartKind::kContinuousDriver:
       return 1;
-    case StartKind::kInitialProcedure:
+    case support::StartKind::kInitialProcedure:
       return 2;
-    case StartKind::kTriggeredProcedure:
+    case support::StartKind::kTriggeredProcedure:
       return 3;
   }
   throw InternalError("TurnOf: a kind of starting process has no turn");
 }
 
 inline constexpr std::size_t kStartTurnCount =
-    TurnOf(StartKind::kTriggeredProcedure) + 1;
+    TurnOf(support::StartKind::kTriggeredProcedure) + 1;
 
 // A final procedure bound to the instance it runs for: the call, and what it
 // runs in, which the thread calling it takes on for the length of the call (LRM
@@ -200,7 +195,13 @@ class Runtime final : public RuntimeEffects {
 
   // A process that starts at time zero waits for the turn its kind has, in the
   // region set it runs in: the design's, or a program's (LRM 24.3.1).
-  void QueueStart(StartKind kind, Activation* top);
+  void QueueStart(support::StartKind kind, Activation* top);
+
+  // Keeps a reaction for the run (LRM 4.9.1, Annex P). Public because the
+  // free registration functions live outside this class.
+  auto AdoptReaction(
+      const abi::ReactionDefinition& definition, void* object,
+      const ExecutionContext& context, DrawRng generator) -> Reaction&;
 
   // The threads of the program instance `program`.
   [[nodiscard]] auto ProgramOf(const Scope& program) -> ProgramThreads&;
@@ -222,7 +223,7 @@ class Runtime final : public RuntimeEffects {
   // Gives back the code running on no thread that entered last.
   void LeaveNoThread();
 
-  // What the running process, or the code running on no thread, runs in.
+  // What the code running runs in.
   [[nodiscard]] auto RunningContext() const -> const ExecutionContext&;
 
   // Where the run stands, which decides where work made now can still run:
@@ -265,7 +266,7 @@ class Runtime final : public RuntimeEffects {
  private:
   friend class RuntimeEffects;
   friend class CurrentRuntimeGuard;
-  friend class ProcessExecutionGuard;
+  friend class RunnerGuard;
   friend class InterruptReport;
   friend void HandOverExpiry(IntrusiveList<WaitMembership>& expiry) noexcept;
 
@@ -437,6 +438,9 @@ class Runtime final : public RuntimeEffects {
   AssertionControls assertion_controls_;
   BoundMembers bound_members_;
   std::unordered_set<const VariableCell*> driven_continuously_;
+  // Every reaction of the run, released after the processes made for them
+  // and before the queues above, which one still waiting sits in.
+  ReactionTable reactions_;
   // Every execution no process started and no program keeps. Released before
   // the queues above, which a running one is still placed in.
   OwnedProcesses roots_{nullptr};
@@ -444,19 +448,15 @@ class Runtime final : public RuntimeEffects {
   // queues above as the runtime's own are. A map holds each where it was made,
   // which its roots point back at.
   std::map<const Scope*, ProgramThreads> programs_;
-  // The process running now. Atomic, as the current time is, because a run
+  // What is running: what a randomization call draws from (LRM 18.13,
+  // 18.14), what a DPI-C foreign call reports its scope through (LRM 35.5.3),
+  // and what a stop parks. Atomic, as the current time is, because a run
   // stopped from outside is asked where it is from a signal handler, which may
   // read nothing else.
-  std::atomic<RuntimeProcess*> current_process_ = nullptr;
-  // The procedure in force while no process runs: that of the code running on
-  // no thread, or of whoever made the effect or bound the timer a region is
-  // running. Atomic for the same reader.
+  std::atomic<Runner*> running_ = nullptr;
+  // The procedure in force while nothing runs: that of whoever made the effect
+  // or bound the timer a region is running. Atomic for the same reader.
   std::atomic<const ProcedureContext*> procedure_in_force_ = &kNoProcedure;
-  // What is running, which is what a randomization call draws from (LRM 18.13,
-  // 18.14) and what a DPI-C foreign call reports its scope through (LRM
-  // 35.5.3). Whichever is running installs one: a process the state it owns,
-  // code on no thread one of its own.
-  RunningState* running_ = nullptr;
   // The stream of every `$random` called with no seed (LRM 20.14.1). The
   // standard states no start for it; zero is what the algorithm itself
   // replaces with its own constant (LRM Annex N).
@@ -494,37 +494,32 @@ class Runtime final : public RuntimeEffects {
 [[nodiscard]] auto AsRuntime(RuntimeEffects& effects) -> Runtime&;
 [[nodiscard]] auto AsRuntime(const RuntimeEffects& effects) -> const Runtime&;
 
-// Reached by the generated registration builtins: creates a process bound to
-// `owning_scope` and registers it in the ambient runtime. LRM 9.2 lifecycle:
-// every kind starts at time zero, in the turn its kind has. The scope handle
-// arrives as a pointer because the generated call site is holding the `self`
-// pointer from its enclosing body. `unit_instance` is the module, interface, or
-// program instance whose text creates the process, which holds the seeds LRM
-// 18.14.1 starts a static process from: the scope itself unless the process is
-// declared inside a generate scope, which has no seeds of its own. A process
-// runs as the code of that instance and in the region set its class states
-// (LRM 24.3.1), except a continuous driver, which names the instance it runs
-// as: the drive across a child's output port is created by the instantiation
-// and evaluates the child's code (LRM 4.9.6, 24.3.2). `written_at` is where the
-// source writes the procedure, a constant of the program's that lasts the
-// whole run.
-void RegisterAlwaysProcess(
-    Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine,
-    base::SourceLocation written_at);
-void RegisterContinuousDriver(
+// Reached by the generated registration builtins: creates a static process
+// bound to `owning_scope` and registers it in the ambient runtime. LRM 9.2
+// lifecycle: every kind starts at time zero, in the turn its kind has, which
+// its `definition` states with where the source writes it, a constant of the
+// program's that lasts the whole run. The scope handle arrives as a pointer
+// because the generated call site is holding the `self` pointer from its
+// enclosing body. `unit_instance` is the module, interface, or program instance
+// whose text creates the process, which holds the seeds LRM 18.14.1 starts a
+// static process from: the scope itself unless the process is declared inside a
+// generate scope, which has no seeds of its own. `runs_as` is the instance
+// whose code it evaluates, whose class states the region set it runs in (LRM
+// 24.3.1): the creating instance but for the drive across a child's output
+// port, which the instantiation creates and which evaluates the child's code
+// (LRM 4.9.6, 24.3.2).
+//
+// The two are one operation over the two ways a body is compiled: a coroutine
+// the run resumes where it stopped, and a body that runs to its end each time
+// it is triggered, which `reaction` says how the body was split into, and whose
+// parts the run calls on `object`.
+void RegisterCoroutine(
     Scope* owning_scope, Scope* unit_instance, Scope* runs_as,
-    Coroutine<void> coroutine, base::SourceLocation written_at);
-// An execution of the scope woken inside each occurrence of what it waits for,
-// before anything the occurrence woke into a region runs (LRM 14.7, 14.10).
-void RegisterObservingProcess(
-    Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine,
-    base::SourceLocation written_at);
-void RegisterInitialProcess(
-    Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine,
-    base::SourceLocation written_at);
-void RegisterTriggeredProcess(
-    Scope* owning_scope, Scope* unit_instance, Coroutine<void> coroutine,
-    base::SourceLocation written_at);
+    const abi::ProcessDefinition* definition, Coroutine<void> coroutine);
+void RegisterReaction(
+    Scope* owning_scope, Scope* unit_instance, Scope* runs_as,
+    const abi::ProcessDefinition* definition,
+    const abi::ReactionDefinition* reaction, void* object);
 
 // Reached by the generated registration of a final procedure: keeps `call`, a
 // final procedure bound to its instance, to be called at the end of
@@ -582,5 +577,31 @@ auto ClaimNamespaceInitialization(RuntimeEffects& runtime, const char* name)
 // it up, so it is one of the run's from here.
 void RegisterNamespace(
     RuntimeEffects& runtime, const abi::ScopeDeclarations* scope_declarations);
+
+// `runner` is what runs, for the extent of a scope, in place of whatever ran
+// before, which it puts back; so an execution started inside another, or a
+// nested foreign call that re-enters generated code, leaves the outer one in
+// place on its way out. Every run of a reaction and every resume of a frame
+// takes one, so it is defined where the runtime is whole.
+class RunnerGuard {
+ public:
+  RunnerGuard(RuntimeEffects& effects, Runner& runner)
+      : runtime_(&static_cast<Runtime&>(effects)),
+        previous_(
+            runtime_->running_.exchange(&runner, std::memory_order_relaxed)) {
+  }
+  ~RunnerGuard() {
+    runtime_->running_.store(previous_, std::memory_order_relaxed);
+  }
+
+  RunnerGuard(const RunnerGuard&) = delete;
+  auto operator=(const RunnerGuard&) -> RunnerGuard& = delete;
+  RunnerGuard(RunnerGuard&&) = delete;
+  auto operator=(RunnerGuard&&) -> RunnerGuard& = delete;
+
+ private:
+  Runtime* runtime_;
+  Runner* previous_;
+};
 
 }  // namespace lyra::runtime

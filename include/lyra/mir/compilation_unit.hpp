@@ -247,7 +247,6 @@ struct BuiltinMirTypes {
   // written, and the record that value holds the address of.
   TypeId source_location;
   TypeId source_location_record;
-  TypeId source_location_record_ptr;
   TypeId wait;
   // What each stop at a wait is handed.
   TypeId wait_ptr;
@@ -424,7 +423,6 @@ struct CompilationUnit {
                 LibraryTypeOf(types, support::LibraryDecl::kSourceLocation),
             .source_location_record = LibraryTypeOf(
                 types, support::LibraryDecl::kSourceLocationRecord),
-            .source_location_record_ptr = TypeId{},
             .wait = LibraryTypeOf(types, support::LibraryDecl::kWait),
             .wait_ptr = TypeId{},
             .deferred_effects_ptr = types.Intern(
@@ -449,11 +447,6 @@ struct CompilationUnit {
         mir::Type{mir::PointerType{
             .pointee = builtins.read_report,
             .ownership = mir::PointerOwnership::kBorrowed}});
-    builtins.source_location_record_ptr = types.Intern(
-        mir::Type{mir::PointerType{
-            .pointee = builtins.source_location_record,
-            .ownership = mir::PointerOwnership::kBorrowed,
-            .mutability = mir::Mutability::kReadOnly}});
     builtins.wait_ptr = types.Intern(
         mir::Type{mir::PointerType{
             .pointee = builtins.wait,

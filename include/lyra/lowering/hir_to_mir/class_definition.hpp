@@ -76,11 +76,6 @@ auto LexicalScopeRecordConstant(
 auto ScopeDeclarationsAddress(
     const mir::CompilationUnit& unit, mir::Builder block) -> mir::ExprId;
 
-// The address of `constant`, a constant of the unit, as a value of `block`.
-auto ConstantAddressIn(
-    const mir::CompilationUnit& unit, mir::Builder block,
-    mir::ConstantId constant) -> mir::ExprId;
-
 // The type of the entry that makes a block of a block body (LRM 27), answering
 // an owning pointer to the block as the base every scope extends. It takes
 // where the block hangs, what it adds to a hierarchical name -- the

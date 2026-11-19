@@ -40,14 +40,16 @@ auto ProcessStatus(const value::ObjectRef& self, base::SourceLocation at)
     -> value::Int;
 
 // LRM 9.7 `process::kill()`: forcibly terminate the process and all its
-// descendant subprocesses. Each terminated node is marked KILLED and its frame
-// released, so nothing can resume it, and every process awaiting one is woken.
+// descendant subprocesses. Each terminated node is marked KILLED and its
+// execution released, so nothing can resume it, and every process awaiting one
+// is woken.
 //
 // Killing the calling process or one of its ancestors is a deferred,
-// safe-boundary termination: a running coroutine cannot destroy the frame it is
-// executing in, and that frame is somewhere in the killed subtree. Every
+// safe-boundary termination: a running process cannot release the execution it
+// is running in, and that execution is somewhere in the killed subtree. Every
 // off-path node (each parked at a safe boundary) is torn down synchronously,
-// while the chain that owns the running frame is kept linked so it stays alive;
+// while the chain that owns the running execution is kept linked so it stays
+// alive;
 // the running process's own termination is requested (taken off whatever could
 // wake it, cause recorded) and its body is unwound to the engine's resume
 // boundary, where the terminal state is published and the retained chain

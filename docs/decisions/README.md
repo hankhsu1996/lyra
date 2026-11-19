@@ -1051,9 +1051,9 @@ the detail lives in the entry itself.
   instruction is added for the collector. Stack maps, a shadow stack, conservative scanning, moving
   the static tree into the heap, and a second traceable-frame path are rejected.
 - [activation-frame-and-transient-scope](activation-frame-and-transient-scope.md) -- naming and the
-  escape invariant: `RuntimeProcess` is the lineage/scheduler node, `activation` is the control
-  identity, `ActivationValueStore` is one execution's cross-suspension value storage (named a store
-  rather than a frame, because the generated body already has a frame and this is not it), and
+  escape invariant: `RuntimeProcess` is the lineage node, `activation` is the control identity,
+  `ActivationValueStore` is one execution's cross-suspension value storage (named a store rather
+  than a frame, because the generated body already has a frame and this is not it), and
   `GeneratedCallScope` was the per-stretch transient -- that half superseded by
   [a-value-lives-in-its-makers-frame](a-value-lives-in-its-makers-frame.md), where a value never
   outlives its full-expression except by being handed to storage that owns it. A speculative
@@ -1563,12 +1563,12 @@ the detail lives in the entry itself.
   an activation's queue place -- and merely linked by the target; leaving is a detach rather than a
   search, and the two-authoritative-copies shape is rejected.
 - [a-wait-is-storage-of-its-activation](a-wait-is-storage-of-its-activation.md) -- every timing
-  control is a wait the body's frame holds, built so a stop reached again stops at the same wait
+  control is a wait the body's execution holds, built so a stop reached again stops at the same wait
   (outside the innermost loop on fixed storage, at the stop for a delay or a join); its memberships
   stand for its life, each stop only parks on it and answers how the execution carries on, and a
   join waits on its branches' termination. A continuous process's wait keeps a change the process
   makes itself while it runs and evaluates it again in the Active region. Every process stays one
-  coroutine; the two-kinds-of-process split was built, measured and rejected. Revises
+  shape above the run; the two-kinds-of-process split was built, measured and rejected. Revises
   waiting-is-an-operation D4 and disable-scope-invalidation D2.
 - [an-always-comb-is-triggered-by-what-a-run-leaves](an-always-comb-is-triggered-by-what-a-run-leaves.md)
   -- an `always_comb` or `always_latch` wakes on what an event's execution leaves changed of what it
@@ -1583,11 +1583,13 @@ the detail lives in the entry itself.
   uses. Splitting coroutines in the execution backend is rejected.
 - [a-process-stopping-only-at-its-loop-head-is-called](a-process-stopping-only-at-its-loop-head-is-called.md)
   -- a stage rewrites MIR into MIR before any consumer reads it, and its first rewrite splits a
-  process that stops only at the head of its loop into a setup and a pass that the runtime's one
-  coroutine calls, and a body that never stops into an ordinary function, so HIR and MIR as lowered
+  process that stops only at the head of its loop into a setup and a pass, and a body that never
+  stops into its setup alone, which the registration hands the run as a reaction -- an activation
+  that is no frame, whose process object is made when first asked for -- so HIR and MIR as lowered
   keep one process shape and both backends compile no coroutine for it. Splitting in one backend,
-  two process kinds upstream, kept locals, one entry answering three ways, and predicting a node's
-  position are rejected.
+  two process kinds upstream, kept locals, a part answering three ways, predicting a node's
+  position, a coroutine of the run's own around the parts, and an erased execution type are
+  rejected.
 - [a-rewrite-of-mir-says-whether-a-program-needs-it](a-rewrite-of-mir-says-whether-a-program-needs-it.md)
   -- the stage's rewrites are one ordered list, in which the conversion from the built phase into
   the legalized one is required and every other rewrite is optional and runs in every build unless a

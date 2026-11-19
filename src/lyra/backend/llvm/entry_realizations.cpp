@@ -1295,16 +1295,10 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kTakeNoThreadContext:
     case support::BuiltinFn::kEnterNoThread:
     case support::BuiltinFn::kDisable:
-    case support::BuiltinFn::kRegisterAlways:
-    case support::BuiltinFn::kRegisterObserving:
-    case support::BuiltinFn::kRegisterContinuousDriver:
-    case support::BuiltinFn::kRegisterInitial:
-    case support::BuiltinFn::kRegisterTriggered:
+    case support::BuiltinFn::kRegisterCoroutine:
+    case support::BuiltinFn::kRegisterReaction:
     case support::BuiltinFn::kRegisterFinal:
     case support::BuiltinFn::kRunAssertionAction:
-    case support::BuiltinFn::kEnterReactionRunningFirst:
-    case support::BuiltinFn::kEnterReactionStoppingFirst:
-    case support::BuiltinFn::kEnterRunToCompletion:
     case support::BuiltinFn::kEnterScopeStaticInit:
     case support::BuiltinFn::kEnterNamespaceStaticInit:
     case support::BuiltinFn::kLeaveStaticInit:

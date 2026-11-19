@@ -64,7 +64,7 @@ void LeaveCancellationTarget(
 }
 
 void TakeDepartureIfDue(RuntimeEffects& effects) {
-  if (RuntimeProcess* process = effects.TryCurrentProcess();
+  if (RuntimeProcess* process = effects.RunningProcessIfMade();
       process != nullptr && process->TerminationIsDue()) {
     RaiseUnclaimableEffect();
   }
@@ -76,17 +76,6 @@ void TakeDepartureIfDue(RuntimeEffects& effects) {
         target != nullptr) {
       throw ControlEffect{.target = target};
     }
-  }
-}
-
-void TakeDepartureIfDue(RuntimeProcess& process) {
-  if (process.TerminationIsDue() || process.EndedTheRun()) {
-    RaiseUnclaimableEffect();
-  }
-  if (CancellationTarget* target =
-          process.Running().targets.OutermostInvalidated();
-      target != nullptr) {
-    throw ControlEffect{.target = target};
   }
 }
 
@@ -106,7 +95,7 @@ auto RunningDepartureIsDue(RuntimeEffects& effects) -> bool {
 }
 
 auto RunningIsDisabled(RuntimeEffects& effects) -> bool {
-  if (const RuntimeProcess* process = effects.TryCurrentProcess();
+  if (const RuntimeProcess* process = effects.RunningProcessIfMade();
       process != nullptr && process->TerminationIsDue()) {
     return true;
   }
@@ -138,6 +127,15 @@ auto ClassifyUnwind() -> Unwound {
     return {true, std::current_exception()};
   } catch (...) {
     return {false, std::current_exception()};
+  }
+}
+
+auto CatchUnwind(abi::ReactionPart part, void* receiver, void* wait)
+    -> std::expected<bool, Unwound> {
+  try {
+    return part(receiver, wait);
+  } catch (...) {
+    return std::unexpected(ClassifyUnwind());
   }
 }
 

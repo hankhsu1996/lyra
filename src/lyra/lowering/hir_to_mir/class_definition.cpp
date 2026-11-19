@@ -39,6 +39,7 @@
 #include "lyra/mir/dispatch_table.hpp"
 #include "lyra/mir/enum_table.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/library_record_builder.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
@@ -984,14 +985,15 @@ auto ScopeDeclarationsAddress(
       *brought_up->scope_declarations;
   // A namespace has no object, so the library enters the bodies reading and
   // subscribing to what it keeps as the code they are.
-  return ConstantAddressIn(
-      unit, block,
+  return mir::BuildConstantAddress(
+      unit,
       ScopeDeclarationsRecord(
           unit, scope_declarations,
           [](mir::CallableId body) -> mir::ReferenceTarget {
             return mir::FunctionRef{.callable = body};
           })
-          .Intern());
+          .Intern(),
+      block);
 }
 
 //   {"u", kModuleArray, 0}
@@ -1025,21 +1027,6 @@ auto LexicalScopeRecordConstant(
   record.Set(
       &LexicalScopeRecord::kind, Number(static_cast<std::uint8_t>(kind)));
   return std::move(record).Intern();
-}
-
-auto ConstantAddressIn(
-    const mir::CompilationUnit& unit, mir::Builder block,
-    mir::ConstantId constant) -> mir::ExprId {
-  const mir::TypeId type = unit.constants.Get(constant).type;
-  return block.Add(
-      mir::MakeAddressOfExpr(
-          block.Add(
-              mir::Expr{
-                  .data =
-                      mir::ReferenceExpr{
-                          .target = mir::ConstantRef{.constant = constant}},
-                  .type = type}),
-          ReadOnlyPointerTo(unit, type)));
 }
 
 namespace {

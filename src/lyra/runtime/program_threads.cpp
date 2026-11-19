@@ -43,7 +43,7 @@ void ProgramThreads::Exit(RuntimeEffects& effects) {
 
 auto ProgramThreads::EndEveryThread(RuntimeEffects& effects) -> bool {
   ended_ = true;
-  return roots_.EndAll(effects, effects.TryCurrentProcess());
+  return roots_.EndAll(effects, effects.RunningProcessIfMade());
 }
 
 }  // namespace lyra::runtime
