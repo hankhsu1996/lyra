@@ -2,9 +2,12 @@
 
 #include <filesystem>
 #include <nlohmann/json.hpp>
+#include <optional>
+#include <string>
 #include <string_view>
 
 #include "conformance/framework/process.hpp"
+#include "lyra/ports/port.hpp"
 
 namespace lyra::test {
 
@@ -78,6 +81,13 @@ auto WriteForeignCodeDesign(const std::filesystem::path& path) -> void;
 // was named prints another number.
 auto CompileForeignCodeInto(const std::filesystem::path& dir)
     -> conformance::framework::ProcessOutcome;
+
+// Writes the metadata of the tree `store` holds for `port`, stating the port
+// and the digest of what the tree holds, as a port Lyra ships carries it.
+// Answers why it could not.
+auto PreparePort(
+    const std::filesystem::path& store, const lyra::ports::PortIdentity& port)
+    -> std::optional<std::string>;
 
 // A file a run wrote about itself, parsed. A file that is absent or is not
 // JSON answers with a discarded value, so the caller reports it as the run

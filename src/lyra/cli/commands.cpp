@@ -914,7 +914,8 @@ auto ResolveRequest(const Invocation& invocation) -> std::optional<Request> {
   const Reporter& report = *invocation.report;
   slang::driver::Driver& driver = *invocation.driver;
 
-  auto declaration_or = ResolveDesignDeclaration(*invocation.options, driver);
+  auto declaration_or = ResolveDesignDeclaration(
+      *invocation.options, driver, invocation.program_path);
   if (!declaration_or) {
     report(std::move(declaration_or.error()));
     return std::nullopt;

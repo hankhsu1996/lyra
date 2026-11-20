@@ -1,0 +1,142 @@
+Eleven register examples include uvm_pkg.sv, the file that defines the UVM
+package, instead of importing the package the UVM library defines. A package
+is defined once across every compilation unit (IEEE 1800-2023 3.13 b), so
+wherever UVM is compiled as a library of its own, as its README directs, the
+include defines uvm_pkg a second time. Include only the UVM macros, as the
+README directs and as the other examples do. Each file already imports
+uvm_pkg, so what it reads is unchanged.
+
+Not sent to the suite, since UVM 1.2 is a closed Accellera release.
+
+diff --git a/examples/simple/registers/models/aliasing/tb_run.sv b/examples/simple/registers/models/aliasing/tb_run.sv
+--- a/examples/simple/registers/models/aliasing/tb_run.sv
++++ b/examples/simple/registers/models/aliasing/tb_run.sv
+@@ -21,7 +21,7 @@
+ // -------------------------------------------------------------
+ // 
+ 
+-`include "uvm_pkg.sv"
++`include "uvm_macros.svh"
+ 
+ program tb;
+ 
+diff --git a/examples/simple/registers/models/coverage/tb_run.sv b/examples/simple/registers/models/coverage/tb_run.sv
+--- a/examples/simple/registers/models/coverage/tb_run.sv
++++ b/examples/simple/registers/models/coverage/tb_run.sv
+@@ -21,7 +21,7 @@
+ // -------------------------------------------------------------
+ // 
+ 
+-`include "uvm_pkg.sv"
++`include "uvm_macros.svh"
+ 
+ program tb;
+ 
+diff --git a/examples/simple/registers/models/fifo_reg/tb_run.sv b/examples/simple/registers/models/fifo_reg/tb_run.sv
+--- a/examples/simple/registers/models/fifo_reg/tb_run.sv
++++ b/examples/simple/registers/models/fifo_reg/tb_run.sv
+@@ -21,7 +21,7 @@
+ // -------------------------------------------------------------
+ // 
+ 
+-`include "uvm_pkg.sv"
++`include "uvm_macros.svh"
+ `include "apb.sv"
+ `include "dut.sv"
+ 
+diff --git a/examples/simple/registers/models/not_yet_implemented/tb_run.sv b/examples/simple/registers/models/not_yet_implemented/tb_run.sv
+--- a/examples/simple/registers/models/not_yet_implemented/tb_run.sv
++++ b/examples/simple/registers/models/not_yet_implemented/tb_run.sv
+@@ -21,7 +21,7 @@
+ // -------------------------------------------------------------
+ // 
+ 
+-`include "uvm_pkg.sv"
++`include "uvm_macros.svh"
+ 
+ program tb;
+ 
+diff --git a/examples/simple/registers/models/reg_without_field/tb_run.sv b/examples/simple/registers/models/reg_without_field/tb_run.sv
+--- a/examples/simple/registers/models/reg_without_field/tb_run.sv
++++ b/examples/simple/registers/models/reg_without_field/tb_run.sv
+@@ -21,7 +21,7 @@
+ // -------------------------------------------------------------
+ // 
+ 
+-`include "uvm_pkg.sv"
++`include "uvm_macros.svh"
+ 
+ program tb;
+ 
+diff --git a/examples/simple/registers/models/ro_wo_same_addr/tb_run.sv b/examples/simple/registers/models/ro_wo_same_addr/tb_run.sv
+--- a/examples/simple/registers/models/ro_wo_same_addr/tb_run.sv
++++ b/examples/simple/registers/models/ro_wo_same_addr/tb_run.sv
+@@ -21,7 +21,7 @@
+ // -------------------------------------------------------------
+ // 
+ 
+-`include "uvm_pkg.sv"
++`include "uvm_macros.svh"
+ 
+ program tb;
+ 
+diff --git a/examples/simple/registers/models/shared_reg/blk_run.sv b/examples/simple/registers/models/shared_reg/blk_run.sv
+--- a/examples/simple/registers/models/shared_reg/blk_run.sv
++++ b/examples/simple/registers/models/shared_reg/blk_run.sv
+@@ -20,7 +20,7 @@
+ // -------------------------------------------------------------
+ // 
+ 
+-`include "uvm_pkg.sv"
++`include "uvm_macros.svh"
+ `include "reg_pkg.sv"
+ `include "blk_pkg.sv"
+ 
+diff --git a/examples/simple/registers/models/user-defined/tb_run.sv b/examples/simple/registers/models/user-defined/tb_run.sv
+--- a/examples/simple/registers/models/user-defined/tb_run.sv
++++ b/examples/simple/registers/models/user-defined/tb_run.sv
+@@ -21,7 +21,7 @@
+ // -------------------------------------------------------------
+ // 
+ 
+-`include "uvm_pkg.sv"
++`include "uvm_macros.svh"
+ 
+ `include "dut.sv"
+ 
+diff --git a/examples/simple/registers/sequence_api/blk_run.sv b/examples/simple/registers/sequence_api/blk_run.sv
+--- a/examples/simple/registers/sequence_api/blk_run.sv
++++ b/examples/simple/registers/sequence_api/blk_run.sv
+@@ -20,7 +20,7 @@
+ // -------------------------------------------------------------
+ // 
+ 
+-`include "uvm_pkg.sv"
++`include "uvm_macros.svh"
+ `include "apb.sv"
+ `include "blk_reg_pkg.sv"
+ `include "blk_pkg.sv"
+diff --git a/examples/simple/registers/vertical_reuse/blk_run.sv b/examples/simple/registers/vertical_reuse/blk_run.sv
+--- a/examples/simple/registers/vertical_reuse/blk_run.sv
++++ b/examples/simple/registers/vertical_reuse/blk_run.sv
+@@ -20,7 +20,7 @@
+ // -------------------------------------------------------------
+ // 
+ 
+-`include "uvm_pkg.sv"
++`include "uvm_macros.svh"
+ `include "apb.sv"
+ `include "blk_reg_pkg.sv"
+ `include "blk_pkg.sv"
+diff --git a/examples/simple/registers/vertical_reuse/sys_run.sv b/examples/simple/registers/vertical_reuse/sys_run.sv
+--- a/examples/simple/registers/vertical_reuse/sys_run.sv
++++ b/examples/simple/registers/vertical_reuse/sys_run.sv
+@@ -20,7 +20,7 @@
+ // -------------------------------------------------------------
+ // 
+ 
+-`include "uvm_pkg.sv"
++`include "uvm_macros.svh"
+ `include "apb.sv"
+ `include "blk_reg_pkg.sv"
+ `include "sys_reg_pkg.sv"

@@ -74,6 +74,11 @@ auto ExecutionBackendLibrary(
 auto ResolveRuntimeLocation(std::string_view binary_path)
     -> diag::Result<RuntimeLocation>;
 
+// Where the ports of the third-party libraries Lyra supports are, shipped and
+// found as the runtime is.
+auto ResolveShippedPortStore(std::string_view binary_path)
+    -> diag::Result<std::filesystem::path>;
+
 // Copy the located runtime into `dest_dir`, matching the relative layout the
 // emitted build recipe references, so an emitted project builds with no
 // external include or link paths: the header closure and the static library,

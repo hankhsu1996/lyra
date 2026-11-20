@@ -101,6 +101,8 @@ struct CliOptions {
   std::optional<bool> link_time;
   std::optional<std::string> sanitize;
   std::optional<std::string> config;
+  std::optional<std::string> ports;
+  std::optional<bool> locked;
   std::optional<std::string> cache_dir;
   std::optional<bool> rebuild;
   std::optional<std::string> cxx;
@@ -186,9 +188,14 @@ using DesignDeclaration =
 // which is what makes an invocation independent of every file outside the
 // inputs it names. A declaration read is held by the driver's source manager,
 // so a refusal of it is shown at its place in the file.
+//
+// Resolving a declaration settles which port of each supported library the
+// build takes, and the root's lock is written to say so once the whole graph
+// resolved, or refused where the run was told the lock may not change.
+// `binary_path` is where the ports Lyra ships are found from.
 auto ResolveDesignDeclaration(
-    const CliOptions& opts, slang::driver::Driver& driver)
-    -> diag::Result<DesignDeclaration>;
+    const CliOptions& opts, slang::driver::Driver& driver,
+    std::string_view binary_path) -> diag::Result<DesignDeclaration>;
 
 // Adds the declared material to what the command line already named, and makes
 // a selection only where the command line left one unmade.

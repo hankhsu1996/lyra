@@ -64,6 +64,7 @@ cc_library(
     deps = [
         "//:base",
         "//:driver",
+        "//:ports",
         "//conformance/adapters/lyra:reader",
         "//conformance/framework",
         "//conformance/framework:process",
@@ -691,6 +692,7 @@ cc_test(
     deps = [
         ":framework",
         "//:driver",
+        "//:ports",
         "@googletest//:gtest_main",
         "@libfst",
         "@nlohmann_json//:json",
@@ -807,6 +809,8 @@ cc_test(
     ],
     deps = [
         ":framework",
+        "//:cli",
+        "//:ports",
         "@bazel_tools//tools/cpp/runfiles",
         "@googletest//:gtest_main",
     ],
@@ -936,6 +940,7 @@ cc_test(
     deps = [
         ":framework",
         "//:driver",
+        "//:ports",
         "@googletest//:gtest_main",
     ],
 )

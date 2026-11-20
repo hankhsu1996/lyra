@@ -3,6 +3,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 
 #include <slang/ast/Compilation.h>
 #include <slang/driver/Driver.h>
@@ -22,6 +23,10 @@ struct ParseResult {
   SlangSourceManager diag_sources;
   support::ForceTargets force_targets;
 };
+
+// The language version a build is read under where neither its command line
+// nor its declaration names one.
+inline constexpr std::string_view kDefaultLanguageVersion = "1800-2023";
 
 // Applies the driver's options, reads everything it was pointed at, and
 // elaborates. Returns nullopt when a source could not be read or a syntax

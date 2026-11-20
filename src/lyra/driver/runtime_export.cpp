@@ -51,6 +51,20 @@ auto CopyTree(
   return {};
 }
 
+// What the binary at `binary_path` ships beside it.
+auto OpenShipped(std::string_view binary_path)
+    -> diag::Result<std::unique_ptr<Runfiles>> {
+  std::string error;
+  std::unique_ptr<Runfiles> runfiles{
+      Runfiles::Create(std::string(binary_path), &error)};
+  if (!runfiles) {
+    return diag::Fail(
+        diag::DiagCode::kHostIoError,
+        "cannot access what Lyra ships beside itself ({})", error);
+  }
+  return runfiles;
+}
+
 // A file the binary ships beside it, under `rlocation`, or why there is none.
 auto LocateShipped(
     const Runfiles& runfiles, const std::string& rlocation,
@@ -124,32 +138,29 @@ auto ExecutionBackendRuntime(
 
 auto ResolveRuntimeLocation(std::string_view binary_path)
     -> diag::Result<RuntimeLocation> {
-  std::string rf_error;
-  std::unique_ptr<Runfiles> runfiles{
-      Runfiles::Create(std::string(binary_path), &rf_error)};
-  if (!runfiles) {
-    return diag::Fail(
-        diag::DiagCode::kHostIoError, "cannot access the Lyra runtime ({})",
-        rf_error);
+  auto shipped = OpenShipped(binary_path);
+  if (!shipped) {
+    return std::unexpected(std::move(shipped.error()));
   }
+  const Runfiles& runfiles = **shipped;
   // The surface is staged under a root holding it and nothing else, so the
   // root around any one of its headers is the whole of what a project gets.
   // What makes that true is the staging rather than this walk: a header
   // resolved where this repository keeps it would hand back a directory
   // carrying every header the compiler has.
   auto anchor = LocateShipped(
-      *runfiles, "_main/runtime_surface/lyra/runtime/runtime.hpp",
+      runfiles, "_main/runtime_surface/lyra/runtime/runtime.hpp",
       "the Lyra runtime headers");
   if (!anchor) {
     return std::unexpected(std::move(anchor.error()));
   }
   auto lib = LocateShipped(
-      *runfiles, "_main/libcpp_runtime.a", "the Lyra runtime library");
+      runfiles, "_main/libcpp_runtime.a", "the Lyra runtime library");
   if (!lib) {
     return std::unexpected(std::move(lib.error()));
   }
   auto sanitized = LocateShipped(
-      *runfiles, "_main/libcpp_runtime_address_sanitized.a",
+      runfiles, "_main/libcpp_runtime_address_sanitized.a",
       "the Lyra runtime library compiled for the address sanitizer");
   if (!sanitized) {
     return std::unexpected(std::move(sanitized.error()));
@@ -160,7 +171,7 @@ auto ResolveRuntimeLocation(std::string_view binary_path)
         std::pair{&asan.cxx_archive, "libclang_rt.asan_cxx.a"},
         std::pair{&asan.symbolizer, "llvm-symbolizer"}}) {
     auto found = LocateShipped(
-        *runfiles, std::format("_main/address_sanitizer_runtime/{}", name),
+        runfiles, std::format("_main/address_sanitizer_runtime/{}", name),
         "the address sanitizer's runtime");
     if (!found) {
       return std::unexpected(std::move(found.error()));
@@ -170,7 +181,7 @@ auto ResolveRuntimeLocation(std::string_view binary_path)
   std::vector<std::filesystem::path> standard_headers;
   for (const std::string_view header : kStandardHeaders) {
     auto found = LocateShipped(
-        *runfiles, std::format("_main/third_party/systemverilog/{}", header),
+        runfiles, std::format("_main/third_party/systemverilog/{}", header),
         "the standard's C headers");
     if (!found) {
       return std::unexpected(std::move(found.error()));
@@ -178,13 +189,13 @@ auto ResolveRuntimeLocation(std::string_view binary_path)
     standard_headers.push_back(*std::move(found));
   }
   auto licenses = LocateShipped(
-      *runfiles, std::format("_main/{}", kThirdPartyLicensesFile),
+      runfiles, std::format("_main/{}", kThirdPartyLicensesFile),
       "the notices of the code the Lyra runtime carries");
   if (!licenses) {
     return std::unexpected(std::move(licenses.error()));
   }
   auto source_list = LocateShipped(
-      *runfiles, std::format("_main/runtime_sources/{}", kRuntimeSourceList),
+      runfiles, std::format("_main/runtime_sources/{}", kRuntimeSourceList),
       "the Lyra runtime sources");
   if (!source_list) {
     return std::unexpected(std::move(source_list.error()));
@@ -197,6 +208,17 @@ auto ResolveRuntimeLocation(std::string_view binary_path)
       .sources_root = source_list->parent_path(),
       .standard_headers = std::move(standard_headers),
       .third_party_licenses = *std::move(licenses)};
+}
+
+auto ResolveShippedPortStore(std::string_view binary_path)
+    -> diag::Result<std::filesystem::path> {
+  auto shipped = OpenShipped(binary_path);
+  if (!shipped) {
+    return std::unexpected(std::move(shipped.error()));
+  }
+  return LocateShipped(
+      **shipped, "_main/port_store",
+      "the ports of the libraries Lyra supports");
 }
 
 auto ExportRuntimeTree(

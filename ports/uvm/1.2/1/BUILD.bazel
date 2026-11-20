@@ -1,0 +1,14 @@
+load("//tools/bazel:ports.bzl", "port")
+
+# UVM 1.2, port version 1. Published: its content is the digest below, and a
+# change to what this directory or the release it names holds is a new port
+# version beside it, never an edit here.
+port(
+    name = "port",
+    digest = "sha256:63a16cd793aafc9ff735b1b975c75994bacac010805135ce4bf80b5157e7f222",
+    manifest = "lyra.toml",
+    tree = "@uvm_1_2_port_1//:library",
+    visibility = ["//:__pkg__"],
+)
+
+exports_files(["patches/hdl_access_through_vpi.patch"])

@@ -27,6 +27,7 @@
 #include <slang/util/CommandLine.h>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/cli/lock_file.hpp"
 #include "lyra/cli/manifest.hpp"
 #include "lyra/cli/object_code_switches.hpp"
 #include "lyra/diag/diag_code.hpp"
@@ -54,6 +55,8 @@ enum class LyraOption : std::uint8_t {
   kAssertions,
   kCoalesceCombUpdates,
   kConfig,
+  kPorts,
+  kLocked,
   kOptimization,
   kLinkTime,
   kSanitize,
@@ -108,12 +111,15 @@ class OptionSet {
 };
 
 // What every command reading a design acts on: how its report is coloured,
-// where the design's declaration is, whether the run reports on itself, and
-// how it shows what it is doing meanwhile.
+// where the design's declaration is and the ports its supported libraries are
+// taken from, whether its lock may change, whether the run reports on itself,
+// and how it shows what it is doing meanwhile.
 constexpr OptionSet kReadsADesign = {
     LyraOption::kColor,
     LyraOption::kNoColor,
     LyraOption::kConfig,
+    LyraOption::kPorts,
+    LyraOption::kLocked,
     LyraOption::kTimeTrace,
     LyraOption::kTimeTraceGranularity,
     LyraOption::kStatsFile,
@@ -259,6 +265,10 @@ auto Spelling(LyraOption option) -> std::string_view {
       return "--coalesce-comb-updates";
     case LyraOption::kConfig:
       return "--config";
+    case LyraOption::kPorts:
+      return "--ports";
+    case LyraOption::kLocked:
+      return "--locked";
     case LyraOption::kOptimization:
       return "-O";
     case LyraOption::kLinkTime:
@@ -331,6 +341,10 @@ auto IsGiven(
       return opts.coalesce_comb_updates.has_value();
     case LyraOption::kConfig:
       return opts.config.has_value();
+    case LyraOption::kPorts:
+      return opts.ports.has_value();
+    case LyraOption::kLocked:
+      return opts.locked.has_value();
     case LyraOption::kOptimization:
       return opts.optimization.has_value();
     case LyraOption::kLinkTime:
@@ -642,6 +656,14 @@ void RegisterCliOptions(slang::CommandLine& cmd, CliOptions& opts) {
       "read this lyra.toml instead of searching for one", "<file>",
       slang::CommandLineFlags::FilePath);
   cmd.add(
+      "--ports", opts.ports,
+      "take the ports of supported libraries from this store instead of the "
+      "one Lyra ships",
+      "<dir>", slang::CommandLineFlags::FilePath);
+  cmd.add(
+      "--locked", opts.locked,
+      "refuse to build where the project's lyra.lock would have to change");
+  cmd.add(
       "-O", opts.optimization,
       "how hard the design's code is optimized, as a C++ compiler's -O: a "
       "higher level builds slower and simulates faster; 0 when not given",
@@ -919,14 +941,50 @@ auto ResolveCompileWidth(std::optional<std::int32_t> jobs)
   return detected == 0 ? 1 : static_cast<std::size_t>(detected);
 }
 
+namespace {
+
+// Brings the root's lock to what this build takes, or, told the lock may not
+// change, refuses the build and writes nothing.
+auto UpdateLockFile(const Declarations& declared, bool locked)
+    -> diag::Result<void> {
+  if (!declared.lock_update) {
+    return {};
+  }
+  if (locked) {
+    return std::unexpected(
+        diag::Make(
+            diag::DiagCode::kHostInvalidManifest,
+            "'{}' does not record what this build takes, and '--locked' says "
+            "it may not change",
+            declared.lock_path.string())
+            .WithNote(
+                "build once without '--locked' to bring the lock up to date, "
+                "and commit it"));
+  }
+  return WriteLockFile(declared.lock_path, *declared.lock_update);
+}
+
+}  // namespace
+
 auto ResolveDesignDeclaration(
-    const CliOptions& opts, slang::driver::Driver& driver)
-    -> diag::Result<DesignDeclaration> {
-  const auto load = [&driver](const std::filesystem::path& path)
+    const CliOptions& opts, slang::driver::Driver& driver,
+    std::string_view binary_path) -> diag::Result<DesignDeclaration> {
+  const PortStoreChoice ports{
+      .given = opts.ports ? std::optional<std::filesystem::path>{*opts.ports}
+                          : std::nullopt,
+      .binary_path = binary_path};
+  const bool locked = opts.locked.value_or(false);
+  const BuildReading given{
+      .language_version = driver.options.languageVersion,
+      .timescale = driver.options.timeScale};
+  const auto load = [&](const std::filesystem::path& path)
       -> diag::Result<DesignDeclaration> {
-    auto loaded = LoadDeclarations(path, driver.sourceManager);
+    auto loaded = LoadDeclarations(path, driver.sourceManager, given, ports);
     if (!loaded) {
       return std::unexpected(std::move(loaded.error()));
+    }
+    if (auto updated = UpdateLockFile(*loaded, locked); !updated) {
+      return std::unexpected(std::move(updated.error()));
     }
     return DesignDeclaration{*std::move(loaded)};
   };
@@ -1111,12 +1169,8 @@ auto ApplyDeclarations(
   if (driver.options.topModules.empty()) {
     driver.options.topModules = root.design.top;
   }
-  if (!driver.options.languageVersion) {
-    driver.options.languageVersion = root.language_version;
-  }
-  if (!driver.options.timeScale) {
-    driver.options.timeScale = root.timescale;
-  }
+  driver.options.languageVersion = declared.reading.language_version;
+  driver.options.timeScale = declared.reading.timescale;
   return {};
 }
 

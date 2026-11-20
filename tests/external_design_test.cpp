@@ -43,6 +43,8 @@
 #include <vector>
 
 #include "conformance/framework/process.hpp"
+#include "lyra/cli/lock_file.hpp"
+#include "lyra/ports/port.hpp"
 #include "tests/framework/cli_fixture.hpp"
 #include "tools/cpp/runfiles/runfiles.h"
 
@@ -396,12 +398,22 @@ TEST_P(Design, GetsAsFarAsIsRecordedOfIt) {
   // far the cases before it got. A case that stops is said with where it was
   // built, since one that stops as recorded is looked into from there as much
   // as one that does not, and with the last lines its step wrote, which say how
-  // it ended.
+  // it ended. Each port of a supported library the case took is said by its
+  // identity and digest, which is what the result was measured against.
+  std::string taken;
+  if (const auto lock =
+          lyra::cli::ReadLockFile(*work / lyra::cli::kLockFileName)) {
+    for (const lyra::ports::PortMetadata& port : lock->libraries) {
+      taken += std::format(
+          ", taking port {} of {} {} ({})", port.identity.port_version,
+          port.identity.name, port.identity.version, port.digest);
+    }
+  }
   std::cout << std::format(
-                   "{}: {} after {} s{}", subject.design.name,
+                   "{}: {}{} after {} s{}", subject.design.name,
                    stop ? std::format("stops at its {}", NameOf(stop->at))
                         : std::string("builds, runs and passes its check"),
-                   took.count(),
+                   taken, took.count(),
                    stop ? std::format(
                               ", built in\n{}\n{}", work->string(),
                               LastLines(stop->said))

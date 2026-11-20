@@ -78,7 +78,7 @@ auto ParseLibraryText(
 // overrides any of it.
 void ApplyBaseline(slang::driver::Driver& driver) {
   if (!driver.options.languageVersion) {
-    driver.options.languageVersion = "1800-2023";
+    driver.options.languageVersion = std::string(kDefaultLanguageVersion);
   }
 
   // A select whose constant position lies outside its vector or array is given

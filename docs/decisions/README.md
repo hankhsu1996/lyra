@@ -1734,6 +1734,14 @@ the detail lives in the entry itself.
   who builds it and never an invocation or machine property; material accumulates and selection is
   replaced, a path resolves against its own manifest, and naming sources on the command line uses no
   manifest at all. A project mode, a merged cascade, and a flag to suppress discovery are rejected.
+- [a-supported-library-is-a-port-lyra-ships](a-supported-library-is-a-port-lyra-ships.md) -- a
+  dependency names a path or a release of a library Lyra supports; a release is taken from a port,
+  an upstream release as Lyra prepares it, identified by name, release and port version, shipped
+  beside the binary and never changed once published, its content's digest committed and checked by
+  the merge gate and at resolution; the root's `lyra.lock` records the port each build took, written
+  whole once the graph resolves, and `--locked` refuses a change to it; `--ports` replaces the
+  shipped store for one run. A version range, patching the library in the project, a recipe read at
+  run time, and taking a tree on its directory's name alone are rejected.
 - [the-standard-decides-what-text-is-legal](the-standard-decides-what-text-is-legal.md) -- the front
   end's own reading is the default, replacing the most tolerant one, because the evidence that
   forbidden text "works everywhere else" was one simulator and a forbidden text has no meaning to

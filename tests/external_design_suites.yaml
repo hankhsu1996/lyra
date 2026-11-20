@@ -5,22 +5,24 @@
 # A suite names the inputs its sources are under (`sources_in`, a repository
 # MODULE.bazel fetches) and the inputs its cases are under (`cases_in`), and
 # states what every case reads: `sources` compiled ahead of each case's own,
-# `incdir` under `sources_in`, `defines`, a `timescale`, whether every file is
-# one compilation unit (`single_unit`), the `arguments` every run is handed, and
-# the `check` of a run -- a program, by the inputs it is under, and what it is
-# handed, run from the directory the run started in, where the run's output is
-# `_execute/stdout.log`. A case names a directory under `cases_in`: its `files`, what it adds to the include path (its own directory
-# is on it always) and to the defines, its `runs`, each with what it is handed
-# (one run handed nothing where it names none), and a `check` replacing the
-# suite's.
+# `incdir` under `sources_in`, the `dependencies` every case declares, each a
+# supported library by the version a user would name, `defines`, a
+# `timescale`, whether every file is one compilation unit (`single_unit`), the
+# `arguments` every run is handed, and the `check` of a run -- a program, by
+# the inputs it is under, and what it is handed, run from the directory the run
+# started in, where the run's output is `_execute/stdout.log`. A case names a
+# directory under `cases_in`: its `files`, what it adds to the include path
+# (its own directory is on it always) and to the defines, its `runs`, each with
+# what it is handed (one run handed nothing where it names none), and a `check`
+# replacing the suite's.
 #
 # The UVM class library's: each uvm-1.2 case is read off the Makefile beside
-# its example, and uvm-core's are tests of this repository under `tests/uvm`.
+# its example and takes UVM 1.2 as a user does, from the port Lyra ships; and
+# uvm-core's are tests of this repository under `tests/uvm`.
 uvm-1.2:
-  sources_in: uvm_1_2
   cases_in: uvm_1_2/examples
-  sources: [src/uvm.sv]
-  incdir: [src]
+  dependencies:
+    uvm: '1.2'
   timescale: 1ns/1ns
   single_unit: true
   arguments: [+UVM_VERBOSITY=UVM_LOW]
