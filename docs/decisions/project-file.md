@@ -426,8 +426,9 @@ person adds a field under the rule rather than re-deriving the line:
   keyword-version mapping, local-include and include-order behaviour. Design material, because each
   changes what program the source text denotes. Absent because nothing has needed one. The first
   dialect knob of Lyra's own lowering is `coalesce_comb_updates`
-  (`combinational-updates-are-coalesced-where-a-build-asks.md`), which OpenPiton needed: a design is
-  written for combinational updates coalesced or not, and does not alternate between them.
+  (`combinational-updates-are-coalesced-where-a-build-asks.md`), which OpenPiton and OpenTitan need:
+  a design is written for combinational updates coalesced or not, and does not alternate between
+  them.
 
 ## One table per question the design answers, not per consumer
 

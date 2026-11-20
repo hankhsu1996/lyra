@@ -5,6 +5,7 @@ by what it leaves (Rejected, "Judging the run of every process"). Revised again 
 update is an event unless the build asks for coalescing (Rejected, "Coalescing by default"). Revised
 2026-11-19: each library is built in the dialect it states; the shape is restated as change
 detection over an interval on the write path; the rewrite stating a write made once is removed.
+Revised again 2026-11-19: OpenTitan needs the option too.
 
 ## Context
 
@@ -29,7 +30,9 @@ end
 
 No bit of either output depends on the other's, and the style -- a default for every output at the
 top of the procedure -- is ordinary RTL, which synthesis reads as logic without a loop. CVA6's write
-buffer has this shape, and OpenPiton stops on it.
+buffer has this shape, and OpenPiton stops on it; so does OpenTitan's SRAM byte adapter, whose state
+machine defaults the stall its response mux reads while the mux defaults the response the state
+machine reads.
 
 LRM 4.7 lets the statements of two processes interleave: in a schedule where neither procedure is
 waiting while the other writes, neither sees the other's default, and the two settle. A schedule
@@ -221,8 +224,9 @@ it lands, a per-interval observer's included.
   than before any coalescing, and the rewrite brought that back to 3.5% only where each run writes
   each variable once. It also made Lyra answer for a design relying on a schedule the standard does
   not promise, on behalf of every design that does not, and departed from the standard's reading
-  wherever a procedure's side effects show it. One real design needs it; the option serves that
-  design at no cost to the others. Revisit if designs needing it turn out common rather than one.
+  wherever a procedure's side effects show it. Two real designs of the external suite need it,
+  OpenPiton and OpenTitan; the option serves them at no cost to the others. What coalescing costs a
+  real design has not been measured, and is what revisiting the default turns on.
 - **Coalescing a slot only once it fails to settle.** Running the slot again coalesced when its
   bound is reached gives a design two meanings depending on whether it loops, and what ran before
   the switch has already been told each write.
@@ -364,7 +368,7 @@ it lands, a per-interval observer's included.
   a change of any. Two procedures defaulting each other's inputs through a part nested deeper than a
   path follows, a reference into an array whose size changes the execution did not write whole, or a
   solver's write are judged by each write, and do not settle.
-- OpenPiton is built with the option in the external design suite
+- OpenPiton and OpenTitan are built with the option in the external design suite
   (`tests/external_design_build_options.yaml`).
 
 ## Cross-references

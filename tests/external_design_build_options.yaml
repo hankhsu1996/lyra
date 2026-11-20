@@ -9,3 +9,5 @@
 # run.
 OpenPiton:
   - --coalesce-comb-updates
+OpenTitan:
+  - --coalesce-comb-updates
