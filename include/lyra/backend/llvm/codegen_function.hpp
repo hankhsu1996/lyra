@@ -21,7 +21,6 @@
 #include "lyra/lir/operator.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/type_id.hpp"
-#include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/integral_operation.hpp"
 #include "lyra/support/runtime_object.hpp"
 #include "lyra/support/value_domain.hpp"
@@ -258,14 +257,46 @@ class CodeGenFunction {
   auto LowerOrdinaryCall(
       const lir::CallInstr& call, const DestinationRef& destination)
       -> diag::Result<llvm::Value*>;
-  // Opens a landing: the pad the platform transfers to, answering what is
-  // unwinding as the pointer the unwinder carries.
-  auto LowerLanding(const lir::LandingInstr& landing) -> llvm::Value*;
-  // A handler's extent, spelled as the C++ ABI's own begin and end of a catch,
-  // as clang spells it; neither can be unwound out of.
-  auto LowerBeginHandling(const lir::BeginHandlingInstr& begun)
+  // `call` made as an invoke returning to `normal` and unwinding to `unwind`,
+  // answering what the call answers. A call this body realizes as its own
+  // instructions cannot be unwound out of, so control goes on to `normal`.
+  auto LowerInvoke(
+      const lir::CallInstr& call, const DestinationRef& destination,
+      llvm::BasicBlock* normal, llvm::BasicBlock* unwind)
       -> diag::Result<llvm::Value*>;
-  auto LowerEndHandling() -> llvm::Value*;
+  // The landing pad unwinding to the cleanup block `target` enters through,
+  // one per target and shared by every call unwinding there, as clang shares
+  // one per scope. It catches where the way out through `target` ends where
+  // this body takes what is unwinding, so the platform's search for a taker
+  // stops in this frame, and only lets it on its way otherwise. Either way what
+  // arrived is kept in the frame's slot for it.
+  auto LandingPadFor(lir::BlockId target) -> llvm::BasicBlock*;
+  // A landing pad that catches where `catches` holds, keeps what arrived in
+  // the slot, and goes on with what `continue_at` emits.
+  auto MakeLandingPad(bool catches, llvm::function_ref<void()> continue_at)
+      -> llvm::BasicBlock*;
+  // Which blocks reached only by unwinding lie on a way out that ends where
+  // this body takes what is unwinding, by block: found once, walking back from
+  // every taking point, as rustc's code generation finds its no-op landing
+  // pads once per body.
+  [[nodiscard]] auto BlocksEndingInTaking() const -> std::vector<bool>;
+  // The frame storage a landing keeps what is unwinding in, read where it is
+  // taken or carried on: one per function, as clang keeps one exception slot.
+  auto ExceptionSlot() -> llvm::Value*;
+  // A taking point: the catch begins with what the landing kept, the runtime
+  // is asked inside it what arrived, and the catch ends on both ways out --
+  // where the asking returns with a departure of the design, and where it
+  // carries on what is not, to `otherwise` -- as clang begins a C++ catch and
+  // pushes its end as a cleanup.
+  auto LowerReceiveDepartureInto(const lir::ReceiveDepartureTerm& taken)
+      -> diag::Result<void>;
+  // Goes on unwinding out of the body with what the slot holds. A coroutine
+  // unwound out of is done, and says so first.
+  void ResumeUnwinding();
+  // The C++ ABI's own begin and end of a catch, neither of which can be unwound
+  // out of.
+  void BeginCatch(llvm::Value* exception);
+  void EndCatch();
   // What a landing pad yields and `resume` takes: the unwinder's pointer and a
   // selector no clause here reads.
   auto LandingPadType() -> llvm::StructType*;
@@ -479,6 +510,11 @@ class CodeGenFunction {
   std::optional<InvokeDest> invoke_dest_;
   std::unordered_map<lir::ValueId, llvm::Value*> values_;
   std::vector<llvm::BasicBlock*> blocks_;
+  // The landing pad each cleanup block is entered through, by block, made the
+  // first time a call unwinds there.
+  std::vector<llvm::BasicBlock*> landing_pads_;
+  std::vector<bool> ends_in_taking_;
+  llvm::Value* exception_slot_ = nullptr;
   // Where frame storage is allocated: the end of the code the body opens with,
   // ahead of its first statement.
   llvm::Instruction* frame_storage_point_ = nullptr;

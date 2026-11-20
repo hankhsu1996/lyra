@@ -306,7 +306,7 @@ void FunctionLowerer::BindParam(mir::LocalId param, lir::ValueId argument) {
   const lir::TypeId type = fn_.values.Get(argument).type;
   const lir::ValueId slot = OpenLocalSlot(param, type);
   AssignFrom(LocalPlace(slot), lir::Use{.value = argument});
-  if (unit_->Types().Get(type).IsOwnedValue()) {
+  if (NeedsEnd(type)) {
     OpenScope(EndSlot{.slot = slot});
   }
 }
@@ -363,7 +363,7 @@ auto FunctionLowerer::Run() -> diag::Result<lir::Function> {
   // the body. A closure invoke's receiver names the storage its captures live
   // in, and leads the per-invocation parameters in the signature; a body that
   // takes its closure over owns the box as it owns any argument handed over.
-  stretch_start_ = NewBlock();
+  stretch_start_ = NewOrdinaryBlock();
   SetCurrent(stretch_start_);
   std::vector<std::pair<mir::LocalId, lir::ValueId>> taken;
   if (closure_ != nullptr) {
@@ -411,7 +411,7 @@ auto FunctionLowerer::Run() -> diag::Result<lir::Function> {
     // region of its own, as a C++ coroutine's body stands in a `try` whose
     // handler hands what escaped to its promise.
     top = Region{
-        .handler = NewBlock(),
+        .handler = NewCleanupBlock(),
         .caught = NewPlaceLocal(unit_->ControlEffectType())};
     OpenScope(*top);
   }
@@ -452,7 +452,8 @@ auto FunctionLowerer::Run() -> diag::Result<lir::Function> {
     fn_.blocks.push_back(
         lir::BasicBlock{
             .instrs = std::move(block.instrs),
-            .terminator = *std::move(block.terminator)});
+            .terminator = *std::move(block.terminator),
+            .is_cleanup = block.is_cleanup});
   }
   return std::move(fn_);
 }
@@ -463,27 +464,8 @@ auto FunctionLowerer::ConstructorOf(mir::ClassId cls) -> EnteredConstructor {
       .callee = unit_->ConstructionCallTargetOf(cls)};
 }
 
-auto FunctionLowerer::UnwindingType() -> lir::TypeId {
-  return AddressType(unit_->TranslateType(unit_->Mir().builtins.void_type));
-}
-
-auto FunctionLowerer::ExceptionSlot() -> lir::ValueId {
-  if (!exception_slot_.has_value()) {
-    exception_slot_ = NewPlaceLocal(UnwindingType());
-    // Every landing writes it, so its bytes are in use from where the body's
-    // stretches start and never go out of use: no one way out ends them.
-    blocks_[stretch_start_.value].instrs.push_back(
-        lir::Instr{
-            .data =
-                lir::StorageInstr{
-                    .op = lir::StorageInstr::Op::kLive, .of = *exception_slot_},
-            .span = span_});
-  }
-  return *exception_slot_;
-}
-
-auto FunctionLowerer::LandingHere(std::optional<lir::ValueId> unmade)
-    -> diag::Result<lir::BlockId> {
+auto FunctionLowerer::UnwindDestinationHere(std::optional<lir::ValueId> unmade)
+    -> diag::Result<std::optional<lir::BlockId>> {
   diag::Result<CleanupNodeId> owed = UnwindNodeAt(scopes_.size());
   if (!owed) {
     return std::unexpected(std::move(owed.error()));
@@ -494,25 +476,16 @@ auto FunctionLowerer::LandingHere(std::optional<lir::ValueId> unmade)
       return std::unexpected(std::move(owed.error()));
     }
   }
-  if (const std::optional<lir::BlockId> built = cleanups_.LandingOf(*owed)) {
-    return *built;
+  return DestinationOf(*owed);
+}
+
+auto FunctionLowerer::DestinationOf(CleanupNodeId node)
+    -> std::optional<lir::BlockId> {
+  if (node == CleanupTree::LeavingRoot() &&
+      unit_->Types().Get(fn_.result_type).Is<lir::CoroutineType>()) {
+    return LeavingBlock();
   }
-  const lir::BlockId landing = NewBlock();
-  const lir::BlockId resumed = current_;
-  SetCurrent(landing);
-  const lir::Operand exception = Emit(
-      UnwindingType(),
-      lir::LandingInstr{
-          .clause = cleanups_.EndsInHandler(*owed)
-                        ? lir::LandingInstr::Clause::kCatchAll
-                        : lir::LandingInstr::Clause::kCleanup});
-  Store(
-      lir::Place{.base = lir::Use{.value = ExceptionSlot()}, .chain = {}},
-      exception);
-  Terminate(lir::BranchTerm{.target = cleanups_.EntryOf(*owed)});
-  SetCurrent(resumed);
-  cleanups_.SetLanding(*owed, landing);
-  return landing;
+  return cleanups_.EntryOf(node);
 }
 
 void FunctionLowerer::RefuseLeavingCleanupCode(
@@ -527,12 +500,12 @@ void FunctionLowerer::RefuseLeavingCleanupCode(
 }
 
 // Walking outward from the innermost open scope, the walk stops at the first
-// scope whose node is
-// known -- one found before, or a region, whose handler takes what arrives --
-// or at the outermost, which continues to the frame's edge. The nodes of the
-// scopes inside the stop are then found from the outside in, each continuing to
-// the one around it, so unwinding from inside many scopes is one loop over
-// them, as clang pops its cleanup stack and rustc builds its drop tree.
+// scope whose node is known -- one found before, or a region, whose taking
+// point takes what arrives -- or at the outermost, past which unwinding goes on
+// out of the body. The nodes of the scopes inside the stop are then found from
+// the outside in, each continuing to the one around it, so unwinding from
+// inside many scopes is one loop over them, as clang pops its cleanup stack and
+// rustc builds its drop tree.
 auto FunctionLowerer::UnwindNodeAt(std::size_t depth)
     -> diag::Result<CleanupNodeId> {
   std::size_t first = depth;
@@ -545,14 +518,14 @@ auto FunctionLowerer::UnwindNodeAt(std::size_t depth)
       break;
     }
     if (const auto* region = std::get_if<Region>(&scope.entry)) {
-      node = cleanups_.HandlerRoot(region->handler);
+      node = cleanups_.TakingRoot(region->handler);
       scope.unwind_node = node;
       break;
     }
     --first;
   }
   if (!node.has_value()) {
-    node = cleanups_.Root(FrameEdge());
+    node = CleanupTree::LeavingRoot();
   }
   for (std::size_t at = first; at < depth; ++at) {
     if (const auto* owed = std::get_if<Owed>(&scopes_[at].entry)) {
@@ -569,20 +542,39 @@ auto FunctionLowerer::UnwindNodeAt(std::size_t depth)
 
 auto FunctionLowerer::NodeFor(CleanupId cleanup, CleanupNodeId next)
     -> diag::Result<CleanupNodeId> {
+  // Copied: lowering a cleanup's code adds cleanups of its own to the tree.
+  const Cleanup owed = cleanups_.Get(cleanup);
+  if (cleanups_.LeavesTheBody(next) &&
+      std::holds_alternative<StorageDead>(owed)) {
+    return next;
+  }
   if (const std::optional<CleanupNodeId> found =
           cleanups_.Find(cleanup, next)) {
     return *found;
   }
   const lir::BlockId resumed = current_;
-  const lir::BlockId entry = NewBlock();
+  const lir::BlockId entry =
+      cleanups_.Unwinding(next) ? NewCleanupBlock() : NewBlock();
   SetCurrent(entry);
-  // Copied: lowering a cleanup's code adds cleanups of its own to the tree.
-  const Cleanup owed = cleanups_.Get(cleanup);
   auto ran = RunCleanup(owed);
   if (!ran) {
     return std::unexpected(std::move(ran.error()));
   }
-  Terminate(lir::BranchTerm{.target = cleanups_.EntryOf(next)});
+  // A cleanup whose code is empty runs nothing, so a way out reaching it goes
+  // straight on, as rustc removes a landing pad that does nothing.
+  if (current_ == entry && blocks_.size() == entry.value + 1 &&
+      blocks_[entry.value].instrs.empty()) {
+    blocks_.pop_back();
+    SetCurrent(resumed);
+    return next;
+  }
+  // The leaving root has no block: the last of what is owed on the way out of
+  // the body is where unwinding goes on out of it.
+  if (const std::optional<lir::BlockId> continued = cleanups_.EntryOf(next)) {
+    Terminate(lir::BranchTerm{.target = *continued});
+  } else {
+    Terminate(lir::UnwindResumeTerm{});
+  }
   SetCurrent(resumed);
   return cleanups_.Insert(cleanup, next, entry);
 }
@@ -618,14 +610,15 @@ auto FunctionLowerer::ExitEntryAt(lir::BlockId target, std::size_t depth)
     }
     scopes_[at].exit_nodes.push_back(ExitNode{.target = target, .node = *node});
   }
-  return cleanups_.EntryOf(*node);
+  // An ordinary way out ends at the block it goes to.
+  return *cleanups_.EntryOf(*node);
 }
 
 auto FunctionLowerer::AbandonBlock() -> lir::BlockId {
   if (abandon_block_.has_value()) {
     return *abandon_block_;
   }
-  const lir::BlockId block = NewBlock();
+  const lir::BlockId block = NewOrdinaryBlock();
   abandon_block_ = block;
   const lir::BlockId resumed = current_;
   SetCurrent(block);
@@ -638,7 +631,7 @@ auto FunctionLowerer::ReturnBlock() -> lir::BlockId {
   if (return_block_.has_value()) {
     return *return_block_;
   }
-  const lir::BlockId block = NewBlock();
+  const lir::BlockId block = NewOrdinaryBlock();
   return_block_ = block;
   const lir::BlockId resumed = current_;
   SetCurrent(block);
@@ -647,42 +640,36 @@ auto FunctionLowerer::ReturnBlock() -> lir::BlockId {
   return block;
 }
 
-// Past every scope nothing here takes the raise and nothing more is owed, so
-// unwinding goes on out of the body.
-auto FunctionLowerer::FrameEdge() -> lir::BlockId {
-  if (frame_edge_.has_value()) {
-    return *frame_edge_;
+auto FunctionLowerer::LeavingBlock() -> lir::BlockId {
+  if (leaving_block_.has_value()) {
+    return *leaving_block_;
   }
-  const lir::BlockId edge = NewBlock();
-  frame_edge_ = edge;
+  const lir::BlockId block = NewCleanupBlock();
+  leaving_block_ = block;
   const lir::BlockId resumed = current_;
-  SetCurrent(edge);
-  const lir::ValueId slot = ExceptionSlot();
-  const lir::TypeId unwinding = UnwindingType();
-  Terminate(
-      lir::UnwindResumeTerm{
-          .exception = Load(
-              lir::Place{.base = lir::Use{.value = slot}, .chain = {}},
-              unwinding)});
+  SetCurrent(block);
+  Terminate(lir::UnwindResumeTerm{});
   SetCurrent(resumed);
-  return edge;
+  return block;
 }
 
 auto FunctionLowerer::OpenHandler(const Region& region) -> diag::Result<void> {
+  // What is not the design's goes on from the taking point to what the scopes
+  // outside the region owe.
+  const diag::Result<CleanupNodeId> outside = UnwindNodeAt(scopes_.size());
+  if (!outside) {
+    return std::unexpected(outside.error());
+  }
   SetCurrent(region.handler);
-  const lir::ValueId slot = ExceptionSlot();
-  const lir::TypeId unwinding = UnwindingType();
-  EmitStatement(
-      lir::BeginHandlingInstr{
-          .exception = Load(
-              lir::Place{.base = lir::Use{.value = slot}, .chain = {}},
-              unwinding)});
-  OpenScope(EndHandling{});
-  // What arrived is asked about inside the handling, because the asking is
-  // itself a way out of it: what is not the design's goes on from there.
-  return EmitInvoke(
-      lir::BuiltinTarget{.fn = support::BuiltinFn::kReceiveDeparture}, {},
-      lir::Place{.base = lir::Use{.value = region.caught}, .chain = {}});
+  const lir::BlockId then = NewOrdinaryBlock();
+  Terminate(
+      lir::ReceiveDepartureTerm{
+          .departure =
+              lir::Place{.base = lir::Use{.value = region.caught}, .chain = {}},
+          .then = then,
+          .otherwise = DestinationOf(*outside)});
+  SetCurrent(then);
+  return {};
 }
 
 auto FunctionLowerer::EmitCoroutineHandler(const Region& top)
@@ -703,37 +690,41 @@ auto FunctionLowerer::EmitCoroutineHandler(const Region& top)
   return {};
 }
 
-auto FunctionLowerer::EmitInvoke(
-    lir::CallTarget target, std::vector<lir::Operand> args,
-    lir::Destination destination) -> diag::Result<void> {
+void FunctionLowerer::EmitInvoke(
+    lir::CallInstr call, lir::Destination destination, lir::BlockId unwind) {
   const std::optional<lir::ValueId> owner =
-      OwningTransient(destination, lir::CallMakesValue(target));
-  // A call unwound out of makes no value, so the bytes the value would have
-  // lain in go out of use where the unwinding lands.
-  auto landing = LandingHere(owner);
-  if (!landing) {
-    return std::unexpected(std::move(landing.error()));
-  }
+      OwningTransient(destination, lir::CallMakesValue(call.target));
   const lir::BlockId returned = NewBlock();
   Terminate(
       lir::InvokeTerm{
           .destination = std::move(destination),
-          .target = std::move(target),
-          .args = std::move(args),
+          .call = std::move(call),
           .returned = returned,
-          .landing = *landing});
+          .unwind = unwind});
   SetCurrent(returned);
-  // The value exists only where the call returned, so the landing, built
-  // before it, owes nothing for it.
+  // The value exists only where the call returned, so the way out by
+  // unwinding, settled before it, owes nothing for it.
   if (owner.has_value()) {
     OpenScope(EndValue{.value = *owner});
   }
-  return {};
 }
 
 auto FunctionLowerer::NewBlock() -> lir::BlockId {
+  return blocks_[current_.value].is_cleanup ? NewCleanupBlock()
+                                            : NewOrdinaryBlock();
+}
+
+auto FunctionLowerer::NewCleanupBlock() -> lir::BlockId {
   const lir::BlockId id{static_cast<std::uint32_t>(blocks_.size())};
-  blocks_.emplace_back(OpenBlock{.id = id, .instrs = {}, .terminator = {}});
+  blocks_.emplace_back(
+      OpenBlock{.id = id, .instrs = {}, .terminator = {}, .is_cleanup = true});
+  return id;
+}
+
+auto FunctionLowerer::NewOrdinaryBlock() -> lir::BlockId {
+  const lir::BlockId id{static_cast<std::uint32_t>(blocks_.size())};
+  blocks_.emplace_back(
+      OpenBlock{.id = id, .instrs = {}, .terminator = {}, .is_cleanup = false});
   return id;
 }
 
@@ -760,9 +751,7 @@ auto FunctionLowerer::OwningTransient(
   return std::visit(
       Overloaded{
           [&](const lir::Transient& defined) -> std::optional<lir::ValueId> {
-            if (!makes_value || !unit_->Types()
-                                     .Get(fn_.values.Get(defined.value).type)
-                                     .IsOwnedValue()) {
+            if (!makes_value || !NeedsEnd(fn_.values.Get(defined.value).type)) {
               return std::nullopt;
             }
             return defined.value;
@@ -825,6 +814,10 @@ void FunctionLowerer::MarkStorage(lir::StorageInstr::Op op, lir::ValueId of) {
   EmitStatement(lir::StorageInstr{.op = op, .of = of});
 }
 
+auto FunctionLowerer::NeedsEnd(lir::TypeId type) const -> bool {
+  return lir::NeedsEnd(unit_->Lir(), type);
+}
+
 void FunctionLowerer::EmitCleanup(const EndValue& end) {
   EmitValueEnd(lir::Use{.value = end.value});
   MarkStorage(lir::StorageInstr::Op::kDead, end.value);
@@ -854,7 +847,8 @@ void FunctionLowerer::EmitCleanup(const ReleaseStorage& release) {
           .args = {release.storage}});
 }
 
-auto FunctionLowerer::IsLentCopyable(const lir::Operand& value) const -> bool {
+auto FunctionLowerer::IsConsumedByCopy(const lir::Operand& value) const
+    -> bool {
   const lir::TypeId type = lir::OperandType(fn_, value);
   return unit_->Types().Get(type).IsOwnedValue() &&
          !std::holds_alternative<lir::DeletedStep>(
@@ -863,7 +857,7 @@ auto FunctionLowerer::IsLentCopyable(const lir::Operand& value) const -> bool {
 }
 
 auto FunctionLowerer::ConsumeByCopyOrMove(lir::Operand value) -> lir::Rvalue {
-  if (IsLentCopyable(value)) {
+  if (IsConsumedByCopy(value)) {
     return lir::CallInstr{.target = lir::CopyValueTarget{}, .args = {value}};
   }
   return lir::UseInstr{.operand = HandOn(std::move(value))};
@@ -959,8 +953,7 @@ auto FunctionLowerer::OwedEndOfLocal(const mir::Block& block, mir::ExprId place)
 }
 
 auto FunctionLowerer::HandOn(lir::Operand value) -> lir::Operand {
-  const lir::TypeId type = lir::OperandType(fn_, value);
-  if (!unit_->Types().Get(type).IsOwnedValue()) {
+  if (!NeedsEnd(lir::OperandType(fn_, value))) {
     return value;
   }
   if (const std::optional<std::size_t> owed = OwedEndAt(value)) {
@@ -1062,7 +1055,7 @@ auto FunctionLowerer::DeclareLocal(
   if (!closed) {
     return closed;
   }
-  if (unit_->Types().Get(type).IsOwnedValue()) {
+  if (NeedsEnd(type)) {
     OpenScope(EndSlot{.slot = slot});
   }
   return {};
@@ -1074,7 +1067,7 @@ auto FunctionLowerer::Load(lir::Place place, lir::TypeId type) -> lir::Operand {
 
 auto FunctionLowerer::Store(lir::Place place, lir::Operand value)
     -> lir::Operand {
-  // A frame slot of an owned type owns its value, so it ends the one it held
+  // A frame slot of a type whose end does something ends the one it held
   // before taking the one it is given, and takes that one's end with it. What
   // it is given may lie inside what it held, as in `n = n.next`, so that is
   // made a value of its own first, as rustc evaluates the right-hand side of a
@@ -1082,8 +1075,8 @@ auto FunctionLowerer::Store(lir::Place place, lir::Operand value)
   if (lir::IsPlaceLocal(fn_, place.base) && place.chain.empty()) {
     const lir::TypeId type =
         fn_.values.Get(std::get<lir::Use>(place.base).value).type;
-    if (unit_->Types().Get(type).IsOwnedValue()) {
-      if (IsLentCopyable(value)) {
+    if (NeedsEnd(type)) {
+      if (IsConsumedByCopy(value)) {
         value = Emit(
             type,
             lir::CallInstr{
@@ -1186,7 +1179,7 @@ auto FunctionLowerer::LowerBlockExpr(const mir::Block& scope, mir::ExprId value)
   lir::Operand carried = *std::move(yielded);
   // A value lent by storage it lies in is copied out before the block ends,
   // as a C++ `return` makes its result, whichever storage lent it.
-  if (IsLentCopyable(carried)) {
+  if (IsConsumedByCopy(carried)) {
     carried = Emit(
         lir::OperandType(fn_, carried),
         ConsumeByCopyOrMove(std::move(carried)));
@@ -1676,10 +1669,6 @@ auto FunctionLowerer::RunCleanup(const Cleanup& cleanup) -> diag::Result<void> {
           [&](const ReleaseStorage& release) -> diag::Result<void> {
             EmitCleanup(release);
             return {};
-          },
-          [&](const EndHandling&) -> diag::Result<void> {
-            EmitStatement(lir::EndHandlingInstr{});
-            return {};
           }},
       cleanup);
 }
@@ -1783,10 +1772,10 @@ auto FunctionLowerer::LowerFinallyInto(
 
 auto FunctionLowerer::LowerTryInto(
     const mir::Block& block, const mir::TryStmt& stmt) -> diag::Result<void> {
-  const lir::BlockId handler_id = NewBlock();
+  const lir::BlockId handler_id = NewCleanupBlock();
   const lir::BlockId merge_id = NewBlock();
 
-  // The effect is received where the handler begins and read by its
+  // The effect is received where unwinding is taken and read by the handler's
   // statements, which may stand in other blocks, so it is frame storage rather
   // than a value in flight.
   const lir::ValueId caught =
@@ -1814,8 +1803,8 @@ auto FunctionLowerer::LowerTryInto(
     return std::unexpected(std::move(handler.error()));
   }
   // Reaching the handler's end is what claiming the effect amounts to:
-  // execution resumes past the region (LRM 9.6.2), once the handling of what
-  // the region took has ended there.
+  // execution resumes past the region (LRM 9.6.2), once what the handler's own
+  // scopes owe has run.
   auto closed = CloseExtent(depth);
   if (!closed) {
     return closed;
@@ -1987,7 +1976,7 @@ auto FunctionLowerer::HeldInSlot(lir::Operand value, lir::TypeId type)
     -> lir::ValueId {
   const lir::ValueId slot = NewLiveSlot(type);
   AssignFrom(LocalPlace(slot), std::move(value));
-  if (unit_->Types().Get(type).IsOwnedValue()) {
+  if (NeedsEnd(type)) {
     OpenScope(EndSlot{.slot = slot});
   }
   return slot;
@@ -2832,7 +2821,7 @@ auto FunctionLowerer::LowerCallInto(
       }
       const lir::TypeId taken_type = unit_->TranslateType(type);
       lir::Operand taken = Load(StorageAt(*std::move(storage)), taken_type);
-      if (unit_->Types().Get(taken_type).IsOwnedValue()) {
+      if (NeedsEnd(taken_type)) {
         OpenScope(EndValue{.value = std::get<lir::Use>(taken).value});
       }
       return settled(std::move(taken));
@@ -2991,18 +2980,24 @@ auto FunctionLowerer::CallInto(
     return {};
   }
   const bool returns = lir::CallReturns(target);
+  std::optional<lir::BlockId> unwind;
   if (lir::CallCanUnwind(
           unit_->Lir(), target,
           lir::DestinationType(unit_->Lir(), fn_, destination))) {
-    auto invoked =
-        EmitInvoke(std::move(target), std::move(args), std::move(destination));
-    if (!invoked) {
-      return invoked;
+    // A call unwound out of makes no value, so the bytes the value would have
+    // lain in go out of use on that way out.
+    auto here = UnwindDestinationHere(
+        OwningTransient(destination, lir::CallMakesValue(target)));
+    if (!here) {
+      return std::unexpected(std::move(here.error()));
     }
+    unwind = *here;
+  }
+  lir::CallInstr call{.target = std::move(target), .args = std::move(args)};
+  if (unwind.has_value()) {
+    EmitInvoke(std::move(call), std::move(destination), *unwind);
   } else {
-    Assign(
-        std::move(destination),
-        lir::CallInstr{.target = std::move(target), .args = std::move(args)});
+    Assign(std::move(destination), std::move(call));
   }
   // Nothing comes back to the point the call returns to, so whatever the
   // source wrote after the call is never reached and has no lowering.
@@ -3323,7 +3318,7 @@ auto FunctionLowerer::LowerConditional(
   if (auto made = LowerConditionalInto(block, cond, LocalPlace(slot)); !made) {
     return std::unexpected(std::move(made.error()));
   }
-  if (unit_->Types().Get(result_type).IsOwnedValue()) {
+  if (NeedsEnd(result_type)) {
     OpenScope(EndSlot{.slot = slot});
   }
   return Load(LocalPlace(slot), result_type);
@@ -3459,9 +3454,7 @@ auto FunctionLowerer::LowerExpr(const mir::Block& block, mir::ExprId id)
             // moved out of with nothing to drop. A value only lent to this
             // body owes no end here, and what takes it copies it.
             auto value = LowerRead(block, m.operand);
-            if (!value || !unit_->Types()
-                               .Get(lir::OperandType(fn_, *value))
-                               .IsOwnedValue()) {
+            if (!value || !NeedsEnd(lir::OperandType(fn_, *value))) {
               return value;
             }
             if (const std::optional<std::size_t> owed =

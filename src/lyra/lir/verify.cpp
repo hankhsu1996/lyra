@@ -6,6 +6,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -180,7 +181,7 @@ auto AllocatesStorage(const CallTarget& target) -> bool {
 
 // The values that name storage of dynamic duration just allocated, by value
 // id: storage holding no value yet, as a frame slot is before its first. An
-// allocation that may raise is an invoke, and defines its value the same way.
+// allocation stated as an invoke defines its value the same way.
 auto AllocatedStorage(const Function& fn) -> std::vector<bool> {
   std::vector<bool> allocated(fn.values.size(), false);
   const auto record = [&](const Destination& destination,
@@ -200,7 +201,7 @@ auto AllocatedStorage(const Function& fn) -> std::vector<bool> {
       }
     }
     if (const auto* invoke = std::get_if<InvokeTerm>(&block.terminator.data)) {
-      record(invoke->destination, invoke->target);
+      record(invoke->destination, invoke->call.target);
     }
   }
   return allocated;
@@ -366,8 +367,7 @@ void VerifyInstr(
                   "lir verify: a value is replaced by nothing made");
             }
             VerifyRvalue(unit, fn, replaced.value, place_type);
-          },
-          [](const BeginHandlingInstr&) {}, [](const EndHandlingInstr&) {}},
+          }},
       instr.data);
 }
 
@@ -444,18 +444,9 @@ void VerifyRvalue(
                   "union");
             }
           },
-          // A callee that can be unwound out of is called as an invoke, so
-          // that whatever is owed between the call and the frame's edge gets
-          // its turn.
           [&](const CallInstr& call) {
             RequireCallWellFormed(
                 unit, fn, call.target, call.args, result_type);
-            if (CallCanUnwind(unit, call.target, result_type)) {
-              throw InternalError(
-                  "lir verify: a callee that can be unwound out of is called "
-                  "as an instruction rather than as an invoke -- please "
-                  "report this as a bug");
-            }
           },
           [](const ProductInstr&) {},
           [&](const ClosureInstr& built) {
@@ -470,9 +461,6 @@ void VerifyRvalue(
           },
           [](const ArrayInstr&) {}, [](const BinaryInstr&) {},
           [](const UnaryInstr&) {}, [](const VariableStorageInstr&) {},
-          // Where it may stand is a property of the block rather than of the
-          // instruction, so it is held where the blocks are walked.
-          [](const LandingInstr&) {},
           [&](const UseInstr& use) {
             if (OperandType(fn, use.operand) != result_type) {
               throw InternalError(
@@ -486,44 +474,138 @@ void VerifyRvalue(
       value);
 }
 
-// A landing is a block invokes name and that opens by taking what is unwinding.
-// Neither half stands without the other: a body reaches a landing no other way,
-// and what is unwinding has nowhere else to be taken -- so a block that opens
-// this way and is named by nothing would never run, and one that is named and
-// does not would run with nothing taken. Calls that owe the same on the way out
-// share one, as LLVM lets any number of invokes unwind to one landing pad.
-auto TakesUnwinding(const Instr& instr) -> bool {
-  const auto* assign = std::get_if<AssignInstr>(&instr.data);
-  return assign != nullptr &&
-         std::holds_alternative<LandingInstr>(assign->value);
+// Whether an instruction calls something that can be unwound out of.
+auto CallsWhatCanUnwind(
+    const CompilationUnit& unit, const Function& fn, const Instr& instr)
+    -> bool {
+  if (const auto* assign = std::get_if<AssignInstr>(&instr.data)) {
+    const auto* call = std::get_if<CallInstr>(&assign->value);
+    return call != nullptr &&
+           CallCanUnwind(
+               unit, call->target,
+               DestinationType(unit, fn, assign->destination));
+  }
+  if (const auto* replaced = std::get_if<EndAndReplaceInstr>(&instr.data)) {
+    const auto* call = std::get_if<CallInstr>(&replaced->value);
+    return call != nullptr &&
+           CallCanUnwind(
+               unit, call->target, PlaceType(unit, fn, replaced->place));
+  }
+  return false;
 }
 
-void VerifyLandings(const Function& fn) {
-  std::vector<bool> named(fn.blocks.size(), false);
+// Two rules about unwinding.
+//
+// A cleanup leaves only by running to its end: a block reached only by
+// unwinding calls nothing that can be unwound out of, goes on only to another
+// such block, on out of the body, or to where the body takes what is
+// unwinding, and is reached only that way -- from a call naming it, from
+// another such block, or from a taking point handing on what is not the
+// design's. Where unwinding is taken, control goes on in an ordinary block.
+//
+// A function declared not to unwind lets no unwinding out of it, so its
+// `nounwind` is true: nothing in it goes on unwinding out of the body, from a
+// call or from a taking point. A taking point carries on whatever is not the
+// design's, so no call in such a function can be unwound out of at all.
+void VerifyUnwinding(
+    const CompilationUnit& unit, const Function& fn, bool cannot_unwind) {
+  const auto is_cleanup = [&](BlockId id) {
+    return fn.blocks[id.value].is_cleanup;
+  };
+  const auto refuse = [](std::string_view what) {
+    throw InternalError(
+        std::format("lir verify: {} -- please report this as a bug", what));
+  };
   for (const BasicBlock& block : fn.blocks) {
-    if (const auto* call = std::get_if<InvokeTerm>(&block.terminator.data)) {
-      named[call->landing.value] = true;
-    }
-  }
-  for (std::size_t index = 0; index < fn.blocks.size(); ++index) {
-    const std::vector<Instr>& instrs = fn.blocks[index].instrs;
-    for (std::size_t at = 0; at < instrs.size(); ++at) {
-      if (!TakesUnwinding(instrs[at])) {
+    for (const Instr& instr : block.instrs) {
+      if (!CallsWhatCanUnwind(unit, fn, instr)) {
         continue;
       }
-      if (at != 0) {
-        throw InternalError(
-            "lir verify: what is unwinding is taken somewhere other than at "
-            "the start of a landing");
+      if (block.is_cleanup) {
+        refuse(
+            "a block reached only by unwinding calls something that can be "
+            "unwound out of");
+      }
+      if (cannot_unwind) {
+        refuse(
+            "a function declared not to unwind calls something that can be "
+            "unwound out of with nothing in it to take what unwinds");
       }
     }
-    const bool takes = !instrs.empty() && TakesUnwinding(instrs[0]);
-    if (takes != named[index]) {
-      throw InternalError(
-          takes ? "lir verify: a landing no invoke names"
-                : "lir verify: an invoke names a block that takes nothing "
-                  "unwinding");
-    }
+    const auto goes_on_alike = [&](BlockId target) {
+      if (is_cleanup(target) != block.is_cleanup) {
+        refuse(
+            "control passes between a block reached only by unwinding and an "
+            "ordinary one other than by unwinding or by taking it");
+      }
+    };
+    std::visit(
+        Overloaded{
+            [&](const InvokeTerm& call) {
+              if (block.is_cleanup) {
+                refuse(
+                    "a block reached only by unwinding names one to unwind to");
+              }
+              if (!CallCanUnwind(
+                      unit, call.call.target,
+                      DestinationType(unit, fn, call.destination))) {
+                refuse(
+                    "a call names a block to unwind to though its callee "
+                    "cannot be unwound out of");
+              }
+              if (!is_cleanup(call.unwind) || is_cleanup(call.returned)) {
+                refuse(
+                    "a call unwinds to an ordinary block or returns to one "
+                    "reached only by unwinding");
+              }
+            },
+            [&](const ReceiveDepartureTerm& taken) {
+              if (!block.is_cleanup) {
+                refuse(
+                    "unwinding is taken somewhere other than on a way out by "
+                    "unwinding");
+              }
+              if (is_cleanup(taken.then)) {
+                refuse(
+                    "what is taken goes on in a block reached only by "
+                    "unwinding");
+              }
+              if (taken.otherwise.has_value() &&
+                  !is_cleanup(*taken.otherwise)) {
+                refuse("what is not taken goes on in an ordinary block");
+              }
+              if (!taken.otherwise.has_value() && cannot_unwind) {
+                refuse(
+                    "a function declared not to unwind hands what it does not "
+                    "take out of the body");
+              }
+            },
+            [&](const UnwindResumeTerm&) {
+              if (!block.is_cleanup) {
+                refuse("an ordinary block goes on unwinding");
+              }
+              if (cannot_unwind) {
+                refuse("a function declared not to unwind goes on unwinding");
+              }
+            },
+            [&](const BranchTerm& branch) { goes_on_alike(branch.target); },
+            [&](const CondBranchTerm& branch) {
+              goes_on_alike(branch.if_true);
+              goes_on_alike(branch.if_false);
+            },
+            [&](const SwitchTerm& dispatch) {
+              for (const SwitchTarget& target : dispatch.targets) {
+                goes_on_alike(target.target);
+              }
+              goes_on_alike(dispatch.otherwise);
+            },
+            [&](const SuspendTerm& suspension) {
+              goes_on_alike(suspension.resume);
+              goes_on_alike(suspension.abandoned);
+            },
+            [](const ReturnTerm&) {}, [](const AbandonTerm&) {},
+            [](const DepartTerm&) {}, [](const UnreachableTerm&) {}},
+        block.terminator.data);
   }
 }
 
@@ -555,10 +637,17 @@ void VerifyFunction(
     const diag::FailureContext ended_at(block.terminator.span);
     if (const auto* call = std::get_if<InvokeTerm>(&block.terminator.data)) {
       RequireInitializes(
-          unit, fn, allocated, call->destination, CallMakesValue(call->target));
+          unit, fn, allocated, call->destination,
+          CallMakesValue(call->call.target));
       RequireCallWellFormed(
-          unit, fn, call->target, call->args,
+          unit, fn, call->call.target, call->call.args,
           DestinationType(unit, fn, call->destination));
+    }
+    if (const auto* taken =
+            std::get_if<ReceiveDepartureTerm>(&block.terminator.data)) {
+      RequireInitializes(
+          unit, fn, allocated, taken->departure,
+          CallMakesValue(ReceiveDepartureCall().target));
     }
     // Only a body whose call protocol is the coroutine one can hand control
     // back to the scheduler; a suspension anywhere else has no one to resume
@@ -574,19 +663,8 @@ void VerifyFunction(
           "lir verify: a suspension, or a completion with a departure, appears "
           "in a body whose result type is not a coroutine");
     }
-    // A function no call can be unwound out of calls nothing that can be,
-    // which would be an invoke, and starts no unwind of its own, so its
-    // `nounwind` is true.
-    const bool unwinds =
-        std::holds_alternative<InvokeTerm>(block.terminator.data) ||
-        std::holds_alternative<UnwindResumeTerm>(block.terminator.data);
-    if (unwinds && cannot_unwind) {
-      throw InternalError(
-          "lir verify: a function declared not to unwind has a block that can "
-          "-- please report this as a bug");
-    }
   }
-  VerifyLandings(fn);
+  VerifyUnwinding(unit, fn, cannot_unwind);
 }
 
 }  // namespace

@@ -211,27 +211,39 @@ something every artifact links against. Rust's `catch_unwind` has the same shape
 reason: its landing matches anything, and the runtime then decides from the exception it was handed
 whether the raise was its own.
 
-The execution backend keeps the scopes a departure can meet -- cleanups, the end of each value the
-body owns, and regions alike -- on one stack in the order they nest, as Clang's exception handling
-does. What a way out owes is a chain of nodes, each one cleanup and the node it continues to, made
-once for that pair as rustc's drop tree is. Calls that owe the same on the way out share a landing,
-as clang's calls of one scope share a landing pad; what one call owes alone -- the bytes its value
-would have been made in -- is a node of its own ahead of the shared part. The landing takes what
-arrived, handling nothing yet, and enters that chain, whose cleanups run once on the way out, until
-a region's handler takes it or the frame's own edge carries it on out of the body. A cleanup's own
-code is lowered with none of the body's scopes open, so nothing in it can lead back into a scope
-around it. Only a handler begins handling what arrived, and every way out of the handler ends it, as
-Clang begins a `catch` and ends it in a cleanup of the handler; a landing says whether its way out
-ends in such a handler, which is what tells the platform this frame takes the raise. A body entered
-as a coroutine stands in a region of its own, as a C++ coroutine's body stands in a `try` whose
-handler hands what escaped to its promise. A cleanup's code therefore appears once on the unwinding
-path however many calls inside it can leave, while the ordinary ways out -- falling off the end, a
-return, a loop exit -- still copy it, as below. A value whose end passes to storage or to the caller
-stops being owed at that point, and a node never changes once a way out recorded it, so the ways out
-recorded while it was owed keep ending it and those recorded afterwards do not. An object being
-constructed is such a value. Its creator's reference to it is owed on every way out of the
-construction, so a departure that leaves the construction partway ends that reference and nothing
-else, and the object goes on existing while anything else refers to it.
+The lowering to the execution layer keeps the scopes a departure can meet -- cleanups, the end of
+each value the body owns, and regions alike -- on one stack in the order they nest, as Clang's
+exception handling does; a value whose type's end does nothing is owed no end, as rustc schedules no
+drop for a type that needs none. What a way out owes is a chain of nodes, each one cleanup and the
+node it continues to, made once for that pair as rustc's drop tree is. A call that can leave names
+the first block of what it owes, as rustc's MIR names a call's cleanup block, and calls that owe the
+same share it; what one call owes alone -- the bytes its value would have been made in -- is a node
+of its own ahead of the shared part. A call that owes nothing on the way out names no block:
+unwinding from it leaves the body, as rustc's `UnwindAction::Continue`, and leaving the body ends
+every byte of its frame, so the bytes a frame keeps are owed only on a way out that stays in the
+body. The chain's blocks are reached only by unwinding and run once on the way out, until a region
+of the body takes what is unwinding or the chain goes on out of the body. Taking it is one step: the
+runtime is asked what arrived, a departure of the design is handed to the region as a value and the
+handler goes on in ordinary code, and anything else goes on unwinding as the same raise, so nothing
+in a body is ever still being handled. A cleanup's own code is lowered with none of the body's
+scopes open, so nothing in it can lead back into a scope around it. A body entered as a coroutine
+stands in a region of its own, as a C++ coroutine's body stands in a `try` whose handler hands what
+escaped to its promise, and every way it is left by unwinding is a block that says so. A cleanup's
+code therefore appears once on the unwinding path however many calls inside it can leave, while the
+ordinary ways out -- falling off the end, a return, a loop exit -- still copy it, as below. A value
+whose end passes to storage or to the caller stops being owed at that point, and a node never
+changes once a way out recorded it, so the ways out recorded while it was owed keep ending it and
+those recorded afterwards do not. An object being constructed is such a value. Its creator's
+reference to it is owed on every way out of the construction, so a departure that leaves the
+construction partway ends that reference and nothing else, and the object goes on existing while
+anything else refers to it.
+
+How the execution backend carries an unwind is its own: a landing pad for each block a call names,
+which catches where the way out through that block ends where the body takes what is unwinding, so
+the platform's search for a taker stops in this frame, and otherwise only runs what is owed; one
+slot per frame keeping what arrived; and at a taking point the C++ ABI's own begin of a catch, the
+runtime's question, and the end of the catch on both ways out, as clang realizes the C++ backend's
+`catch (...)` around the same question.
 
 Ending an execution is the other construct the opening names, built on this one. Three requests end
 executions -- a `disable` of a target an execution was started inside, `disable fork`, and `kill()`

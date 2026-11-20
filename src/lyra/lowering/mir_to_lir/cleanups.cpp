@@ -8,6 +8,10 @@
 
 namespace lyra::lowering::mir_to_lir {
 
+CleanupTree::CleanupTree() {
+  nodes_.push_back(Node{.entry = std::nullopt, .way_out = WayOut::kLeaving});
+}
+
 auto CleanupTree::Add(Cleanup cleanup) -> CleanupId {
   const CleanupId id{static_cast<std::uint32_t>(cleanups_.size())};
   cleanups_.push_back(std::move(cleanup));
@@ -19,24 +23,24 @@ auto CleanupTree::Get(CleanupId id) const -> const Cleanup& {
 }
 
 auto CleanupTree::Root(lir::BlockId destination) -> CleanupNodeId {
-  return RootAt(destination, false);
+  return RootAt(destination, WayOut::kOrdinary);
 }
 
-auto CleanupTree::HandlerRoot(lir::BlockId handler) -> CleanupNodeId {
-  return RootAt(handler, true);
+auto CleanupTree::TakingRoot(lir::BlockId taking_point) -> CleanupNodeId {
+  return RootAt(taking_point, WayOut::kTaken);
 }
 
-auto CleanupTree::RootAt(lir::BlockId destination, bool ends_in_handler)
+auto CleanupTree::LeavingRoot() -> CleanupNodeId {
+  return CleanupNodeId{0};
+}
+
+auto CleanupTree::RootAt(lir::BlockId destination, WayOut way_out)
     -> CleanupNodeId {
   if (const auto found = roots_.find(destination); found != roots_.end()) {
     return found->second;
   }
   const CleanupNodeId id{static_cast<std::uint32_t>(nodes_.size())};
-  nodes_.push_back(
-      Node{
-          .entry = destination,
-          .ends_in_handler = ends_in_handler,
-          .landing = std::nullopt});
+  nodes_.push_back(Node{.entry = destination, .way_out = way_out});
   roots_.emplace(destination, id);
   return id;
 }
@@ -53,30 +57,36 @@ auto CleanupTree::Insert(
     CleanupId cleanup, CleanupNodeId next, lir::BlockId entry)
     -> CleanupNodeId {
   const CleanupNodeId id{static_cast<std::uint32_t>(nodes_.size())};
-  nodes_.push_back(
-      Node{
-          .entry = entry,
-          .ends_in_handler = nodes_[next.value].ends_in_handler,
-          .landing = std::nullopt});
+  nodes_.push_back(Node{.entry = entry, .way_out = nodes_[next.value].way_out});
   made_.emplace(std::pair{cleanup, next}, id);
   return id;
 }
 
-auto CleanupTree::EntryOf(CleanupNodeId node) const -> lir::BlockId {
+auto CleanupTree::EntryOf(CleanupNodeId node) const
+    -> std::optional<lir::BlockId> {
   return nodes_[node.value].entry;
 }
 
-auto CleanupTree::EndsInHandler(CleanupNodeId node) const -> bool {
-  return nodes_[node.value].ends_in_handler;
+auto CleanupTree::Unwinding(CleanupNodeId node) const -> bool {
+  switch (nodes_[node.value].way_out) {
+    case WayOut::kOrdinary:
+      return false;
+    case WayOut::kTaken:
+    case WayOut::kLeaving:
+      return true;
+  }
+  std::unreachable();
 }
 
-auto CleanupTree::LandingOf(CleanupNodeId node) const
-    -> std::optional<lir::BlockId> {
-  return nodes_[node.value].landing;
-}
-
-void CleanupTree::SetLanding(CleanupNodeId node, lir::BlockId landing) {
-  nodes_[node.value].landing = landing;
+auto CleanupTree::LeavesTheBody(CleanupNodeId node) const -> bool {
+  switch (nodes_[node.value].way_out) {
+    case WayOut::kOrdinary:
+    case WayOut::kTaken:
+      return false;
+    case WayOut::kLeaving:
+      return true;
+  }
+  std::unreachable();
 }
 
 }  // namespace lyra::lowering::mir_to_lir

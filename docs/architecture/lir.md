@@ -65,7 +65,8 @@ below LIR, at LIR-to-LLVM.
   step, because a window is several elements rather than one storage, and storage behind an
   indirection is reached by a dereference step.
 - When the bytes a frame keeps for a value are in use: from where a slot or a value is made, to a
-  point stated on every way out of the extent it belongs to.
+  point stated on every way out of the extent it belongs to but unwinding out of the body, which
+  ends every byte of the frame.
 - Whether a write initializes or assigns: a value put into storage holding none -- a slot's first
   value, one whose value was ended before, or a part of a body's return place, where an answer is
   built part by part -- is an assignment naming that storage as its destination, made there or moved
@@ -136,9 +137,18 @@ below LIR, at LIR-to-LLVM.
   a call of it can be unwound out of, as LLVM's `nounwind` is an attribute of a function's
   declaration and rustc's `FnAbi::can_unwind` a fact of a callee apart from its body. A function
   lowered from a body takes what MIR declares of that body, and one this layer builds can be unwound
-  out of unless it hands its place to an operation that cannot; a call of one that cannot is no
-  invoke, and the unit's verification holds every call that can be to being one, and every function
-  that cannot to calling nothing that can and starting no unwind of its own.
+  out of unless it hands its place to an operation that cannot.
+- Where unwinding goes in a body, as rustc's MIR states a call's unwind action: a call that can be
+  unwound out of at a point where the body owes something on the way out names the first block of
+  what is owed, and so ends its block; any other call is an instruction, unwinding from it leaving
+  the body. A block reached only by unwinding is marked as one. Unwinding ends where a region of the
+  body, or the top of an execution, takes it -- a terminator asking the runtime what arrived and
+  going on with a departure of the design, while anything else goes on unwinding as the same raise
+  -- or by going on out of the body. What is unwinding is no value of the body, and how a target
+  carries it -- landing pads, where it is kept while cleanups run, beginning and ending a catch,
+  resuming -- is below LIR. The unit's verification holds two rules apart: a block reached only by
+  unwinding calls nothing that can be unwound out of and is reached only by unwinding, and a
+  function declared not to unwind lets no unwinding out of it.
 - The boundary protocol to the scheduling runtime (entry, suspend, resume, abandonment, completion).
 - Where in the source each instruction and terminator came from, as rustc's MIR statements and
   terminators carry a span: that of the innermost MIR node naming one whose lowering emitted it, so
@@ -204,9 +214,9 @@ identity is the suspect, not the analysis.
 6. The runtime protocol is explicit: suspend, resume, abandonment, and each way a body is left
    appear as CFG edges, not as lowering conventions implied by node order. A suspension names both
    ways control can leave it -- the driver resumes the body, or ends it where it stands -- so what
-   the second owes is in the graph rather than assumed; and a body left by unwinding, or an
-   execution completed by a departure, says so with a terminator of its own, as a returning one
-   does. A coroutine body's entry is such a suspension, before its first statement, so whoever
+   the second owes is in the graph rather than assumed; and an execution's body left by unwinding,
+   or an execution completed by a departure, says so with a terminator of its own, as a returning
+   one does. A coroutine body's entry is such a suspension, before its first statement, so whoever
    drives the body runs every stretch of it, the first included, and ending it there ends what it
    was handed and nothing else -- the initial suspend a C++ coroutine's promise states, here stated
    in the graph rather than left to each backend. _Machine-execution consequence: the scheduler's

@@ -448,11 +448,12 @@ auto CallReturns(const CallTarget& target) -> bool;
 // be unwound out of wherever it can raise, since a run-time error is a
 // departure too; a runtime entry answers for itself, and one that only moves
 // memory raises nothing. Foreign code no departure comes out of is unwound
-// through all the same where the stack it waits on is released. A call that can
-// be unwound out of names the landing it reaches, so it is a terminator. A
-// construction is told apart by what it answers, which is the whole of its
-// callee: a value with no copy is its operand handed on and calls nothing, and
-// another construction is a library entry that may raise.
+// through all the same where the stack it waits on is released. Whether a call
+// that can be unwound out of names a block of its body to go to is the body's
+// question, of what it owes at the call, as rustc's MIR building asks of its
+// drop scopes. A construction is told apart by what it answers, which is the
+// whole of its callee: a value with no copy is its operand handed on and calls
+// nothing, and another construction is a library entry that may raise.
 auto CallCanUnwind(
     const CompilationUnit& unit, const CallTarget& target, TypeId answer)
     -> bool;
@@ -631,13 +632,13 @@ struct BitsStoreInstr {
 // one value after another. A slot's bytes come into use where the lowering
 // says; a made value's, with the instruction that makes it, which needs no
 // statement. Either goes out of use where the lowering says, on every way out
-// of the extent it was introduced in, unwinding included -- and where a call
-// that would have made the value is unwound out of instead, on that call's way
-// out, ahead of what the scopes around it owe. A value handed on takes its
-// bytes out of use with it, which is what
-// a return does with the value it returns. How long a frame's bytes are needed
-// is all this states; none of them is a value too large for a frame, which MIR
-// keeps in a box.
+// of the extent it was introduced in but unwinding out of the body, which ends
+// every byte of the frame -- and where a call that would have made the value
+// is unwound out of instead, on that call's way out, ahead of what the scopes
+// around it owe. A value handed on takes its bytes out of use with it, which is
+// what a return does with the value it returns. How long a frame's bytes are
+// needed is all this states; none of them is a value too large for a frame,
+// which MIR keeps in a box.
 //
 // A LIR-only statement with no MIR twin: a target whose own language places
 // its values states none of this. It is the pair rustc's MIR states as
@@ -682,23 +683,6 @@ struct UnaryInstr {
 // emitting nothing.
 struct CastInstr {
   Operand operand;
-};
-
-// Takes what is unwinding out of a call whose landing this is, answering it as
-// the machine pointer the unwinder carries; nothing is handled yet. A block
-// beginning with this is a landing, which is the whole of what makes it one: it
-// is reached only as the landing of calls, and what arrives is not an operand
-// anyone passed.
-//
-// `clause` says whether this frame takes the raise on the way out of them
-// -- a region of the frame encloses it, or the frame is an execution's top --
-// or only runs what is owed and lets it go on, which is what decides where the
-// platform's search for a taker stops. It is read off the same nesting that
-// builds the way out, as clang reads the clauses of a landing pad off its scope
-// stack.
-struct LandingInstr {
-  enum class Clause : std::uint8_t { kCatchAll, kCleanup };
-  Clause clause;
 };
 
 // Which of a body's declared variables: the position the body's statement of
@@ -763,27 +747,13 @@ struct SetObjectClassInstr {
   TypeId cls;
 };
 
-// The extent in which a handler of this frame handles `exception`, what a
-// landing took: begun where the handler starts, before it asks the runtime what
-// arrived, and ended on every way out of the handler -- falling off its end,
-// and being unwound out of it by a raise of its own or by what it asked about.
-// Every begin is matched by one end, so the platform's record of what is being
-// handled is left as the frame found it, as clang begins a catch and pushes
-// the end of it as a cleanup of the handler.
-struct BeginHandlingInstr {
-  Operand exception;
-};
-
-struct EndHandlingInstr {};
-
 // What computes a value, as rustc's MIR names the right-hand side of an
 // assignment: every instruction that yields one, a call to a callee answering
 // nothing included, whose value is the void one.
 using Rvalue = std::variant<
     CallInstr, ProductInstr, TaggedUnionInstr, ClosureInstr, ArrayInstr,
     VectorGetInstr, DiscriminantInstr, LoadInstr, AddrOfInstr, BinaryInstr,
-    UnaryInstr, CastInstr, LandingInstr, VariableStorageInstr,
-    BeginVariableInstr, UseInstr>;
+    UnaryInstr, CastInstr, VariableStorageInstr, BeginVariableInstr, UseInstr>;
 
 // A value computed once and consumed where it is used, with a pure dataflow
 // origin and no storage of its own to name.
@@ -820,12 +790,11 @@ struct EndAndReplaceInstr {
 // One step of a block: an assignment, or a statement that yields nothing --
 // a write into a value already there, a frame's bytes coming into or going out
 // of use, a variable ending, the storage at a place beginning or ending, an
-// object being given its class, a value ended and built anew where it lies, or
-// a handler's extent beginning or ending.
+// object being given its class, or a value ended and built anew where it lies.
 using InstrData = std::variant<
     AssignInstr, StoreInstr, BitsStoreInstr, StorageInstr, EndVariableInstr,
-    BeginStorageInstr, EndStorageInstr, SetObjectClassInstr, EndAndReplaceInstr,
-    BeginHandlingInstr, EndHandlingInstr>;
+    BeginStorageInstr, EndStorageInstr, SetObjectClassInstr,
+    EndAndReplaceInstr>;
 
 // `span` is the piece of source the instruction was lowered from, or no place
 // where it was lowered from none, as rustc's MIR statements carry a span; only
@@ -900,13 +869,12 @@ struct DepartTerm {
   Operand departure;
 };
 
-// Goes on unwinding out of the body with `exception`, what a landing took,
-// once what every scope owed on the way out has run and nothing in this frame
-// took it: the way a body is left by a raise it does not handle, as LLVM's
-// `resume` and rustc's `UnwindResume` are.
-struct UnwindResumeTerm {
-  Operand exception;
-};
+// Goes on unwinding out of the body, once what every scope owed on the way out
+// has run and nothing in this frame took what is unwinding: the way a body is
+// left by a raise it does not handle, as rustc's `UnwindResume`. What is
+// unwinding is no value of the body; how a target keeps it while the cleanups
+// run is the target's.
+struct UnwindResumeTerm {};
 
 // Ends a block control never reaches -- the join of a conditional whose arms
 // all returned, or the tail of a value-returning body that always returns
@@ -914,29 +882,44 @@ struct UnwindResumeTerm {
 // block.
 struct UnreachableTerm {};
 
-// A call whose callee can be unwound out of instead of returning (LRM 9.6.2,
-// 9.7): the result continues at `returned`, and unwinding transfers to
-// `landing`, where what is unwinding arrives rather than being passed as an
-// operand -- LLVM's `invoke`, and a call naming its unwind action in rustc's
-// MIR.
-//
-// It is a terminator and not an instruction because control leaves the block
-// through it either way, which is what a terminator means here; both of this
-// IR's peers say it the same way. Only a callee that can be unwound out of
-// takes this form, which is every callee but one declared not to; a call to
-// one that cannot stays an instruction. Where its value goes is stated as an
-// assignment's is, as a call in rustc's MIR names its `destination`.
+// A call that can be unwound out of (LRM 9.6.2, 9.7) at a point where the
+// body owes something on the way out: the result continues at `returned`, and
+// unwinding goes to `unwind`, the first cleanup block of what is owed --
+// rustc's call with `UnwindAction::Cleanup`, LLVM's `invoke`. A call with no
+// such block, because its callee cannot be unwound out of or because nothing
+// would run, is the same call stated as an instruction, since control leaves
+// its block only one way. Where its value goes is stated as an assignment's is,
+// as a call in rustc's MIR names its `destination`.
 struct InvokeTerm {
   Destination destination;
-  CallTarget target;
-  std::vector<Operand> args;
+  CallInstr call;
   BlockId returned;
-  BlockId landing;
+  BlockId unwind;
 };
+
+// Ends unwinding in this body, where a region of it encloses what unwound or
+// the body is an execution's top: the runtime is asked what arrived, and a
+// departure of the design is put in `departure` and control goes on at `then`
+// (LRM 9.6.2). Anything else -- not the design's, or the raise the asking
+// itself makes -- goes on unwinding as the same raise, to `otherwise`, a
+// cleanup block of what the body owes outside the region, or out of the body
+// where it owes nothing there. A taking point hands the departure over once,
+// as a value, so nothing in the body is ever still being handled; declining it
+// is a raise of that value like any other.
+struct ReceiveDepartureTerm {
+  Destination departure;
+  BlockId then;
+  std::optional<BlockId> otherwise;
+};
+
+// The call a taking point asks the runtime what arrived by, which every target
+// makes where unwinding is taken.
+auto ReceiveDepartureCall() -> CallInstr;
 
 using TerminatorData = std::variant<
     ReturnTerm, BranchTerm, CondBranchTerm, SwitchTerm, SuspendTerm,
-    AbandonTerm, DepartTerm, UnwindResumeTerm, UnreachableTerm, InvokeTerm>;
+    AbandonTerm, DepartTerm, UnwindResumeTerm, UnreachableTerm, InvokeTerm,
+    ReceiveDepartureTerm>;
 
 // `span` is as an instruction's.
 struct Terminator {
@@ -944,14 +927,25 @@ struct Terminator {
   diag::SourceSpan span{};
 };
 
+// The blocks control can go on to from `terminator`, the way out by unwinding
+// included, as rustc's `TerminatorKind::successors` and LLVM's `successors`.
+[[nodiscard]] auto SuccessorsOf(const TerminatorData& terminator)
+    -> std::vector<BlockId>;
+
 // A maximal straight-line run of instructions entered only at its first and
 // left only at its last. The terminator is what makes it one: control leaves
 // through it and nowhere else, so a block is never partly formed here -- a run
 // of instructions with no decided exit is a thing under construction, which the
 // pass building it holds in its own shape.
+//
+// `is_cleanup` marks a block reached only by unwinding, as rustc's MIR marks
+// one: it runs what a way out owes, so it leaves only by running to its end --
+// to another such block, on out of the body, or to where the body takes what
+// is unwinding.
 struct BasicBlock {
   std::vector<Instr> instrs;
   Terminator terminator;
+  bool is_cleanup = false;
 };
 
 // A callable lowered to a CFG. `name` is unique across the unit, so it is the

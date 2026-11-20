@@ -306,8 +306,8 @@ void TypeOperationCollector::VisitRvalue(
           [](const lir::ProductInstr&) {}, [](const lir::TaggedUnionInstr&) {},
           [](const lir::ClosureInstr&) {}, [](const lir::ArrayInstr&) {},
           [](const lir::VectorGetInstr&) {}, [](const lir::UnaryInstr&) {},
-          [](const lir::CastInstr&) {}, [](const lir::LandingInstr&) {},
-          [](const lir::VariableStorageInstr&) {}, [](const lir::UseInstr&) {}},
+          [](const lir::CastInstr&) {}, [](const lir::VariableStorageInstr&) {},
+          [](const lir::UseInstr&) {}},
       value);
 }
 
@@ -387,19 +387,29 @@ void TypeOperationCollector::VisitFunction(const lir::Function& fn) {
               },
               [](const lir::StorageInstr&) {},
               [](const lir::EndVariableInstr&) {},
-              [](const lir::SetObjectClassInstr&) {},
-              [](const lir::BeginHandlingInstr&) {},
-              [](const lir::EndHandlingInstr&) {}},
+              [](const lir::SetObjectClassInstr&) {}},
           instr.data);
     }
-    if (const auto* invoke =
-            std::get_if<lir::InvokeTerm>(&block.terminator.data)) {
-      visit_destination(invoke->destination);
-      VisitCall(
-          lowering,
-          lir::CallInstr{.target = invoke->target, .args = invoke->args},
-          lir::DestinationType(*unit_, fn, invoke->destination));
-    }
+    std::visit(
+        Overloaded{
+            [&](const lir::InvokeTerm& invoke) {
+              visit_destination(invoke.destination);
+              VisitCall(
+                  lowering, invoke.call,
+                  lir::DestinationType(*unit_, fn, invoke.destination));
+            },
+            [&](const lir::ReceiveDepartureTerm& taken) {
+              visit_destination(taken.departure);
+              VisitCall(
+                  lowering, lir::ReceiveDepartureCall(),
+                  lir::DestinationType(*unit_, fn, taken.departure));
+            },
+            [](const lir::ReturnTerm&) {}, [](const lir::BranchTerm&) {},
+            [](const lir::CondBranchTerm&) {}, [](const lir::SwitchTerm&) {},
+            [](const lir::SuspendTerm&) {}, [](const lir::AbandonTerm&) {},
+            [](const lir::DepartTerm&) {}, [](const lir::UnwindResumeTerm&) {},
+            [](const lir::UnreachableTerm&) {}},
+        block.terminator.data);
   }
 }
 

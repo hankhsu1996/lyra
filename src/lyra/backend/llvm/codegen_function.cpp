@@ -31,7 +31,6 @@
 #include "lyra/lir/place_query.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/value_step.hpp"
-#include "lyra/runtime/object_layout.hpp"
 #include "lyra/support/runtime_object.hpp"
 #include "lyra/support/value_domain.hpp"
 
@@ -79,6 +78,8 @@ auto CodeGenFunction::Run() -> diag::Result<void> {
         llvm::BasicBlock::Create(
             module_->Context(), std::format("bb{}", i), value_));
   }
+  landing_pads_.assign(fn_->blocks.size(), nullptr);
+  ends_in_taking_ = BlocksEndingInTaking();
 
   // A coroutine body opens with its ramp -- identity, frame, begin -- ahead of
   // the body, and the slots that must survive a suspension are allocated there,
@@ -678,26 +679,12 @@ auto CodeGenFunction::LowerTerminatorInto(const lir::Terminator& terminator)
             builder_.CreateBr(coro_final_);
             return {};
           },
-          [&](const lir::UnwindResumeTerm& resumed) -> diag::Result<void> {
-            auto exception = LowerOperand(resumed.exception);
-            if (!exception) {
-              return std::unexpected(std::move(exception.error()));
-            }
-            // A coroutine unwound out of is done, and says so before the
-            // unwinding leaves it, as LLVM's coroutines ask of a landing pad.
-            // Its body starts at its initial suspension, so nothing unwinds
-            // while it is first entered and no frame is left to free here.
-            if (IsCoroutine()) {
-              builder_.CreateCall(
-                  llvm::Intrinsic::getOrInsertDeclaration(
-                      &module_->Module(), llvm::Intrinsic::coro_end),
-                  {llvm::ConstantPointerNull::get(module_->Types().Ptr()),
-                   builder_.getInt1(true),
-                   llvm::ConstantTokenNone::get(module_->Context())});
-            }
-            builder_.CreateResume(builder_.CreateInsertValue(
-                llvm::PoisonValue::get(LandingPadType()), *exception, 0));
+          [&](const lir::UnwindResumeTerm&) -> diag::Result<void> {
+            ResumeUnwinding();
             return {};
+          },
+          [&](const lir::ReceiveDepartureTerm& taken) -> diag::Result<void> {
+            return LowerReceiveDepartureInto(taken);
           },
           [&](const lir::UnreachableTerm&) -> diag::Result<void> {
             builder_.CreateUnreachable();
@@ -708,13 +695,9 @@ auto CodeGenFunction::LowerTerminatorInto(const lir::Terminator& terminator)
             if (!destination) {
               return std::unexpected(std::move(destination.error()));
             }
-            const lir::CallInstr stated{
-                .target = call.target, .args = call.args};
-            invoke_dest_ = InvokeDest{
-                .normal = blocks_[call.returned.value],
-                .unwind = blocks_[call.landing.value]};
-            auto answered = LowerCall(stated, *destination);
-            invoke_dest_.reset();
+            auto answered = LowerInvoke(
+                call.call, *destination, blocks_[call.returned.value],
+                LandingPadFor(call.unwind));
             if (!answered) {
               return std::unexpected(std::move(answered.error()));
             }
@@ -722,11 +705,6 @@ auto CodeGenFunction::LowerTerminatorInto(const lir::Terminator& terminator)
             // where it is put.
             llvm::IRBuilder<> at(blocks_[call.returned.value]);
             StoreInto(*destination, *answered, at);
-            // A call this body realizes as its own instructions cannot be
-            // unwound out of, so control goes on to where the call returns.
-            if (!builder_.GetInsertBlock()->hasTerminator()) {
-              builder_.CreateBr(blocks_[call.returned.value]);
-            }
             return {};
           }},
       terminator.data);

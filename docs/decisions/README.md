@@ -485,6 +485,14 @@ the detail lives in the entry itself.
 - [context-free-call-lowering](context-free-call-lowering.md) -- one expression dispatcher template
   per boundary; the call family becomes a template once the `with`-clause element / index are
   co-equal loop variables.
+- [where-an-unwind-goes-is-stated-and-how-it-travels-is-the-targets](where-an-unwind-goes-is-stated-and-how-it-travels-is-the-targets.md)
+  -- LIR states where unwinding goes as rustc's MIR does: a call names a cleanup block exactly where
+  the body owes something on that way out, and is otherwise an instruction an unwind leaves the body
+  from; blocks reached only by unwinding are marked; a region or an execution's top takes what is
+  unwinding in one step, a departure of the design handed over as a value and anything else going on
+  as the same raise. Landing pads, the slot for what arrived, the begin and end of a catch and
+  resuming are the target's. Every call a terminator, a landing where nothing is owed, and a catch's
+  extent in LIR are rejected.
 
 ### References and construction
 
