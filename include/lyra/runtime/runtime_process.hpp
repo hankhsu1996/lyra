@@ -458,15 +458,6 @@ class CoroutineThread final : public ProcessExecution {
     context_ = left;
   }
 
-  // Runs the thread `activation` belongs to from `activation` -- the specific
-  // frame that suspended (the innermost one when a task enabled by this
-  // thread is suspended) -- and releases its process and that process's
-  // lineage once it has terminated. The process is held for the whole run,
-  // because its own ending wakes what may drop every other hold on it, as the
-  // last initial procedure of a program does by ending the program (LRM 24.3).
-  // Answers whether the process was left, ended by a departure or an error.
-  static auto Run(RuntimeEffects& effects, FrameActivation* activation) -> bool;
-
   // The top-level frame's activation, which is what the engine schedules to
   // start the thread and what completion is judged against. Null once the
   // body has terminated.
@@ -513,6 +504,10 @@ class CoroutineThread final : public ProcessExecution {
   }
 
  private:
+  // A thread is resumed only by a run of one of its frames, which holds its
+  // process for as long as the resume lasts.
+  friend struct FrameActivation;
+
   // Resumes `activation` -- the specific frame that suspended (the innermost
   // one when a task enabled by this thread is suspended). Symmetric transfer
   // carries control back up the enable chain. Returns true if the whole process
