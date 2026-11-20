@@ -2471,6 +2471,59 @@ TEST(LyraTopSelection, RefusesATopWhosePortNeedsAnInstantiation) {
   }
 }
 
+// A call through `super` or a superclass scope runs that class's own body, and
+// a pure virtual method has none (LRM 8.21). The front end refuses the call,
+// and a tolerant reading that relaxes its error lends the call no body either,
+// so the compiler refuses it in its own words rather than failing later.
+TEST(LyraCheck, RefusesAPureVirtualMethodCalledWithoutDispatch) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  WriteFile(
+      *tmp_or / "pure.sv",
+      "virtual class Base;\n"
+      "  pure virtual function int f();\n"
+      "endclass\n"
+      "class Leaf extends Base;\n"
+      "  virtual function int f();\n"
+      "    return super.f() + 1;\n"
+      "  endfunction\n"
+      "endclass\n"
+      "module Test;\n"
+      "  initial begin\n"
+      "    Leaf l = new;\n"
+      "    $display(\"%0d\", l.f());\n"
+      "  end\n"
+      "endmodule\n");
+
+  const auto strict = RunLyraFrom(lyra, *tmp_or, "check --top Test pure.sv");
+  EXPECT_THAT(strict, ExitedWithCode(1)) << strict.stderr_text;
+  EXPECT_NE(
+      strict.stderr_text.find(
+          "error: pure virtual method 'f' has no implementation to call "
+          "through 'super' or a superclass scope"),
+      std::string::npos)
+      << strict.stderr_text;
+
+  const auto checked =
+      RunLyraFrom(lyra, *tmp_or, "check --compat all --top Test pure.sv");
+  EXPECT_THAT(checked, ExitedWithCode(0)) << checked.stderr_text;
+
+  const auto lowered =
+      RunLyraFrom(lyra, *tmp_or, "dump hir --compat all --top Test pure.sv");
+  EXPECT_THAT(lowered, ExitedWithCode(1)) << lowered.stderr_text;
+  EXPECT_NE(
+      lowered.stderr_text.find(
+          "pure.sv:6:12: error: pure virtual method 'f' has no implementation "
+          "for a call through 'super' or a superclass scope to run"),
+      std::string::npos)
+      << lowered.stderr_text;
+  EXPECT_EQ(lowered.stderr_text.find("internal error"), std::string::npos)
+      << lowered.stderr_text;
+}
+
 // A construct Lyra does not yet carry out is refused by the compiler, in its
 // own words and with one answer whichever backend was asked for, and nothing is
 // written -- rather than a project written as text another compiler rejects, or
