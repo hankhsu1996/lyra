@@ -344,7 +344,29 @@ D10. Every text of a build -- the library being built, a library it depends on, 
     `__slang__`, so a source selects on the tool that will run it by the first and on the parser
     reading it by the second. The name is the tool's own: an invocation's `-U` takes either away,
     and its `-D` gives neither another value. No macro states a version, since Lyra shows none.
+
+D11. What a build makes names a source by its path from the directory of the manifest declaring
+    the design, and a source outside that directory by its absolute path; a design the command
+    line names is named from the directory the command was given in, where its paths start. That
+    is every name a build writes into what it makes: where a report says it was made, what
+    `__FILE__` expands to (LRM 22.13 leaves the form to the tool) and the `__FILE__` of
+    foreign code Lyra compiles. A message Lyra prints while it builds keeps the path from the
+    working directory, and an emitted project, built in its own directory, names its foreign
+    sources by their paths there.
 ```
+
+D11 is Cargo's: it hands rustc a workspace's files by their path from the workspace's root and runs
+it there, so that, in its own words, `cargo build` does not rebuild "if you change directories" or
+"move the whole package wholesale to a new directory". Lyra keeps what a build made in one store for
+every project, so a name taken from the working directory made the same design, built from a
+subdirectory or from beside it, a new build of every unit with a procedure. Naming each library's
+files under the library's own name, as Go's `-trimpath` and Rust's trim-paths do for what they
+publish, would have shared a library between being built and being depended on; it was rejected
+because a report then names a path no editor opens. A library built alone and the same library
+depended on therefore name their files differently, as they do under Cargo. A file is named as the
+front end opens it, its links followed, as Cargo records the files rustc read; a source reached
+through a link out of the project is therefore named by where it lies, and foreign code, which the
+host compiler names as it was given, by the link.
 
 ## The schema
 

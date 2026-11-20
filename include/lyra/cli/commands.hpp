@@ -1,5 +1,6 @@
 #pragma once
 
+#include <filesystem>
 #include <optional>
 #include <span>
 #include <string>
@@ -101,6 +102,9 @@ struct CommandContext {
   frontend::ParseResult* elaborated;
   diag::DiagnosticSink* sink;
   std::span<const driver::DpiLinkInput> dpi_inputs;
+  // What the build makes names a source under this directory by its path from
+  // it, foreign sources included, and any other source by its absolute path.
+  std::filesystem::path root_dir;
   std::string_view program_path;
 };
 

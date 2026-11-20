@@ -662,10 +662,12 @@ auto CompilationUnitName(
   if (unit.kind == SymbolKind::CompilationUnit) {
     // The anonymous $unit scope has no source name; its distinguishing identity
     // is the compilation-unit input it belongs to, named by the source buffer
-    // its declarations live in. Folding the resolved path yields a name stable
+    // its declarations live in. Folding the name `__FILE__` gives that
+    // buffer, before any line directive renames it, yields a name stable
     // across edits to the scope's body (the property a module's specialization
-    // name has) and distinct per input, with no shared table. A text of Lyra's
-    // own is an input that names itself.
+    // name has), distinct per input, and the same wherever the build runs
+    // from, with no shared table. A text of Lyra's own is an input that names
+    // itself.
     const auto& cu = unit.as<slang::ast::CompilationUnitSymbol>();
     if (const frontend::LibraryText* text = frontend::LibraryTextOf(cu)) {
       return std::string(text->unit);
@@ -682,7 +684,7 @@ auto CompilationUnitName(
           "CompilationUnitName: compilation unit has no located member");
     }
     return std::format(
-        "$unit__{:016x}", NameDigest(sources->getFullPath(*buffer).string()));
+        "$unit__{:016x}", NameDigest(sources->getRawMacroFileName(*buffer)));
   }
   throw InternalError(
       "CompilationUnitName: symbol is not a package, module body, compilation "
