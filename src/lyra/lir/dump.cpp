@@ -294,9 +294,9 @@ class LirDumper {
       Line(std::format("var {}: {}", v, FormatType(fn.variables[v])));
     }
     for (std::size_t b = 0; b < fn.blocks.size(); ++b) {
-      Line(std::format("bb{}:", b));
-      Indent();
       const BasicBlock& block = fn.blocks[b];
+      Line(std::format("bb{}{}:", b, block.is_cleanup ? " (cleanup)" : ""));
+      Indent();
       for (const Instr& instr : block.instrs) {
         Line(FormatInstr(fn, instr.data));
       }
@@ -366,13 +366,6 @@ class LirDumper {
               return std::format(
                   "{} {}", StorageOpName(storage.op),
                   FormatOperand(Use{.value = storage.of}));
-            },
-            [&](const BeginHandlingInstr& begun) -> std::string {
-              return std::format(
-                  "begin_handling {}", FormatOperand(begun.exception));
-            },
-            [](const EndHandlingInstr&) -> std::string {
-              return "end_handling";
             }},
         data);
   }
@@ -381,18 +374,7 @@ class LirDumper {
     return std::visit(
         Overloaded{
             [&](const CallInstr& call) -> std::string {
-              return std::format(
-                  "call {}({})", FormatCallTarget(call.target),
-                  FormatOperands(call.args));
-            },
-            [](const LandingInstr& landing) -> std::string {
-              switch (landing.clause) {
-                case LandingInstr::Clause::kCatchAll:
-                  return "landing catch_all";
-                case LandingInstr::Clause::kCleanup:
-                  return "landing cleanup";
-              }
-              throw InternalError("lir dump: unknown landing clause");
+              return FormatCall(call);
             },
             [&](const ProductInstr& product) -> std::string {
               return std::format(
@@ -480,19 +462,32 @@ class LirDumper {
             [&](const DepartTerm& depart) -> std::string {
               return std::format("depart {}", FormatOperand(depart.departure));
             },
-            [&](const UnwindResumeTerm& resumed) -> std::string {
-              return std::format(
-                  "unwind_resume {}", FormatOperand(resumed.exception));
+            [](const UnwindResumeTerm&) -> std::string {
+              return "unwind_resume";
             },
             [](const UnreachableTerm&) -> std::string { return "unreachable"; },
             [&](const InvokeTerm& call) -> std::string {
               return std::format(
-                  "{} = call {}({}) -> bb{} unwinds bb{}",
+                  "{} = {} -> bb{} unwinds bb{}",
                   FormatDestination(fn, call.destination),
-                  FormatCallTarget(call.target), FormatOperands(call.args),
-                  call.returned.value, call.landing.value);
+                  FormatCall(call.call), call.returned.value,
+                  call.unwind.value);
+            },
+            [&](const ReceiveDepartureTerm& taken) -> std::string {
+              return std::format(
+                  "{} = receive_departure -> bb{} otherwise {}",
+                  FormatDestination(fn, taken.departure), taken.then.value,
+                  taken.otherwise.has_value()
+                      ? std::format("bb{}", taken.otherwise->value)
+                      : std::string{"unwinds out"});
             }},
         term.data);
+  }
+
+  [[nodiscard]] auto FormatCall(const CallInstr& call) const -> std::string {
+    return std::format(
+        "call {}({})", FormatCallTarget(call.target),
+        FormatOperands(call.args));
   }
 
   [[nodiscard]] static auto FormatStatedDispatchRef(StatedDispatchRef method)

@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <gtest/gtest.h>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -377,63 +378,200 @@ TEST(LirVerifyTest, OnlyAReceiverMeetsAnAddressOfAnotherClass) {
       "of another type than its parameter");
 }
 
-// A callee that can be unwound out of is called as an invoke, and a function
-// declared not to unwind is left by no unwind: a call as an instruction of a
-// function so declared is accepted and of one not declared so is refused, and a
-// function so declared that goes on unwinding is refused.
-TEST(LirVerifyTest, OnlyWhatCannotUnwindIsCalledAsAnInstruction) {
-  const auto calling = [](bool callee_cannot_unwind,
-                          const std::string& because) {
-    PairBody body;
-    Function callee;
-    callee.name = "callee";
-    callee.result_type = body.unit.types.Intern(Type{VoidType{}});
-    const FunctionId called = body.unit.functions.Add(
-        FunctionAttributes{.can_unwind = !callee_cannot_unwind},
-        std::move(callee));
-    const Instr call{
-        .data = AssignInstr{
-            .destination = body.Transient(body.fn.result_type),
-            .value = CallInstr{
-                .target = FunctionTarget{.function = called}, .args = {}}}};
+// A unit holding a body of `blocks`, declared as `caller` says, and a callee
+// with no body of its own declared as `callee_attributes` says, whose function
+// the body's calls name.
+struct UnwindingBody {
+  CompilationUnit unit;
+  TypeId void_type;
+  FunctionId callee;
+  Function body;
+
+  explicit UnwindingBody(FunctionAttributes callee_attributes) {
+    void_type = unit.types.Intern(Type{VoidType{}});
+    Function declared;
+    declared.name = "callee";
+    declared.result_type = void_type;
+    callee = unit.functions.Add(callee_attributes, std::move(declared));
+  }
+
+  [[nodiscard]] auto Call() const -> CallInstr {
+    return CallInstr{.target = FunctionTarget{.function = callee}, .args = {}};
+  }
+
+  // A value answering nothing the body defines once.
+  auto Transient() -> Destination {
+    return lir::Transient{
+        .value = body.values.Add(
+            Local{.name = "t", .type = void_type, .kind = LocalKind::kTemp})};
+  }
+
+  // A call as an instruction, answering nothing.
+  auto CallInstruction() -> Instr {
+    return Instr{
+        .data = AssignInstr{.destination = Transient(), .value = Call()}};
+  }
+
+  // A block ending in a call that returns to `returned` and unwinds to
+  // `unwind`.
+  auto Invoking(BlockId returned, BlockId unwind) -> BasicBlock {
+    return BasicBlock{
+        .instrs = {},
+        .terminator =
+            Terminator{
+                .data =
+                    InvokeTerm{
+                        .destination = Transient(),
+                        .call = Call(),
+                        .returned = returned,
+                        .unwind = unwind}},
+        .is_cleanup = false};
+  }
+
+  void Verify(FunctionAttributes caller, std::vector<BasicBlock> blocks) {
+    body.name = "f";
+    body.result_type = void_type;
+    body.blocks = std::move(blocks);
+    unit.functions.Add(caller, std::move(body));
+    lir::Verify(unit);
+  }
+};
+
+void ExpectRefusedUnwinding(
+    UnwindingBody& unwinding, FunctionAttributes caller,
+    std::vector<BasicBlock> blocks, std::string_view because) {
+  try {
+    unwinding.Verify(caller, std::move(blocks));
+    FAIL() << "the verifier accepted it";
+  } catch (const InternalError& error) {
+    EXPECT_NE(
+        std::string_view{error.what()}.find(because), std::string_view::npos)
+        << error.what();
+  }
+}
+
+auto Returning(std::vector<Instr> instrs) -> BasicBlock {
+  return BasicBlock{
+      .instrs = std::move(instrs),
+      .terminator = Terminator{.data = ReturnTerm{}},
+      .is_cleanup = false};
+}
+
+auto Resuming() -> BasicBlock {
+  return BasicBlock{
+      .instrs = {},
+      .terminator = Terminator{.data = UnwindResumeTerm{}},
+      .is_cleanup = true};
+}
+
+// A function declared not to unwind lets no unwinding out of it: a call that
+// can be unwound out of, as an instruction, leaves with nothing to take it, and
+// going on unwinding leaves too. In a function that can unwind, the same call
+// is unwinding passing through a body that owes nothing.
+TEST(LirVerifyTest, AFunctionDeclaredNotToUnwindLetsNoUnwindingOut) {
+  {
+    UnwindingBody unwinding(FunctionAttributes{.can_unwind = true});
+    EXPECT_NO_THROW(unwinding.Verify(
+        FunctionAttributes{.can_unwind = true},
+        {Returning({unwinding.CallInstruction()})}));
+  }
+  {
+    UnwindingBody unwinding(FunctionAttributes{.can_unwind = true});
+    std::vector<BasicBlock> blocks{Returning({unwinding.CallInstruction()})};
+    ExpectRefusedUnwinding(
+        unwinding, FunctionAttributes{.can_unwind = false}, std::move(blocks),
+        "declared not to unwind");
+  }
+  {
+    UnwindingBody unwinding(FunctionAttributes{.can_unwind = true});
+    std::vector<BasicBlock> blocks{
+        unwinding.Invoking(BlockId{1}, BlockId{2}), Returning({}), Resuming()};
+    ExpectRefusedUnwinding(
+        unwinding, FunctionAttributes{.can_unwind = false}, std::move(blocks),
+        "declared not to unwind");
+  }
+}
+
+// A cleanup leaves only by running to its end: a block reached only by
+// unwinding calls nothing that can be unwound out of, and control reaches one
+// only by unwinding. A call names a block to unwind to only where its callee
+// can be unwound out of.
+TEST(LirVerifyTest, ACleanupLeavesOnlyByRunningToItsEnd) {
+  {
+    UnwindingBody unwinding(FunctionAttributes{.can_unwind = true});
+    Instr call = unwinding.CallInstruction();
+    std::vector<BasicBlock> blocks{BasicBlock{
+        .instrs = {std::move(call)},
+        .terminator = Terminator{.data = UnwindResumeTerm{}},
+        .is_cleanup = true}};
+    ExpectRefusedUnwinding(
+        unwinding, FunctionAttributes{.can_unwind = true}, std::move(blocks),
+        "reached only by unwinding calls");
+  }
+  {
+    UnwindingBody unwinding(FunctionAttributes{.can_unwind = true});
+    std::vector<BasicBlock> blocks{
+        BasicBlock{
+            .instrs = {},
+            .terminator = Terminator{.data = BranchTerm{.target = BlockId{1}}},
+            .is_cleanup = false},
+        Resuming()};
+    ExpectRefusedUnwinding(
+        unwinding, FunctionAttributes{.can_unwind = true}, std::move(blocks),
+        "control passes between");
+  }
+  {
+    UnwindingBody unwinding(FunctionAttributes{.can_unwind = false});
+    std::vector<BasicBlock> blocks{
+        unwinding.Invoking(BlockId{1}, BlockId{2}), Returning({}), Resuming()};
+    ExpectRefusedUnwinding(
+        unwinding, FunctionAttributes{.can_unwind = true}, std::move(blocks),
+        "its callee cannot");
+  }
+}
+
+// Unwinding is taken only on a way out by unwinding, and goes on from there in
+// an ordinary block, while what is not taken goes on in a block reached only by
+// unwinding.
+TEST(LirVerifyTest, UnwindingIsTakenOnlyOnAWayOutByUnwinding) {
+  const FunctionAttributes may_unwind{.can_unwind = true};
+  // Block 0 calls, returning to 1 and unwinding to `unwind`; block 2 is the
+  // taking point, marked as `taken_in_cleanup` says; block 3 goes on
+  // unwinding out of the body.
+  const auto verifying = [&](bool taken_in_cleanup, BlockId unwind,
+                             BlockId then, std::optional<BlockId> otherwise,
+                             std::string_view because) {
+    UnwindingBody unwinding(may_unwind);
+    std::vector<BasicBlock> blocks;
+    blocks.push_back(unwinding.Invoking(BlockId{1}, unwind));
+    blocks.push_back(Returning({}));
+    blocks.push_back(
+        BasicBlock{
+            .instrs = {},
+            .terminator =
+                Terminator{
+                    .data =
+                        ReceiveDepartureTerm{
+                            .departure = unwinding.Transient(),
+                            .then = then,
+                            .otherwise = otherwise}},
+            .is_cleanup = taken_in_cleanup});
+    blocks.push_back(Resuming());
     if (because.empty()) {
-      EXPECT_NO_THROW(body.VerifyRunning(call));
+      EXPECT_NO_THROW(unwinding.Verify(may_unwind, std::move(blocks)));
     } else {
-      ExpectRefused(body, call, because);
+      ExpectRefusedUnwinding(unwinding, may_unwind, std::move(blocks), because);
     }
   };
-  calling(true, "");
-  calling(false, "called as an instruction rather than as an invoke");
-
-  CompilationUnit unit;
-  Function resuming;
-  resuming.name = "resuming";
-  resuming.result_type = unit.types.Intern(Type{VoidType{}});
-  const ValueId exception = resuming.values.Add(
-      Local{
-          .name = "e",
-          .type = unit.types.Intern(
-              Type{MachineIntType{
-                  .width = MachineIntWidth::k64,
-                  .signedness = Signedness::kUnsigned}}),
-          .kind = LocalKind::kParam});
-  resuming.params.push_back(exception);
-  resuming.blocks.push_back(
-      BasicBlock{
-          .instrs = {},
-          .terminator = Terminator{
-              .data = UnwindResumeTerm{.exception = Use{.value = exception}}}});
-  unit.functions.Add(
-      FunctionAttributes{.can_unwind = false}, std::move(resuming));
-  try {
-    Verify(unit);
-    FAIL() << "a function declared not to unwind that unwinds passed";
-  } catch (const InternalError& refused) {
-    EXPECT_NE(
-        std::string_view{refused.what()}.find("declared not to unwind"),
-        std::string_view::npos)
-        << refused.what();
-  }
+  verifying(true, BlockId{2}, BlockId{1}, BlockId{3}, "");
+  verifying(true, BlockId{2}, BlockId{1}, std::nullopt, "");
+  verifying(
+      true, BlockId{2}, BlockId{3}, std::nullopt, "what is taken goes on");
+  verifying(
+      true, BlockId{2}, BlockId{1}, BlockId{1}, "what is not taken goes on");
+  verifying(
+      false, BlockId{3}, BlockId{1}, std::nullopt,
+      "taken somewhere other than");
 }
 
 // A type's default is reached through what the type is told to the library by,

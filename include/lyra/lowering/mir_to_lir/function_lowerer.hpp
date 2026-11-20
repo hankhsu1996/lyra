@@ -6,7 +6,6 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
-#include <utility>
 #include <variant>
 #include <vector>
 
@@ -173,8 +172,8 @@ class FunctionLowerer {
   // what it was allocated for.
   void PassEndAt(std::size_t index);
   // `value` as what an assignment puts where it goes, as rustc's
-  // `consume_by_copy_or_move`: one this body made is moved, and one it was only
-  // lent is copied, so what is put there is a value of its own.
+  // `consume_by_copy_or_move`: one this body owes an end for is moved, and any
+  // other is copied, so what is put there is a value of its own.
   auto ConsumeByCopyOrMove(lir::Operand value) -> lir::Rvalue;
   // `value` put where `destination` says, consumed; one moved out leaves the
   // bytes it was made in behind.
@@ -188,9 +187,16 @@ class FunctionLowerer {
   // end is still owed, and nothing otherwise.
   [[nodiscard]] auto OwedEndOfLocal(const mir::Block& block, mir::ExprId place)
       const -> std::optional<std::size_t>;
-  // Whether `value` is one this body was only lent and can copy: owned by its
-  // type, with a copy, and with no end owed for it here.
-  [[nodiscard]] auto IsLentCopyable(const lir::Operand& value) const -> bool;
+  // Whether a value of `type` is owed an end by whatever holds it: ending it
+  // does something. One whose end does nothing is only its bytes, which a move
+  // copies and the frame ends, so nothing holding it owes or hands on an end,
+  // as rustc schedules no drop for a type that needs none.
+  [[nodiscard]] auto NeedsEnd(lir::TypeId type) const -> bool;
+  // Whether `value` is one this body has no end owed for here and can copy,
+  // so what takes it gets a value of its own rather than the storage it was
+  // read from: one this body was only lent, or one whose end does nothing,
+  // whose copy is its bytes.
+  [[nodiscard]] auto IsConsumedByCopy(const lir::Operand& value) const -> bool;
   // States the end of an owned value, and of the one a frame slot holds.
   void EmitValueEnd(lir::Operand value);
   void EmitSlotValueEnd(lir::ValueId slot);
@@ -249,7 +255,9 @@ class FunctionLowerer {
   auto ExitEntryAt(lir::BlockId target, std::size_t depth)
       -> diag::Result<lir::BlockId>;
   // The node that runs `cleanup` and goes on to `next`, made with its block the
-  // first time a way out needs it.
+  // first time a way out needs it, or `next` itself where the cleanup runs
+  // nothing on that way out: its code is empty, or it ends a slot's bytes and
+  // the way out leaves the body, which ends every byte of its frame.
   auto NodeFor(CleanupId cleanup, CleanupNodeId next)
       -> diag::Result<CleanupNodeId>;
   // Ends the body being left where it stands, once what it owed has run.
@@ -285,51 +293,46 @@ class FunctionLowerer {
   // (LRM 9.6.2) while its body may state no region at all, so the question is
   // asked wherever control returns rather than only where a body nests one.
   auto TakeDepartureIfDue() -> diag::Result<void>;
-  // Emits a call whose callee can be unwound out of, naming where unwinding
-  // lands as well as where it returns. Every such call names one, including
-  // where nothing here takes or owes anything: a landing is also how a frame
-  // says unwinding is passing through it. What the call answers goes where
+  // Emits a call that, unwound out of, goes to `unwind`, a cleanup block of
+  // this body, as well as returning. What the call answers goes where
   // `destination` says.
-  auto EmitInvoke(
-      lir::CallTarget target, std::vector<lir::Operand> args,
-      lir::Destination destination) -> diag::Result<void>;
-  // The landing the call about to be made here unwinds to: it takes what is
-  // unwinding into the frame's one slot for it and enters the node the open
-  // scopes owe, saying whether this frame takes the raise on that way out.
-  // Every call unwinding into one node shares its landing, as clang's calls of
+  void EmitInvoke(
+      lir::CallInstr call, lir::Destination destination, lir::BlockId unwind);
+  // Where unwinding from a call about to be made here goes in this body: the
+  // first block of what the open scopes owe, ending at the innermost region's
+  // taking point or on out of the body, or none where nothing would run on
+  // the way out. Every call owing the same shares one, as clang's calls of
   // one scope share a landing pad. `unmade` is the value the call would have
   // made, where it makes one whose bytes a frame keeps; their going out of use
   // is that call's own, ahead of what the scopes owe.
-  auto LandingHere(std::optional<lir::ValueId> unmade)
-      -> diag::Result<lir::BlockId>;
+  auto UnwindDestinationHere(std::optional<lir::ValueId> unmade)
+      -> diag::Result<std::optional<lir::BlockId>>;
   // The node unwinding from where `depth` scopes are open enters: what they
-  // owe, ending at the innermost region's handler, or past every scope at the
-  // frame's own edge, where the unwinding is carried out of the frame.
+  // owe, ending at the innermost region's taking point, or past every scope
+  // on out of the body.
   auto UnwindNodeAt(std::size_t depth) -> diag::Result<CleanupNodeId>;
+  // Where a way out through `node` goes in this body. Leaving a function that
+  // owes nothing is no block. A coroutine's body is an execution, every way out
+  // of which its body states by a terminator of its own, so leaving one is
+  // always the block that says so.
+  auto DestinationOf(CleanupNodeId node) -> std::optional<lir::BlockId>;
   // A way out reaching the boundary that stands over a cleanup's own code would
   // leave that code before its end, which nothing a cleanup holds may do; the
   // unit's verification refuses such a cleanup, so reaching one here is a
   // compiler bug. `how` says how the code would be left.
   static void RefuseLeavingCleanupCode(
       const ScopeEntry& entry, std::string_view how);
-  auto FrameEdge() -> lir::BlockId;
-  // Opens a region's handler in the block its scope named: the handling of
-  // what the landing took begins, an extent that ends it on every way out is
-  // opened, and the runtime is asked what arrived, into the region's `caught`.
-  // The handler's own code follows, and closing the extent ends the handling.
+  // The block that goes on unwinding out of a coroutine's body with nothing
+  // left to run there.
+  auto LeavingBlock() -> lir::BlockId;
+  // Ends unwinding at a region's taking point, the block its scope named: the
+  // runtime is asked what arrived, into the region's `caught`, and anything not
+  // the design's goes on to what the scopes outside the region owe. The
+  // handler's own code follows, in an ordinary block.
   auto OpenHandler(const Region& region) -> diag::Result<void>;
   // The handler of the region a coroutine's whole body stands in: what arrived
   // completes the execution, as a departure.
   auto EmitCoroutineHandler(const Region& top) -> diag::Result<void>;
-  // The frame storage a landing puts what is unwinding in and every handler
-  // and every way out by unwinding reads it from. One serves the whole frame,
-  // because it is read only on the way from a landing to where that way ends,
-  // and nothing on it can be unwound out of, so no other landing writes it in
-  // between -- as clang keeps one exception slot per function.
-  auto ExceptionSlot() -> lir::ValueId;
-  // What a landing takes: the pointer the platform's unwinder carries, to an
-  // object no code here names the type of.
-  auto UnwindingType() -> lir::TypeId;
   auto CurrentRuntime() -> lir::Operand;
 
   // Reads a value out of an expression, as rustc's `as_operand`. An expression
@@ -448,8 +451,9 @@ class FunctionLowerer {
       std::vector<lir::Operand> args, lir::TypeId result_type)
       -> diag::Result<lir::Operand>;
   // Emits a call to a resolved callee, followed by what its ending leaves: the
-  // statement after it for one that returns, a landing as well for one that
-  // can be unwound out of, and nothing at all for one that only unwinds.
+  // statement after it for one that returns, the first block of what is owed
+  // as well for one that can be unwound out of where something is, and
+  // nothing at all for one that only unwinds.
   auto EmitCallTo(
       lir::CallTarget target, std::vector<lir::Operand> args,
       lir::TypeId result_type) -> diag::Result<lir::Operand>;
@@ -646,7 +650,11 @@ class FunctionLowerer {
   // The place an address opens to, which is storage, reached through whatever
   // protocol that storage has rather than by loading it.
   [[nodiscard]] static auto StorageAt(lir::Operand address) -> lir::Place;
+  // A block of the kind the current one is: code lowered on a way out by
+  // unwinding -- a cleanup's own branches and loops -- stays on that way out.
   auto NewBlock() -> lir::BlockId;
+  auto NewCleanupBlock() -> lir::BlockId;
+  auto NewOrdinaryBlock() -> lir::BlockId;
   void SetCurrent(lir::BlockId id);
   void Terminate(lir::TerminatorData data);
   [[nodiscard]] auto Terminated() const -> bool;
@@ -677,6 +685,7 @@ class FunctionLowerer {
     lir::BlockId id;
     std::vector<lir::Instr> instrs;
     std::optional<lir::Terminator> terminator;
+    bool is_cleanup = false;
   };
 
   std::vector<OpenBlock> blocks_;
@@ -690,12 +699,9 @@ class FunctionLowerer {
   CleanupTree cleanups_;
   // Which scope owes the end of a value or of what a slot holds.
   std::unordered_map<lir::ValueId, std::size_t> owed_end_;
-  // Where unwinding goes once it has passed every scope, built the first time
-  // one is needed.
-  std::optional<lir::BlockId> frame_edge_;
+  std::optional<lir::BlockId> leaving_block_;
   std::optional<lir::BlockId> abandon_block_;
   std::optional<lir::BlockId> return_block_;
-  std::optional<lir::ValueId> exception_slot_;
   // Which of the body's variables each local is, where its declared type gives
   // it one, and what each local has resolved to so far.
   std::vector<std::optional<std::uint32_t>> variable_slot_;

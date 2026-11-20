@@ -2,7 +2,9 @@
 
 Date: 2026-11-01. Status: accepted. Revised 2026-11-05: calls that owe the same on the way out now
 share a landing, so the exception slot has a writer per landing rather than one per call; the
-markers this record decides do not depend on that.
+markers this record decides do not depend on that. Revised 2026-11-20: the slot what is unwinding is
+kept in is the execution backend's own rather than LIR's, and the backend states its start as LIR
+states every other slot's.
 
 ## Context
 
@@ -31,9 +33,9 @@ slot that names storage realizes `storage_live` and `storage_dead` as `llvm.life
   above that one, as rustc schedules a local's storage and its value as two drops. So a way out
   while the slot is being initialized ends its bytes and no value, and a value moved out leaves the
   bytes owed.
-- **Storage no way out ends has a start and no end.** The slot a landing writes what is unwinding
-  into, and the storage a body's variables live in, last the whole body. LLVM keeps a slot with no
-  end in the frame, which costs a pointer written only on the exceptional path.
+- **Storage no way out ends has a start and no end.** The slot a landing pad writes what is
+  unwinding into, and the storage a body's variables live in, last the whole body. LLVM keeps a slot
+  with no end in the frame, which costs a pointer written only on the exceptional path.
 - **A value a transient holds in frame bytes states nothing yet.** Its bytes come into use with the
   instruction making it, and clang marks a temporary there too. It has the few uses of its
   statement, so LLVM's own answer costs it nothing, and nothing has needed the marker.

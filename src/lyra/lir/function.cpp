@@ -2,6 +2,7 @@
 
 #include <string_view>
 #include <variant>
+#include <vector>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
@@ -74,6 +75,51 @@ auto CoroutineOpName(CoroutineTarget::Op op) -> std::string_view {
       return "release_coroutine";
   }
   throw InternalError("lir: unknown coroutine operation");
+}
+
+auto ReceiveDepartureCall() -> CallInstr {
+  return CallInstr{
+      .target = BuiltinTarget{.fn = support::BuiltinFn::kReceiveDeparture},
+      .args = {}};
+}
+
+auto SuccessorsOf(const TerminatorData& terminator) -> std::vector<BlockId> {
+  return std::visit(
+      Overloaded{
+          [](const ReturnTerm&) -> std::vector<BlockId> { return {}; },
+          [](const BranchTerm& branch) -> std::vector<BlockId> {
+            return {branch.target};
+          },
+          [](const CondBranchTerm& fork) -> std::vector<BlockId> {
+            return {fork.if_true, fork.if_false};
+          },
+          [](const SwitchTerm& dispatch) {
+            std::vector<BlockId> successors;
+            successors.reserve(dispatch.targets.size() + 1);
+            for (const SwitchTarget& to : dispatch.targets) {
+              successors.push_back(to.target);
+            }
+            successors.push_back(dispatch.otherwise);
+            return successors;
+          },
+          [](const SuspendTerm& suspension) -> std::vector<BlockId> {
+            return {suspension.resume, suspension.abandoned};
+          },
+          [](const AbandonTerm&) -> std::vector<BlockId> { return {}; },
+          [](const DepartTerm&) -> std::vector<BlockId> { return {}; },
+          [](const UnwindResumeTerm&) -> std::vector<BlockId> { return {}; },
+          [](const UnreachableTerm&) -> std::vector<BlockId> { return {}; },
+          [](const InvokeTerm& call) -> std::vector<BlockId> {
+            return {call.returned, call.unwind};
+          },
+          [](const ReceiveDepartureTerm& taken) {
+            std::vector<BlockId> successors{taken.then};
+            if (taken.otherwise.has_value()) {
+              successors.push_back(*taken.otherwise);
+            }
+            return successors;
+          }},
+      terminator);
 }
 
 auto CallReturns(const CallTarget& target) -> bool {

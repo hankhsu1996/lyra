@@ -93,12 +93,6 @@ auto CodeGenFunction::LowerInstrInto(const lir::Instr& instr)
           },
           [&](const lir::EndAndReplaceInstr& replaced) -> Done {
             return LowerEndAndReplaceInto(replaced);
-          },
-          [&](const lir::BeginHandlingInstr& begun) -> Done {
-            return done(LowerBeginHandling(begun));
-          },
-          [&](const lir::EndHandlingInstr&) -> Done {
-            return done(LowerEndHandling());
           }},
       instr.data);
 }
@@ -152,9 +146,6 @@ auto CodeGenFunction::LowerRvalue(
           },
           [&](const lir::UseInstr& use) -> Lowered {
             return LowerUse(use, destination);
-          },
-          [&](const lir::LandingInstr& landing) -> Lowered {
-            return LowerLanding(landing);
           },
           [&](const lir::ProductInstr& product) -> Lowered {
             return LowerProduct(
@@ -1321,8 +1312,18 @@ auto CodeGenFunction::BodyAt(llvm::Value* table, std::uint64_t slot)
       ptr_ty, builder_.CreateConstInBoundsGEP1_64(ptr_ty, table, slot));
 }
 
-auto CodeGenFunction::LowerLanding(const lir::LandingInstr& landing)
-    -> llvm::Value* {
+auto CodeGenFunction::LandingPadFor(lir::BlockId target) -> llvm::BasicBlock* {
+  llvm::BasicBlock*& pad = landing_pads_[target.value];
+  if (pad == nullptr) {
+    pad = MakeLandingPad(ends_in_taking_[target.value], [&] {
+      builder_.CreateBr(blocks_[target.value]);
+    });
+  }
+  return pad;
+}
+
+auto CodeGenFunction::MakeLandingPad(
+    bool catches, llvm::function_ref<void()> continue_at) -> llvm::BasicBlock* {
   // The referee is named on the function rather than at the landing, so it is
   // set the first time one is needed and is absent from a body that has none.
   if (!value_->hasPersonalityFn()) {
@@ -1334,44 +1335,155 @@ auto CodeGenFunction::LowerLanding(const lir::LandingInstr& landing)
                     llvm::FunctionType::get(builder_.getInt32Ty(), true))
                 .getCallee()));
   }
+  const llvm::IRBuilderBase::InsertPointGuard resumed(builder_);
+  llvm::BasicBlock* const block =
+      llvm::BasicBlock::Create(module_->Context(), "landing", value_);
+  builder_.SetInsertPoint(block);
   // A frame that takes the raise matches anything, naming no raised type:
   // which region claims a departure is a question about the target it names,
-  // which the handler tests once it has asked the runtime what arrived.
-  llvm::LandingPadInst* const pad =
+  // which is asked once the runtime has said what arrived.
+  llvm::LandingPadInst* const landing =
       builder_.CreateLandingPad(LandingPadType(), 1);
-  switch (landing.clause) {
-    case lir::LandingInstr::Clause::kCatchAll:
-      pad->addClause(llvm::ConstantPointerNull::get(module_->Types().Ptr()));
-      break;
-    case lir::LandingInstr::Clause::kCleanup:
-      pad->setCleanup(true);
-      break;
+  if (catches) {
+    landing->addClause(llvm::ConstantPointerNull::get(module_->Types().Ptr()));
+  } else {
+    landing->setCleanup(true);
   }
-  return builder_.CreateExtractValue(pad, 0);
+  builder_.CreateStore(
+      builder_.CreateExtractValue(landing, 0), ExceptionSlot());
+  continue_at();
+  return block;
 }
 
-auto CodeGenFunction::LowerBeginHandling(const lir::BeginHandlingInstr& begun)
-    -> diag::Result<llvm::Value*> {
-  auto exception = LowerOperand(begun.exception);
-  if (!exception) {
-    return std::unexpected(std::move(exception.error()));
+auto CodeGenFunction::BlocksEndingInTaking() const -> std::vector<bool> {
+  // By each block's position, the positions of the blocks reached only by
+  // unwinding that go on to it.
+  const std::size_t count = fn_->blocks.size();
+  std::vector<std::vector<std::size_t>> reached_from(count);
+  std::vector<bool> ends(count, false);
+  std::vector<std::size_t> pending;
+  for (std::size_t at = 0; at < count; ++at) {
+    const lir::BasicBlock& block = fn_->blocks[at];
+    if (!block.is_cleanup) {
+      continue;
+    }
+    if (std::holds_alternative<lir::ReceiveDepartureTerm>(
+            block.terminator.data)) {
+      ends[at] = true;
+      pending.push_back(at);
+    }
+    for (const lir::BlockId next : lir::SuccessorsOf(block.terminator.data)) {
+      reached_from[next.value].push_back(at);
+    }
   }
+  while (!pending.empty()) {
+    const std::size_t at = pending.back();
+    pending.pop_back();
+    for (const std::size_t from : reached_from[at]) {
+      if (!ends[from]) {
+        ends[from] = true;
+        pending.push_back(from);
+      }
+    }
+  }
+  return ends;
+}
+
+auto CodeGenFunction::ExceptionSlot() -> llvm::Value* {
+  if (exception_slot_ != nullptr) {
+    return exception_slot_;
+  }
+  exception_slot_ = FrameStorage(module_->Types().Ptr());
+  // The slot lasts the whole body, so nothing ends it; a coroutine's slot
+  // states its start as every slot of one does, or the split asks of every
+  // pair of the landings writing it whether a suspension lies between them.
+  if (IsCoroutine()) {
+    llvm::BasicBlock* const body = blocks_.front();
+    llvm::IRBuilder<> at(body, body->getFirstInsertionPt());
+    at.CreateLifetimeStart(exception_slot_);
+  }
+  return exception_slot_;
+}
+
+auto CodeGenFunction::LowerInvoke(
+    const lir::CallInstr& call, const DestinationRef& destination,
+    llvm::BasicBlock* normal, llvm::BasicBlock* unwind)
+    -> diag::Result<llvm::Value*> {
+  invoke_dest_ = InvokeDest{.normal = normal, .unwind = unwind};
+  auto answered = LowerCall(call, destination);
+  invoke_dest_.reset();
+  if (answered && !builder_.GetInsertBlock()->hasTerminator()) {
+    builder_.CreateBr(normal);
+  }
+  return answered;
+}
+
+auto CodeGenFunction::LowerReceiveDepartureInto(
+    const lir::ReceiveDepartureTerm& taken) -> diag::Result<void> {
+  auto destination = ResolveDestination(taken.departure);
+  if (!destination) {
+    return std::unexpected(std::move(destination.error()));
+  }
+  BeginCatch(builder_.CreateLoad(module_->Types().Ptr(), ExceptionSlot()));
+  llvm::BasicBlock* const received =
+      llvm::BasicBlock::Create(module_->Context(), "received", value_);
+  // What leaves the asking is not the design's, or the raise the asking makes:
+  // the catch ends on its way, and it goes on as the same raise.
+  llvm::BasicBlock* const declined = MakeLandingPad(
+      taken.otherwise.has_value() && ends_in_taking_[taken.otherwise->value],
+      [&] {
+        EndCatch();
+        if (taken.otherwise.has_value()) {
+          builder_.CreateBr(blocks_[taken.otherwise->value]);
+        } else {
+          ResumeUnwinding();
+        }
+      });
+  auto answered = LowerInvoke(
+      lir::ReceiveDepartureCall(), *destination, received, declined);
+  if (!answered) {
+    return std::unexpected(std::move(answered.error()));
+  }
+  builder_.SetInsertPoint(received);
+  EndCatch();
+  StoreInto(*destination, *answered, builder_);
+  builder_.CreateBr(blocks_[taken.then.value]);
+  return {};
+}
+
+void CodeGenFunction::ResumeUnwinding() {
+  // A coroutine unwound out of is done, and says so before the unwinding
+  // leaves it, as LLVM's coroutines ask of a landing pad. Its body starts at
+  // its initial suspension, so nothing unwinds while it is first entered and
+  // no frame is left to free here.
+  if (IsCoroutine()) {
+    builder_.CreateCall(
+        llvm::Intrinsic::getOrInsertDeclaration(
+            &module_->Module(), llvm::Intrinsic::coro_end),
+        {llvm::ConstantPointerNull::get(module_->Types().Ptr()),
+         builder_.getInt1(true),
+         llvm::ConstantTokenNone::get(module_->Context())});
+  }
+  builder_.CreateResume(builder_.CreateInsertValue(
+      llvm::PoisonValue::get(LandingPadType()),
+      builder_.CreateLoad(module_->Types().Ptr(), ExceptionSlot()), 0));
+}
+
+void CodeGenFunction::BeginCatch(llvm::Value* exception) {
   llvm::PointerType* const ptr = module_->Types().Ptr();
   llvm::CallInst* const call = builder_.CreateCall(
       module_->Module().getOrInsertFunction(
           "__cxa_begin_catch", llvm::FunctionType::get(ptr, {ptr}, false)),
-      {*exception});
+      {exception});
   call->setDoesNotThrow();
-  return call;
 }
 
-auto CodeGenFunction::LowerEndHandling() -> llvm::Value* {
+void CodeGenFunction::EndCatch() {
   llvm::CallInst* const call =
       builder_.CreateCall(module_->Module().getOrInsertFunction(
           "__cxa_end_catch",
           llvm::FunctionType::get(builder_.getVoidTy(), false)));
   call->setDoesNotThrow();
-  return call;
 }
 
 auto CodeGenFunction::LandingPadType() -> llvm::StructType* {
