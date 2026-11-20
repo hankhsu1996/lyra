@@ -36,6 +36,7 @@
 #include <slang/numeric/SVInt.h>
 #include <slang/parsing/TokenKind.h>
 #include <slang/syntax/AllSyntax.h>
+#include <slang/text/SourceLocation.h>
 #include <slang/text/SourceManager.h>
 
 #include "lyra/base/internal_error.hpp"
@@ -662,12 +663,12 @@ auto CompilationUnitName(
   if (unit.kind == SymbolKind::CompilationUnit) {
     // The anonymous $unit scope has no source name; its distinguishing identity
     // is the compilation-unit input it belongs to, named by the source buffer
-    // its declarations live in. Folding the name `__FILE__` gives that
-    // buffer, before any line directive renames it, yields a name stable
-    // across edits to the scope's body (the property a module's specialization
-    // name has), distinct per input, and the same wherever the build runs
-    // from, with no shared table. A text of Lyra's own is an input that names
-    // itself.
+    // its declarations live in. Folding the name `__FILE__` gives at that
+    // buffer's start, before any line directive renames it, yields a name
+    // stable across edits to the scope's body (the property a module's
+    // specialization name has), distinct per input, and the same wherever the
+    // build runs from, with no shared table. A text of Lyra's own is an input
+    // that names itself.
     const auto& cu = unit.as<slang::ast::CompilationUnitSymbol>();
     if (const frontend::LibraryText* text = frontend::LibraryTextOf(cu)) {
       return std::string(text->unit);
@@ -684,7 +685,8 @@ auto CompilationUnitName(
           "CompilationUnitName: compilation unit has no located member");
     }
     return std::format(
-        "$unit__{:016x}", NameDigest(sources->getRawMacroFileName(*buffer)));
+        "$unit__{:016x}", NameDigest(sources->getPathForFileMacro(
+                              slang::SourceLocation(*buffer, 0))));
   }
   throw InternalError(
       "CompilationUnitName: symbol is not a package, module body, compilation "
