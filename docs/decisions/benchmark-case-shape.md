@@ -1,6 +1,7 @@
 # A benchmark case fixes what work is done and lets the harness choose how much
 
-Date: 2026-08-31; D13 added 2026-10-17, revised 2026-10-28. Status: accepted.
+Date: 2026-08-31; D13 added 2026-10-17, revised 2026-10-28 and 2026-11-20; D14 added 2026-11-20.
+Status: accepted.
 
 D13 said the build sizes were "large enough that the units between the two add far more than a
 build's fixed part varies by between runs". For the case that grew a signal's width it was not: two
@@ -144,10 +145,23 @@ D13. A case can also be counted rather than timed: the instructions one unit of 
      than a build's fixed part varies by is not assumed: the lower amount is counted twice, and
      what the two disagree by, as a share of the work counted, is the case's resolution. A case
      whose resolution is too coarse to tell a change worth marking from its own variation fails,
-     with what it measured. A count is Lyra's alone -- a reference simulator is compared by rate
-     (D6) -- and it is what tells two revisions of Lyra apart, because it does not move with the
+     with what it measured. A count is Lyra's and a hand-written program's (D14) -- a reference
+     simulator is compared by rate (D6), since its count would be of another simulator's whole
+     engine -- and it is what tells two revisions of Lyra apart, because it does not move with the
      load on the machine that took it. It does move from one machine to another, so a count is
      compared only with one taken beside it, and what is read across days is the rate.
+
+D14. A case may hold the program a careful C++ programmer would write for its work, the floor
+     the language allows that work to cost, so that whether Lyra reaches it is read at any
+     revision rather than measured once and lost. The program keeps every guarantee the language
+     gives what it uses, whether or not the case exercises it, because a compiler building one
+     unit cannot know what another leaves out, and a floor that drops one is no floor of this
+     language; what the containers share is one header the programs include, as libc++'s
+     container benchmarks share one. It is compiled by the C++ compiler Lyra's own builds take
+     when none is named, at -O2, measured in the same run by the same method as Lyra's program,
+     and held to doing the same work: at one small amount it prints what Lyra's program prints,
+     or its measurement fails, naming both texts. A comparison of two revisions reads Lyra's
+     rows only, since the program does not change with the compiler.
 ```
 
 ## Rejected alternatives
@@ -228,6 +242,9 @@ it better, which is why it is the decision the others hang from.
 - Comparing two revisions is a separate program that reads two count runs' result files (D13).
   Nothing in the runner knows what "before" was; the one thing it takes from an earlier run is the
   amount each case was counted at, which is what makes the two counts of the same work.
+- A container's cases each hold a hand-written program (D14), over a cheap element and an expensive
+  one, `int` and `string`, as libc++'s container benchmarks split them, so what a container costs
+  Lyra is read beside what it costs a C++ program following the same rules.
 
 ## Cross-references
 

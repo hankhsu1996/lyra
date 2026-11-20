@@ -5,12 +5,18 @@ Runs every case under tests/benchmark/ against Lyra, on each backend, and a
 reference simulator, choosing how much work each one does so that every
 measurement lands in the same duration, and reports the rate each sustained.
 
+A case may also hold the program a careful C++ programmer would write for the
+same work, keeping the language's guarantees, which is the floor Lyra's
+program is measured against. It is built as a shipped C++ program is, measured
+the same way as Lyra's, and held to doing the same work: at one small amount it
+has to print what Lyra's program prints.
+
 With --count it measures something else: how many instructions one unit of each
-case's work costs Lyra, counted under callgrind. A count does not move with the
-machine's load, so two compilers counted on one machine are told apart however
-small the difference; it can move from one machine to another, so it is compared
-only with a count taken beside it, and a rate is what compares Lyra with the
-reference simulator.
+case's work costs Lyra and each hand-written program, counted under callgrind.
+A count does not move with the machine's load, so two programs counted on one
+machine are told apart however small the difference; it can move from one
+machine to another, so it is compared only with a count taken beside it, and a
+rate is what compares Lyra with the reference simulator.
 
 With --count and --design it counts real designs instead of the corpus: each a
 directory `declare_external_design` wrote a case of Verilator's benchmark suite
@@ -55,6 +61,14 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 CORPUS_ROOT = REPO_ROOT / "tests" / "benchmark"
 
 CASE_ENTRY = "main.sv"
+
+# The hand-written program of a case's work, beside its entry where it has one.
+HAND_WRITTEN_SOURCE = "hand_written.cpp"
+
+# The amount every simulation case's program is first run at, to say what it
+# prints: a hand-written program has to print what Lyra's does at the same
+# amount, or it was not doing the same work.
+PROOF_AMOUNT = 3
 
 # The top-level module every case elaborates, and the name it takes its work
 # count under. Both are fixed rather than declared, so a case says only what a
@@ -151,6 +165,12 @@ CELL_NOT_RUN = "not run"
 # The tools a report has a column for.
 LYRA = "lyra"
 VERILATOR = "verilator"
+HAND_WRITTEN = "hand-written"
+
+# A hand-written program is compiled as a shipped C++ program is: by the host
+# compiler Lyra's own builds use when none is named, at the level of
+# optimization a simulation case's Lyra build is given.
+HAND_WRITTEN_FLAGS = ("-std=c++23", "-O2")
 
 # Lyra builds a program on either backend, and each is measured as a tool of
 # its own, since one may regress while the other does not.
@@ -186,6 +206,7 @@ class Case:
     work_unit: str
     work_max: int
     sources: tuple[Path, ...]
+    hand_written: Path | None = None
 
     @property
     def path(self) -> str:
@@ -214,6 +235,10 @@ class Result:
     growth: float = 0.0
     detail: str = ""
     output: str = ""
+    # What a simulation case's program printed at `PROOF_AMOUNT`. It is read
+    # within the run, to hold a hand-written program to Lyra's, and is not
+    # part of the result file.
+    printed: str = ""
 
 
 def measured_name(tool: str, backend: str) -> str:
@@ -390,6 +415,14 @@ def read_case(entry: Path, corpus_root: Path) -> Case:
     companions = sorted(
         p for p in entry.parent.glob("*.sv") if p.name != CASE_ENTRY)
 
+    # A hand-written program does a simulation's work. A build case's work is
+    # Lyra compiling the design, which no program written by hand does.
+    hand_written = entry.parent / HAND_WRITTEN_SOURCE
+    if hand_written.is_file() and measure != MEASURE_RUN:
+        raise ValueError(
+            f"{hand_written}: a hand-written program does a simulation's "
+            f"work, and this case measures a {measure}")
+
     return Case(
         family=family,
         name=name,
@@ -397,6 +430,7 @@ def read_case(entry: Path, corpus_root: Path) -> Case:
         work_unit=work_unit,
         work_max=work_max,
         sources=(*companions, entry),
+        hand_written=hand_written if hand_written.is_file() else None,
     )
 
 
@@ -575,20 +609,34 @@ def verilator_build_command(
     return cmd
 
 
+def hand_written_build_command(cxx: str, case: Case, out_dir: str) -> list[str]:
+    # The containers every hand-written program shares are included by a path
+    # relative to the program, so the command names nothing beside it.
+    assert case.hand_written is not None
+    return [
+        cxx, *HAND_WRITTEN_FLAGS, "-o", str(Path(out_dir) / BINARY_NAME),
+        str(case.hand_written)]
+
+
 @dataclass(frozen=True)
 class Tool:
-    """One simulator, and how to build a case with it and find what it made."""
+    """One simulator, or the hand-written programs, and how to build a case
+    with it and find what it made."""
     name: str
     build: Callable[[Case, str, int | None], list[str]]
     binary: Callable[[str], Path]
     env: dict | None = None
     backend: str = ""
+    # Whether a case is one this tool measures: every case, except for the
+    # hand-written programs, which only some cases have.
+    measures: Callable[[Case], bool] = lambda case: True
 
 
 def build_program(
     case: Case, tool: Tool, result: Result, root: str,
 ) -> Path | None:
-    """Build a simulation case's program once, or record why there is none."""
+    """Build a simulation case's program once and say what it prints, or record
+    why there is none."""
     work = os.path.join(root, "build")
     os.makedirs(work, exist_ok=True)
     build = run_process(tool.build(case, work, None), cwd=work, env=tool.env)
@@ -601,6 +649,10 @@ def build_program(
         result.detail = f"build produced no {binary.name}"
         return None
     result.binary_kb = round(binary.stat().st_size / 1024)
+    proof = run_process([str(binary), f"+work={PROOF_AMOUNT}"])
+    if record_failure(result, f"run at +work={PROOF_AMOUNT}", proof):
+        return None
+    result.printed = proof.stdout
     return binary
 
 
@@ -1000,6 +1052,41 @@ def verilator_tool(verilator: str) -> Tool:
     )
 
 
+def hand_written_tool(cxx: str) -> Tool:
+    return Tool(
+        name=HAND_WRITTEN,
+        build=lambda case, out, _amount: hand_written_build_command(
+            cxx, case, out),
+        binary=lambda out: Path(out) / BINARY_NAME,
+        measures=lambda case: case.hand_written is not None,
+    )
+
+
+def hold_to_lyra(results: list[Result]) -> None:
+    """Fail a hand-written program's measurement where it printed something
+    other than Lyra's program on any backend that ran, at the same amount.
+
+    What it prints is what says it did the case's work; a program that does
+    less, or other, work is no floor for Lyra's. Lyra's program is what is held
+    to the language, so where the two differ the hand-written one is what the
+    measurement does not stand on, and both texts are said.
+    """
+    lyra = [
+        r for r in results if r.tool == LYRA and r.status == STATUS_OK]
+    for written in results:
+        if written.tool != HAND_WRITTEN or written.status != STATUS_OK:
+            continue
+        for built in lyra:
+            if built.case != written.case or built.printed == written.printed:
+                continue
+            written.status = STATUS_ERROR
+            written.detail = (
+                f"at +work={PROOF_AMOUNT} it printed "
+                f"{written.printed.strip()!r} where Lyra's program on "
+                f"{built.backend} printed {built.printed.strip()!r}")
+            break
+
+
 def measure(
     case: Case, tool: Tool, tmpdir: str,
     step: Callable[[Case, Tool, Result, str], Result],
@@ -1162,8 +1249,39 @@ def unreached_measurements(
         f"{case.name}/{measured_name(tool.name, tool.backend)}"
         for case in cases
         for tool in tools
-        if (case.name, measured_name(tool.name, tool.backend)) not in reached
+        if tool.measures(case)
+        and (case.name, measured_name(tool.name, tool.backend)) not in reached
     ]
+
+
+def unmeasured_tools(
+    cases: list[Case], tools: list[Tool], metric: str,
+) -> tuple[int, list[str]]:
+    """How many measurements a tool missing from the machine leaves without a
+    number, and a line naming each such tool. A count run measures no
+    reference simulator, so its absence there is no absence."""
+    missing = 0
+    lines = []
+    if metric == METRIC_TIME and not any(t.name == VERILATOR for t in tools):
+        missing += len(cases)
+        lines.append(f"**{VERILATOR}**: not on PATH, so no case was run with it")
+    written = [c for c in cases if c.hand_written is not None]
+    if written and not any(t.name == HAND_WRITTEN for t in tools):
+        missing += len(written)
+        lines.append(
+            f"**{HAND_WRITTEN}**: no C++ compiler on PATH, so no hand-written "
+            f"program was built")
+    return missing, lines
+
+
+def hand_written_cell(
+    case: Case, written: Result | None, measured: str,
+) -> str:
+    """What a table says of a case's hand-written program: nothing where the
+    case has none, which is no absence."""
+    if case.hand_written is None:
+        return "-"
+    return fmt_cell(written, measured)
 
 
 def families_of(cases: list[Case]) -> dict[str, list[Case]]:
@@ -1181,13 +1299,13 @@ def print_report(
 
     The table has a row for every case on every backend whatever was reached,
     so a run that was cut short still says which cases it never got to. Each
-    row sets one backend beside the reference simulator, which is measured once
-    per case.
+    row sets one backend beside the reference simulator and the case's
+    hand-written program, each measured once per case.
     """
     reached = by_measurement(results)
     not_reached = unreached_measurements(cases, tools, results)
-    verilator_ran = any(t.name == VERILATOR for t in tools)
-    not_run = len(not_reached) + (0 if verilator_ran else len(cases))
+    missing, missing_lines = unmeasured_tools(cases, tools, METRIC_TIME)
+    not_run = len(not_reached) + missing
 
     print()
     print("## Lyra Benchmark Report")
@@ -1206,14 +1324,19 @@ def print_report(
         print()
         print(
             "| Case | Backend | Unit | Lyra /s | Verilator /s | vs Verilator "
+            "| Hand-written /s | vs hand-written "
             "| Lyra work | Lyra growth | Binary (KB) |")
         print(
             "|------|---------|------|--------:|-------------:|:-------------"
+            "|----------------:|:----------------"
             "|----------:|:------------|------------:|")
         for case in members:
             ver = reached.get((case.name, VERILATOR))
             ver_ok = ver is not None and ver.status == STATUS_OK
             ver_rate = ver.rate if ver_ok else 0.0
+            written = reached.get((case.name, HAND_WRITTEN))
+            written_ok = written is not None and written.status == STATUS_OK
+            written_rate = written.rate if written_ok else 0.0
             for backend in backends:
                 lyra = reached.get((case.name, measured_name(LYRA, backend)))
                 lyra_ok = lyra is not None and lyra.status == STATUS_OK
@@ -1226,12 +1349,11 @@ def print_report(
                     f"| {fmt_cell(lyra, fmt_rate(lyra_rate))} "
                     f"| {fmt_cell(ver, fmt_rate(ver_rate))} "
                     f"| {fmt_comparison(lyra_rate, ver_rate)} "
+                    f"| {hand_written_cell(case, written, fmt_rate(written_rate))} "
+                    f"| {fmt_comparison(lyra_rate, written_rate)} "
                     f"| {work} | {growth} | {binary} |")
 
-    print_absences(
-        results, not_reached,
-        [] if verilator_ran else
-        [f"**{VERILATOR}**: not on PATH, so no case was run with it"])
+    print_absences(results, not_reached, missing_lines)
     print()
 
 
@@ -1240,9 +1362,12 @@ def print_count_report(
     backends: list[str], results: list[Result], revision: str,
 ) -> None:
     """Print instructions per unit of work for every case on every backend,
-    and each real design's totals."""
+    beside the case's hand-written program where it has one, and each real
+    design's totals."""
     reached = by_measurement(results)
     not_reached = unreached_measurements(cases, tools, results)
+    missing, missing_lines = unmeasured_tools(
+        cases, tools, METRIC_INSTRUCTIONS)
 
     print()
     print("## Lyra Instruction Count Report")
@@ -1250,7 +1375,7 @@ def print_count_report(
     print(
         f"> git: `{revision}` | instructions per unit of work, "
         f"under callgrind")
-    print_absence_count(results, len(not_reached), "count")
+    print_absence_count(results, len(not_reached) + missing, "count")
     if designs:
         print()
         print(f"## {DESIGN_FAMILY}")
@@ -1268,19 +1393,32 @@ def print_count_report(
         print()
         print(f"## {family}")
         print()
-        print("| Case | Backend | Unit | Instructions per unit | Work |")
-        print("|------|---------|------|----------------------:|-----:|")
+        print(
+            "| Case | Backend | Unit | Instructions per unit "
+            "| Hand-written | Lyra / hand-written | Work |")
+        print(
+            "|------|---------|------|----------------------:"
+            "|-------------:|--------------------:|-----:|")
         for case in members:
+            written = reached.get((case.name, HAND_WRITTEN))
+            written_ok = written is not None and written.status == STATUS_OK
+            written_count = (
+                written.instructions_per_unit if written_ok else 0.0)
             for backend in backends:
                 lyra = reached.get((case.name, measured_name(LYRA, backend)))
                 ok = lyra is not None and lyra.status == STATUS_OK
                 count = f"{lyra.instructions_per_unit:,.0f}" if ok else "-"
+                ratio = (
+                    fmt_factor(lyra.instructions_per_unit / written_count)
+                    if ok and written_count > 0.0 else "-")
                 work = f"{lyra.work:,}" if ok else "-"
                 print(
                     f"| {case.name} | {backend} | {case.work_unit} "
-                    f"| {fmt_cell(lyra, count)} | {work} |")
+                    f"| {fmt_cell(lyra, count)} "
+                    f"| {hand_written_cell(case, written, f'{written_count:,.0f}')} "
+                    f"| {ratio} | {work} |")
 
-    print_absences(results, not_reached, [])
+    print_absences(results, not_reached, missing_lines)
     print()
 
 
@@ -1442,6 +1580,13 @@ def main() -> None:
             tools.append(verilator_tool(verilator))
         else:
             print("note: verilator not on PATH; Lyra only", file=sys.stderr)
+    # The compiler `lyra build` takes when none is named.
+    cxx = shutil.which("clang++") or shutil.which("c++")
+    if cxx:
+        tools.append(hand_written_tool(cxx))
+    elif any(c.hand_written is not None for c in cases):
+        print("note: no C++ compiler on PATH; no hand-written program is "
+              "built", file=sys.stderr)
 
     print(f"Running {len(cases) + len(designs)} cases", file=sys.stderr)
 
@@ -1502,7 +1647,8 @@ def main() -> None:
                     *(pool.submit(
                         lambda c=case, t=tool: [
                             measure(c, t, tmpdir, step, unprepared)])
-                      for case in cases for tool in tools),
+                      for case in cases for tool in tools
+                      if tool.measures(case)),
                     *(pool.submit(
                         count_design, design, lyra, backend, run_store, tmpdir,
                         unprepared)
@@ -1520,6 +1666,11 @@ def main() -> None:
                 pool.shutdown(wait=True)
     finally:
         shutil.rmtree(run_store, ignore_errors=True)
+        # Only once every program has run can each hand-written one be set
+        # beside Lyra's, so what this fails is written again.
+        hold_to_lyra(results)
+        if args.json:
+            write_json(results, args.json, metric, revision, target)
         results.sort(
             key=lambda r: (r.family, r.case, r.tool, r.backend, r.measure))
         if metric == METRIC_INSTRUCTIONS:
