@@ -24,8 +24,8 @@ class -- is
 ## Context
 
 A fixed-size unpacked array (LRM 7.4.2) has a count its type fixes and elements of one type. On the
-C++ backend it is `UnpackedArray<T, N>`: the elements in place at every size, every whole-array
-algorithm instantiated by the host compiler for the element type and the count
+C++ backend it is `UnpackedArray<T, N, Impl>`: the elements in place at every size, and every
+whole-array operation a body built for the type, which the class asks through `Impl`
 ([unpacked-array-representation](unpacked-array-representation.md)).
 
 The execution backend held the same array as an object of the prebuilt library's: a run of elements
@@ -167,9 +167,9 @@ One of these is a rejection another record makes, reversed here for an array.
   are one type and a whole-array operation is the element's operation and a count; that left the
   library carrying out every operation by reading the type, and the execution backend doing other
   work than the C++ backend's instantiated template. D4's revision takes it back. What the library
-  is still told -- a count and the element's table, for reaching an element, building an array from
-  elements and merging two -- is what [a-packed-value-is-its-words](a-packed-value-is-its-words.md)
-  admits: numbers and the addresses of functions the design contains.
+  is still told -- a count and the element's table, for reaching an element and building an array
+  from elements -- is what [a-packed-value-is-its-words](a-packed-value-is-its-words.md) admits:
+  numbers and the addresses of functions the design contains.
 - **"Passing a tuple's table beside its bytes instead of inside them. Entries over a container's
   elements take a value of any domain, so their signatures cannot grow a table argument for one
   domain, and the families that keep a tuple would each need to be told its type again"**

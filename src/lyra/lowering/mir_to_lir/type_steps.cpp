@@ -26,8 +26,8 @@ namespace lyra::lowering::mir_to_lir {
 namespace {
 
 constexpr std::array kEveryStep{
-    lir::ValueStep::kCopy, lir::ValueStep::kMove, lir::ValueStep::kAssign,
-    lir::ValueStep::kEnd};
+    support::ValueStep::kCopy, support::ValueStep::kRelocate,
+    support::ValueStep::kAssign, support::ValueStep::kEnd};
 
 // One function carrying out a step, built block by block: its parameters are
 // where the values it takes lie, and what it builds, where it builds one, is
@@ -163,8 +163,8 @@ class StepBody {
 };
 
 // A part of `type` built at `to` out of the one lying at `from`: copied, or
-// moved, the one at `from` being ended afterwards by whoever holds it. A part
-// held as itself rather than in storage of its own is put there as it is.
+// relocated, the one at `from` owed nothing afterwards. A part held as itself
+// rather than in storage of its own is put there as it is.
 void BuildPart(
     StepBody& body, lir::TypeId type, const lir::Type& stated,
     lir::CallTarget step, lir::Place from, lir::Place to) {
@@ -187,16 +187,32 @@ void UnitLowerer::StateTypeSteps() {
   // say; building them names no type that needs one of its own: borrowed
   // pointers, machine integers, void.
   const std::size_t named = out_.types.size();
-  std::vector<std::pair<lir::TypeId, lir::ValueStep>> stated;
+  std::vector<std::pair<lir::TypeId, support::ValueStep>> stated;
   for (const lir::TypeId type : out_.types.Ids()) {
     if (type.value < types_seen_) {
       continue;
     }
-    for (const lir::ValueStep step : kEveryStep) {
+    for (const support::ValueStep step : kEveryStep) {
       if (!NeedsStepFunction(type, step)) {
         continue;
       }
-      out_.type_steps.emplace(std::pair{type, step}, out_.functions.Declare());
+      // A container's elements are no parts its type lays out, so each step
+      // of one carried out by a function is its type's operation for that
+      // step, a body built for its type over its core, which takes and
+      // answers what the step does.
+      // Its relocation is its core's bytes, stated as any value's bytes are.
+      if (out_.types.Get(type).IsLaidOutContainer() &&
+          std::holds_alternative<lir::GlueStep>(
+              lir::StepOf(out_, type, step))) {
+        out_.type_steps.emplace(
+            std::pair{type, step},
+            TypeOperationFunction(
+                lir::TypeOperation{.type = type, .answers = step}));
+        continue;
+      }
+      const lir::FunctionId function =
+          out_.functions.Declare(lir::FunctionAttributes{});
+      out_.type_steps.emplace(std::pair{type, step}, function);
       stated.emplace_back(type, step);
     }
   }
@@ -208,19 +224,19 @@ void UnitLowerer::StateTypeSteps() {
   types_seen_ = named;
 }
 
-auto UnitLowerer::NeedsStepFunction(lir::TypeId type, lir::ValueStep step) const
-    -> bool {
-  const lir::StepRealization realized = lir::StepOf(out_, type, step);
-  if (std::holds_alternative<lir::StepByFunction>(realized)) {
+auto UnitLowerer::NeedsStepFunction(
+    lir::TypeId type, support::ValueStep step) const -> bool {
+  const lir::StepKind realized = lir::StepOf(out_, type, step);
+  if (std::holds_alternative<lir::GlueStep>(realized)) {
     return true;
   }
   // A value laid out by its type is held by the library through a table that
   // names a function for every step of it it has, its bytes or not.
   return lir::IsLaidOutByItsType(out_.types.Get(type)) &&
-         !std::holds_alternative<lir::NoSuchStep>(realized);
+         !std::holds_alternative<lir::DeletedStep>(realized);
 }
 
-auto UnitLowerer::BuildStepFunction(lir::TypeId type, lir::ValueStep step)
+auto UnitLowerer::BuildStepFunction(lir::TypeId type, support::ValueStep step)
     -> lir::Function {
   const auto pointer = [&](lir::Mutability mutability) {
     return out_.types.Intern(
@@ -239,18 +255,18 @@ auto UnitLowerer::BuildStepFunction(lir::TypeId type, lir::ValueStep step)
   std::vector<lir::TypeId> params;
   bool answers = false;
   switch (step) {
-    case lir::ValueStep::kCopy:
+    case support::ValueStep::kCopy:
       params = {read};
       answers = true;
       break;
-    case lir::ValueStep::kMove:
+    case support::ValueStep::kRelocate:
       params = {written};
       answers = true;
       break;
-    case lir::ValueStep::kAssign:
+    case support::ValueStep::kAssign:
       params = {written, read};
       break;
-    case lir::ValueStep::kEnd:
+    case support::ValueStep::kEnd:
       params = {written};
       break;
   }
@@ -263,17 +279,17 @@ auto UnitLowerer::BuildStepFunction(lir::TypeId type, lir::ValueStep step)
   // Where the value the step takes lies, and where what it builds or writes
   // over lies: its answer, or the value written over.
   const lir::Place taken =
-      step == lir::ValueStep::kAssign ? body.Pointed(1) : body.Pointed(0);
+      step == support::ValueStep::kAssign ? body.Pointed(1) : body.Pointed(0);
   std::optional<lir::Place> made;
   switch (step) {
-    case lir::ValueStep::kCopy:
-    case lir::ValueStep::kMove:
+    case support::ValueStep::kCopy:
+    case support::ValueStep::kRelocate:
       made = body.Answer();
       break;
-    case lir::ValueStep::kAssign:
+    case support::ValueStep::kAssign:
       made = body.Pointed(0);
       break;
-    case lir::ValueStep::kEnd:
+    case support::ValueStep::kEnd:
       break;
   }
 
@@ -283,19 +299,20 @@ auto UnitLowerer::BuildStepFunction(lir::TypeId type, lir::ValueStep step)
                         const std::optional<lir::Place>& to) {
     const lir::Type part_stated = out_.types.Get(part_type);
     switch (step) {
-      case lir::ValueStep::kCopy:
+      case support::ValueStep::kCopy:
         BuildPart(
             body, part_type, part_stated, lir::CopyValueTarget{}, from, *to);
         return;
-      case lir::ValueStep::kMove:
+      case support::ValueStep::kRelocate:
         BuildPart(
-            body, part_type, part_stated, lir::MoveValueTarget{}, from, *to);
+            body, part_type, part_stated, lir::RelocateValueTarget{}, from,
+            *to);
         return;
-      case lir::ValueStep::kAssign:
+      case support::ValueStep::kAssign:
         body.Statement(
             lir::StoreInstr{.place = *to, .value = body.Load(from, part_type)});
         return;
-      case lir::ValueStep::kEnd:
+      case support::ValueStep::kEnd:
         if (lir::NeedsEnd(out_, part_type)) {
           body.Emit(
               void_type, lir::CallInstr{
@@ -309,17 +326,17 @@ auto UnitLowerer::BuildStepFunction(lir::TypeId type, lir::ValueStep step)
   // A value that is its bytes is stepped as them, whatever it is laid out as:
   // built by putting a reading of it in place, written by a store, and ended
   // by nothing.
-  if (std::holds_alternative<lir::StepIsBytes>(lir::StepOf(out_, type, step))) {
+  if (std::holds_alternative<lir::TrivialStep>(lir::StepOf(out_, type, step))) {
     switch (step) {
-      case lir::ValueStep::kCopy:
-      case lir::ValueStep::kMove:
+      case support::ValueStep::kCopy:
+      case support::ValueStep::kRelocate:
         body.Into(*made, lir::UseInstr{.operand = body.Load(taken, type)});
         break;
-      case lir::ValueStep::kAssign:
+      case support::ValueStep::kAssign:
         body.Statement(
             lir::StoreInstr{.place = *made, .value = body.Load(taken, type)});
         break;
-      case lir::ValueStep::kEnd:
+      case support::ValueStep::kEnd:
         break;
     }
     return std::move(body).Finish();
@@ -392,13 +409,13 @@ auto UnitLowerer::BuildStepFunction(lir::TypeId type, lir::ValueStep step)
   }
 
   // A tagged union steps the member its tag names (LRM 7.3.2). A copy builds
-  // the union holding a copy of that member, and so does a move, which leaves
-  // the one moved from to be ended; a write over one ends what was there and
+  // the union holding a copy of that member, and a relocation the union
+  // holding that member relocated; a write over one ends what was there and
   // builds a copy of the other in its place, unless the two are one.
   if (const std::optional<std::span<const lir::TypeId>> tagged =
           lir::OverlaidMembers(out_, type)) {
     const std::span<const lir::TypeId> members = *tagged;
-    if (step == lir::ValueStep::kAssign) {
+    if (step == support::ValueStep::kAssign) {
       const lir::BlockId replace = body.NewBlock();
       const lir::BlockId done = body.NewBlock();
       const lir::Operand same = body.Emit(
@@ -446,7 +463,7 @@ auto UnitLowerer::BuildStepFunction(lir::TypeId type, lir::ValueStep step)
     for (std::size_t k = 0; k < members.size(); ++k) {
       body.SetCurrent(blocks[k]);
       const lir::Place member = StepBody::Component(taken, k);
-      if (step == lir::ValueStep::kEnd) {
+      if (step == support::ValueStep::kEnd) {
         part(members[k], member, std::nullopt);
       } else {
         body.Into(
@@ -504,7 +521,7 @@ void UnitLowerer::StateClassSteps() {
     const auto stated = [&](std::string name, lir::Function fn) {
       fn.name = std::move(name);
       fn.linkage = cls.linkage;
-      out_.functions.Add(std::move(fn));
+      out_.functions.Add(lir::FunctionAttributes{}, std::move(fn));
     };
     // The parts the class places in the object at `o`: what it extends, and
     // then its own members.

@@ -226,13 +226,13 @@ retained cell    : field type = Shared<Var<int>>     // retain a lifted local; r
 ```
 
 A closure a region keeps is made in storage that region's effects hand out and committed to them, a
-watch is made in a box the wait takes and erased where it is handed over, and a sort's order is
-erased as a borrow for the call:
+watch is made in a box the wait takes and erased where it is handed over, and the write-back a
+reference seen as another type carries is erased as a borrow:
 
 ```text
 deferred effect : C_k       --[ ::new (k) ]--> region's effects      // made where the region's keeper says, which takes it over, asks FnOnce
 watch           : Box<C_w>  --[ cast ]--> Box<dyn (bool) -> bool>    // the wait owns it, asks FnMut
-sort order      : &C_s      --[ cast ]--> &dyn (i64, i64) -> bool    // lent for the call, asks Fn
+write-back      : &C_r      --[ cast ]--> &dyn () -> ()              // lent while its answer is held, asks Fn
 ```
 
 What each holder asks is stated by the entry it is handed to, and a closure serves it where its own

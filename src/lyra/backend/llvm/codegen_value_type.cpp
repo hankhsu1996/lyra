@@ -1,7 +1,5 @@
 #include "lyra/backend/llvm/codegen_value_type.hpp"
 
-#include <array>
-#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <format>
@@ -40,6 +38,9 @@
 #include "lyra/support/runtime_object.hpp"
 #include "lyra/support/value_domain.hpp"
 #include "lyra/support/value_operation.hpp"
+#include "lyra/value/array_type_bodies.hpp"
+#include "lyra/value/associative_array_type.hpp"
+#include "lyra/value/dynamic_array_type.hpp"
 #include "lyra/value/element_type.hpp"
 #include "lyra/value/fixed_array_type.hpp"
 #include "lyra/value/integral.hpp"
@@ -437,11 +438,31 @@ auto CodeGenValueTypes::WitnessFromOperation(
       own.crossing);
 }
 
+auto CodeGenValueTypes::OwnBodyWitness(
+    lir::TypeId type, support::ValueOperation answers, std::string_view witness,
+    const support::MachineSignature& signature) -> llvm::Constant* {
+  const std::optional<lir::FunctionId> method = OwnOperationOf(type, answers);
+  if (!method.has_value()) {
+    throw InternalError(
+        std::format(
+            "llvm codegen: a run-time-sized array's type record is made with "
+            "no body for \"{}\" -- please report this as a bug",
+            witness));
+  }
+  // A body that can report takes where its caller wrote it, which the record's
+  // function is not handed: the location bound where the record was reached
+  // stands.
+  if (support::TakesCallerLocation(answers)) {
+    return NoLocationBody(type, witness, signature, *method);
+  }
+  return Body(type, witness, signature, owner_->UnitFunction(*method));
+}
+
 auto CodeGenValueTypes::FillWitness(lir::TypeId type, const Witness& witness)
     -> llvm::Constant* {
   return std::visit(
       Overloaded{
-          [&](lir::ValueStep step) -> llvm::Constant* {
+          [&](support::ValueStep step) -> llvm::Constant* {
             return Body(
                 type, witness.name, witness.stands_in_for,
                 owner_->UnitFunction(lir::StepFunctionOf(*unit_, type, step)));
@@ -479,6 +500,30 @@ auto CodeGenValueTypes::GetAddrOfOperationFunctions(lir::TypeId type)
   return functions;
 }
 
+namespace {
+
+// Which record the library reads a value of `stated` through, among those an
+// array opens; every other type opens none of these.
+auto ValueTypeKindOf(const lir::Type& stated) -> value::ValueTypeKind {
+  if (stated.Is<lir::UnpackedArrayType>()) {
+    return value::ValueTypeKind::kFixedArray;
+  }
+  if (const auto* library = stated.As<lir::LibraryType>()) {
+    if (library->decl == support::LibraryDecl::kDynamicArray) {
+      return value::ValueTypeKind::kDynamicArray;
+    }
+    if (library->decl == support::LibraryDecl::kQueue) {
+      return value::ValueTypeKind::kQueue;
+    }
+    if (library->decl == support::LibraryDecl::kAssociativeArray) {
+      return value::ValueTypeKind::kAssociativeArray;
+    }
+  }
+  return value::ValueTypeKind::kOther;
+}
+
+}  // namespace
+
 auto CodeGenValueTypes::GetAddrOfLaidOutType(lir::TypeId type)
     -> llvm::GlobalVariable* {
   const std::string& key = KeyOf(type);
@@ -489,7 +534,6 @@ auto CodeGenValueTypes::GetAddrOfLaidOutType(lir::TypeId type)
   llvm::LLVMContext& ctx = module.getContext();
   auto* ptr = types_->Ptr();
   const lir::Type& stated = unit_->types.Get(type);
-  const auto* array = stated.As<lir::UnpackedArrayType>();
   const auto global = [&](std::string name, llvm::Type* of) {
     auto* made =
         llvm::cast<llvm::GlobalVariable>(module.getOrInsertGlobal(name, of));
@@ -515,23 +559,114 @@ auto CodeGenValueTypes::GetAddrOfLaidOutType(lir::TypeId type)
   }
   constant->setLinkage(*linkage);
   // The table, each witness where the library's declaration of it lays it
-  // out, and for an array the library's answer for its elements by position,
-  // which reads them off the type it is handed.
+  // out.
   ConstantRecord witnesses(ctx, sizeof(value::ValueWitnessTable));
   for (const Witness& witness : ValueWitnesses()) {
     witnesses.Place(witness.offset, FillWitness(type, witness));
   }
-  llvm::Constant* parts = llvm::ConstantPointerNull::get(ptr);
-  if (array != nullptr) {
-    parts = owner_->LibraryData(kFixedArrayPartsWitnessTableSymbol);
-  }
-  witnesses.Place(OffsetInTable(&value::ValueWitnessTable::parts), parts);
   llvm::Constant* const table_data = std::move(witnesses).Build();
   llvm::GlobalVariable* const table =
       global(std::format("lyra.type{}.witnesses", key), table_data->getType());
   table->setInitializer(table_data);
   table->setAlignment(llvm::Align(alignof(value::ValueWitnessTable)));
 
+  // A container is the record its core keeps its elements in; a dynamic
+  // array's type and a queue's also state their element's type and the type's
+  // own bodies finding where a write through a position lands and making a
+  // value a count long, which the library's steps within a write and
+  // randomization's resize call.
+  const auto* library = stated.As<lir::LibraryType>();
+  switch (ValueTypeKindOf(stated)) {
+    case value::ValueTypeKind::kDynamicArray: {
+      const TypeConstantReferences container = ReferencesOf(*unit_, type);
+      auto element = GetAddrOfElementType(*container.element_type);
+      if (!element) {
+        throw InternalError(
+            "llvm codegen: a dynamic array's element is no value the runtime "
+            "realizes");
+      }
+      ConstantRecord out(ctx, sizeof(value::DynamicArrayType));
+      PlaceValueType(
+          out, table, *support::ObjectStorageOf(library->decl),
+          value::ValueTypeKind::kDynamicArray);
+      out.Place(value::DynamicArrayType::ElementStatedAt(), *element);
+      out.Place(
+          value::DynamicArrayType::ElementPlaceStatedAt(),
+          OwnBodyWitness(
+              type, support::ElementAccessItem::kElementPlace, "element_place",
+              WitnessSignatureOf<value::ElementPlaceFunction>::Get()));
+      out.Place(
+          value::DynamicArrayType::ResizedStatedAt(),
+          OwnBodyWitness(
+              type, support::ResizeItem::kResized, "resized",
+              WitnessSignatureOf<value::ResizedFunction>::Get()));
+      return Defined(
+          key, constant, std::move(out).Build(),
+          alignof(value::DynamicArrayType));
+    }
+    // A queue's type also states the bound it declares (LRM 7.10.5), which a
+    // queue built at it is held to.
+    case value::ValueTypeKind::kQueue: {
+      const TypeConstantReferences container = ReferencesOf(*unit_, type);
+      auto element = GetAddrOfElementType(*container.element_type);
+      if (!element) {
+        throw InternalError(
+            "llvm codegen: a queue's element is no value the runtime realizes");
+      }
+      ConstantRecord out(ctx, sizeof(value::QueueType));
+      PlaceValueType(
+          out, table, *support::ObjectStorageOf(library->decl),
+          value::ValueTypeKind::kQueue);
+      out.Place(value::QueueType::ElementStatedAt(), *element);
+      out.PlaceInteger(
+          value::QueueType::BoundStatedAt(),
+          static_cast<std::uint64_t>(
+              support::LibraryBoundOf(library->Bound())));
+      out.Place(
+          value::QueueType::ElementPlaceStatedAt(),
+          OwnBodyWitness(
+              type, support::ElementAccessItem::kElementPlace, "element_place",
+              WitnessSignatureOf<value::ElementPlaceFunction>::Get()));
+      out.Place(
+          value::QueueType::ResizedStatedAt(),
+          OwnBodyWitness(
+              type, support::ResizeItem::kResized, "resized",
+              WitnessSignatureOf<value::ResizedFunction>::Get()));
+      return Defined(
+          key, constant, std::move(out).Build(), alignof(value::QueueType));
+    }
+    // An associative array's type states its index type in place of a bound,
+    // which what loads a memory file into one builds its indices at (LRM
+    // 21.4.1), and has no count to be made at.
+    case value::ValueTypeKind::kAssociativeArray: {
+      const TypeConstantReferences container = ReferencesOf(*unit_, type);
+      auto element = GetAddrOfElementType(*container.element_type);
+      auto index = GetAddrOfValueType(*stated.IndexType());
+      if (!element || !index) {
+        throw InternalError(
+            "llvm codegen: an associative array's element or index is no "
+            "value the runtime realizes");
+      }
+      ConstantRecord out(ctx, sizeof(value::AssociativeArrayType));
+      PlaceValueType(
+          out, table, *support::ObjectStorageOf(library->decl),
+          value::ValueTypeKind::kAssociativeArray);
+      out.Place(value::AssociativeArrayType::ElementStatedAt(), *element);
+      out.Place(value::AssociativeArrayType::IndexStatedAt(), *index);
+      out.Place(
+          value::AssociativeArrayType::ElementPlaceStatedAt(),
+          OwnBodyWitness(
+              type, support::ElementAccessItem::kElementPlace, "element_place",
+              WitnessSignatureOf<value::ElementPlaceFunction>::Get()));
+      return Defined(
+          key, constant, std::move(out).Build(),
+          alignof(value::AssociativeArrayType));
+    }
+    case value::ValueTypeKind::kFixedArray:
+    case value::ValueTypeKind::kIntegral:
+    case value::ValueTypeKind::kOther:
+      break;
+  }
   using value::FixedArrayType;
   using value::TupleComponent;
   using value::TupleType;
@@ -672,7 +807,7 @@ auto CodeGenValueTypes::GetAddrOfTakePositions(lir::TypeId type)
     return elsewhere;
   }
   const std::optional<lir::FunctionId> method =
-      OwnOperationOf(type, support::BuiltinFn::kTakePositions);
+      OwnOperationOf(type, support::PositionsItem::kTakePositions);
   if (!method.has_value()) {
     throw InternalError(
         "llvm codegen: a takeover begins on a value whose type states no way "
@@ -744,17 +879,6 @@ auto CodeGenValueTypes::GetAddrOfOperations(lir::TypeId type)
   if (!domain) {
     return std::unexpected(std::move(domain.error()));
   }
-  if (const std::optional<lir::TypeId> element =
-          stated.ContainerElementType()) {
-    auto of_element = GetAddrOfOperations(*element);
-    if (!of_element) {
-      return std::unexpected(std::move(of_element.error()));
-    }
-    return define(
-        owner_->LibraryData(OperationFunctionsSymbol(*domain)),
-        owner_->LibraryData(ValueTypeSymbol(*domain)), *of_element,
-        llvm::GlobalValue::LinkOnceODRLinkage);
-  }
   llvm::Constant* const library =
       owner_->LibraryData(ValueOperationsSymbol(*domain));
   operations_of_.emplace(key, library);
@@ -822,10 +946,12 @@ auto CodeGenValueTypes::EmitDeclared() -> void {
     // where the record states the operations it is made of. A net of a record
     // a net type resolves is built holding what it asks of the record's
     // positions, and only such a record states how they are written.
-    if (OwnOperationOf(type, support::BuiltinFn::kWritePositions).has_value()) {
+    if (OwnOperationOf(type, support::PositionsItem::kWritePositions)
+            .has_value()) {
       GetAddrOfNetWitnesses(type);
     }
-    if (OwnOperationOf(type, support::BuiltinFn::kTakePositions).has_value()) {
+    if (OwnOperationOf(type, support::PositionsItem::kTakePositions)
+            .has_value()) {
       GetAddrOfTakePositions(type);
     }
     if (!GetAddrOfOperations(type)) {
@@ -907,31 +1033,6 @@ auto CodeGenValueTypes::GetAddrOfValueType(lir::TypeId type)
       *held);
 }
 
-auto CodeGenValueTypes::GetAddrOfQueueType(lir::TypeId queue)
-    -> diag::Result<llvm::Constant*> {
-  if (const auto found = queue_types_.find(queue);
-      found != queue_types_.end()) {
-    return found->second;
-  }
-  const lir::Type& declared = unit_->types.Get(queue);
-  const std::int64_t bound =
-      support::LibraryBoundOf(declared.Get<lir::LibraryType>().Bound());
-  auto element = GetAddrOfElementType(*declared.ContainerElementType());
-  if (!element) {
-    return std::unexpected(std::move(element.error()));
-  }
-  using value::QueueType;
-  ConstantRecord out(owner_->Context(), sizeof(QueueType));
-  out.Place(QueueType::ElementStatedAt(), *element);
-  out.PlaceInteger(
-      QueueType::BoundStatedAt(), static_cast<std::uint64_t>(bound));
-  llvm::GlobalVariable* defined = owner_->DefineConstant(
-      std::format("lyra.queue.{}", queue.value), std::move(out).Build(),
-      llvm::GlobalValue::PrivateLinkage, llvm::Align(alignof(QueueType)));
-  queue_types_.emplace(queue, defined);
-  return defined;
-}
-
 auto CodeGenValueTypes::GetAddrOfElementType(lir::TypeId element)
     -> diag::Result<llvm::Constant*> {
   if (const auto found = element_types_.find(element);
@@ -959,7 +1060,7 @@ auto CodeGenValueTypes::GetAddrOfElementType(lir::TypeId element)
     linkage = *own;
   }
   const std::optional<lir::FunctionId> builder =
-      OwnOperationOf(element, support::BuiltinFn::kDeclaredDefault);
+      OwnOperationOf(element, support::DefaultItem::kDeclaredDefault);
   if (!builder.has_value()) {
     throw InternalError(
         std::format(

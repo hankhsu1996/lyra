@@ -5,14 +5,17 @@
 
 #include "lyra/abi/records.hpp"
 #include "lyra/support/library_decl.hpp"
+#include "lyra/value/container_core.hpp"
+#include "lyra/value/container_lease.hpp"
 
 namespace lyra::abi {
 
-// Hands `visit` each structure of the library a unit states constants of, as
-// the C++ type the library declares and the library declaration a type naming
-// it names. It is the record part of those declarations: a layer stating a
-// constant of one reads its members' types and places off the structure handed
-// here, so the two sides read one declaration.
+// Hands `visit` each structure of the library a unit states constants of or
+// reaches the members of, as the C++ type the library declares and the library
+// declaration a type naming it names. It is the record part of those
+// declarations: a layer stating a constant of one, or reaching a member of one,
+// reads its members' types and places off the structure handed here, so the
+// two sides read one declaration.
 template <typename Visit>
 constexpr void ForEachLibraryRecord(const Visit& visit) {
   using Decl = support::LibraryDecl;
@@ -39,6 +42,12 @@ constexpr void ForEachLibraryRecord(const Visit& visit) {
   visit.template operator()<base::SourceLocation::Impl>(
       Decl::kSourceLocationRecord);
   visit.template operator()<value::Enumeration>(Decl::kEnumeration);
+  visit.template operator()<value::DynamicArrayCore>(Decl::kDynamicArray);
+  visit.template operator()<value::QueueCore>(Decl::kQueue);
+  visit.template operator()<value::AssociativeArrayCore>(
+      Decl::kAssociativeArray);
+  visit.template operator()<value::Recycler>(Decl::kRecycler);
+  visit.template operator()<value::LeaseCount>(Decl::kLeaseCount);
 }
 
 // Where `Record` is listed above: the declaration naming it, and how many times

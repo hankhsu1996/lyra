@@ -39,6 +39,43 @@ auto ReceiverOf(const mir::CallExpr& call) -> mir::ExprId {
   return *std::get<mir::Direct>(call.callee).receiver;
 }
 
+// The call `expr` is where it is a run operation of an array's type -- its
+// own body for the run, at the run's type -- which it is handed by reference.
+auto RunCallOf(const mir::Expr& expr, support::BuiltinFn operation)
+    -> const mir::CallExpr* {
+  const auto* call = std::get_if<mir::CallExpr>(&expr.data);
+  if (call == nullptr) {
+    return nullptr;
+  }
+  const auto* direct = std::get_if<mir::Direct>(&call->callee);
+  if (direct == nullptr || !direct->receiver.has_value()) {
+    return nullptr;
+  }
+  const auto* target = std::get_if<mir::TypeOperationTarget>(&direct->target);
+  if (target == nullptr ||
+      target->answers != support::ValueOperation{operation} ||
+      target->arguments.size() != 1) {
+    return nullptr;
+  }
+  return call;
+}
+
+// What a run operation was handed by reference: the operand of the borrow, and
+// anything else as it is -- a designation of the part a write is opened on.
+auto Handed(const mir::Block& block, mir::ExprId id) -> mir::ExprId {
+  if (const auto* borrowed =
+          std::get_if<mir::BorrowExpr>(&block.exprs.Get(id).data)) {
+    return borrowed->operand;
+  }
+  return id;
+}
+
+auto RunTypeOf(const mir::CallExpr& call) -> mir::TypeId {
+  return std::get<mir::TypeOperationTarget>(
+             std::get<mir::Direct>(call.callee).target)
+      .arguments.front();
+}
+
 auto TypeArgumentOf(const mir::CallExpr& call) -> mir::TypeId {
   return std::get<mir::Direct>(call.callee).type_arguments.front();
 }
@@ -137,9 +174,11 @@ class Simplifier {
                  block.exprs.Get(ReceiverOf(*read)).type);
     }
     if (const mir::CallExpr* read =
-            CallOf(expr, support::BuiltinFn::kElementSlice)) {
-      return IsFirstPosition(*unit_, block, read->arguments[0]) &&
-             TypeArgumentOf(*read) == block.exprs.Get(ReceiverOf(*read)).type;
+            RunCallOf(expr, support::BuiltinFn::kElementSlice)) {
+      return IsFirstPosition(
+                 *unit_, block, Handed(block, read->arguments[0])) &&
+             RunTypeOf(*read) ==
+                 block.exprs.Get(Handed(block, ReceiverOf(*read))).type;
     }
     if (const mir::CallExpr* set = CallOf(expr, support::BuiltinFn::kSet)) {
       const mir::CallExpr* bits = CallOf(
@@ -150,13 +189,6 @@ class Simplifier {
                  *unit_, TypeArgumentOf(*bits),
                  WrittenValueType(
                      *unit_, block.exprs.Get(ReceiverOf(*bits)).type));
-    }
-    if (const mir::CallExpr* run =
-            CallOf(expr, support::BuiltinFn::kAssignElementSlice)) {
-      return IsFirstPosition(*unit_, block, run->arguments[0]) &&
-             block.exprs.Get(run->arguments[2]).type ==
-                 WrittenValueType(
-                     *unit_, block.exprs.Get(ReceiverOf(*run)).type);
     }
     return false;
   }
@@ -209,14 +241,10 @@ class Simplifier {
       }
       return Read(rebuild, *whole, expr.type);
     }
-    if (const mir::CallExpr* set = CallOf(expr, support::BuiltinFn::kSet)) {
-      const mir::CallExpr& bits = *CallOf(
-          from.exprs.Get(ReceiverOf(*set)), support::BuiltinFn::kSliceMut);
-      return WholeWrite(rebuild, ReceiverOf(bits), set->arguments[0]);
-    }
-    const mir::CallExpr& run =
-        *CallOf(expr, support::BuiltinFn::kAssignElementSlice);
-    return WholeWrite(rebuild, ReceiverOf(run), run.arguments[2]);
+    const mir::CallExpr& set = *CallOf(expr, support::BuiltinFn::kSet);
+    const mir::CallExpr& bits =
+        *CallOf(from.exprs.Get(ReceiverOf(set)), support::BuiltinFn::kSliceMut);
+    return WholeWrite(rebuild, ReceiverOf(bits), set.arguments[0]);
   }
 
  private:
@@ -225,10 +253,12 @@ class Simplifier {
   [[nodiscard]] auto WholeRead(const mir::Block& block, mir::ExprId id) const
       -> std::optional<mir::ExprId> {
     const mir::Expr& expr = block.exprs.Get(id);
-    const mir::CallExpr* read = CallOf(expr, support::BuiltinFn::kSlice);
-    if (read == nullptr) {
-      read = CallOf(expr, support::BuiltinFn::kElementSlice);
+    if (const mir::CallExpr* run =
+            RunCallOf(expr, support::BuiltinFn::kElementSlice);
+        run != nullptr && Fires(block, expr)) {
+      return Handed(block, ReceiverOf(*run));
     }
+    const mir::CallExpr* read = CallOf(expr, support::BuiltinFn::kSlice);
     if (read == nullptr || !Fires(block, expr)) {
       return std::nullopt;
     }

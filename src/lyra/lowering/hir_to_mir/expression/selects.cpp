@@ -15,7 +15,6 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
-#include "lyra/lowering/hir_to_mir/bitstream.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
@@ -35,7 +34,9 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/stmt.hpp"
+#include "lyra/mir/storage_part.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/mir/value_parts.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
 // HIR-to-MIR lowering for the three ways the source selects part of a value:
@@ -240,20 +241,19 @@ auto SliceStartOf(
       range);
 }
 
-// The step a slice of `count` positions takes from the index `index_id` its
-// start names, `shift` positions below it.
+// The step a slice of `result_type` takes from the index `index_id` its start
+// names, `shift` positions below it.
 auto SliceStepAt(
     const mir::CompilationUnit& unit, mir::Builder block,
     const PositionMap& map, std::int64_t shift, mir::ExprId index_id,
-    std::uint64_t count, mir::TypeId result_type) -> DescentStep {
+    mir::TypeId result_type) -> DescentStep {
   const mir::ExprId position =
       WrapIndexAsPosition(unit, block, map, index_id, shift);
   if (unit.types.Get(result_type).IsIntegral()) {
     return BitsStep(position, result_type);
   }
   return DescentStep{
-      .to = StepToElementRun{.start = position, .count = count},
-      .part_type = result_type};
+      .to = StepToElementRun{.start = position}, .part_type = result_type};
 }
 
 // The step `receiver[hi:lo]`, `receiver[base+:w]` and `receiver[base-:w]` take
@@ -278,8 +278,7 @@ auto RangeStep(
   auto index = lowerer.LowerExpr(lowerer.HirExprs().Get(start.index), frame);
   if (!index) return std::unexpected(std::move(index.error()));
   return SliceStepAt(
-      unit, block, map, start.shift, block.Add(*std::move(index)), count,
-      result_type);
+      unit, block, map, start.shift, block.Add(*std::move(index)), result_type);
 }
 
 // The tag a member of the packed aggregate `projection` describes needs carried
@@ -673,7 +672,7 @@ auto LowerStreamWindowRun(
   mir::Builder block = frame.Builder();
   const hir::Expr& array = lowerer.HirExprs().Get(operand.value);
   const UnitLowerer& unit_lowerer = lowerer.Owner();
-  if (HoldsClassHandle(unit, unit_lowerer.TranslateType(array.type))) {
+  if (mir::HoldsClassHandle(unit, unit_lowerer.TranslateType(array.type))) {
     return diag::Fail(
         array.span, diag::DiagCode::kUnsupportedExpressionForm,
         "streaming the object a class handle refers to is not yet supported");
@@ -686,10 +685,24 @@ auto LowerStreamWindowRun(
       lowerer, queue ? frame.WithSelectedQueue(&base->path) : frame, array.type,
       *operand.with);
   if (!window) return std::unexpected(std::move(window.error()));
-  return mir::MakeBuiltinCall(
-      unit, block.Body(), support::BuiltinFn::kWindowToBitVec,
-      PathAsPlace(unit, block, NamedIn(unit, base->path, block)),
-      {window->start, window->count}, unit.builtins.bit_vec);
+  const mir::ExprId streamed =
+      PathAsPlace(unit, block, NamedIn(unit, base->path, block));
+  // An array whose elements a position names streams a window by its type's
+  // own body, handed the array, the start and the count by reference.
+  return mir::Expr{
+      .data =
+          mir::CallExpr{
+              .callee =
+                  mir::Direct{
+                      .target =
+                          mir::TypeOperationTarget{
+                              .type = block.Get(streamed).type,
+                              .answers = support::BuiltinFn::kWindowToBitVec},
+                      .receiver = mir::Borrow(unit, block, streamed)},
+              .arguments =
+                  {mir::Borrow(unit, block, window->start),
+                   mir::Borrow(unit, block, window->count)}},
+      .type = unit.builtins.bit_vec};
 }
 
 auto MemberTypesOf(const UnitLowerer& unit_lowerer, const hir::Type& aggregate)
@@ -749,11 +762,19 @@ auto ElementStep(
     mir::ExprId idx_id, mir::TypeId part_type) -> DescentStep {
   const mir::CompilationUnit& unit = unit_lowerer.Unit();
   const hir::Type& receiver = unit_lowerer.Hir().types.Get(receiver_type);
-  // An associative array is reached by the key the source wrote, which is a
-  // value of the index type rather than a place in any order (LRM 7.8).
+  // An associative array is reached by the key the source wrote, a value of
+  // the index type rather than a place in any order (LRM 7.8), which a
+  // wildcard index takes as any integral value (LRM 7.8.1).
   if (receiver.Is<hir::AssociativeArrayType>()) {
+    const mir::TypeId index =
+        unit.types.Get(unit_lowerer.TranslateType(receiver_type))
+            .IndexType()
+            .value();
     return DescentStep{
-        .to = StepToAssocElement{.key = idx_id}, .part_type = part_type};
+        .to =
+            StepToAssocElement{
+                .key = ConvertToType(unit, block, idx_id, index)},
+        .part_type = part_type};
   }
   // A character of a string is named the way `getc` and `putc` take one (LRM
   // Table 6-9, 6.16.2, 6.16.3): as an `int`, which an index is converted to
@@ -826,8 +847,7 @@ auto PublishedSelectorStep(
             const auto start = SliceStartOf(slice.range, map, count);
             return SliceStepAt(
                 unit, block, map, start.shift,
-                mir::BuildIntLiteral(unit, block, start.index), count,
-                part_type);
+                mir::BuildIntLiteral(unit, block, start.index), part_type);
           }},
       selector);
 }
@@ -1074,8 +1094,7 @@ auto LowerHirArraySliceWithIndices(
   return NamedMemory{
       .path = DescendInto(
           *std::move(base),
-          SliceStepAt(
-              unit, block, map, start.shift, index_id, count, result_type)),
+          SliceStepAt(unit, block, map, start.shift, index_id, result_type)),
       .slice =
           SliceIndices{.left = offset(to_left), .right = offset(to_right)}};
 }

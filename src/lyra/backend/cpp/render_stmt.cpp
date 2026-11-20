@@ -276,6 +276,18 @@ void RenderStmtInPlace(
               out += ";\n";
               return;
             }
+            // A local moved out as what the body answers is the local itself,
+            // as clang holds `return made;`: C++ moves it there and may build
+            // it in place of the answer.
+            const auto* moved = std::get_if<mir::MoveExpr>(
+                &view.Block().exprs.Get(*s.value).data);
+            if (moved != nullptr &&
+                mir::ReferencedLocal(
+                    view.Block().exprs.Get(moved->operand).data)
+                    .has_value()) {
+              Write(view, out, " ", moved->operand, ";\n");
+              return;
+            }
             Write(view, out, " ", *s.value, ";\n");
           },
       },

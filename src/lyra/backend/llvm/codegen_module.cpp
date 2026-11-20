@@ -49,6 +49,7 @@
 #include "lyra/support/library_decl.hpp"
 #include "lyra/support/runtime_object.hpp"
 #include "lyra/support/value_domain.hpp"
+#include "lyra/support/value_step.hpp"
 #include "lyra/value/constant_span.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/layout.hpp"
@@ -189,6 +190,11 @@ auto CodeGenModule::DeclareCallable(lir::FunctionId id) -> llvm::Function* {
       FunctionTypeOf(params, fn.result_type), LinkageOf(fn.linkage), fn.name,
       module_.get());
   MarkBoolsAsCpp(declared);
+  // A function no call can be unwound out of is `nounwind`, as clang marks a
+  // `noexcept` one.
+  if (!unit_->functions.Attributes(id).can_unwind) {
+    declared->addFnAttr(llvm::Attribute::NoUnwind);
+  }
   return declared;
 }
 
@@ -339,24 +345,8 @@ auto CodeGenModule::AppendTypeArg(
             args.push_back(*element_type);
             return {};
           },
-          [&](const QueueTypeArg& of) -> diag::Result<void> {
-            auto queue_type = value_types_.GetAddrOfQueueType(of.type);
-            if (!queue_type) {
-              return std::unexpected(std::move(queue_type.error()));
-            }
-            args.push_back(*queue_type);
-            return {};
-          },
           [&](const TakePositionsArg& of) -> diag::Result<void> {
             args.push_back(value_types_.GetAddrOfTakePositions(of.type));
-            return {};
-          },
-          [&](const IndexOrderArg& of) -> diag::Result<void> {
-            auto domain = DomainOf(of.key);
-            if (!domain) {
-              return std::unexpected(std::move(domain.error()));
-            }
-            args.push_back(LibraryData(IndexOrderSymbol(*domain)));
             return {};
           },
           [&](const OperationsArg& of) -> diag::Result<void> {
@@ -455,31 +445,31 @@ auto CodeGenModule::EmitDeleteCall(
 }
 
 auto CodeGenModule::EmitStep(
-    llvm::IRBuilderBase& builder, lir::TypeId type, lir::ValueStep step,
+    llvm::IRBuilderBase& builder, lir::TypeId type, support::ValueStep step,
     std::span<llvm::Value* const> args) -> diag::Result<void> {
   return std::visit(
       Overloaded{
           // A value that is its bytes is copied as them, as clang copies a
           // trivially copyable aggregate, and ends with nothing to do.
-          [&](const lir::StepIsBytes&) -> diag::Result<void> {
+          [&](const lir::TrivialStep&) -> diag::Result<void> {
             const support::Layout layout = types_.LayoutOf(type).layout;
             const llvm::Align align(layout.align);
             switch (step) {
-              case lir::ValueStep::kCopy:
-              case lir::ValueStep::kMove:
+              case support::ValueStep::kCopy:
+              case support::ValueStep::kRelocate:
                 builder.CreateMemCpy(
                     args[1], align, args[0], align, layout.size);
                 return {};
-              case lir::ValueStep::kAssign:
+              case support::ValueStep::kAssign:
                 builder.CreateMemCpy(
                     args[0], align, args[1], align, layout.size);
                 return {};
-              case lir::ValueStep::kEnd:
+              case support::ValueStep::kEnd:
                 return {};
             }
             throw InternalError("llvm codegen: unknown value step");
           },
-          [&](const lir::StepByFunction&) -> diag::Result<void> {
+          [&](const lir::GlueStep&) -> diag::Result<void> {
             builder.CreateCall(
                 UnitFunction(lir::StepFunctionOf(*unit_, type, step)), args);
             return {};
@@ -487,8 +477,8 @@ auto CodeGenModule::EmitStep(
           // What only the definition a value opens with knows how to end is
           // ended through it: an object as the class it was created as, a
           // closure of no known type by the entry that reads its definition.
-          [&](const lir::StepThroughDefinition&) -> diag::Result<void> {
-            if (step != lir::ValueStep::kEnd) {
+          [&](const lir::VirtualStep&) -> diag::Result<void> {
+            if (step != support::ValueStep::kEnd) {
               throw InternalError(
                   "llvm codegen: a value ended through its definition is "
                   "asked for another step -- please report this as a bug");
@@ -513,8 +503,8 @@ auto CodeGenModule::EmitStep(
           // An owning pointer ends what it points at -- a variable's cell
           // with its storage, a value as its type ends one -- and gives the
           // storage back, as clang writes a `delete` out where it is.
-          [&](const lir::StepThroughPointee&) -> diag::Result<void> {
-            if (step != lir::ValueStep::kEnd) {
+          [&](const lir::BoxStep&) -> diag::Result<void> {
+            if (step != support::ValueStep::kEnd) {
               throw InternalError(
                   "llvm codegen: an owning pointer is asked through what it "
                   "points at for a step other than its end -- please report "
@@ -526,28 +516,28 @@ auto CodeGenModule::EmitStep(
             auto ended =
                 unit_->types.Get(pointee).Is<lir::ObservableType>()
                     ? EndStorageAt(builder, pointee, CellStorage(pointee), held)
-                    : EmitStep(builder, pointee, lir::ValueStep::kEnd, at);
+                    : EmitStep(builder, pointee, support::ValueStep::kEnd, at);
             if (!ended) {
               return ended;
             }
             return EmitDeleteCall(builder, pointee, held);
           },
-          [&](const lir::StepByLibrary& library) -> diag::Result<void> {
+          [&](const lir::LibraryStep& library) -> diag::Result<void> {
             return EmitLibraryStep(builder, type, library.object, step, args);
           },
-          [&](const lir::NoSuchStep&) -> diag::Result<void> {
+          [&](const lir::DeletedStep&) -> diag::Result<void> {
             throw InternalError(
                 std::format(
                     "llvm codegen: a value with no {} step is asked for one -- "
                     "please report this as a bug",
-                    lir::ValueStepName(step)));
+                    support::ValueStepName(step)));
           }},
       lir::StepOf(*unit_, type, step));
 }
 
 auto CodeGenModule::EmitLibraryStep(
     llvm::IRBuilderBase& builder, lir::TypeId type,
-    const support::RuntimeObject& object, lir::ValueStep step,
+    const support::RuntimeObject& object, support::ValueStep step,
     std::span<llvm::Value* const> args) -> diag::Result<void> {
   // Ending a value takes it; assigning takes the one written into and then
   // the one written; copying and moving take the source and build in storage
@@ -555,11 +545,11 @@ auto CodeGenModule::EmitLibraryStep(
   std::span<llvm::Value* const> operands = args;
   ReturnInfo ret = ReturnDirect{.type = types_.Void()};
   switch (step) {
-    case lir::ValueStep::kEnd:
-    case lir::ValueStep::kAssign:
+    case support::ValueStep::kEnd:
+    case support::ValueStep::kAssign:
       break;
-    case lir::ValueStep::kCopy:
-    case lir::ValueStep::kMove:
+    case support::ValueStep::kCopy:
+    case support::ValueStep::kRelocate:
       operands = args.first(1);
       ret = ReturnIndirect{.returned = types_.Ptr()};
       break;
@@ -1169,7 +1159,7 @@ auto CodeGenModule::EndStorageAt(
     -> diag::Result<void> {
   const std::array<llvm::Value*, 1> args{at};
   if (HoldsItsBytesInline(type, storage)) {
-    return EmitStep(builder, type, lir::ValueStep::kEnd, args);
+    return EmitStep(builder, type, support::ValueStep::kEnd, args);
   }
   if (!MemberLayout(type, storage).needs_end) {
     return {};
@@ -1348,7 +1338,7 @@ auto CodeGenModule::EmitClosureDefinition(lir::ClosureId id)
       lir::StepFunctionOf(
           *unit_,
           unit_->types.Intern(lir::Type{lir::ClosureType{.closure_id = id}}),
-          lir::ValueStep::kEnd));
+          support::ValueStep::kEnd));
 
   // A body taking its closure over is started where it is made rather than
   // called, so its definition is the common entries alone. Any other is called

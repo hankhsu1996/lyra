@@ -4,6 +4,7 @@
 #include <format>
 #include <initializer_list>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -100,55 +101,12 @@ auto SymbolPartOf(std::optional<std::string_view> name, std::uint32_t ordinal)
 }
 
 auto SymbolPartOf(const support::DefPath& path) -> SymbolPart {
-  // A step opens with the marker of its kind, then states its own extent: the
-  // length of its name before the name, or a terminator after its position.
-  // What else tells a step from its siblings follows the name, each behind a
-  // mark of its own and ended by a terminator.
-  const auto named = [](char kind, std::string_view name) {
-    return std::format("${}{}:{}", kind, name.size(), name);
-  };
-  const auto placed = [](char kind, std::uint32_t position) {
-    return std::format("${}{};", kind, position);
-  };
-  const auto bound = [](const std::optional<std::uint64_t>& arguments) {
-    return arguments.has_value() ? std::format("#{:016x};", *arguments)
-                                 : std::string{};
-  };
+  // Each step opens with the marker no other part opens with, then its own
+  // identity, which states where it ends.
   SymbolPart steps;
   for (const support::DefPathData& step : path.data) {
-    steps.encoded += std::visit(
-        Overloaded{
-            [&](const support::GenerateBlockStep& block) {
-              std::string part = named('g', block.label);
-              if (block.disambiguator != 0) {
-                part += std::format("~{};", block.disambiguator);
-              }
-              return part + bound(block.distinguisher);
-            },
-            [&](const support::ClassStep& cls) {
-              const std::string name = named('c', cls.name);
-              const std::string arguments = bound(cls.arguments);
-              return name + arguments;
-            },
-            [&](const support::SubroutineStep& subroutine) {
-              return named('s', subroutine.name);
-            },
-            [&](const support::NamedBlockStep& block) {
-              return named('b', block.name);
-            },
-            [&](const support::ClockingBlockStep& block) {
-              return named('k', block.name);
-            },
-            [&](const support::UnnamedBlockStep& block) {
-              return placed('u', block.position);
-            },
-            [&](const support::TypeStep& type) {
-              return named('t', type.name);
-            },
-            [&](const support::UnnamedTypeStep& type) {
-              return placed('a', type.position);
-            }},
-        step);
+    steps.encoded += "$";
+    steps.encoded += support::DefPathIdentity(support::DefPath{.data = {step}});
   }
   return steps;
 }
@@ -458,19 +416,28 @@ auto SymbolPartOf(const CompilationUnit& unit, TypeId type) -> SymbolPart {
 
 auto TypeOperationSymbol(
     std::string_view unit_name, SymbolPart type,
-    support::ValueOperation operation) -> std::string {
+    support::ValueOperation operation, std::span<const SymbolPart> arguments)
+    -> std::string {
+  // Each argument is a type's part, which states where it ends, so the parts
+  // laid end to end name the instantiation without a separator.
+  SymbolPart instantiated{.encoded = std::format("$i{}", arguments.size())};
+  for (const SymbolPart& argument : arguments) {
+    instantiated.encoded += argument.encoded;
+  }
   return SymbolName(
       SymbolCategory::kTypeOperation,
       {SymbolPart::Name(unit_name), std::move(type),
-       SymbolPart::Name(support::ValueOperationName(operation))});
+       SymbolPart::Name(support::ValueOperationName(operation)),
+       std::move(instantiated)});
 }
 
 auto ValueStepSymbol(
-    std::string_view unit_name, SymbolPart type, ValueStep step)
+    std::string_view unit_name, SymbolPart type, support::ValueStep step)
     -> std::string {
   return SymbolName(
-      SymbolCategory::kValueStep, {SymbolPart::Name(unit_name), std::move(type),
-                                   SymbolPart::Name(ValueStepName(step))});
+      SymbolCategory::kValueStep,
+      {SymbolPart::Name(unit_name), std::move(type),
+       SymbolPart::Name(support::ValueStepName(step))});
 }
 
 auto ClassDefinitionSymbol(std::string_view unit_name, SymbolPart cls)

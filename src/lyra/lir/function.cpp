@@ -5,6 +5,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/type_id.hpp"
 
 namespace lyra::lir {
@@ -25,9 +26,10 @@ auto OpenWriteOpName(OpenWriteTarget::Op op) -> std::string_view {
   switch (op) {
     case OpenWriteTarget::Op::kLand:
       return "land";
-    case OpenWriteTarget::Op::kAssignElementSlice:
-    case OpenWriteTarget::Op::kAssignQueueSlice:
-      return "assign_slice";
+    case OpenWriteTarget::Op::kDesignated:
+      return "designated";
+    case OpenWriteTarget::Op::kMoved:
+      return "moved";
   }
   throw InternalError("lir: unknown open-write operation");
 }
@@ -74,65 +76,93 @@ auto CoroutineOpName(CoroutineTarget::Op op) -> std::string_view {
   throw InternalError("lir: unknown coroutine operation");
 }
 
-auto CallEndingOf(const CallTarget& target) -> support::CallEnding {
-  using support::CallEnding;
+auto CallReturns(const CallTarget& target) -> bool {
   return std::visit(
       Overloaded{
-          [](const FunctionTarget&) { return CallEnding::kReturnsOrUnwinds; },
-          [](const DispatchTarget&) { return CallEnding::kReturnsOrUnwinds; },
-          [](const InterfaceDispatchTarget&) {
-            return CallEnding::kReturnsOrUnwinds;
-          },
-          [](const IndirectTarget&) { return CallEnding::kReturnsOrUnwinds; },
-          [](const SymbolTarget&) { return CallEnding::kReturnsOrUnwinds; },
-          [](const ForeignTarget&) { return CallEnding::kReturnsOrUnwinds; },
+          [](const FunctionTarget&) { return true; },
+          [](const DispatchTarget&) { return true; },
+          [](const InterfaceDispatchTarget&) { return true; },
+          [](const IndirectTarget&) { return true; },
+          [](const SymbolTarget&) { return true; },
+          [](const ForeignTarget&) { return true; },
           [](const BuiltinTarget& builtin) {
-            return support::RuntimeEntryOf(builtin.fn).ending;
+            return support::RuntimeEntryOf(builtin.fn).returns;
           },
-          [](const ConstructTarget&) { return CallEnding::kReturnsOrUnwinds; },
-          [](const CreationTarget&) { return CallEnding::kReturns; },
-          [](const ValueCellTarget&) { return CallEnding::kReturns; },
-          // Keeping a part's value only moves memory; writing a slice is what
-          // any storage's slice takes, which can raise.
+          [](const ConstructTarget&) { return true; },
+          [](const CreationTarget&) { return true; },
+          [](const ValueCellTarget&) { return true; },
+          [](const OpenWriteTarget&) { return true; },
+          [](const DesignatedBitsTarget&) { return true; },
+          [](const EndValueTarget&) { return true; },
+          [](const CopyValueTarget&) { return true; },
+          [](const RelocateValueTarget&) { return true; },
+          [](const DynamicStorageTarget&) { return true; },
+          [](const BuildCellTarget&) { return true; },
+          // Declining a departure carries it on past this frame.
+          [](const ControlEffectTarget& effect) {
+            switch (effect.op) {
+              case ControlEffectTarget::Op::kTakeDepartureIfDue:
+                return true;
+              case ControlEffectTarget::Op::kDeclineDeparture:
+                return false;
+            }
+            throw InternalError("lir: unknown control-effect operation");
+          },
+          [](const CoroutineTarget&) { return true; }},
+      target);
+}
+
+auto CallCanUnwind(
+    const CompilationUnit& unit, const CallTarget& target, TypeId answer)
+    -> bool {
+  return std::visit(
+      Overloaded{
+          [&](const FunctionTarget& called) {
+            return unit.functions.Attributes(called.function).can_unwind;
+          },
+          [](const DispatchTarget&) { return true; },
+          [](const InterfaceDispatchTarget&) { return true; },
+          [](const IndirectTarget&) { return true; },
+          [](const SymbolTarget&) { return true; },
+          [](const ForeignTarget&) { return true; },
+          [](const BuiltinTarget& builtin) {
+            return support::RuntimeEntryOf(builtin.fn).can_unwind;
+          },
+          [&](const ConstructTarget&) {
+            return !unit.types.Get(answer).IsMoveOnly();
+          },
+          [](const CreationTarget&) { return false; },
+          [](const ValueCellTarget&) { return false; },
+          // Landing, answering the part and telling what moved only move
+          // memory.
           [](const OpenWriteTarget& write) {
             switch (write.op) {
               case OpenWriteTarget::Op::kLand:
-                return CallEnding::kReturns;
-              case OpenWriteTarget::Op::kAssignElementSlice:
-              case OpenWriteTarget::Op::kAssignQueueSlice:
-                return CallEnding::kReturnsOrUnwinds;
+              case OpenWriteTarget::Op::kDesignated:
+              case OpenWriteTarget::Op::kMoved:
+                return false;
             }
             throw InternalError("lir: unknown open-write operation");
           },
           // Writing bits within a write is what a slice write is, which can
           // raise.
-          [](const DesignatedBitsTarget&) {
-            return CallEnding::kReturnsOrUnwinds;
-          },
-          [](const EndValueTarget&) { return CallEnding::kReturns; },
-          [](const CopyValueTarget&) { return CallEnding::kReturns; },
-          [](const MoveValueTarget&) { return CallEnding::kReturns; },
-          [](const DynamicStorageTarget&) { return CallEnding::kReturns; },
-          [](const BuildCellTarget&) { return CallEnding::kReturns; },
-          [](const ControlEffectTarget& effect) {
-            switch (effect.op) {
-              case ControlEffectTarget::Op::kTakeDepartureIfDue:
-                return CallEnding::kReturnsOrUnwinds;
-              case ControlEffectTarget::Op::kDeclineDeparture:
-                return CallEnding::kUnwinds;
-            }
-            throw InternalError("lir: unknown control-effect operation");
-          },
+          [](const DesignatedBitsTarget&) { return true; },
+          [](const EndValueTarget&) { return false; },
+          [](const CopyValueTarget&) { return false; },
+          [](const RelocateValueTarget&) { return false; },
+          [](const DynamicStorageTarget&) { return false; },
+          [](const BuildCellTarget&) { return false; },
+          [](const ControlEffectTarget&) { return true; },
           // Entering builds an execution out of a frame and stops before its
           // first statement; awaiting runs the design's code, and releasing
           // raises again whatever that code raised.
           [](const CoroutineTarget& coroutine) {
             switch (coroutine.op) {
               case CoroutineTarget::Op::kEnter:
-                return CallEnding::kReturns;
+                return false;
               case CoroutineTarget::Op::kAwait:
               case CoroutineTarget::Op::kRelease:
-                return CallEnding::kReturnsOrUnwinds;
+                return true;
             }
             throw InternalError("lir: unknown coroutine operation");
           }},

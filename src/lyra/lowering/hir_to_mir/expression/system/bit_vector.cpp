@@ -27,6 +27,7 @@
 #include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
+#include "lyra/mir/type_interface.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -37,8 +38,6 @@ namespace {
 // it. LRM 20.9 admits a value by naming it as a control bit, and naming it
 // twice admits it once, which is what a set of flags records.
 using AdmittedBitValues = std::uint8_t;
-
-constexpr unsigned kBitValueCount = 4;
 
 auto FlagOfPlanes(bool value, bool state) -> AdmittedBitValues {
   return static_cast<AdmittedBitValues>(
@@ -100,7 +99,7 @@ auto MakeControlBitsExpr(
     const mir::CompilationUnit& unit, mir::Builder block,
     AdmittedBitValues admitted) -> mir::ExprId {
   std::vector<unsigned> named;
-  for (unsigned i = 0; i < kBitValueCount; ++i) {
+  for (unsigned i = 0; i < mir::kBitValueCount; ++i) {
     if ((admitted & (1U << i)) != 0U) {
       named.push_back(i);
     }
@@ -112,7 +111,7 @@ auto MakeControlBitsExpr(
   }
   std::uint64_t value_word = 0;
   std::uint64_t state_word = 0;
-  for (unsigned position = 0; position < kBitValueCount; ++position) {
+  for (unsigned position = 0; position < mir::kBitValueCount; ++position) {
     const unsigned value = named[position % named.size()];
     if ((value & 1U) != 0U) {
       value_word |= std::uint64_t{1} << position;
@@ -122,7 +121,7 @@ auto MakeControlBitsExpr(
     }
   }
   return mir::BuildIntegralLiteral(
-      unit, block, BitCountControlType(unit),
+      unit, block, mir::BitCountControlType(unit.types),
       mir::IntegralConstant{
           .value_words = {value_word}, .state_words = {state_word}});
 }
@@ -213,11 +212,6 @@ auto LowerBitVectorSystemSubroutineCall(
   return mir::MakeBinary(
       unit, body.Body(), *op, count, mir::BuildIntLiteral(unit, body, 1),
       unit.builtins.bit1);
-}
-
-auto BitCountControlType(const mir::CompilationUnit& unit) -> mir::TypeId {
-  return mir::PackedVectorOf(
-      unit.types, kBitValueCount, mir::IntegralStateKind::kFourState);
 }
 
 template auto LowerBitVectorSystemSubroutineCall(

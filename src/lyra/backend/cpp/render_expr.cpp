@@ -411,7 +411,8 @@ void RenderNewExpr(
   // expression: C++ finds the allocation function by the types of the
   // arguments and hands it the size of `T`, and its alignment where `T` is
   // over-aligned ([expr.new]), and those arguments find the one the node
-  // names, which the library defines as that function.
+  // names: the library's definition of that function, or, for one address,
+  // the standard's reserved `operator new(std::size_t, void*)`.
   if (n.placement.has_value()) {
     const Enclosure enclosure(out, Precedence::kPrefix, at_least);
     out += "::new (";

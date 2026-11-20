@@ -1,9 +1,12 @@
+// @reports: warning count=3
+//
 // A queue's elements are numbered from 0, and $ names the last index. Writing
 // to an index within 0..$ replaces that element and writing to $+1 appends one.
 // Every other index is invalid -- negative, past $+1, or carrying x or z -- and
-// the write through it is ignored. Reading an invalid index yields the value
-// Table 7-1 gives for the element type, all x for a 4-state element and zero
-// for a 2-state one, and never makes the queue grow. A read-modify-write form
+// the write through it is ignored with a run-time warning, one for each of the
+// three such writes below. Reading an invalid index yields the value Table 7-1
+// gives for the element type, all x for a 4-state element and zero for a
+// 2-state one, and never makes the queue grow. A read-modify-write form
 // reaches the stored element through the same write path. A member of an
 // element is reached the same way, in a queue a variable holds and in one a
 // function answers (LRM 7.10, 7.10.1, 7.4.5, Table 7-1).

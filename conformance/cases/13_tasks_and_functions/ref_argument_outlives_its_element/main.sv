@@ -10,8 +10,10 @@
 // index afterwards is a new one, which the reference does not reach. The
 // element keeps its value whatever its type, a string or a structure holding
 // one included, and two subroutines holding the same element each keep it
-// until the second completes. A process ended while it holds one -- killed,
-// or its block disabled -- lets it go.
+// until the second completes. An element of an array that is itself an
+// automatic variable goes on existing when the scope declaring the array
+// ends, until the subroutine holding it completes (LRM 6.21). A process ended
+// while it holds one -- killed, or its block disabled -- lets it go.
 module Top;
   typedef struct {
     int tag;
@@ -49,6 +51,17 @@ module Top;
   task automatic hold_record(ref tagged_text_t record);
     #2;
     seen_record = record;
+  endtask
+
+  task automatic hold_from_local(int first);
+    int local_queue [$];
+    string local_texts [$];
+    local_queue = '{first, first + 1};
+    local_texts = '{"a string long enough to own storage, held past its scope"};
+    fork
+      hold(local_queue[1]);
+      hold_text(local_texts[0]);
+    join_none
   endtask
 
   task automatic hold_forever(ref int element);
@@ -154,6 +167,14 @@ module Top;
     if (seen !== 21) $fatal(1, "the first of two holders read %0d", seen);
     if (seen_second !== 99)
       $fatal(1, "the second of two holders read %0d after the first wrote", seen_second);
+
+    seen = 0;
+    seen_text = "";
+    hold_from_local(60);
+    #3;
+    if (seen !== 61) $fatal(1, "an element of an ended local queue read %0d", seen);
+    if (seen_text != "a string long enough to own storage, held past its scope")
+      $fatal(1, "a string element of an ended local queue read '%s'", seen_text);
 
     queue = '{20, 21, 22};
     seen = 0;

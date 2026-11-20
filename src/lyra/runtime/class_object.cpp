@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <type_traits>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/simulation_error.hpp"
@@ -46,11 +47,11 @@ namespace {
 
 // The body `entry` of the object's class's randomization, entered on the
 // object with `args` after it, or nothing where the class states none.
-template <typename... Args>
+template <typename... Params>
 void EnterRandomization(
     GcObject& object,
-    void (*abi::ClassObjectInfo::*entry)(GcObject*, const Args&...),
-    const Args&... args) {
+    void (*abi::ClassObjectInfo::*entry)(GcObject*, Params...),
+    std::type_identity_t<Params>... args) {
   const abi::ClassObjectInfo* info = object.definition->class_object;
   if (info == nullptr) {
     throw InternalError(
@@ -64,16 +65,21 @@ void EnterRandomization(
 
 }  // namespace
 
-void ObjectRandVariables(GcObject& object, const value::ObjectRef& problem) {
-  EnterRandomization(object, &abi::ClassObjectInfo::rand_variables, problem);
+void ObjectRandVariables(
+    GcObject& object, const value::ObjectRef& problem,
+    base::SourceLocation at) {
+  EnterRandomization(
+      object, &abi::ClassObjectInfo::rand_variables, problem, at);
 }
 
 void ObjectConstrain(GcObject& object, const value::ObjectRef& problem) {
   EnterRandomization(object, &abi::ClassObjectInfo::constrain, problem);
 }
 
-void ObjectRandObjects(GcObject& object, const value::ObjectRef& problem) {
-  EnterRandomization(object, &abi::ClassObjectInfo::rand_objects, problem);
+void ObjectRandObjects(
+    GcObject& object, const value::ObjectRef& problem,
+    base::SourceLocation at) {
+  EnterRandomization(object, &abi::ClassObjectInfo::rand_objects, problem, at);
 }
 
 void BuiltinPreRandomize() {

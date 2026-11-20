@@ -9,7 +9,6 @@
 #include <variant>
 #include <vector>
 
-#include "lyra/base/component_index.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/diag_code.hpp"
@@ -22,7 +21,10 @@
 #include "lyra/lowering/hir_to_mir/call_operands.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
+#include "lyra/lowering/hir_to_mir/condition.hpp"
+#include "lyra/lowering/hir_to_mir/container_bodies.hpp"
 #include "lyra/lowering/hir_to_mir/covergroup_lowerer.hpp"
+#include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/expression/array_iterator_method.hpp"
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
 #include "lyra/lowering/hir_to_mir/expression/enum_method.hpp"
@@ -56,9 +58,9 @@
 #include "lyra/mir/builder.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
-#include "lyra/mir/storage_part.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
+#include "lyra/mir/type_interface.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/library_decl.hpp"
 #include "lyra/support/system_subroutine.hpp"
@@ -66,11 +68,6 @@
 namespace lyra::lowering::hir_to_mir {
 
 namespace {
-
-// Where a traversal's completion components sit: the SV int the method answers
-// with, then the index it visited (LRM 7.9.4 -- 7.9.7).
-constexpr base::ComponentIndex kTraversalFound{0};
-constexpr base::ComponentIndex kTraversalVisitedIndex{1};
 
 // LRM 7.9.4 -- 7.9.7 associative traversal (`m.first(idx)` / `last` / `next` /
 // `prev`), with the array and the index it is asked of lowered as the first of
@@ -102,6 +99,63 @@ auto LowerAssociativeTraversal(
   return BuildAssociativeTraversal(
       unit_lowerer.Unit(), steps, b.method, map_read_id, *std::move(idx_lhs_or),
       key_type, result_type);
+}
+
+// LRM 20.7 `$low` / `$high` over an associative dimension: the least or the
+// greatest index the array holds, read at the query's answer type, and that
+// type's default -- the `'x` the clause requires -- where it holds none.
+template <ExprLowerer Lowerer>
+auto LowerAssociativeEdgeQuery(
+    Lowerer& lowerer, WalkFrame frame, const hir::BuiltinMethodRef& b,
+    mir::TypeId result_type) -> diag::Result<mir::Expr> {
+  const mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  BlockBuilder steps(frame);
+  mir::Builder body = steps.Body();
+  auto array_or = lowerer.LowerExpr(
+      lowerer.HirExprs().Get(ObjectActedOn(b)), steps.Frame());
+  if (!array_or) return std::unexpected(std::move(array_or.error()));
+  const mir::ExprId array = body.Add(*std::move(array_or));
+  const mir::TypeId index_type =
+      unit.types.Get(body.Get(array).type).IndexType().value();
+  const mir::TypeId edge_type = mir::BorrowedPointerTo(
+      unit.types, index_type, mir::Mutability::kReadOnly);
+  const mir::LocalId edge = steps.Bindings().DeclareAnonymous(edge_type);
+  body.AppendStmt(
+      mir::LocalDeclStmt{
+          .target = edge,
+          .init = body.Add(ContainerOperationCall(
+                               unit, body,
+                               b.method == support::BuiltinFn::kAssocMinIndex
+                                   ? support::BuiltinFn::kAssocFirst
+                                   : support::BuiltinFn::kAssocLast,
+                               array, {}, edge_type)
+                               .value())});
+  const mir::LocalId answer = steps.Bindings().DeclareAnonymous(result_type);
+  body.AppendStmt(
+      mir::LocalDeclStmt{
+          .target = answer,
+          .init = body.Add(BuildDefaultValueExpr(unit, body, result_type))});
+  mir::Block held;
+  mir::Builder held_builder = body.Into(held);
+  held_builder.AppendStmt(
+      mir::ExprStmt{
+          .expr = held_builder.Add(
+              mir::MakeAssignExpr(
+                  unit.builtins, held_builder.LocalPlace(answer, result_type),
+                  ConvertToType(
+                      unit, held_builder,
+                      held_builder.AsValue(
+                          unit.types,
+                          held_builder.Deref(
+                              unit.types,
+                              held_builder.ReadLocal(edge, edge_type),
+                              index_type)),
+                      result_type)))});
+  body.AppendIfThen(
+      BuildConditionNot(
+          unit, body, BuildIsNull(unit, body, body.ReadLocal(edge, edge_type))),
+      std::move(held));
+  return steps.Build(body.ReadLocal(answer, result_type));
 }
 
 // A structural context admits only a pure value query -- one that reads state
@@ -304,26 +358,39 @@ auto LowerSystemSubroutineCall(
       desc.semantic);
 }
 
+// The element type of the array a method acts on, where it acts on one, and
+// its index type where that array is associative.
+struct ActedOn {
+  std::optional<mir::TypeId> element;
+  std::optional<mir::TypeId> index;
+};
+
 // An operand as the entry reads it. One read as a position is an ordinal the
 // source wrote in a type of its own (LRM 6.16.2, 7.10.2), so it is brought to
 // the position type here, where it is written. One the entry holds as an
 // element of the array it acts on is passed into that element as an input is
 // passed into its formal (LRM 7.10.2, 13.5.1), so it is brought to the element
-// type. Every other operand is stated as it stands.
+// type, and an associative array's index to its index type, as the index of
+// an element select is (LRM 7.8.4, 7.9.8). Every other operand is stated as it
+// stands.
 auto StatedAsRead(
     const mir::CompilationUnit& unit, mir::Builder block,
-    support::OperandReading reading, std::optional<mir::TypeId> element,
+    support::OperandReading reading, const ActedOn& acted_on,
     mir::ExprId operand) -> mir::ExprId {
   switch (reading) {
     case support::OperandReading::kPosition:
       return BuildOrdinalPosition(unit, block, operand);
     case support::OperandReading::kHeld:
-      return element.has_value() ? AtType(unit, block, operand, *element)
-                                 : operand;
+      return acted_on.element.has_value()
+                 ? AtType(unit, block, operand, *acted_on.element)
+                 : operand;
+    case support::OperandReading::kKey:
+      return acted_on.index.has_value()
+                 ? ConvertToType(unit, block, operand, *acted_on.index)
+                 : operand;
     case support::OperandReading::kBits:
     case support::OperandReading::kNumber:
     case support::OperandReading::kTyped:
-    case support::OperandReading::kKey:
     case support::OperandReading::kMachine:
       return operand;
   }
@@ -345,6 +412,12 @@ auto LowerBuiltinMethodCall(
   if (entry.writes_the_index_back) {
     return LowerAssociativeTraversal(lowerer, frame, c, b, result_type);
   }
+  // LRM 20.7 `$low` / `$high` over an associative dimension read the array's
+  // first or last index where the query is written.
+  if (b.method == support::BuiltinFn::kAssocMinIndex ||
+      b.method == support::BuiltinFn::kAssocMaxIndex) {
+    return LowerAssociativeEdgeQuery(lowerer, frame, b, result_type);
+  }
   // LRM 20.5 conversions answer in a machine integer, which the destination's
   // declared representation then has to land, so each is a pair of steps
   // rather than the single call the generic path builds.
@@ -362,13 +435,16 @@ auto LowerBuiltinMethodCall(
   // calling it where it states what it reaches there, then these.
   const std::size_t leading = (b.receiver.has_value() ? 1 : 0) +
                               (entry.takes_the_runtime_handle ? 1 : 0);
-  // The element type of the array the method acts on, where it acts on one.
-  const std::optional<mir::TypeId> element =
-      b.receiver.has_value() ? unit.types
-                                   .Get(unit_lowerer.TranslateType(
-                                       hir_exprs.Get(*b.receiver).type))
-                                   .ContainerElementType()
-                             : std::nullopt;
+  // The element type and the index type of the array the method acts on,
+  // where it acts on one.
+  ActedOn acted_on;
+  if (b.receiver.has_value()) {
+    const mir::Type& receiver = unit.types.Get(
+        unit_lowerer.TranslateType(hir_exprs.Get(*b.receiver).type));
+    acted_on = {
+        .element = receiver.ContainerElementType(),
+        .index = receiver.IndexType()};
+  }
   const auto lower_operands =
       [&](WalkFrame at) -> diag::Result<std::vector<mir::ExprId>> {
     mir::Builder into = at.Builder();
@@ -389,7 +465,7 @@ auto LowerBuiltinMethodCall(
         lowered = into.AsValue(unit.types, lowered);
       }
       args.push_back(StatedAsRead(
-          unit, into, entry.operands.At(leading + args.size()), element,
+          unit, into, entry.operands.At(leading + args.size()), acted_on,
           lowered));
     }
     return args;
@@ -397,13 +473,20 @@ auto LowerBuiltinMethodCall(
   const auto call_on = [&](mir::Builder into,
                            std::optional<mir::ExprId> receiver,
                            std::vector<mir::ExprId> args) -> mir::Expr {
-    // A question asked of a whole value is asked as every such question is:
-    // through the type's own body where it has one -- a structure's or a
-    // union's method, the body a unit states for an array -- and of the
-    // library otherwise.
-    if (receiver.has_value() && IsWholeValueOperation(b.method)) {
-      return into.Get(BuildValueOperation(
-          unit, into, b.method, receiver, std::move(args), result_type));
+    // An item of a trait the receiver's type implements is asked through
+    // that type's own body -- a structure's or a union's method, the body a
+    // unit states for an array; any other entry, an operation a container is
+    // called by included, is the entry's call, which finds the container's own
+    // body.
+    if (receiver.has_value()) {
+      const std::optional<support::ValueOperation> own =
+          mir::OperationNamedByEntry(unit, into.Get(*receiver).type, b.method);
+      if (const auto* item =
+              own.has_value() ? std::get_if<support::LibraryAnsweredItem>(&*own)
+                              : nullptr) {
+        return into.Get(BuildValueOperation(
+            unit, into, *item, receiver, std::move(args), result_type));
+      }
     }
     return BuildBuiltinMethodCall(
         unit_lowerer.Unit(), into, b.method, receiver, std::move(args),
@@ -532,7 +615,7 @@ auto LowerLibraryHookCall(
   return BuildBuiltinMethodCall(
       unit_lowerer.Unit(), block, fn, std::nullopt,
       {StatedAsRead(
-          unit, block, support::RuntimeEntryOf(fn).operands.At(0), std::nullopt,
+          unit, block, support::RuntimeEntryOf(fn).operands.At(0), ActedOn{},
           *object)},
       result_type);
 }
@@ -561,6 +644,13 @@ auto BuildBuiltinMethodCall(
   // `await`, and nothing could be stopped at.
   const mir::TypeId answered =
       entry.answers_a_wait ? unit.builtins.wait : result_type;
+  // A container's operation is the body its type has for it.
+  if (receiver.has_value()) {
+    if (std::optional<mir::Expr> own = ContainerOperationCall(
+            unit, block, method, *receiver, arguments, answered)) {
+      return *std::move(own);
+    }
+  }
   return mir::MakeBuiltinCall(
       unit, block.Body(), method, receiver, std::move(arguments), answered);
 }
@@ -570,35 +660,90 @@ auto BuildAssociativeTraversal(
     support::BuiltinFn method, mir::ExprId array, AccessPath index,
     mir::TypeId key_type, mir::TypeId result_type) -> mir::Expr {
   mir::Builder body = steps.Body();
+  const mir::TypeId array_type = body.Get(array).type;
+  const mir::TypeId index_type = unit.types.Get(array_type).IndexType().value();
   // `first` / `last` ignore the index's current value and `next` / `prev` read
-  // it as the search bound, so every form takes it as an ordinary operand. The
-  // index is then written with the one visited, so it is read and written
-  // through one path.
+  // it as the search bound, at the array's index type (LRM 7.9.8). The index
+  // is then written with the one visited, so it is read and written through
+  // one path.
   const ReadThenWritten visited_into =
       ReadThenWrite(unit, steps.Frame(), std::move(index));
+  // What the index held is read once, and is both the bound a search starts
+  // past and what the index keeps where none is visited.
+  const mir::LocalId held = steps.Bindings().DeclareAnonymous(key_type);
+  body.AppendStmt(
+      mir::LocalDeclStmt{.target = held, .init = visited_into.incoming});
+  std::vector<mir::ExprId> operands;
+  const mir::CallableCode method_declared =
+      mir::OperationDeclarationOf(
+          unit, mir::TypeOperationSource{.type = array_type, .answers = method})
+          .value();
+  if (method_declared.params.size() > 1) {
+    operands.push_back(
+        ConvertToType(unit, body, body.ReadLocal(held, key_type), index_type));
+  }
+  const mir::TypeId visited_type = mir::BorrowedPointerTo(
+      unit.types, index_type, mir::Mutability::kReadOnly);
+  const mir::LocalId visited = steps.Bindings().DeclareAnonymous(visited_type);
+  body.AppendStmt(
+      mir::LocalDeclStmt{
+          .target = visited,
+          .init =
+              body.Add(ContainerOperationCall(
+                           unit, body, method, array, operands, visited_type)
+                           .value())});
+  const mir::ExprId found = BuildConditionNot(
+      unit, body,
+      BuildIsNull(unit, body, body.ReadLocal(visited, visited_type)));
+  const mir::LocalId visited_one =
+      steps.Bindings().DeclareAnonymous(unit.builtins.machine_bool);
+  body.AppendStmt(mir::LocalDeclStmt{.target = visited_one, .init = found});
 
-  const mir::TypeId payload_type =
-      CompletionPayloadType(unit, {result_type, key_type});
-  const mir::ExprId query_id = body.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee = mir::Direct{.target = method, .receiver = array},
-                  .arguments = {visited_into.incoming}},
-          .type = payload_type});
-  const mir::LocalId completion =
-      steps.Bindings().DeclareAnonymous(payload_type);
-  body.AppendStmt(mir::LocalDeclStmt{.target = completion, .init = query_id});
-
-  const mir::ExprId visited_id = ProjectCompletionComponent(
-      body, completion, payload_type, kTraversalVisitedIndex, key_type);
+  // Where an index was visited the variable takes it, truncated where it is
+  // narrower than the index type (LRM 7.9.8), and where none was it keeps the
+  // value it held.
+  const mir::ExprId visited_index = ConvertToType(
+      unit, body,
+      body.AsValue(
+          unit.types,
+          body.Deref(
+              unit.types, body.ReadLocal(visited, visited_type), index_type)),
+      key_type);
   body.AppendStmt(
       mir::ExprStmt{
-          .expr = body.Add(
-              BuildStoreExpr(unit, body, visited_into.place, visited_id))});
+          .expr = body.Add(BuildStoreExpr(
+              unit, body, visited_into.place,
+              body.Add(
+                  mir::Expr{
+                      .data =
+                          mir::ConditionalExpr{
+                              .condition = body.ReadLocal(
+                                  visited_one, unit.builtins.machine_bool),
+                              .then_value = visited_index,
+                              .else_value = body.ReadLocal(held, key_type)},
+                      .type = key_type})))});
 
-  return steps.Build(ProjectCompletionComponent(
-      body, completion, payload_type, kTraversalFound, result_type));
+  // LRM 7.9.4 -- 7.9.8: 1 where an index was visited, 0 where none was, and -1
+  // where one was and the variable is an integral one narrower than the index
+  // type, which truncated it.
+  const mir::Type& key = unit.types.Get(key_type);
+  const mir::Type& declared = unit.types.Get(index_type);
+  const bool truncates =
+      key.IsIntegral() && declared.IsIntegral() &&
+      key.Integral().bit_width < declared.Integral().bit_width;
+  const auto answer = [&](std::int64_t value) {
+    return ConvertToType(
+        unit, body, mir::BuildIntLiteral(unit, body, value), result_type);
+  };
+  return steps.Build(body.Add(
+      mir::Expr{
+          .data =
+              mir::ConditionalExpr{
+                  .condition =
+                      body.ReadLocal(visited_one, unit.builtins.machine_bool),
+                  .then_value = answer(truncates ? -1 : 1),
+                  .else_value = answer(0)},
+          .type = result_type}));
 }
 
 template <ExprLowerer Lowerer>

@@ -1,7 +1,8 @@
 # A published operation is compiled once
 
 Date: 2026-09-23 Status: accepted. Extended 2026-11-01: a member a unit calls carries no constraint.
-Extended 2026-11-03: a member some types of a family cannot have is stated member by member.
+Extended 2026-11-03: a member some types of a family cannot have is stated member by member. Revised
+2026-11-05: no family is stated over a dynamic array, which is a value laid out by its type.
 
 ## What this decides
 
@@ -78,18 +79,21 @@ instantiated only where a call leaves it out: a takeover is handed how to show w
 the library is compiled with defaults it, and a type laid out at run time has no default, so a call
 that leaves it out does not compile. A member some types of a family cannot have is declared for
 every type and left out where it cannot be built, as `std::vector`'s count constructor is declared
-for an element type with no default: a variable of a container the library holds is built only from
-the container's type, so its constructor from nothing is never instantiated for one, and the
-families of variables over the three containers state their write alone, since an explicit
-instantiation of the whole class instantiates every member whose constraints hold ([temp.explicit]),
-and GCC 13 instantiates a member defaulted outside its class only with the whole class, so a
-container variable's end is made wherever one is ended. libc++ states `basic_string` as compiled the
-same way, one member at a time from a list (`libcxx/include/__string/extern_template_lists.h`,
-defined in `libcxx/src/string.cpp`), and elsewhere marks each member outside its library's ABI with
-an attribute leaving it out of the explicit instantiation, which GCC does not have; libstdc++ 13
-states the whole class, and no member of it carries a requires-clause. A function template stated
-once takes no concept in its head, for the same reason. A unit of the design's own family is free of
-this, since it compiles those members itself.
+for an element type with no default, and such a family is stated member by member rather than whole,
+since an explicit instantiation of the whole class instantiates every member whose constraints hold
+([temp.explicit]), and GCC 13 instantiates a member defaulted outside its class only with the whole
+class, so such a member is left to be made wherever it is used. libc++ states `basic_string` as
+compiled the same way, one member at a time from a list
+(`libcxx/include/__string/extern_template_lists.h`, defined in `libcxx/src/string.cpp`), and
+elsewhere marks each member outside its library's ABI with an attribute leaving it out of the
+explicit instantiation, which GCC does not have; libstdc++ 13 states the whole class, and no member
+of it carries a requires-clause. A function template stated once takes no concept in its head, for
+the same reason. A unit of the design's own family is free of this, since it compiles those members
+itself. The variables of the three run-time-sized containers were the case this was written for, on
+2026-11-03; since 2026-11-05 a dynamic array, since 2026-11-07 a queue and since 2026-11-18 an
+associative array is a value laid out by its type, held by the laid-out families, and no family is
+stated over any of them
+([a-containers-operations-are-built-for-its-type-over-a-core](a-containers-operations-are-built-for-its-type-over-a-core.md)).
 
 **What only the library reaches stays in the header.** The engine asks an event control whether a
 change was an event on every change it reaches; moved into a source file of its own, that question

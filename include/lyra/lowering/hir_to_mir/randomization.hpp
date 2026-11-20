@@ -1,11 +1,12 @@
 #pragma once
 
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "lyra/diag/diagnostic.hpp"
-#include "lyra/hir/class_ref.hpp"
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/stmt.hpp"
@@ -13,10 +14,12 @@
 #include "lyra/hir/type_id.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/builder.hpp"
+#include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type_id.hpp"
+#include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -35,6 +38,35 @@ class UnitLowerer;
 [[nodiscard]] auto ChosenMembers(
     UnitLowerer& unit_lowerer, mir::Builder block, hir::TypeId type)
     -> std::optional<mir::ExprId>;
+
+// A variable named by the reference the local `local` holds, of
+// `reference_type`, to storage of `type`: read as the reference each time it
+// is handed on, or as that storage.
+struct NamedReference {
+  mir::LocalId local;
+  mir::TypeId reference_type;
+  mir::TypeId type;
+
+  [[nodiscard]] auto Reference(mir::Builder block) const -> mir::ExprId {
+    return block.ReadLocal(local, reference_type);
+  }
+  [[nodiscard]] auto Storage(
+      const mir::CompilationUnit& unit, mir::Builder block) const
+      -> mir::ExprId {
+    return block.Add(block.WrapperContents(unit.types, Reference(block), type));
+  }
+};
+
+// The walk of a random variable (LRM 18.4) for what the entry `begin` begins
+// it for, handed `begin_operands` before the variable: begun on the variable
+// `variable` names, made by its own type's code where it is an array -- each
+// element walked in turn, at any depth -- and named to the problem where it is
+// not, then ended; `problem` reads the call's problem, once for each step that
+// is handed it.
+void AppendRandomWalk(
+    const mir::CompilationUnit& unit, mir::Builder block,
+    const std::function<mir::ExprId()>& problem, support::BuiltinFn begin,
+    std::vector<mir::ExprId> begin_operands, const NamedReference& variable);
 
 // The name the mode of the static constraint block `block` is kept under, which
 // is the mode of `introducer`, the class that introduced it (LRM 18.5.10): the

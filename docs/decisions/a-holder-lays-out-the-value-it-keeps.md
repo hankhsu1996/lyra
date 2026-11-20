@@ -1,11 +1,12 @@
 # A holder lays out the value it keeps, from the type it is told
 
-Date: 2026-10-12, revised 2026-11-03: D2 names the containers the library holds. Status: accepted.
-Supersedes D6 of [a-fixed-array-is-laid-out-by-its-type](a-fixed-array-is-laid-out-by-its-type.md),
-and the parts of [a-tuple-is-laid-out-by-its-type](a-tuple-is-laid-out-by-its-type.md) that put a
-tuple's type in its bytes and hold a tuple in storage of its own; carries out for every holder what
-D6 of [a-packed-value-is-its-words](a-packed-value-is-its-words.md) states of a value wider than a
-word.
+Date: 2026-10-12, revised 2026-11-03: D2 names the containers the library holds; revised 2026-11-05:
+a container is a value laid out by its type (D2, D8); revised 2026-11-18: an associative array too
+(D8). Status: accepted. Supersedes D6 of
+[a-fixed-array-is-laid-out-by-its-type](a-fixed-array-is-laid-out-by-its-type.md), and the parts of
+[a-tuple-is-laid-out-by-its-type](a-tuple-is-laid-out-by-its-type.md) that put a tuple's type in its
+bytes and hold a tuple in storage of its own; carries out for every holder what D6 of
+[a-packed-value-is-its-words](a-packed-value-is-its-words.md) states of a value wider than a word.
 
 ## Context
 
@@ -62,19 +63,21 @@ out as its type says. The code generator lays such a member out at the size the 
 holder followed by a value of that size, as it lays out every other member from its type.
 
 **D2. The holder is told the value's width or type where it is built.** A width for an integral
-value, the type's constant for a tuple, a union and an array -- the same constant every entry acting
-on such a value is told. A holder of a queue, a dynamic array or an associative array is told what
-an entry building the empty container of that type is told: a queue its whole type, its bound
-included (LRM 7.10.5), a dynamic array its element type, and an associative array its index order
-and its element type. Every entry acting on a holder after it is built is told nothing of the values
-it is handed, since the holder keeps the type.
+value, and for every value laid out by its type -- a tuple, a union, an array of any kind -- the
+type's constant, the same constant every entry acting on such a value is told. Every entry acting on
+a holder after it is built is told nothing of the values it is handed, since the holder keeps the
+type.
 
 Revised 2026-11-03: D2 named only the values a holder lays out after itself, so a holder of a
 container was built holding a container of no type, which took its type at the declaration's first
 write. That is the shape D5 and the first rejected alternative below rule out, and it was reachable:
 a method a base constructor calls may write a property of the extending class before that property's
 initializer runs (LRM 8.7, 8.17 NOTE 2), and growing a queue or an associative array there was
-refused as a compiler bug. A container's value now exists only at its type.
+refused as a compiler bug. A holder of a container was then told what an entry building the empty
+container is told. Revised again 2026-11-05: a container is a value laid out by its type
+([a-containers-operations-are-built-for-its-type-over-a-core](a-containers-operations-are-built-for-its-type-over-a-core.md)),
+so its holder is told its type's constant like any other such value, and the type's default builds
+the empty container at its type, a queue's bound and an associative array's index kind included.
 
 **D3. A value past the size a value may lie in what holds it is one address of storage the holder
 owns,** allocated where the holder is built and taken into afterwards. The bound is the one
@@ -101,14 +104,16 @@ keeps beneath, a driver's contribution, a history's entries.
 told once per call after the operands, as a fixed-size unpacked array's is.
 
 **D8. Every value laid out by its type is one domain of the library's** -- a structure, a union, a
-tuple and a fixed-size unpacked array alike. What the library does with such a value, holding it,
-comparing its bytes, resolving a net of it or keeping its history, it does by the type it is told,
-so the work is the same whatever kind of value the type is and one realization serves them all. An
-operation only an array has is realized for the same domain and told the array's type, as every
-other entry is. Go's runtime moves and clears a value of any kind by one function told its type
-(`typedmemmove` and `typedmemclr`, in the Go runtime's `mbarrier.go`), and Swift's copies an array
-of any element type by one entry told the type's metadata (`swift_arrayInitWithCopy`,
-`stdlib/public/runtime/Array.cpp`); the library is prebuilt as theirs are.
+tuple, a fixed-size unpacked array and, a dynamic array since 2026-11-05, a queue since 2026-11-07
+and an associative array since 2026-11-18 alike, whose bytes are the core holding its elements. What
+the library does with such a value, holding it, comparing its bytes, resolving a net of it or
+keeping its history, it does by the type it is told, so the work is the same whatever kind of value
+the type is and one realization serves them all. An operation only an array has is realized for the
+same domain and told the array's type, as every other entry is. Go's runtime moves and clears a
+value of any kind by one function told its type (`typedmemmove` and `typedmemclr`, in the Go
+runtime's `mbarrier.go`), and Swift's copies an array of any element type by one entry told the
+type's metadata (`swift_arrayInitWithCopy`, `stdlib/public/runtime/Array.cpp`); the library is
+prebuilt as theirs are.
 
 ## Rejected
 

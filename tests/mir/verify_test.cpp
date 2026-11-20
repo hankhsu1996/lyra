@@ -1,5 +1,6 @@
 #include "lyra/mir/verify.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <gtest/gtest.h>
@@ -38,9 +39,11 @@
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/record_decl.hpp"
 #include "lyra/mir/stmt.hpp"
+#include "lyra/mir/storage_part.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/mir/type_id.hpp"
+#include "lyra/mir/type_interface.hpp"
 #include "lyra/mir/unary_op.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/class_name.hpp"
@@ -150,6 +153,13 @@ auto UnitWithCode(const Fill& fill) -> CompilationUnit {
   return unit;
 }
 
+// A fixed-size array of four `element`s, whose element is reached by a step
+// its layout places rather than by a body of its type.
+auto FourOf(const TypePool& types, TypeId element) -> TypeId {
+  return types.Intern(
+      Type{UnpackedArrayType{.element_type = element, .count = 4}});
+}
+
 // A unit whose one body, `f`, is the statements `fill` writes into it.
 template <typename Fill>
 auto UnitWithBody(const Fill& fill) -> CompilationUnit {
@@ -162,8 +172,7 @@ auto UnitWithBody(const Fill& fill) -> CompilationUnit {
 // whose code is `code`.
 void DeclareEquality(
     CompilationUnit& unit, RecordId record, CallableCode code) {
-  unit.AddRecordMethod(
-      record, support::ValueOperator::kEquality, std::move(code));
+  unit.AddRecordMethod(record, support::EqualityItem::kEqual, std::move(code));
 }
 
 // The verifier refuses `unit` as every backend reads it, and its refusal says
@@ -702,6 +711,61 @@ TEST(MirVerifyTest, OnlyABindingOfAMemberMakesAReferenceNameOtherStorage) {
       "binds something other than a reference held as a member");
 }
 
+// A local referring to storage it does not own refers to what its declaration
+// bound it to, so a store re-seating one is refused, except where it is a
+// loop's cursor that the loop's step advances, as an iterator is.
+TEST(MirVerifyTest, ALocalBorrowingStorageIsReseatedOnlyAsALoopsCursor) {
+  const auto reseated = [](bool by_the_step) {
+    return UnitWithCode([=](CompilationUnit& u, CallableCode& code) {
+      const TypeId borrowed = u.types.Intern(
+          Type{PointerType{
+              .pointee = u.builtins.int_type,
+              .ownership = PointerOwnership::kBorrowed}});
+      const LocalId cursor = code.AddLocal(borrowed);
+      Builder body(code.Body(), diag::SourceSpan{});
+      body.AppendStmt(
+          LocalDeclStmt{
+              .target = cursor,
+              .init = body.Add(Expr{.data = NullLiteral{}, .type = borrowed})});
+      const ExprId advance = body.Add(MakeAssignExpr(
+          u.builtins, body.LocalPlace(cursor, borrowed),
+          body.Add(Expr{.data = NullLiteral{}, .type = borrowed})));
+      if (by_the_step) {
+        body.AppendStmt(
+            ForStmt{
+                .init = {},
+                .condition = std::nullopt,
+                .step = {advance},
+                .scope = body.AddScope(Block{})});
+        return;
+      }
+      body.AppendStmt(ExprStmt{.expr = advance});
+    });
+  };
+
+  EXPECT_NO_THROW(Verify(reseated(true)));
+  ExpectRefused(
+      reseated(false), "re-seats a local referring to storage it does not own");
+}
+
+// Whether a call of an entry reporting where it was written is handed that.
+enum class WrittenAt : std::uint8_t { kHanded, kWithheld };
+
+// The arguments a call of `entry` is handed: `argument`, and where the call
+// is written where the entry reports there and `written_at` hands it.
+auto ArgumentsOf(
+    const CompilationUnit& u, Builder body, support::BuiltinFn entry,
+    ExprId argument, WrittenAt written_at = WrittenAt::kHanded)
+    -> std::vector<ExprId> {
+  std::vector<ExprId> arguments{argument};
+  if (support::RuntimeEntryOf(entry).takes_the_location &&
+      written_at == WrittenAt::kHanded) {
+    arguments.push_back(body.Add(
+        Expr{.data = NullLiteral{}, .type = u.builtins.source_location}));
+  }
+  return arguments;
+}
+
 // An element of a numbered container is named by a position, so an index left
 // in the type the source wrote it in is refused; the entry reaching an
 // associative array takes a value of its index type, which is no ordinal (LRM
@@ -712,9 +776,10 @@ TEST(MirVerifyTest, AnOrdinalIsStatedAsAPosition) {
       const TypeId element = u.builtins.int_type;
       const TypeId container =
           keyed ? AssociativeArrayOf(u.types, u.builtins.int_type, element)
-                : DynamicArrayOf(u.types, element);
-      const support::BuiltinFn entry = keyed ? support::BuiltinFn::kAssocElement
-                                             : support::BuiltinFn::kElement;
+                : FourOf(u.types, element);
+      const support::BuiltinFn entry =
+          keyed ? support::BuiltinFn::kAssocReferElement
+                : support::BuiltinFn::kElement;
       const TypeId index_type =
           as_position ? PositionType(u.types) : u.builtins.int_type;
       const ExprId array =
@@ -729,7 +794,7 @@ TEST(MirVerifyTest, AnOrdinalIsStatedAsAPosition) {
                           CallExpr{
                               .callee =
                                   Direct{.target = entry, .receiver = array},
-                              .arguments = {at}},
+                              .arguments = ArgumentsOf(u, body, entry, at)},
                       .type = u.types.Intern(
                           Type{ReferenceType{
                               .referent = element,
@@ -744,7 +809,7 @@ TEST(MirVerifyTest, AnOrdinalIsStatedAsAPosition) {
 
 // An element's read and write forms each answer a reference to the element,
 // and a write lands only through the write form's: the read form's referent
-// is the element default where its position names none (LRM 7.4.6), which a
+// is the element default where its position names none (LRM 7.4.5), which a
 // write through it would change for every read.
 TEST(MirVerifyTest, AWriteLandsThroughAnElementsWriteForm) {
   const auto element_write = [](support::BuiltinFn entry, Mutability mutability,
@@ -752,7 +817,7 @@ TEST(MirVerifyTest, AWriteLandsThroughAnElementsWriteForm) {
     return UnitWithBody([entry, mutability, as_reference](
                             CompilationUnit& u, Builder body) {
       const TypeId element = u.builtins.int_type;
-      const TypeId container = DynamicArrayOf(u.types, element);
+      const TypeId container = FourOf(u.types, element);
       const ExprId array =
           body.Add(Expr{.data = NullLiteral{}, .type = container});
       const ExprId at =
@@ -801,8 +866,8 @@ TEST(MirVerifyTest, AWriteLandsThroughAnElementsWriteForm) {
     return UnitWithBody([inner, inner_mutability](
                             CompilationUnit& u, Builder body) {
       const TypeId element = u.builtins.int_type;
-      const TypeId row = DynamicArrayOf(u.types, element);
-      const TypeId rows = DynamicArrayOf(u.types, row);
+      const TypeId row = FourOf(u.types, element);
+      const TypeId rows = FourOf(u.types, row);
       const ExprId array = body.Add(Expr{.data = NullLiteral{}, .type = rows});
       const auto position = [&] {
         return body.Add(
@@ -850,7 +915,7 @@ TEST(MirVerifyTest, AWriteLandsThroughAnElementsWriteForm) {
 // Bits are written through the reference `slice_mut` takes on the value they
 // lie in, so that value is reached as a write reaches it: through an
 // element's write form, never through the read form, whose referent may be
-// the element default every read shares (LRM 7.4.6).
+// the element default every read shares (LRM 7.4.5).
 TEST(MirVerifyTest, BitsAreWrittenThroughAnElementsWriteForm) {
   const auto bits_written = [](support::BuiltinFn entry,
                                Mutability mutability) {
@@ -859,7 +924,7 @@ TEST(MirVerifyTest, BitsAreWrittenThroughAnElementsWriteForm) {
           PackedVectorOf(u.types, 8, IntegralStateKind::kFourState);
       const TypeId nibble =
           PackedVectorOf(u.types, 4, IntegralStateKind::kFourState);
-      const TypeId container = DynamicArrayOf(u.types, byte);
+      const TypeId container = FourOf(u.types, byte);
       const ExprId array =
           body.Add(Expr{.data = NullLiteral{}, .type = container});
       const ExprId at =
@@ -945,7 +1010,8 @@ TEST(MirVerifyTest, AReferenceBindsStorageNeverARead) {
 // argument is of type `argument`, answering a value of type `answer`.
 auto UnitCalling(
     support::BuiltinFn entry, const auto& container_of, const auto& argument_of,
-    const auto& answer_of) -> CompilationUnit {
+    const auto& answer_of, WrittenAt written_at = WrittenAt::kHanded)
+    -> CompilationUnit {
   return UnitWithBody([&](CompilationUnit& u, Builder body) {
     const ExprId receiver =
         body.Add(Expr{.data = NullLiteral{}, .type = container_of(u)});
@@ -959,7 +1025,8 @@ auto UnitCalling(
                         CallExpr{
                             .callee =
                                 Direct{.target = entry, .receiver = receiver},
-                            .arguments = {argument}},
+                            .arguments = ArgumentsOf(
+                                u, body, entry, argument, written_at)},
                     .type = answer_of(u)})});
   });
 }
@@ -973,7 +1040,7 @@ TEST(MirVerifyTest, AnEntryIsCalledOnTheKindOfContainerItReaches) {
         u.types, u.builtins.int_type, u.builtins.int_type);
   };
   const auto numbered = [](CompilationUnit& u) {
-    return DynamicArrayOf(u.types, u.builtins.int_type);
+    return FourOf(u.types, u.builtins.int_type);
   };
   const auto position = [](CompilationUnit& u) {
     return PositionType(u.types);
@@ -987,14 +1054,122 @@ TEST(MirVerifyTest, AnEntryIsCalledOnTheKindOfContainerItReaches) {
 
   EXPECT_NO_THROW(Verify(
       UnitCalling(support::BuiltinFn::kElement, numbered, position, read)));
-  EXPECT_NO_THROW(Verify(
-      UnitCalling(support::BuiltinFn::kAssocElement, keyed, element, read)));
+  EXPECT_NO_THROW(Verify(UnitCalling(
+      support::BuiltinFn::kAssocReferElement, keyed, element, read)));
   ExpectRefused(
       UnitCalling(support::BuiltinFn::kElement, keyed, position, read),
       "reaches by a position into an associative array");
   ExpectRefused(
-      UnitCalling(support::BuiltinFn::kAssocElement, numbered, element, read),
+      UnitCalling(
+          support::BuiltinFn::kAssocReferElement, numbered, element, read),
       "reaches by a key into something that is no associative array");
+}
+
+// A run-time-sized container's own operations are its type's bodies, so a call
+// of the library's entry naming one on such a container is refused, whether the
+// entry names an item of a trait the type implements or one of the type's own
+// methods; the same entries on a fixed-size array, whose operations no core
+// keeps, are the library's to answer.
+TEST(MirVerifyTest, TheLibraryIsNotAskedWhatAContainerStatesAsItsOwn) {
+  const auto queue = [](CompilationUnit& u) {
+    return UnboundedQueueOf(u.types, u.builtins.int_type);
+  };
+  const auto numbered = [](CompilationUnit& u) {
+    return FourOf(u.types, u.builtins.int_type);
+  };
+  const auto index = [](CompilationUnit& u) {
+    return u.builtins.machine_int64;
+  };
+  const auto read = [](CompilationUnit& u) {
+    return u.types.Intern(
+        Type{ReferenceType{
+            .referent = u.builtins.int_type,
+            .mutability = Mutability::kReadOnly}});
+  };
+  const auto count = [](CompilationUnit& u) { return u.builtins.int_type; };
+
+  EXPECT_NO_THROW(Verify(
+      UnitCalling(support::BuiltinFn::kGetUnchecked, numbered, index, read)));
+  ExpectRefused(
+      UnitCalling(support::BuiltinFn::kGetUnchecked, queue, index, read),
+      "an operation that type states as its own");
+  ExpectRefused(
+      UnitCalling(support::BuiltinFn::kSize, queue, index, count),
+      "an operation that type states as its own");
+}
+
+// A body declared not to unwind lets no unwind leave it: one calling only
+// what cannot unwind itself is accepted -- an element read of a fixed-size
+// array -- and one calling what may unwind -- a read through an associative
+// array's key -- is refused, as the same call is accepted in a body declaring
+// no such thing; and so is one placing a value in storage that an entry which
+// may unwind hands out, where the reserved placement form, which cannot, is
+// accepted.
+TEST(MirVerifyTest, ABodyDeclaredNotToUnwindCallsOnlyWhatCannotUnwind) {
+  const auto calling = [](support::BuiltinFn entry, bool keyed,
+                          bool can_unwind) {
+    return UnitWithCode([=](CompilationUnit& u, CallableCode& code) {
+      code.can_unwind = can_unwind;
+      Builder body(code.Body(), diag::SourceSpan{});
+      const TypeId container =
+          keyed ? AssociativeArrayOf(
+                      u.types, u.builtins.int_type, u.builtins.int_type)
+                : FourOf(u.types, u.builtins.int_type);
+      const TypeId coordinate =
+          keyed ? u.builtins.int_type : PositionType(u.types);
+      const TypeId read = u.types.Intern(
+          Type{ReferenceType{
+              .referent = u.builtins.int_type,
+              .mutability = Mutability::kReadOnly}});
+      const ExprId receiver =
+          body.Add(Expr{.data = NullLiteral{}, .type = container});
+      const ExprId argument =
+          body.Add(Expr{.data = NullLiteral{}, .type = coordinate});
+      body.AppendStmt(
+          ExprStmt{
+              .expr = body.Add(
+                  Expr{
+                      .data =
+                          CallExpr{
+                              .callee =
+                                  Direct{.target = entry, .receiver = receiver},
+                              .arguments =
+                                  ArgumentsOf(u, body, entry, argument)},
+                      .type = read})});
+    });
+  };
+  using support::BuiltinFn;
+  EXPECT_NO_THROW(Verify(calling(BuiltinFn::kElement, false, false)));
+  EXPECT_NO_THROW(Verify(calling(BuiltinFn::kAssocReferElement, true, true)));
+  ExpectRefused(
+      calling(BuiltinFn::kAssocReferElement, true, false),
+      "is declared not to unwind and makes");
+
+  const auto placing = [](support::BuiltinFn allocate) {
+    return UnitWithCode([=](CompilationUnit& u, CallableCode& code) {
+      code.can_unwind = false;
+      Builder body(code.Body(), diag::SourceSpan{});
+      const TypeId held = u.builtins.int_type;
+      const TypeId place = u.types.Intern(
+          Type{PointerType{
+              .pointee = held, .ownership = PointerOwnership::kBorrowed}});
+      const ExprId address =
+          body.Add(Expr{.data = NullLiteral{}, .type = place});
+      const ExprId value = body.Add(Expr{.data = NullLiteral{}, .type = held});
+      body.AppendStmt(
+          ExprStmt{
+              .expr = body.Add(MakePlacementNewExpr(
+                  value,
+                  PlacementAllocation{
+                      .allocate = allocate, .arguments = {address}},
+                  place))});
+    });
+  };
+  EXPECT_NO_THROW(Verify(placing(BuiltinFn::kDefaultPlacementNew)));
+  ExpectRefused(
+      placing(BuiltinFn::kAssocElement),
+      "places a value in storage 'assoc_element' hands out, which may "
+      "unwind");
 }
 
 // An entry the source states over values of several kinds is not named where
@@ -1008,6 +1183,10 @@ TEST(MirVerifyTest, ACallIsHeldToItsEntrysOneDeclaration) {
   const auto bit = [](CompilationUnit& u) { return u.builtins.bit1; };
   const auto queue = [](CompilationUnit& u) {
     return QueueOf(u.types, u.builtins.int_type, support::UnboundedQueue{});
+  };
+  const auto keyed = [](CompilationUnit& u) {
+    return AssociativeArrayOf(
+        u.types, u.builtins.int_type, u.builtins.int_type);
   };
   const auto position = [](CompilationUnit& u) {
     return PositionType(u.types);
@@ -1031,7 +1210,9 @@ TEST(MirVerifyTest, ACallIsHeldToItsEntrysOneDeclaration) {
       UnitCalling(support::BuiltinFn::kElementMut, queue, position, write),
       "where another is stated for its first operand");
   ExpectRefused(
-      UnitCalling(support::BuiltinFn::kQueueElementMut, queue, position, write),
+      UnitCalling(
+          support::BuiltinFn::kAssocReferElement, keyed, integral, write,
+          WrittenAt::kWithheld),
       "is not handed where that is");
 
   EXPECT_NO_THROW(
@@ -1173,17 +1354,32 @@ TEST(MirVerifyTest, AnAssignmentLandsOnAPlace) {
 }
 
 // A move hands a local's value on together with the local's end, so it is the
-// last use of the whole local, run exactly once on every way the body runs that
-// reaches that end: nothing else names the local, and only blocks a run enters
-// once whenever the one around them runs stand between the move and the
-// local's declaration. A local named again after it, and one moved under an arm
-// of a choice, in a branch of an `if`, in a loop's body or in its test, are
-// refused; one moved in a block statement is not.
+// last use of the whole local, as in Rust, run exactly once on every way the
+// body runs that reaches that end: what names the local before it in the order
+// the block runs is fine, nothing names it in the statement that moves it or
+// after it, no value that can hold an address is built from it, and only
+// blocks a run enters once whenever the one around them runs stand between the
+// move and the local's declaration. A local named before the move -- one a
+// statement the block holds last but runs first included -- and one moved in a
+// block statement are accepted, and so is one whose address a local of a block
+// ended before the move keeps; one named in the moving statement or after it,
+// one a block expression declares and names again in the value it yields,
+// one whose address a pointer local, a tuple local or an assignment keeps,
+// and one moved under an arm of a choice, in a branch of an `if`, in a loop's
+// body or in its test, are refused.
 TEST(MirVerifyTest, AMoveIsTheLastUseOfAWholeLocal) {
   enum class Shape : std::uint8_t {
     kLastUse,
+    kNamedBefore,
+    kNamedFirstInRunOrder,
     kInABlockStatement,
-    kNamedAgain,
+    kNamedInTheMovingStatement,
+    kNamedInItsBlocksValue,
+    kNamedAfter,
+    kAddressKept,
+    kAddressKeptInANestedBlock,
+    kAddressKeptInATuple,
+    kAddressAssigned,
     kUnderAnArm,
     kInABranch,
     kInALoopBody,
@@ -1195,10 +1391,144 @@ TEST(MirVerifyTest, AMoveIsTheLastUseOfAWholeLocal) {
       const LocalId moved = code.locals.Add(LocalDecl{.type = type});
       const LocalId taker = code.locals.Add(LocalDecl{.type = type});
       Builder body(code.Body(), diag::SourceSpan{});
+      // Declared by a block expression, whose value moves it and then names
+      // it.
+      if (shape == Shape::kNamedInItsBlocksValue) {
+        const TypeId pair =
+            u.types.Intern(Type{TupleType{.elements = {type, type}}});
+        Block steps;
+        Builder steps_at(steps, diag::SourceSpan{});
+        steps_at.AppendStmt(
+            LocalDeclStmt{
+                .target = moved,
+                .init =
+                    steps_at.Add(Expr{.data = NullLiteral{}, .type = type})});
+        const ExprId value = steps_at.Add(
+            Expr{
+                .data =
+                    CompositeExpr{
+                        .parts =
+                            {steps_at.Add(
+                                 Expr{
+                                     .data =
+                                         MoveExpr{
+                                             .operand =
+                                                 steps_at.Add(MakeLocalRefExpr(
+                                                     moved, type))},
+                                     .type = type}),
+                             steps_at.Add(MakeCopyExpr(
+                                 steps_at.Add(MakeLocalRefExpr(moved, type)),
+                                 type))}},
+                .type = pair});
+        const BlockId scope = body.AddScope(std::move(steps));
+        body.AppendStmt(
+            LocalDeclStmt{
+                .target = code.locals.Add(LocalDecl{.type = pair}),
+                .init = body.Add(
+                    Expr{
+                        .data = BlockExpr{.scope = scope, .value = value},
+                        .type = pair})});
+        return;
+      }
       body.AppendStmt(
           LocalDeclStmt{
               .target = moved,
               .init = body.Add(Expr{.data = NullLiteral{}, .type = type})});
+      const auto copy_of_moved = [&](Builder at) {
+        return at.Add(
+            MakeCopyExpr(at.Add(MakeLocalRefExpr(moved, type)), type));
+      };
+      if (shape == Shape::kNamedBefore) {
+        body.AppendStmt(ExprStmt{.expr = copy_of_moved(body)});
+      }
+      const TypeId pointer =
+          BorrowedPointerTo(u.types, type, Mutability::kMutable);
+      const auto address_of_moved = [&] {
+        return body.Add(
+            Expr{
+                .data =
+                    AddressOfExpr{
+                        .operand = body.Add(MakeLocalRefExpr(moved, type))},
+                .type = pointer});
+      };
+      if (shape == Shape::kAddressKept) {
+        body.AppendStmt(
+            LocalDeclStmt{
+                .target = code.locals.Add(LocalDecl{.type = pointer}),
+                .init = address_of_moved()});
+      }
+      if (shape == Shape::kAddressKeptInANestedBlock) {
+        Block nested;
+        Builder nested_at(nested, diag::SourceSpan{});
+        nested_at.AppendStmt(
+            LocalDeclStmt{
+                .target = code.locals.Add(LocalDecl{.type = pointer}),
+                .init = nested_at.Add(
+                    Expr{
+                        .data =
+                            AddressOfExpr{
+                                .operand = nested_at.Add(
+                                    MakeLocalRefExpr(moved, type))},
+                        .type = pointer})});
+        body.AppendStmt(BlockStmt{.scope = body.AddScope(std::move(nested))});
+      }
+      if (shape == Shape::kAddressKeptInATuple) {
+        const TypeId pair = u.types.Intern(
+            Type{TupleType{.elements = {pointer, u.builtins.machine_bool}}});
+        body.AppendStmt(
+            LocalDeclStmt{
+                .target = code.locals.Add(LocalDecl{.type = pair}),
+                .init = body.Add(
+                    Expr{
+                        .data =
+                            CompositeExpr{
+                                .parts =
+                                    {address_of_moved(),
+                                     body.Add(
+                                         Expr{
+                                             .data = NullLiteral{},
+                                             .type =
+                                                 u.builtins.machine_bool})}},
+                        .type = pair})});
+      }
+      if (shape == Shape::kAddressAssigned) {
+        const LocalId kept = code.locals.Add(LocalDecl{.type = pointer});
+        body.AppendStmt(
+            LocalDeclStmt{
+                .target = kept,
+                .init =
+                    body.Add(Expr{.data = NullLiteral{}, .type = pointer})});
+        body.AppendStmt(
+            ExprStmt{
+                .expr = body.Add(
+                    Expr{
+                        .data =
+                            AssignExpr{
+                                .target =
+                                    body.Add(MakeLocalRefExpr(kept, pointer)),
+                                .value = address_of_moved()},
+                        .type = u.builtins.void_type})});
+      }
+      if (shape == Shape::kNamedInTheMovingStatement) {
+        Block steps;
+        Builder steps_at(steps, diag::SourceSpan{});
+        steps_at.AppendStmt(ExprStmt{.expr = copy_of_moved(steps_at)});
+        const ExprId value = steps_at.Add(
+            Expr{
+                .data =
+                    MoveExpr{
+                        .operand = steps_at.Add(MakeLocalRefExpr(moved, type))},
+                .type = type});
+        const BlockId scope = body.AddScope(std::move(steps));
+        body.AppendStmt(
+            LocalDeclStmt{
+                .target = taker,
+                .init = body.Add(
+                    Expr{
+                        .data = BlockExpr{.scope = scope, .value = value},
+                        .type = type})});
+        return;
+      }
       const bool inside = shape == Shape::kInABlockStatement ||
                           shape == Shape::kInABranch ||
                           shape == Shape::kInALoopBody;
@@ -1250,19 +1580,33 @@ TEST(MirVerifyTest, AMoveIsTheLastUseOfAWholeLocal) {
                 .then_scope = body.AddScope(std::move(inner)),
                 .else_scope = std::nullopt});
       }
-      if (shape == Shape::kNamedAgain) {
-        body.AppendStmt(
-            ExprStmt{
-                .expr = body.Add(MakeCopyExpr(
-                    body.Add(MakeLocalRefExpr(moved, type)), type))});
+      if (shape == Shape::kNamedAfter) {
+        body.AppendStmt(ExprStmt{.expr = copy_of_moved(body)});
+      }
+      // Held last by the block, run second, before the move.
+      if (shape == Shape::kNamedFirstInRunOrder) {
+        body.AppendStmt(ExprStmt{.expr = copy_of_moved(body)});
+        std::vector<StmtId>& order = code.Body().root_stmts;
+        std::rotate(order.begin() + 1, order.end() - 1, order.end());
       }
     });
   };
 
   EXPECT_NO_THROW(Verify(moving(Shape::kLastUse)));
+  EXPECT_NO_THROW(Verify(moving(Shape::kNamedBefore)));
+  EXPECT_NO_THROW(Verify(moving(Shape::kNamedFirstInRunOrder)));
+  EXPECT_NO_THROW(Verify(moving(Shape::kAddressKeptInANestedBlock)));
   EXPECT_NO_THROW(Verify(moving(Shape::kInABlockStatement)));
   ExpectRefused(
-      moving(Shape::kNamedAgain), "a move of a local named elsewhere");
+      moving(Shape::kNamedInTheMovingStatement),
+      "names it again in the statement that moves it");
+  ExpectRefused(moving(Shape::kNamedInItsBlocksValue), "names it again");
+  ExpectRefused(moving(Shape::kNamedAfter), "names it again after the move");
+  for (const Shape kept :
+       {Shape::kAddressKept, Shape::kAddressKeptInATuple,
+        Shape::kAddressAssigned}) {
+    ExpectRefused(moving(kept), "stores an address of its storage in a value");
+  }
   for (const Shape not_once :
        {Shape::kUnderAnArm, Shape::kInABranch, Shape::kInALoopBody,
         Shape::kInALoopTest}) {
@@ -1333,6 +1677,126 @@ TEST(MirVerifyTest, AValueHandedMeetsTheTypeItIsHandedTo) {
     EXPECT_NO_THROW(Verify(handing(to, true)));
     ExpectRefused(handing(to, false), refusal);
   }
+}
+
+// The reserved placement form makes a value in the storage its one argument
+// points at, so the argument points at a value of the type placed there.
+TEST(MirVerifyTest, ThePlacementAtAnAddressPlacesWhatTheAddressPointsAt) {
+  const auto placing = [](bool of_pointee_type) {
+    return UnitWithBody([=](CompilationUnit& u, Builder body) {
+      const TypeId held = u.builtins.int_type;
+      const TypeId place = u.types.Intern(
+          Type{PointerType{
+              .pointee = held, .ownership = PointerOwnership::kBorrowed}});
+      const TypeId other = u.types.Intern(
+          Type{PointerType{
+              .pointee = u.builtins.integer,
+              .ownership = PointerOwnership::kBorrowed}});
+      const ExprId address = body.Add(
+          Expr{.data = NullLiteral{}, .type = of_pointee_type ? place : other});
+      const ExprId value = body.Add(Expr{.data = NullLiteral{}, .type = held});
+      body.AppendStmt(
+          ExprStmt{
+              .expr = body.Add(MakePlacementNewExpr(
+                  value,
+                  PlacementAllocation{
+                      .allocate = support::BuiltinFn::kDefaultPlacementNew,
+                      .arguments = {address}},
+                  place))});
+    });
+  };
+
+  EXPECT_NO_THROW(Verify(placing(true)));
+  ExpectRefused(placing(false), "names an allocation function other than");
+}
+
+// A local is named at the type it is declared, so that a view of it at
+// another type -- a read-only reference to a local declared writable -- is a
+// conversion of what is read, never a second spelling of the local.
+TEST(MirVerifyTest, ALocalIsNamedAtTheTypeItIsDeclared) {
+  const auto naming = [](Mutability named_as) {
+    return UnitWithCode([=](CompilationUnit& u, CallableCode& code) {
+      const auto reference = [&](Mutability mutability) {
+        return u.types.Intern(
+            Type{ReferenceType{
+                .referent = u.builtins.int_type, .mutability = mutability}});
+      };
+      const LocalId local =
+          code.locals.Add(LocalDecl{.type = reference(Mutability::kMutable)});
+      code.params.push_back(local);
+      Builder body(code.Body(), diag::SourceSpan{});
+      const ExprId read = body.Read(body.Deref(
+          u.types, body.LocalPlace(local, reference(named_as)),
+          u.builtins.int_type));
+      body.AppendStmt(
+          LocalDeclStmt{
+              .target = code.locals.Add(LocalDecl{.type = u.builtins.int_type}),
+              .init = read});
+    });
+  };
+
+  EXPECT_NO_THROW(Verify(naming(Mutability::kMutable)));
+  ExpectRefused(naming(Mutability::kReadOnly), "hands a local it names");
+}
+
+// An address moved by a count stays an address of what it pointed at, moved by
+// a machine integer, and a value taken out of storage through an address owning
+// nothing is of the type that storage held.
+TEST(MirVerifyTest, AnAddressMovesByACountAndYieldsWhatItPointsAt) {
+  enum class Wrong : std::uint8_t {
+    kNothing,
+    kCountNotAMachineInteger,
+    kMovedToAnotherType,
+    kTakenAsAnotherType,
+    kTakenThroughAnOwner,
+  };
+  const auto taking = [](Wrong wrong) {
+    return UnitWithCode([=](CompilationUnit& u, CallableCode& code) {
+      const TypeId held = u.builtins.int_type;
+      const auto pointer_to = [&](TypeId pointee, PointerOwnership ownership) {
+        return u.types.Intern(
+            Type{PointerType{.pointee = pointee, .ownership = ownership}});
+      };
+      const TypeId address = pointer_to(
+          held, wrong == Wrong::kTakenThroughAnOwner
+                    ? PointerOwnership::kUnique
+                    : PointerOwnership::kBorrowed);
+      Builder body(code.Body(), diag::SourceSpan{});
+      const ExprId start =
+          body.Add(Expr{.data = NullLiteral{}, .type = address});
+      const ExprId count = body.Add(
+          Expr{
+              .data = MachineIntLiteral{.value = 1},
+              .type = wrong == Wrong::kCountNotAMachineInteger
+                          ? held
+                          : u.builtins.machine_int64});
+      const ExprId moved = body.Add(
+          Expr{
+              .data =
+                  BinaryExpr{.op = BinaryOp::kAdd, .lhs = start, .rhs = count},
+              .type = wrong == Wrong::kMovedToAnotherType
+                          ? pointer_to(
+                                u.builtins.integer, PointerOwnership::kBorrowed)
+                          : address});
+      const TypeId taken_type =
+          wrong == Wrong::kTakenAsAnotherType ? u.builtins.integer : held;
+      const ExprId taken = body.Add(MakeCallExpr(
+          Direct{.target = support::BuiltinFn::kPtrRead}, {moved}, taken_type));
+      body.AppendStmt(
+          LocalDeclStmt{
+              .target = code.locals.Add(LocalDecl{.type = taken_type}),
+              .init = taken});
+    });
+  };
+
+  EXPECT_NO_THROW(Verify(taking(Wrong::kNothing)));
+  ExpectRefused(
+      taking(Wrong::kCountNotAMachineInteger), "which is no machine integer");
+  ExpectRefused(taking(Wrong::kMovedToAnotherType), "hands a moved address");
+  ExpectRefused(
+      taking(Wrong::kTakenAsAnotherType), "hands a value taken out of storage");
+  ExpectRefused(
+      taking(Wrong::kTakenThroughAnOwner), "one address owning nothing");
 }
 
 // A composite is its parts and nothing more, so each part is a value of the
@@ -1668,7 +2132,7 @@ TEST(MirVerifyTest, ACallNamesOnlyAnOperationItsTypeCanHave) {
   };
   const auto int_type = [](CompilationUnit& u) { return u.builtins.int_type; };
   const support::ValueOperation default_value =
-      support::BuiltinFn::kDeclaredDefault;
+      support::DefaultItem::kDeclaredDefault;
 
   EXPECT_NO_THROW(Verify(calling(array, default_value)));
   EXPECT_NO_THROW(Verify(calling(string_type, default_value)));
@@ -1677,8 +2141,188 @@ TEST(MirVerifyTest, ACallNamesOnlyAnOperationItsTypeCanHave) {
   ExpectRefused(
       calling(machine_bool, default_value), "which that type cannot have");
   ExpectRefused(
-      calling(int_type, support::ValueOperator::kEquality),
+      calling(int_type, support::EqualityItem::kEqual),
       "which that type cannot have");
+}
+
+// A call of an operation MIR declares for a type hands it what the declaration
+// takes: a receiver exactly where it takes one, then an operand of each
+// parameter's type in order, at the type arguments it is taken at; and a run
+// written on a designation hands the slice write it carries out what that
+// write takes after the array.
+TEST(MirVerifyTest, ACallOfADeclaredOperationHandsWhatItsDeclarationTakes) {
+  // What a call is handed: its receiver, where it has one, and its arguments.
+  struct Handed {
+    std::optional<ExprId> receiver;
+    std::vector<ExprId> arguments;
+  };
+  // A unit calling `target` of `type_of(u)`, handed what `hand(u, body,
+  // value, other)` builds from a local of the type and one of `int`.
+  const auto calling = [](const auto& type_of, const auto& target_of,
+                          const auto& hand) {
+    return UnitWithCode([&](CompilationUnit& u, CallableCode& code) {
+      const TypeId type = type_of(u);
+      const LocalId value = code.AddLocal(type);
+      const LocalId other = code.AddLocal(u.builtins.int_type);
+      Builder body(code.Body(), diag::SourceSpan{});
+      Handed handed = hand(
+          u, body, body.LocalPlace(value, type),
+          body.LocalPlace(other, u.builtins.int_type));
+      body.AppendStmt(
+          ExprStmt{
+              .expr = body.Add(
+                  Expr{
+                      .data =
+                          CallExpr{
+                              .callee =
+                                  Direct{
+                                      .target = target_of(u, type),
+                                      .receiver = handed.receiver,
+                                      .type_arguments = {}},
+                              .arguments = std::move(handed.arguments)},
+                      .type = u.builtins.int_type})});
+    });
+  };
+  const auto dynamic = [](CompilationUnit& u) {
+    return DynamicArrayOf(u.types, u.builtins.int_type);
+  };
+  const auto fixed = [](CompilationUnit& u) {
+    return u.types.Intern(
+        Type{UnpackedArrayType{
+            .element_type = u.builtins.int_type, .count = 4}});
+  };
+  const auto run_type = [](CompilationUnit& u) {
+    return u.types.Intern(
+        Type{UnpackedArrayType{
+            .element_type = u.builtins.int_type, .count = 2}});
+  };
+  const auto operation = [](support::ValueOperation answers,
+                            const auto& arguments_of) {
+    return [=](CompilationUnit& u, TypeId type) -> DirectTarget {
+      return TypeOperationTarget{
+          .type = type, .answers = answers, .arguments = arguments_of(u)};
+    };
+  };
+  const auto at_none = [](CompilationUnit&) { return std::vector<TypeId>{}; };
+  const auto at_int = [](CompilationUnit& u) {
+    return std::vector<TypeId>{u.builtins.int_type};
+  };
+  const auto receiving = [](CompilationUnit& u, Builder body, ExprId value,
+                            ExprId) {
+    return Handed{.receiver = Borrow(u, body, value), .arguments = {}};
+  };
+  const support::ValueOperation size = support::BuiltinFn::kSize;
+
+  EXPECT_NO_THROW(
+      Verify(calling(dynamic, operation(size, at_none), receiving)));
+  ExpectRefused(
+      calling(
+          dynamic, operation(size, at_none),
+          [](CompilationUnit& u, Builder body, ExprId, ExprId other) {
+            return Handed{.receiver = Borrow(u, body, other), .arguments = {}};
+          }),
+      "operands of other types than its declaration takes");
+  // The object handed as an argument is not the object the call is asked of.
+  ExpectRefused(
+      calling(
+          dynamic, operation(size, at_none),
+          [](CompilationUnit& u, Builder body, ExprId value, ExprId) {
+            return Handed{
+                .receiver = std::nullopt,
+                .arguments = {Borrow(u, body, value)}};
+          }),
+      "with no receiver");
+  // An operation taken at a type is asked at one, and one taken at none at
+  // none, a fixed-size array's run as a dynamic array's.
+  ExpectRefused(
+      calling(
+          dynamic, operation(support::BuiltinFn::kElementSlice, at_none),
+          receiving),
+      "type arguments");
+  ExpectRefused(
+      calling(
+          fixed, operation(support::BuiltinFn::kReverse, at_int), receiving),
+      "type arguments");
+
+  // A fixed-size array's and a tuple's operations on a whole value are
+  // declared as a dynamic array's are, each of its own type.
+  const auto tuple = [](CompilationUnit& u) {
+    return u.types.Intern(
+        Type{
+            TupleType{.elements = {u.builtins.int_type, u.builtins.int_type}}});
+  };
+  const support::ValueOperation equality = support::EqualityItem::kEqual;
+  const auto compared_with_itself = [](CompilationUnit& u, Builder body,
+                                       ExprId value, ExprId) {
+    return Handed{
+        .receiver = Borrow(u, body, value),
+        .arguments = {Borrow(u, body, value)}};
+  };
+  const auto compared_with_an_int = [](CompilationUnit& u, Builder body,
+                                       ExprId value, ExprId other) {
+    return Handed{
+        .receiver = Borrow(u, body, value),
+        .arguments = {Borrow(u, body, other)}};
+  };
+  EXPECT_NO_THROW(Verify(
+      calling(fixed, operation(equality, at_none), compared_with_itself)));
+  ExpectRefused(
+      calling(fixed, operation(equality, at_none), compared_with_an_int),
+      "operands of other types than its declaration takes");
+  EXPECT_NO_THROW(Verify(
+      calling(tuple, operation(equality, at_none), compared_with_itself)));
+  ExpectRefused(
+      calling(tuple, operation(equality, at_none), compared_with_an_int),
+      "operands of other types than its declaration takes");
+  // A fixed-size array's interface states no count of its own to ask.
+  ExpectRefused(
+      calling(fixed, operation(size, at_none), receiving),
+      "which that type cannot have");
+
+  // A run written on a designation of a dynamic array within a write: where
+  // it starts, the run, of `run`'s type, and where it was written, answering
+  // the positions it changed.
+  const auto designated = [&](const auto& run_of) {
+    return UnitWithCode([&](CompilationUnit& u, CallableCode& code) {
+      const TypeId array = dynamic(u);
+      const TypeId designation =
+          u.types.Intern(Type{DesignationType{.value = array}});
+      const TypeId position = PositionType(u.types);
+      const LocalId designating = code.AddLocal(designation);
+      const LocalId start = code.AddLocal(position);
+      const LocalId run = code.AddLocal(run_of(u));
+      const LocalId written_at = code.AddLocal(u.builtins.source_location);
+      Builder body(code.Body(), diag::SourceSpan{});
+      body.AppendStmt(
+          ExprStmt{
+              .expr = body.Add(
+                  Expr{
+                      .data =
+                          CallExpr{
+                              .callee =
+                                  Direct{
+                                      .target = support::BuiltinFn::
+                                          kAssignDesignatedRun,
+                                      .receiver = body.LocalPlace(
+                                          designating, designation),
+                                      .type_arguments = {run_type(u)}},
+                              .arguments =
+                                  {Borrow(
+                                       u, body,
+                                       body.LocalPlace(start, position)),
+                                   Borrow(
+                                       u, body,
+                                       body.LocalPlace(run, run_of(u))),
+                                   body.ReadLocal(
+                                       written_at,
+                                       u.builtins.source_location)}},
+                      .type = ChangedRangeType(u.types)})});
+    });
+  };
+  EXPECT_NO_THROW(Verify(designated(run_type)));
+  ExpectRefused(
+      designated([](CompilationUnit& u) { return u.builtins.int_type; }),
+      "operands of other types than its declaration takes");
 }
 
 // A block expression's scope ends when it yields, so what it yields refers to
@@ -1701,7 +2345,7 @@ TEST(MirVerifyTest, ABlockExpressionYieldsNothingThatEndsWithIt) {
   };
   const auto yielding = [](const auto& yield) {
     return UnitWithCode([&](CompilationUnit& u, CallableCode& code) {
-      const TypeId array = DynamicArrayOf(u.types, u.builtins.int_type);
+      const TypeId array = FourOf(u.types, u.builtins.int_type);
       Builder body(code.Body(), diag::SourceSpan{});
       const LocalId outer = code.locals.Add(LocalDecl{.type = array});
       body.AppendStmt(
@@ -1916,24 +2560,26 @@ TEST(MirVerifyTest, APlacementMakesItsValueInStorageItDoesNotOwn) {
       "names an allocation function other than the one its argument "
       "allocates by");
 
-  const CompilationUnit calling =
-      UnitWithBody([](CompilationUnit& u, Builder body) {
-        body.AppendStmt(
-            ExprStmt{
-                .expr = body.Add(
-                    Expr{
-                        .data =
-                            CallExpr{
-                                .callee =
-                                    Direct{
-                                        .target = support::BuiltinFn::
-                                            kDeferredEffectsAllocate},
-                                .arguments = {}},
-                        .type = u.builtins.void_type})});
-      });
+  const auto calling = [](support::BuiltinFn entry) {
+    return UnitWithBody([=](CompilationUnit& u, Builder body) {
+      body.AppendStmt(
+          ExprStmt{
+              .expr = body.Add(
+                  Expr{
+                      .data =
+                          CallExpr{
+                              .callee = Direct{.target = entry},
+                              .arguments = {}},
+                      .type = u.builtins.void_type})});
+    });
+  };
   ExpectRefused(
-      calling,
+      calling(support::BuiltinFn::kDeferredEffectsAllocate),
       "calls an allocation function, which only a new-expression reaches");
+  ExpectRefused(
+      calling(support::BuiltinFn::kDefaultPlacementNew),
+      "calls the reserved placement form, which only a new-expression "
+      "reaches");
 }
 
 // A keeper runs the effect committed to it once the frame that made the effect
@@ -2402,7 +3048,7 @@ TEST(MirVerifyTest, TheOwnersOfAUnitsCallablesCohere) {
                   .path = {},
                   .shape = StructRecord{}});
           const support::ValueOperation equality =
-              support::ValueOperator::kEquality;
+              support::EqualityItem::kEqual;
           u.AddRecordMethod(record, equality, member());
           u.AddRecordMethod(record, equality, member());
           break;
@@ -2551,7 +3197,7 @@ TEST(MirVerifyTest, CodeNamedAsAValueIsAMethodOrANamespaceBody) {
                   .path = {},
                   .shape = StructRecord{}});
           callable = u.AddRecordMethod(
-              record, support::ValueOperator::kEquality, std::move(decl));
+              record, support::EqualityItem::kEqual, std::move(decl));
           break;
         }
         case Named::kForeignFunction: {

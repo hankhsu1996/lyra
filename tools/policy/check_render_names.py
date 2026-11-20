@@ -43,6 +43,12 @@ named twice across the emitters is a second writer of call conventions. Both
 went unseen once: a placement new-expression rendered as a call of the
 allocation function, through a writer of its own, with the size and alignment
 spelled after its arguments.
+
+Two readings hold of what a render entry writes at all. **A class or a struct
+is written only by the entry rendering the declaration MIR states**, since any
+other writing one composes a class out of pieces no node stands for. **No
+entry writes a check of the emitted program's own shape**, such as a
+`static_assert`, since no MIR node states one.
 """
 
 from __future__ import annotations
@@ -54,15 +60,23 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 
-# The value-emission entries. `render_type.cpp` is absent on purpose: it is the
-# type-mapping dispatch, and invariant 3 makes it the one place a runtime
-# library type is spelled.
-EMITTERS = [
-    "src/lyra/backend/cpp/render_expr.cpp",
-    "src/lyra/backend/cpp/render_call.cpp",
-    "src/lyra/backend/cpp/render_stmt.cpp",
-    "src/lyra/backend/cpp/render_decl.cpp",
-]
+# The render entries: every render file of the backend but `render_type.cpp`,
+# the type-mapping dispatch, which invariant 3 makes the one place a runtime
+# library type is spelled. They are found rather than listed, so a render file
+# added later is read too.
+TYPE_MAPPING = "src/lyra/backend/cpp/render_type.cpp"
+EMITTERS = sorted(
+    str(path.relative_to(ROOT))
+    for path in (ROOT / "src/lyra/backend/cpp").glob("render_*.cpp")
+    if str(path.relative_to(ROOT)) != TYPE_MAPPING
+)
+
+# A class or a struct is a declaration MIR states, written by the entry that
+# renders that declaration, so only the declaration renderer spells either
+# keyword: an entry elsewhere writing one is composing a class out of pieces no
+# node stands for, which invariant 1 forbids.
+DECLARATION_RENDERER = "src/lyra/backend/cpp/render_decl.cpp"
+DECLARATION_KEYWORDS = {"class", "struct"}
 
 # Target syntax that carries a capital, which no rule about names can tell from
 # a name. Permanent, and short by construction: C++ spells almost nothing this
@@ -86,6 +100,10 @@ ADMITTED: dict[str, str] = {}
 
 # What a C++ construct supplies itself and an emitter therefore never writes.
 SUPPLIED_BY_THE_CONSTRUCT = {"sizeof", "alignof"}
+
+# What no MIR node stands for, so no render entry writes it: a check of the
+# emitted program's own shape is a fact no node states.
+STATES_NO_NODE = {"static_assert"}
 
 # The ways the runtime-entry declaration says code reaches an entry, read off
 # the declaration so a kind added there is checked here too. A dispatch on that
@@ -201,13 +219,14 @@ def violations() -> list[str]:
     # Where each way of reaching an entry is named, across every emitter.
     named_at: dict[str, list[str]] = {kind: [] for kind in declaration_kinds()}
     for relative in EMITTERS:
-        path = ROOT / relative
-        if not path.exists():
-            found.append(f"{relative}: listed as an emitter but does not exist")
-            continue
-        literals, code = scan(path.read_text())
+        source = (ROOT / relative).read_text()
+        literals, code = scan(source)
+        lines = source.splitlines()
         for literal in literals:
-            if literal.in_diagnostic:
+            # A header the render file includes is no text it emits.
+            if literal.in_diagnostic or lines[literal.line - 1].startswith(
+                "#include"
+            ):
                 continue
             for name in names_in(literal.text):
                 if name in ADMITTED:
@@ -223,6 +242,20 @@ def violations() -> list[str]:
                         f"{relative}:{literal.line}: value emission writes "
                         f"`{token}`, which the construct it renders supplies "
                         f"itself"
+                    )
+                if token in STATES_NO_NODE:
+                    found.append(
+                        f"{relative}:{literal.line}: a render entry writes "
+                        f"`{token}`, which no MIR node stands for"
+                    )
+                if (
+                    token in DECLARATION_KEYWORDS
+                    and relative != DECLARATION_RENDERER
+                ):
+                    found.append(
+                        f"{relative}:{literal.line}: a render entry writes "
+                        f"`{token}`; a class or a struct is written only by "
+                        f"the entry rendering the declaration MIR states"
                     )
         for kind in named_at:
             for match in re.finditer(rf"\b{re.escape(kind)}\b", code):

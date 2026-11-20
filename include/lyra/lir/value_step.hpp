@@ -1,55 +1,49 @@
 #pragma once
 
-#include <cstdint>
-#include <string_view>
 #include <variant>
 
 #include "lyra/lir/function_id.hpp"
 #include "lyra/lir/type_id.hpp"
 #include "lyra/support/runtime_object.hpp"
+#include "lyra/support/value_step.hpp"
 
 namespace lyra::lir {
 
 struct CompilationUnit;
 class Type;
 
-// One step of a value's life that its type says how to carry out: a second
-// value equal to one only read, built in storage holding nothing; the value
-// built in such storage out of one whose holder still ends it afterwards; one
-// value written over the one storage already holds; and the end of a value.
-enum class ValueStep : std::uint8_t { kCopy, kMove, kAssign, kEnd };
-
-// The step's stable spelling, which names the function a unit states for it.
-auto ValueStepName(ValueStep step) -> std::string_view;
-
 // How a step of a value of one type is carried out, which is the one answer
-// every consumer reads, as rustc resolves a type's drop glue once and its code
-// generator calls it or, where it is empty, nothing:
+// every consumer reads, as clang's `DestructionKind` and `PrimitiveCopyKind`
+// answer it for a C type and rustc resolves a type's drop glue once:
 //
-// - the value's bytes, copied where the step builds or writes and left alone
-//   where it ends -- a value with nothing to end, all of whose parts have
-//   nothing to end either;
-// - the library's own entry for what the value is held as;
-// - a function of the unit, built from the type's parts;
-// - the definition the value opens with, which a value whose type is known
-//   only where the program runs is ended through;
-// - what an owning pointer points at, ended as its type says where the
+// - trivial: the value's bytes, copied where the step builds, relocates or
+//   writes, and left alone where it ends -- a value with nothing to end, all
+//   of whose parts have nothing to end either, and the relocation of a value
+//   each of whose parts relocates as its bytes, since a relocation ends
+//   nothing of its source;
+// - the library's own entry for what the value is held as, as a class's own
+//   destructor is;
+// - glue: a function of the unit, built from the type's parts, as rustc's
+//   drop glue and clone shims are;
+// - virtual: the definition the value opens with, which a value whose type is
+//   known only where the program runs is ended through, as a virtual
+//   destructor is;
+// - box: what an owning pointer points at, ended as its type says where the
 //   pointer ends, and the storage then given back, as rustc's drop
 //   elaboration writes a `Box`'s drop out where it is dropped rather than
 //   calling a function per pointee;
-// - no such step, for a value that has none: an owning pointer is never
-//   copied, and a closure is ended where it lies and never moved.
-struct StepIsBytes {};
-struct StepByLibrary {
+// - deleted: no such step, for a value that has none: an owning pointer is
+//   never copied, and a closure is ended where it lies and never relocated.
+struct TrivialStep {};
+struct LibraryStep {
   support::RuntimeObject object;
 };
-struct StepByFunction {};
-struct StepThroughDefinition {};
-struct StepThroughPointee {};
-struct NoSuchStep {};
-using StepRealization = std::variant<
-    StepIsBytes, StepByLibrary, StepByFunction, StepThroughDefinition,
-    StepThroughPointee, NoSuchStep>;
+struct GlueStep {};
+struct VirtualStep {};
+struct BoxStep {};
+struct DeletedStep {};
+using StepKind = std::variant<
+    TrivialStep, LibraryStep, GlueStep, VirtualStep, BoxStep, DeletedStep>;
 
 // Whether a value of `type` is a scalar the IR lays out -- an integral value, a
 // real, a reference owning nothing -- held as its own bytes, which every
@@ -70,14 +64,15 @@ using StepRealization = std::variant<
 // a function, it is the one the unit states for it, which every value laid out
 // by its type with something to end and every closure has.
 [[nodiscard]] auto StepOf(
-    const CompilationUnit& unit, TypeId type, ValueStep step)
-    -> StepRealization;
+    const CompilationUnit& unit, TypeId type, support::ValueStep step)
+    -> StepKind;
 
 // The function `unit` states for `step` of `type`, which a table describing
 // the type names. A value laid out by its type has one for each step in every
 // unit naming the type, whether or not the step does anything but copy its
 // bytes, since the library holding one asks every step of it.
 [[nodiscard]] auto StepFunctionOf(
-    const CompilationUnit& unit, TypeId type, ValueStep step) -> FunctionId;
+    const CompilationUnit& unit, TypeId type, support::ValueStep step)
+    -> FunctionId;
 
 }  // namespace lyra::lir

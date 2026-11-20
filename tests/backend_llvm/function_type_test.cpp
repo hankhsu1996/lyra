@@ -43,11 +43,11 @@ TEST(FunctionTypeTest, TheTypeIsWhatTheArrangementHandsOver) {
            LlvmArgAbi{.type = f64, .mode = PassDirect{}}},
       .type_args =
           {TypeConstantArg{.type = any}, TypeExtentArg{.type = any},
-           ElementTypeArg{.type = any}, QueueTypeArg{.type = any}},
+           ElementTypeArg{.type = any}},
       .ret = ReturnIndirect{.returned = i64}};
   const std::vector<llvm::Type*> expected{i64, ptr, i64, ptr, i64, i1,  ptr,
                                           i64, i1,  i1,  ptr, ptr, ptr, i64,
-                                          f64, ptr, i64, i1,  ptr, ptr, ptr};
+                                          f64, ptr, i64, i1,  ptr, ptr};
   const llvm::FunctionType* const type = module.Types().GetFunctionType(abi);
   EXPECT_EQ(type->getReturnType(), i64);
   EXPECT_EQ(std::vector<llvm::Type*>(type->params()), expected);

@@ -284,27 +284,29 @@ auto CodeGenFunction::BuildInto(
 auto CodeGenFunction::EndValue(lir::TypeId type, llvm::Value* value)
     -> diag::Result<void> {
   const std::array<llvm::Value*, 1> args{LocationOf(type, value)};
-  return module_->EmitStep(builder_, type, lir::ValueStep::kEnd, args);
+  return module_->EmitStep(builder_, type, support::ValueStep::kEnd, args);
 }
 
 auto CodeGenFunction::CopyValue(
     lir::TypeId type, llvm::Value* value, llvm::Value* out)
     -> diag::Result<llvm::Value*> {
   const std::array<llvm::Value*, 2> args{value, out};
-  auto copied = module_->EmitStep(builder_, type, lir::ValueStep::kCopy, args);
+  auto copied =
+      module_->EmitStep(builder_, type, support::ValueStep::kCopy, args);
   if (!copied) {
     return std::unexpected(std::move(copied.error()));
   }
   return out;
 }
 
-auto CodeGenFunction::MoveValue(
+auto CodeGenFunction::RelocateValue(
     lir::TypeId type, llvm::Value* value, llvm::Value* out)
     -> diag::Result<llvm::Value*> {
   const std::array<llvm::Value*, 2> args{value, out};
-  auto moved = module_->EmitStep(builder_, type, lir::ValueStep::kMove, args);
-  if (!moved) {
-    return std::unexpected(std::move(moved.error()));
+  auto relocated =
+      module_->EmitStep(builder_, type, support::ValueStep::kRelocate, args);
+  if (!relocated) {
+    return std::unexpected(std::move(relocated.error()));
   }
   return out;
 }
@@ -313,17 +315,7 @@ auto CodeGenFunction::AssignValue(
     lir::TypeId type, llvm::Value* value, llvm::Value* out)
     -> diag::Result<void> {
   const std::array<llvm::Value*, 2> args{out, value};
-  return module_->EmitStep(builder_, type, lir::ValueStep::kAssign, args);
-}
-
-auto CodeGenFunction::RelocateValue(
-    lir::TypeId type, llvm::Value* value, llvm::Value* out)
-    -> diag::Result<void> {
-  auto moved = MoveValue(type, value, out);
-  if (!moved) {
-    return std::unexpected(std::move(moved.error()));
-  }
-  return EndValue(type, value);
+  return module_->EmitStep(builder_, type, support::ValueStep::kAssign, args);
 }
 
 // A value lying in storage of its own is named by that storage already; one

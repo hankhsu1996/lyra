@@ -1,6 +1,5 @@
 #include "lyra/lowering/hir_to_mir/expression/system/mem_file.hpp"
 
-#include <array>
 #include <cstdint>
 #include <expected>
 #include <format>
@@ -17,18 +16,16 @@
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/expr_id.hpp"
-#include "lyra/hir/param_direction.hpp"
 #include "lyra/hir/procedural_body.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/call_operands.hpp"
-#include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
+#include "lyra/lowering/hir_to_mir/expression/calls.hpp"
 #include "lyra/lowering/hir_to_mir/expression/selects.hpp"
 #include "lyra/lowering/hir_to_mir/lvalue.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
-#include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
@@ -48,7 +45,7 @@ namespace {
 // runtime call, and the address a run starts from where the source names none.
 // Each shape states its addressing differently -- a fixed array of any depth
 // by every dimension's range, and an associative array, a dynamic array or a
-// queue by nothing (its keys are of its declared index type, and its
+// queue by no dimensions (its keys are of its declared index type, and its
 // `[0, size-1]` range comes from the container).
 struct MemAddressing {
   hir::TypeId element;
@@ -68,11 +65,12 @@ auto DescribeMemory(
         std::format(
             "{} reached lowering with a target that is no memory", task));
   };
-  const auto from_zero = [&](hir::TypeId element) {
+  const auto from_zero_with_no_dimensions = [&](hir::TypeId element) {
+    const MemoryIndices from_zero = MemoryIndicesFromZero(unit, wrapper);
     return MemAddressing{
         .element = element,
-        .operands = {},
-        .lowest_address = mir::BuildMachineIntLiteral(unit, wrapper, 0)};
+        .operands = {from_zero.ranges},
+        .lowest_address = from_zero.lowest};
   };
   return unit_lowerer.Hir().types.Get(mem_type).Visit(
       Overloaded{
@@ -90,11 +88,15 @@ auto DescribeMemory(
                 .operands = {indices.ranges},
                 .lowest_address = indices.lowest};
           },
+          // A dynamic array and a queue are laid out by their types as a
+          // fixed-size array is, and are handed to the same entry with no
+          // dimensions, which says each is addressed from 0 across the
+          // elements it holds.
           [&](const hir::DynamicArrayType& d) -> diag::Result<MemAddressing> {
-            return from_zero(d.element_type);
+            return from_zero_with_no_dimensions(d.element_type);
           },
           [&](const hir::QueueType& q) -> diag::Result<MemAddressing> {
-            return from_zero(q.element_type);
+            return from_zero_with_no_dimensions(q.element_type);
           },
           [&](const hir::AssociativeArrayType& a)
               -> diag::Result<MemAddressing> {
@@ -117,7 +119,9 @@ auto DescribeMemory(
                       "index type is not integral",
                       task));
             }
-            return from_zero(a.element_type);
+            // It is laid out by its type as every other memory is, and handed
+            // to the same entry with no dimensions; its addresses are its keys.
+            return from_zero_with_no_dimensions(a.element_type);
           },
           // LRM 21.4 / 21.5 name a memory as an array of integral elements, and
           // the front end refuses a task given any other form.
@@ -191,6 +195,17 @@ auto MemoryWriteTarget(
       .type = unit_lowerer.TranslateType(memory.type),
       .source_type = memory.type,
       .span = memory.span};
+}
+
+auto MemoryIndicesFromZero(mir::CompilationUnit& unit, mir::Builder block)
+    -> MemoryIndices {
+  return MemoryIndices{
+      .ranges = block.Add(
+          mir::Expr{
+              .data = mir::CompositeExpr{.parts = {}},
+              .type = mir::MachineArrayOf(
+                  unit.types, unit.builtins.machine_int64, 0)}),
+      .lowest = mir::BuildMachineIntLiteral(unit, block, 0)};
 }
 
 auto MemoryIndicesOf(
@@ -277,34 +292,12 @@ auto LowerMemFileSystemSubroutineCallStmt(
         task);
   }
 
-  // A load's memory is an `inout`: it crosses in because a word the file does
-  // not address keeps what it held, and it rides the completion back out (LRM
-  // 13.5, 21.4). A dump only reads it.
-  const mir::TypeId mem_type = unit_lowerer.TranslateType(mem_hir.type);
-  std::optional<Lvalue> mem_place;
-  mir::ExprId mem_value{};
-  if (is_store) {
-    AppendReadChecks(unit, body, memory->path);
-    mem_value = PathValue(unit, body, memory->path);
-  } else {
-    auto read = ReadThenWrite(
-        unit_lowerer.Unit(), step_frame,
-        MemoryWriteTarget(
-            unit_lowerer, step_frame, std::move(memory->path), mem_hir));
-    if (!read) return std::unexpected(std::move(read.error()));
-    mem_place = std::move(read->lvalue);
-    mem_value = read->incoming;
-  }
-
   // A word of an enumerated memory is a member's value and nothing else (LRM
   // 21.4.2), so its load names the member list it reads the words as.
   const bool enumerated =
       !is_store && unit.types.Get(elem_mir).Is<mir::EnumType>();
 
   std::vector<mir::ExprId> operands;
-  operands.push_back(
-      body.Add(BuildCurrentRuntimeCallExpr(unit_lowerer.Unit())));
-  operands.push_back(mem_value);
   if (enumerated) {
     operands.push_back(mir::BuildEnumMemberTable(unit, body, elem_mir));
   }
@@ -342,40 +335,51 @@ auto LowerMemFileSystemSubroutineCallStmt(
         BuildToInt64Call(unit, body, body.Add(*std::move(finish_or))));
   }
 
+  // The words the task moves, which the memory's own code then reads or
+  // writes.
   const bool windowed = finish.has_value();
-  const support::BuiltinFn target =
-      is_store ? DumpTask(windowed) : LoadTask(windowed, enumerated);
-
-  if (is_store) {
+  const mir::TypeId words_type =
+      mir::LibraryTypeOf(unit.types, support::LibraryDecl::kMemoryWords);
+  const mir::LocalId words = DeclareLocal(
+      step_frame,
+      body.Add(BuildBuiltinMethodCall(
+          unit, body,
+          is_store ? DumpTask(windowed) : LoadTask(windowed, enumerated),
+          std::nullopt, std::move(operands), words_type)));
+  const mir::TypeId mem_type = unit_lowerer.TranslateType(mem_hir.type);
+  // The memory type's own code, entered on the memory, which a load writes
+  // and a dump only reads, handed the words the task moves.
+  const auto own_code = [&](support::BuiltinFn answers, mir::ExprId memory_at) {
     body.AppendStmt(
         mir::ExprStmt{
-            .expr = body.Add(
-                mir::Expr{
-                    .data =
-                        mir::CallExpr{
-                            .callee = mir::Direct{.target = target},
-                            .arguments = std::move(operands)},
-                    .type = unit.builtins.void_type})});
+            .expr = body.Add(BuildBuiltinMethodCall(
+                unit, body, answers, memory_at,
+                {body.LocalPlace(words, words_type)},
+                unit.builtins.void_type))});
+  };
+  if (is_store) {
+    // A dump reads the memory as it is when the task runs, which a run of
+    // elements the source selected is read into as an array of its own.
+    AppendReadChecks(unit, body, memory->path);
+    const mir::LocalId dumped =
+        DeclareLocal(step_frame, PathValue(unit, body, memory->path));
+    own_code(
+        support::BuiltinFn::kStoreWords, body.LocalPlace(dumped, mem_type));
   } else {
-    const CompletionLayout layout = BuildCompletionLayout(
-        {CalleeFormal{
-            .direction = hir::ParamDirection::kInOut, .type = mem_type}},
-        std::nullopt);
-    const mir::TypeId payload = CompletionPayloadType(unit, layout.components);
-    const std::array writebacks{CompletionWriteback{
-        .target = *mem_place,
-        .component = *layout.formals.front().component,
-        .type = mem_type}};
-    auto completion = BindCompletion(
-        unit_lowerer, step_frame,
-        mir::Expr{
-            .data =
-                mir::CallExpr{
-                    .callee = mir::Direct{.target = target},
-                    .arguments = std::move(operands)},
-            .type = payload},
-        payload, writebacks);
-    if (!completion) return std::unexpected(std::move(completion.error()));
+    // A load's memory is read and then written (LRM 13.5, 21.4): a word the
+    // file does not address keeps what it held, and the memory takes the
+    // whole of what the load made through its own write.
+    auto changed = ReadThenWrite(
+        unit, step_frame,
+        MemoryWriteTarget(
+            unit_lowerer, step_frame, std::move(memory->path), mem_hir));
+    if (!changed) return std::unexpected(std::move(changed.error()));
+    const mir::LocalId loaded = DeclareLocal(step_frame, changed->incoming);
+    own_code(support::BuiltinFn::kLoadWords, body.LocalPlace(loaded, mem_type));
+    auto stored = AppendStores(
+        unit_lowerer, step_frame, changed->lvalue,
+        body.ReadLocal(loaded, mem_type));
+    if (!stored) return std::unexpected(std::move(stored.error()));
   }
 
   mir::Stmt stmt = steps.BuildStatement();

@@ -1,7 +1,11 @@
 # Value-type concepts (composable LRM operator contracts)
 
 Date: 2026-06-17 Status: accepted. Revised 2026-10-30: `LyraValue` asks only what every holder of a
-value asks, and `==`, `!=` and the unknown-bit test left it.
+value asks, and `==`, `!=` and the unknown-bit test left it. Revised 2026-11-12: `DynamicArray<T>`
+and `Queue<T>` are gone; a dynamic array and a queue are each the library's one container class over
+its core, whose operations are the type's own bodies
+([a-containers-operations-are-built-for-its-type-over-a-core](a-containers-operations-are-built-for-its-type-over-a-core.md)).
+Revised 2026-11-18: `AssociativeArray<K,V>` is gone the same way.
 
 ## Context
 
@@ -81,9 +85,7 @@ D4), so the concept asks only what every holder asks.
 | `PackedArray`           | yes         | yes                   | yes                  | yes                      |
 | `String`                | yes         | yes                   | no (LRM excludes)    | yes                      |
 | `UnpackedArray<T>`      | yes         | yes                   | no                   | no (LRM does not define) |
-| `DynamicArray<T>`       | yes         | yes                   | no                   | no                       |
-| `Queue<T>`              | yes         | yes                   | no                   | no                       |
-| `AssociativeArray<K,V>` | yes         | yes                   | no                   | no                       |
+| `Container<Core, Impl>` | yes         | yes                   | no                   | no                       |
 | `lyra::value::Real`     | yes         | yes (compares values) | no                   | yes                      |
 
 An enum has no row: an enum value is not a distinct runtime type but a `PackedArray` at its base

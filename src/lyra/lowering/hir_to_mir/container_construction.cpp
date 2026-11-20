@@ -7,8 +7,9 @@
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
-#include "lyra/lowering/hir_to_mir/expression/references.hpp"
+#include "lyra/lowering/hir_to_mir/container_bodies.hpp"
 #include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
@@ -136,8 +137,8 @@ auto BuildSequenceConstructionCall(
       .type = sequence_type};
 }
 
-auto BuildAssociativeConstructionCall(
-    const mir::CompilationUnit& unit, mir::Builder block,
+auto BuildAssociativeConstruction(
+    const mir::CompilationUnit& unit, const WalkFrame& frame,
     mir::TypeId assoc_type,
     std::vector<std::pair<mir::ExprId, mir::ExprId>> entries,
     std::optional<mir::ExprId> stated_default) -> mir::Expr {
@@ -145,53 +146,57 @@ auto BuildAssociativeConstructionCall(
   const std::optional<mir::TypeId> index = assoc.IndexType();
   if (!index.has_value()) {
     throw InternalError(
-        "BuildAssociativeConstructionCall: what is built is no associative "
+        "BuildAssociativeConstruction: what is built is no associative "
         "array -- please report this as a bug");
   }
   const mir::TypeId key_type = *index;
   const mir::TypeId element_type =
       RequiredContainerElementType(unit, assoc_type);
-
-  const mir::TypeId tuple_type = unit.types.Intern(
-      mir::Type{mir::TupleType{.elements = {key_type, element_type}}});
-  std::vector<mir::ExprId> tuple_ids;
-  tuple_ids.reserve(entries.size());
+  mir::Builder block = frame.Builder();
+  const mir::LocalId made = frame.bindings->DeclareAnonymous(assoc_type);
+  block.AppendStmt(
+      mir::LocalDeclStmt{
+          .target = made,
+          .init = block.Add(
+              mir::Expr{
+                  .data =
+                      mir::CallExpr{
+                          .callee = mir::Construct{}, .arguments = {}},
+                  .type = assoc_type})});
   // Each index and each value is assigned to where it lands (LRM 7.9.11,
   // 10.8), and so is a `default:`, which the front end leaves unconverted
-  // since LRM 10.8 leaves a default correspondence out.
+  // since LRM 10.8 leaves a default correspondence out. A later entry of an
+  // equal index writes over an earlier one, as writing the array would.
+  const mir::TypeId element_pointer = mir::BorrowedPointerTo(
+      unit.types, element_type, mir::Mutability::kMutable);
   for (const auto& [key_id, value_id] : entries) {
-    tuple_ids.push_back(block.Add(
-        mir::Expr{
-            .data =
-                mir::CompositeExpr{
-                    .parts =
-                        {AtType(unit, block, key_id, key_type),
-                         AtType(unit, block, value_id, element_type)}},
-            .type = tuple_type}));
+    const mir::ExprId element =
+        block.Add(ContainerOperationCall(
+                      unit, block, support::BuiltinFn::kAssocElementMut,
+                      block.LocalPlace(made, assoc_type),
+                      {AtType(unit, block, key_id, key_type)}, element_pointer)
+                      .value());
+    block.AppendStmt(
+        mir::ExprStmt{
+            .expr = block.Add(
+                mir::MakeAssignExpr(
+                    unit.builtins,
+                    block.Deref(unit.types, element, element_type),
+                    AtType(unit, block, value_id, element_type)))});
   }
-  const mir::TypeId entries_type =
-      mir::MachineArrayOf(unit.types, tuple_type, tuple_ids.size());
-  const mir::ExprId entries_id = block.Add(
-      mir::Expr{
-          .data = mir::CompositeExpr{.parts = std::move(tuple_ids)},
-          .type = entries_type});
-
-  mir::Expr built{
-      .data =
-          mir::CallExpr{.callee = mir::Construct{}, .arguments = {entries_id}},
-      .type = assoc_type};
-  if (!stated_default.has_value()) {
-    return built;
+  if (stated_default.has_value()) {
+    block.AppendStmt(
+        mir::ExprStmt{
+            .expr = block.Add(
+                ContainerOperationCall(
+                    unit, block, support::BuiltinFn::kAssocSetStatedDefault,
+                    block.LocalPlace(made, assoc_type),
+                    {ConvertToType(unit, block, *stated_default, element_type)},
+                    unit.builtins.void_type)
+                    .value())});
   }
   return mir::Expr{
-      .data =
-          mir::CallExpr{
-              .callee =
-                  mir::Direct{
-                      .target = support::BuiltinFn::kAssocWithDefault,
-                      .receiver = block.Add(std::move(built))},
-              .arguments = {ConvertToType(
-                  unit, block, *stated_default, element_type)}},
+      .data = mir::MoveExpr{.operand = block.LocalPlace(made, assoc_type)},
       .type = assoc_type};
 }
 

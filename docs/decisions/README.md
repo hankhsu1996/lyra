@@ -107,12 +107,13 @@ the detail lives in the entry itself.
   block 30.9% fewer instructions, 3,237 -> 4,711 table passes a second. Resolving in machine
   integers in the runtime, a known-flag position, and restating a literal in a deferred write are
   rejected.
-- [jit-aggregate-realization](jit-aggregate-realization.md) -- on the execution backend a container
-  is a runtime-owned object behind a handle, not structurally monomorphized, holding its elements as
-  their type's bytes; the choice is below LIR, and LIR's operations on values stay logical.
-  Superseded for tuples by the entry below, for a fixed-size unpacked array by the one after it, and
-  for unions by
-  [a-union-is-one-storage-its-members-overlay](a-union-is-one-storage-its-members-overlay.md).
+- [jit-aggregate-realization](jit-aggregate-realization.md) -- on the execution backend an aggregate
+  was a runtime-owned object behind a handle, not structurally monomorphized; the choice is below
+  LIR, and LIR's operations on values stay logical. Superseded for tuples by the entry below, for a
+  fixed-size unpacked array by the one after it, for unions by
+  [a-union-is-one-storage-its-members-overlay](a-union-is-one-storage-its-members-overlay.md), and
+  for containers by
+  [a-containers-operations-are-built-for-its-type-over-a-core](a-containers-operations-are-built-for-its-type-over-a-core.md).
 - [a-tuple-is-laid-out-by-its-type](a-tuple-is-laid-out-by-its-type.md) -- on the execution backend
   a tuple has one form wherever it lies: its type's layout, carrying its type's operation table
   beside it. Each step of a tuple's value -- copy, move, end, write over -- is a function the
@@ -122,14 +123,29 @@ the detail lives in the entry itself.
   the bytes, and holding a tuple in storage of the runtime's own, are superseded by the holder entry
   below, and the table's form as a vtable, and its holding every operation, by the
   record-both-sides-read entry.
+- [a-type-implements-the-librarys-traits](a-type-implements-the-librarys-traits.md) -- the library
+  declares what it asks of a value by name as traits, a library declaration lists those its types
+  implement, MIR states each type's implementation, and both backends reach its items without
+  choosing them; which bodies each compiles stays its own. A trait's items are a closed set, a kind
+  of array's own methods are its inherent impl, what a construct asks of a value handed to it is a
+  language trait the type implements with no item in its record, each kind's methods and language
+  traits' items are signatures MIR states and bodies the lowering builds, held to the same names
+  when Lyra is compiled, and a type's interface is what it implements.
 - [a-type-is-told-to-the-library-as-a-record-both-sides-read](a-type-is-told-to-the-library-as-a-record-both-sides-read.md)
   -- on the execution backend a type reaches the prebuilt library as a C-layout record declared once
   and read by both the code generator and the library, opening with the address of a table of
   function pointers each handed the type, as Swift's value witness table and Go's `abi.Type` are;
   not a fabricated object of a library C++ class measured at compiler run time. The table holds what
   every holder asks -- the steps of a value's life and whether a write changed it -- and comparison,
-  streaming, net resolution, takeover positions and key order are records handed to what asks each;
-  a type's default is MIR's, handed with the type. One table holding every operation is rejected.
+  streaming, net resolution and takeover positions are records handed to what asks each; a type's
+  default is MIR's, handed with the type. One table holding every operation is rejected.
+- [the-library-is-parametric-in-the-types-a-design-composes](the-library-is-parametric-in-the-types-a-design-composes.md)
+  -- the library's code for every type never chooses by a type's kind, and the library never walks
+  what a type is composed of; a facility it declares for one kind knows that kind and where its
+  elements lie, and reaches their values through their items. It reaches a composed value through a
+  service, an item of a trait the type implements, or a description read as data for a tool
+  reporting the design, and its own values are no composed type. A032 checks the choice by kind,
+  listing the places that still make one as a queue that only shrinks.
 - [a-type-the-library-declares-is-named-by-its-declaration](a-type-the-library-declares-is-named-by-its-declaration.md)
   -- a type is MIR's own only where MIR's constructs make, take apart or lay out its values or a
   language rule reads its parts; every other type is one alternative naming a declaration of the
@@ -152,9 +168,9 @@ the detail lives in the entry itself.
   array. A header in the bytes and an element default handed to each construction are rejected.
 - [a-holder-lays-out-the-value-it-keeps](a-holder-lays-out-the-value-it-keeps.md) -- on the
   execution backend a variable, a net and a procedural local of an integral value wider than a word,
-  a tuple, a union or a fixed-size unpacked array are told its width or type where they are built
-  and lay the value out after themselves, or keep one address of storage they own past the in-place
-  bound, so the value has one address for the holder's life and generated code reads it through one
+  a tuple, a union or an array of any kind are told its width or type where they are built and lay
+  the value out after themselves, or keep one address of storage they own past the in-place bound,
+  so the value has one address for the holder's life and generated code reads it through one
   pointer. A tuple's bytes state nothing of its type, and every value laid out by its type is one
   domain of the library's, realized once. What the library keeps for itself stays a value of its
   own. A library object standing for the value in the holder, a family instantiated per type, and a
@@ -214,9 +230,44 @@ the detail lives in the entry itself.
   bodies by each unit that needs them, found on finished LIR, built from its elements' operations,
   and a use calls one by the type and the operation. The execution backend compiles them into the
   records it hands whatever asks one, beside the type's lifecycle the lowering to LIR states; the
-  C++ backend spells the call as its library template's member. The library carrying them out from a
-  description of the type, the code generator instantiating them itself, and a union stated the same
-  way are rejected.
+  C++ backend renders the same bodies as functions of the code file calling them. The library
+  carrying them out from a description of the type, the code generator instantiating them itself,
+  and a union stated the same way are rejected.
+- [a-containers-operations-are-built-for-its-type-over-a-core](a-containers-operations-are-built-for-its-type-over-a-core.md)
+  -- a queue, a dynamic array and an associative array keep their storage in a core the library
+  compiles once, whose fields are a C layout both backends read, and every element committed is
+  ended once after its last lease; every operation of a container type is a body the lowering builds
+  for the type, compiled by both backends, and a container is a value laid out by its type. An
+  associative array's bodies work through its core's entries, which hold its element and index
+  types' records. A dynamic array's and a queue's reach and end their elements over the core's
+  members, and every write through an index -- a position, or an associative array's index -- is
+  built on one body of the type, which the library's own steps reach through the type's record; a
+  queue's core holds nothing type-dependent, and every path a queue runs on each call -- both ends,
+  the bound, taking and giving back element storage from the run's recycler for its size -- is the
+  queue type's body, so that at `-O2 --lto` it costs close to what hand-written C++ of the same
+  semantics does. The associative core compares every key kind the language orders itself, and keeps
+  an LRM 7.8.5 key's entries in the order made, for the type's own bodies to search by the index
+  type's equality. The type's interface in MIR states its core and its four operations -- its
+  default and a copy, each answering a value, a write over a value and an end -- and the C++ type of
+  a container type is the library's one class template for every kind, at the core and at a struct
+  the backend writes declaring the items of the type's implementation of the library's traits, whose
+  special members realize the value's life and relocate the core once for every such type; each item
+  is defined once, in the type's own code file, and every other operation is a free function; the
+  library asks any array in the shapes MIR's declarations have and takes a lease on the core. The
+  whole algorithm a C++ template instantiated per element type, the core handed a full table of the
+  element's operations, a call of the library per element access, a library template per kind
+  carrying the operations out or answering the library's questions through members MIR states no
+  declaration of, a move keeping its source alive, adapters the backend writes into each class, each
+  special member a MIR body, a copy built in the receiving object's storage, each body a
+  specialization of a library template's member, each member defined inline wherever it is used, and
+  every operation a member of the type's class are rejected.
+- [a-move-relocates-its-value](a-move-relocates-its-value.md) -- a move transfers a value's
+  ownership and nothing ends its source, one meaning in MIR, in LIR, in the LLVM code generator and
+  in what the runtime's table of a type calls a relocation; a type stating its own values' life
+  states four operations, its default, a copy, a write over a value and an end, and a move is none
+  of them. The C++ backend realizes a move with a move constructor that leaves the source inert for
+  C++ to destroy. C++'s moved-from model above that realization, a move per type, and each layer
+  choosing are rejected.
 - [a-types-steps-are-stated-in-lir](a-types-steps-are-stated-in-lir.md) -- what copying, moving,
   writing over and ending a value of a type does, and how an object of a class is created and ended,
   is stated once per type and per class in LIR by the lowering from MIR, as rustc builds drop glue
@@ -250,7 +301,9 @@ the detail lives in the entry itself.
   bounds guard before the step, and one element form are rejected.
 - [queue-operators](queue-operators.md) -- queue access operators lower to built-in method calls;
   read and write are distinct methods chosen at lowering. Where it places the receiver is superseded
-  by [call-receiver-on-the-callee](call-receiver-on-the-callee.md).
+  by [call-receiver-on-the-callee](call-receiver-on-the-callee.md), and the slice's and the methods'
+  realization by
+  [a-containers-operations-are-built-for-its-type-over-a-core](a-containers-operations-are-built-for-its-type-over-a-core.md).
 - [concatenation-realization](concatenation-realization.md) -- a join is no node of its own: a join
   of bits is a local and one write of each part into the bits it takes, a join of strings one call
   over one list of them, and a join of queue elements appends to a queue.
@@ -268,8 +321,8 @@ the detail lives in the entry itself.
   [an-array-method-is-a-loop-at-its-call](an-array-method-is-a-loop-at-its-call.md).
 - [an-array-method-is-a-loop-at-its-call](an-array-method-is-a-loop-at-its-call.md) -- an LRM 7.12
   method that asks something of each entry is a loop compiled where the call is, whose index is the
-  entry's own; a sort hands the library an order of positions carrying its direction rather than a
-  key, so `sort` and `rsort` are one entry.
+  entry's own; a sort orders its keys by a body the compiler states for the key type, and the
+  array's type applies that order of positions.
 - [format-dispatch](format-dispatch.md) -- value formatting dispatches through `Formatter<T>` and
   `FormatArg`.
 - [rendering-a-value-by-its-type](rendering-a-value-by-its-type.md) -- how a value reads under LRM
@@ -600,12 +653,12 @@ the detail lives in the entry itself.
   states that home: a closure kept past its statement is made where its keeper keeps it -- a
   region's effect in bytes the run keeps for its effects, made there by a placement new-expression
   at each site and committed, one a timer or an event control's observation keeps in a box the
-  keeper takes -- one a sort borrows lies in the frame, and one started as a coroutine is made in a
-  box its execution takes over, each with its captures inline. A nonblocking assignment costs no
-  allocation of its own. Build-then-move, an entry per destination, a permanent capture indirection,
-  relocatable slots, a node of its own for making a closure in a keeper, a generic function making
-  it there, an arena per region, and an allocator carried in a box's type are rejected; read its
-  last three sections for how the home came to be MIR's.
+  keeper takes -- one lent rather than handed over lies in the frame, and one started as a coroutine
+  is made in a box its execution takes over, each with its captures inline. A nonblocking assignment
+  costs no allocation of its own. Build-then-move, an entry per destination, a permanent capture
+  indirection, relocatable slots, a node of its own for making a closure in a keeper, a generic
+  function making it there, an arena per region, and an allocator carried in a box's type are
+  rejected; read its last three sections for how the home came to be MIR's.
 - [referenceable-objects-have-stable-addresses](referenceable-objects-have-stable-addresses.md) -- a
   class object a reference can point into neither moves nor is reclaimed while that reference lives,
   so a property reference is an ordinary interior pointer. Non-moving stops being a mere realization
@@ -1001,10 +1054,10 @@ the detail lives in the entry itself.
 - [a-write-compares-what-it-reached](a-write-compares-what-it-reached.md) -- a write through a
   wrapper keeps the value of the part it lands on rather than of the variable: MIR takes each step
   into a part the write lands on -- a union's member included, reported at the union -- on the write
-  in progress, an element or slice step tells the write what forming it did (an element made, an
-  index naming none, an element moved), and a whole-value store compares before writing. Observers
-  keeping their own copies, and notifying without comparing, are rejected, because an implicit
-  sensitivity has nothing of its own to compare with.
+  in progress, an element step tells the write what forming it did (an element made, an index naming
+  none), a slice write tells it the positions it changed, and a whole-value store compares before
+  writing. Observers keeping their own copies, and notifying without comparing, are rejected,
+  because an implicit sensitivity has nothing of its own to compare with.
 - [a-part-of-a-variable-is-named-by-its-steps](a-part-of-a-variable-is-named-by-its-steps.md) -- a
   part of a variable is named by the steps that reach it, a member's index or an element's ordinal,
   and by a range of bits inside a packed value; a wait, a write, a reference and a procedure's
@@ -1101,8 +1154,9 @@ the detail lives in the entry itself.
   carrier conversion expressed in MIR at each call, and an export's context is a thread-local
   ambient handle.
 - [dpi-open-array-boundary](dpi-open-array-boundary.md) -- an open array crosses as a canonical
-  boundary object owning its own storage, never as a borrow of the actual; the formal's unsized
-  shape rides the ABI carrier rather than the type system.
+  boundary object owning its own storage, never as a borrow of the actual, filled and read back by
+  the actual's array type's own code; the formal's unsized shape rides the ABI carrier rather than
+  the type system.
 - [foreign-code-is-linked-not-loaded](foreign-code-is-linked-not-loaded.md) -- a program has one
   linker, so a design's foreign code is an artifact that linker takes rather than an environment
   around it; foreign code handed over compiled (LRM Annex J) is linked as it is, each shared library
@@ -1545,8 +1599,9 @@ the detail lives in the entry itself.
 - [a-constraint-describes-a-problem-the-runtime-solves](a-constraint-describes-a-problem-the-runtime-solves.md)
   -- a constraint is code describing a problem to a solver the runtime carries, and MIR has no node
   for it; every class overrides three functions of the part each object starts with, its base's
-  called first, and a block is a virtual method called where its mode is on. Solving at compile
-  time, an external solver and an interpreted table of constraints are rejected.
+  called first, and a block is a virtual method called where its mode is on; a random array is
+  walked by its own type's code. Solving at compile time, an external solver, an interpreted table
+  of constraints and a runtime walk of an array's type are rejected.
 - [dpi-context-scope-is-an-extent](dpi-context-scope-is-an-extent.md) -- the scope a `context`
   import makes current is stated as an entering call and a cleanup that gives it back on every way
   out, never as a value whose destructor does it, and the chain it pushes onto belongs to whatever

@@ -1,7 +1,6 @@
 #include "lyra/backend/llvm/runtime_entry.hpp"
 
 #include <format>
-#include <optional>
 #include <string>
 #include <string_view>
 #include <variant>
@@ -11,11 +10,11 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/operator.hpp"
-#include "lyra/lir/value_step.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/declared_member_storage.hpp"
 #include "lyra/support/runtime_object.hpp"
 #include "lyra/support/value_domain.hpp"
+#include "lyra/support/value_step.hpp"
 
 namespace lyra::backend::llvm_backend {
 
@@ -94,8 +93,8 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "destroy";
     case RuntimeOp::kCopy:
       return "copy";
-    case RuntimeOp::kMove:
-      return "move";
+    case RuntimeOp::kRelocate:
+      return "relocate";
     case RuntimeOp::kAssign:
       return "assign";
   }
@@ -118,15 +117,15 @@ auto WrapperName(WrapperKind wrapper) -> std::string_view {
   throw InternalError("llvm codegen: unknown capability wrapper");
 }
 
-auto RuntimeOpOf(lir::ValueStep step) -> RuntimeOp {
+auto RuntimeOpOf(support::ValueStep step) -> RuntimeOp {
   switch (step) {
-    case lir::ValueStep::kCopy:
+    case support::ValueStep::kCopy:
       return RuntimeOp::kCopy;
-    case lir::ValueStep::kMove:
-      return RuntimeOp::kMove;
-    case lir::ValueStep::kEnd:
+    case support::ValueStep::kRelocate:
+      return RuntimeOp::kRelocate;
+    case support::ValueStep::kEnd:
       return RuntimeOp::kDestroy;
-    case lir::ValueStep::kAssign:
+    case support::ValueStep::kAssign:
       return RuntimeOp::kAssign;
   }
   throw InternalError("llvm codegen: unknown value step");
@@ -140,17 +139,6 @@ auto KeyedElementEntries() -> ElementEntries {
       .write = {
           .entry = support::BuiltinFn::kAssocElementMut,
           .symbol = RuntimeSymbol(support::BuiltinFn::kAssocElementMut)}};
-}
-
-auto QueueElementEntries() -> ElementEntries {
-  return {
-      .read =
-          {.entry = support::BuiltinFn::kElement,
-           .symbol = RuntimeSymbol(
-               support::ValueDomain::kQueue, support::BuiltinFn::kElement)},
-      .write = {
-          .entry = support::BuiltinFn::kQueueElementMut,
-          .symbol = RuntimeSymbol(support::BuiltinFn::kQueueElementMut)}};
 }
 
 auto PositionedElementEntries(support::ValueDomain domain) -> ElementEntries {
@@ -181,32 +169,6 @@ auto ValueTypeSymbol(support::ValueDomain domain) -> std::string {
             support::ValueDomainName(domain)));
   }
   return Symbol(domain, "value_type");
-}
-
-auto IndexOrderSymbol(support::ValueDomain domain) -> std::string {
-  constexpr std::string_view kIndexOrder = "index_order";
-  const std::optional<IndexOrder> order = IndexOrderOf(domain);
-  if (!order.has_value()) {
-    throw InternalError(
-        "llvm codegen: an associative array is indexed by values the "
-        "language admits as no index -- please report this as a bug");
-  }
-  switch (*order) {
-    case IndexOrder::kIntegral:
-      return std::format("{}integral_{}", kRuntimeSymbolPrefix, kIndexOrder);
-    case IndexOrder::kOwn:
-      return Symbol(domain, kIndexOrder);
-  }
-  throw InternalError("llvm codegen: unknown index order");
-}
-
-auto OperationFunctionsSymbol(support::ValueDomain domain) -> std::string {
-  if (!StatesOperationFunctions(domain)) {
-    throw InternalError(
-        "llvm codegen: the library states no operations of values it holds "
-        "this way -- please report this as a bug");
-  }
-  return Symbol(domain, "operation_functions");
 }
 
 auto ValueOperationsSymbol(support::ValueDomain domain) -> std::string {
@@ -365,7 +327,7 @@ auto OperandReadingsOf(RuntimeOp op) -> support::OperandReadings {
     case RuntimeOp::kConstruct:
     case RuntimeOp::kDestroy:
     case RuntimeOp::kCopy:
-    case RuntimeOp::kMove:
+    case RuntimeOp::kRelocate:
     case RuntimeOp::kAssign:
       return {};
   }
@@ -408,7 +370,7 @@ auto AnswerToldOf(RuntimeOp op) -> support::AnswerTold {
     case RuntimeOp::kConstruct:
     case RuntimeOp::kDestroy:
     case RuntimeOp::kCopy:
-    case RuntimeOp::kMove:
+    case RuntimeOp::kRelocate:
     case RuntimeOp::kAssign:
       return support::AnswerTold::kNothing;
   }
@@ -431,17 +393,18 @@ auto OperandReadingsOf(lir::ValueCellTarget::Op op)
 
 auto OperandReadingsOf(lir::OpenWriteTarget::Op op)
     -> support::OperandReadings {
+  using enum support::OperandReading;
   switch (op) {
     case lir::OpenWriteTarget::Op::kLand:
       return {};
-    // A run of elements written within a write takes what the container's own
-    // slice write takes, the designation standing for the container.
-    case lir::OpenWriteTarget::Op::kAssignElementSlice:
-      return support::RuntimeEntryOf(support::BuiltinFn::kAssignElementSlice)
-          .operands;
-    case lir::OpenWriteTarget::Op::kAssignQueueSlice:
-      return support::RuntimeEntryOf(support::BuiltinFn::kAssignQueueSlice)
-          .operands;
+    // The designation, then where the run written next starts and how many
+    // elements it takes.
+    case lir::OpenWriteTarget::Op::kDesignated:
+      return {kMachine, kPosition, kMachine};
+    // The designation, then the positions the run write answered it changed,
+    // from the first to one past the last.
+    case lir::OpenWriteTarget::Op::kMoved:
+      return {kMachine, kPosition, kPosition};
   }
   throw InternalError("llvm codegen: unknown open-write operation");
 }

@@ -28,11 +28,4 @@ auto LowerBitVectorSystemSubroutineCall(
     const support::BitVectorSystemSubroutineInfo& info, diag::SourceSpan span)
     -> diag::Result<mir::Expr>;
 
-// The type of the set a count is taken under: a bit holds one of four values,
-// each at most once in the set, one per bit position. A set naming fewer
-// repeats one it names, which admits nothing twice (LRM 20.9), so every set is
-// a value of this one type.
-[[nodiscard]] auto BitCountControlType(const mir::CompilationUnit& unit)
-    -> mir::TypeId;
-
 }  // namespace lyra::lowering::hir_to_mir

@@ -23,6 +23,7 @@ loop_of_clocked_procedures_sized_by_index:
   - mir.constants
   - mir.constructors
   - mir.types
+loop_selecting_by_index: [bytes]
 loop_sizing_by_index:
   - mir.callables
   - mir.classes

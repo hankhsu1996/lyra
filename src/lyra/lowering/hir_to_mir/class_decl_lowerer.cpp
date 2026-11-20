@@ -76,10 +76,14 @@ auto HoldsHandles(const hir::TypePool& types, hir::TypeId type) -> bool {
 // `problem_type` is that reference's type.
 class HookBody {
  public:
+  // A body handed the problem, and where the call of `randomize()` was written
+  // where `reports_at_the_call`, which every call in it that reports takes as
+  // its own.
   template <typename MakeFrame>
   HookBody(
       UnitLowerer& unit_lowerer, const ClassShape& shape,
-      const MakeFrame& make_frame, std::optional<mir::TypeId> problem_type)
+      const MakeFrame& make_frame, std::optional<mir::TypeId> problem_type,
+      bool reports_at_the_call)
       : unit_lowerer_(&unit_lowerer),
         code_(mir::CallableCode::Defined(diag::SourceSpan{})),
         bindings_(unit_lowerer.Unit(), code_),
@@ -96,6 +100,11 @@ class HookBody {
         })) {
     if (problem_.has_value()) {
       bound_.params.push_back(problem_->local);
+    }
+    if (reports_at_the_call) {
+      code_.caller_location = bindings_.DeclareAnonymous(
+          unit_lowerer.Unit().builtins.source_location);
+      bound_.params.push_back(*code_.caller_location);
     }
   }
   HookBody(const HookBody&) = delete;
@@ -154,13 +163,9 @@ class HookBody {
                 Unit().builtins.void_type)});
   }
 
-  // A reference to the part `path` reaches, and the value of type `type` it
-  // holds now.
-  struct Named {
-    mir::ExprId reference;
-    mir::ExprId value;
-  };
-  [[nodiscard]] auto Name(const AccessPath& path, mir::TypeId type) -> Named {
+  // A reference to the part `path` reaches, of type `type`.
+  [[nodiscard]] auto Name(const AccessPath& path, mir::TypeId type)
+      -> NamedReference {
     mir::Builder block = Block();
     const mir::TypeId reference_type =
         *ParamTypeOf(Unit(), type, hir::ParamDirection::kRef);
@@ -171,10 +176,8 @@ class HookBody {
             .init = AtType(
                 Unit(), block, PathReference(Unit(), block, path),
                 reference_type)});
-    return Named{
-        .reference = block.ReadLocal(reference, reference_type),
-        .value = block.Read(block.Add(block.WrapperContents(
-            Unit().types, block.ReadLocal(reference, reference_type), type)))};
+    return NamedReference{
+        .local = reference, .reference_type = reference_type, .type = type};
   }
 
   // The finished body, which the library calls on an object of the class.
@@ -636,7 +639,7 @@ void ClassDeclLowerer::DefineRandomizationHooks(
   };
 
   {
-    HookBody body(unit_lowerer, shape, make_frame, handed);
+    HookBody body(unit_lowerer, shape, make_frame, handed, true);
     begin(body, support::LibraryCallback::kClassRandVariables);
     each_random_variable(
         body, [&](const AccessPath& path, hir::TypeId hir_type,
@@ -644,25 +647,25 @@ void ClassDeclLowerer::DefineRandomizationHooks(
           if (HoldsHandles(unit_lowerer.Hir().types, hir_type)) {
             return;
           }
-          const HookBody::Named named = body.Name(path, type);
+          const NamedReference named = body.Name(path, type);
           if (const std::optional<mir::ExprId> members =
                   ChosenMembers(unit_lowerer, body.Block(), hir_type)) {
             body.Run(
                 mir::Direct{.target = support::BuiltinFn::kConstraintMembers},
-                {body.Problem(), named.reference, *members});
+                {body.Problem(), named.Reference(body.Block()), *members});
           }
-          body.Run(
-              mir::Direct{
-                  .target = random == support::RandomQualifier::kRandc
-                                ? support::BuiltinFn::kConstraintRandc
-                                : support::BuiltinFn::kConstraintRand},
-              {body.Problem(), named.reference, named.value});
+          AppendRandomWalk(
+              body.Unit(), body.Block(), [&] { return body.Problem(); },
+              random == support::RandomQualifier::kRandc
+                  ? support::BuiltinFn::kConstraintRandc
+                  : support::BuiltinFn::kConstraintRand,
+              {}, named);
         });
     finish(body, support::LibraryCallback::kClassRandVariables);
   }
 
   {
-    HookBody body(unit_lowerer, shape, make_frame, handed);
+    HookBody body(unit_lowerer, shape, make_frame, handed, false);
     begin(body, support::LibraryCallback::kClassConstrain);
     for (const hir::MethodId id : hir_class.methods.Ids()) {
       const hir::SubroutineDecl& method = hir_class.methods.Get(id);
@@ -735,7 +738,7 @@ void ClassDeclLowerer::DefineRandomizationHooks(
   }
 
   {
-    HookBody body(unit_lowerer, shape, make_frame, handed);
+    HookBody body(unit_lowerer, shape, make_frame, handed, true);
     begin(body, support::LibraryCallback::kClassRandObjects);
     each_random_variable(
         body, [&](const AccessPath& path, hir::TypeId hir_type,
@@ -743,10 +746,9 @@ void ClassDeclLowerer::DefineRandomizationHooks(
           if (!HoldsHandles(unit_lowerer.Hir().types, hir_type)) {
             return;
           }
-          const HookBody::Named named = body.Name(path, type);
-          body.Run(
-              mir::Direct{.target = support::BuiltinFn::kRandomizeNested},
-              {body.Problem(), named.reference, named.value});
+          AppendRandomWalk(
+              body.Unit(), body.Block(), [&] { return body.Problem(); },
+              support::BuiltinFn::kRandomizeNested, {}, body.Name(path, type));
         });
     finish(body, support::LibraryCallback::kClassRandObjects);
   }
@@ -760,7 +762,7 @@ void ClassDeclLowerer::DefineRandomizationHooks(
           return;
         }
         const hir::MethodId method = hook->method;
-        HookBody body(unit_lowerer, shape, make_frame, std::nullopt);
+        HookBody body(unit_lowerer, shape, make_frame, std::nullopt, false);
         std::vector<mir::ExprId> arguments;
         if (ReportParamTypeOf(body.Unit(), hir_class.methods.Get(method).kind)
                 .has_value()) {

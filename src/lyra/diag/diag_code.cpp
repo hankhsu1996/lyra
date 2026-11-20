@@ -12,11 +12,6 @@ namespace {
 
 constexpr std::array kEntries{
     std::pair{
-        DiagCode::kUnsupportedAssociativeArrayType,
-        DiagCodeInfo{
-            .kind = DiagKind::kUnsupported,
-            .name = "unsupported_associative_array_type"}},
-    std::pair{
         DiagCode::kUnsupportedTypeKind,
         DiagCodeInfo{
             .kind = DiagKind::kUnsupported, .name = "unsupported_type_kind"}},

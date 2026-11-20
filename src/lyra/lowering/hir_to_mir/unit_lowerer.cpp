@@ -69,6 +69,7 @@
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
+#include "lyra/mir/value_parts.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/def_path.hpp"
 #include "lyra/support/library_callback.hpp"
@@ -508,7 +509,7 @@ auto UnitLowerer::MemberCellType(
           // resolution function, which its one driver gives whole (LRM
           // 6.6.7).
           [&](const hir::NetStorage&) {
-            return NetResolves(unit_, value_type)
+            return mir::NetResolves(unit_, value_type)
                        ? unit_.types.Intern(
                              mir::Type{mir::ResolvedType{.value = value_type}})
                        : unit_.types.Intern(
@@ -932,30 +933,33 @@ auto UnitLowerer::PublishUnitDeclarations() -> diag::Result<void> {
   // has its translation. The methods of one this unit declares, which take
   // values of its type and read what its members hold, follow once every
   // record is defined.
+  struct NamedRecord {
+    const hir::Type* source;
+    mir::RecordId id;
+    mir::TypeId type;
+  };
+  std::vector<NamedRecord> records;
   for (const hir::TypeId hir_id : hir_->types.Ids()) {
     const std::optional<mir::TypeId>& translated =
         type_translations_.Get(hir_id);
     if (!translated.has_value()) continue;
     const mir::RecordId* id = mir::RecordOf(unit_.types.Get(*translated));
     if (id == nullptr) continue;
-    DefineRecord(hir_->types.Get(hir_id), *id);
+    records.push_back(
+        NamedRecord{
+            .source = &hir_->types.Get(hir_id),
+            .id = *id,
+            .type = *translated});
   }
-  const auto each_record = [&](const auto& visit) {
-    for (const hir::TypeId hir_id : hir_->types.Ids()) {
-      const std::optional<mir::TypeId>& translated =
-          type_translations_.Get(hir_id);
-      if (!translated.has_value()) continue;
-      const mir::RecordId* id = mir::RecordOf(unit_.types.Get(*translated));
-      if (id == nullptr) continue;
-      visit(hir_->types.Get(hir_id), *id, *translated);
-    }
-  };
-  each_record([&](const hir::Type& source, mir::RecordId id, mir::TypeId type) {
-    DeclareRecordMethods(source, id, type);
-  });
-  each_record([&](const hir::Type& source, mir::RecordId id, mir::TypeId type) {
-    DefineRecordMethods(source, id, type);
-  });
+  for (const NamedRecord& record : records) {
+    DefineRecord(*record.source, record.id);
+  }
+  for (const NamedRecord& record : records) {
+    DeclareRecordMethods(record.id, record.type);
+  }
+  for (const NamedRecord& record : records) {
+    DefineRecordMethods(*record.source, record.id, record.type);
+  }
 
   for (const hir::ClassId published : hir_->classes.ImportedIds()) {
     DeclarePublishedClass(published);

@@ -4,6 +4,7 @@
 #include <utility>
 #include <vector>
 
+#include "lyra/lowering/hir_to_mir/walk_frame.hpp"
 #include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
@@ -57,15 +58,15 @@ namespace lyra::lowering::hir_to_mir {
     const mir::CompilationUnit& unit, mir::Builder block,
     mir::TypeId sequence_type, std::vector<mir::ExprId> elements) -> mir::Expr;
 
-// Builds the value of an associative-array literal (LRM 7.9.11). Each (key,
-// value) entry is a pair, and the entries ride in the plain-data array of
-// those pairs, which is the construction's one argument. Where the literal
-// writes a `default:` clause, what a read of an absent key returns (LRM 7.8.6)
-// is a value of that array which only the literal can state, so the built
-// array is then given it by the operation that says so. Where it writes none,
-// such a read returns what the element type says and nothing is stated for it.
-[[nodiscard]] auto BuildAssociativeConstructionCall(
-    const mir::CompilationUnit& unit, mir::Builder block,
+// Builds the value of an associative-array literal (LRM 7.9.11), in steps
+// after what `frame`'s block holds: an array of no entries, each (index,
+// value) entry written into it as the array's own element write writes one,
+// and, where the literal writes a `default:` clause, the value a read of an
+// absent index returns (LRM 7.8.6) set as only the literal can state it. Where
+// it writes none, such a read returns what the element type says. The answer
+// is the array the steps made, taken out of the local holding it.
+[[nodiscard]] auto BuildAssociativeConstruction(
+    const mir::CompilationUnit& unit, const WalkFrame& frame,
     mir::TypeId assoc_type,
     std::vector<std::pair<mir::ExprId, mir::ExprId>> entries,
     std::optional<mir::ExprId> stated_default) -> mir::Expr;

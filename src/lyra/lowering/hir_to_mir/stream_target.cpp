@@ -25,9 +25,12 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
+#include "lyra/mir/storage_part.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
+#include "lyra/mir/value_parts.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/library_decl.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -48,7 +51,7 @@ struct Recipient {
 // program's, the rest -- its empty width, and for the first such member also
 // as many whole elements as the members after it leave room for.
 struct FixedSegment {
-  StreamShape shape;
+  mir::StreamShape shape;
   Recipient recipient;
 };
 struct WindowSegment {
@@ -108,7 +111,7 @@ auto SegmentsOf(const mir::CompilationUnit& unit, const StreamTarget& stream)
 auto NestedSegmentOf(
     const mir::CompilationUnit& unit, const StreamTarget& stream,
     const Recipient& recipient) -> Segment {
-  StreamShape shape{
+  mir::StreamShape shape{
       .width = 0, .state_kind = mir::IntegralStateKind::kTwoState};
   StreamFill fill{.empty_width = 0, .first_element = 0, .multiplier = 0};
   bool fixed = true;
@@ -150,8 +153,8 @@ auto SegmentOf(
       Overloaded{
           [&](const StreamVariable& variable) -> Segment {
             const Recipient recipient{.form = &variable, .span = member.span};
-            if (const std::optional<StreamShape> fixed =
-                    FixedStreamShapeOf(unit, variable.target.type)) {
+            if (const std::optional<mir::StreamShape> fixed =
+                    mir::FixedStreamShapeOf(unit, variable.target.type)) {
               return FixedSegment{.shape = *fixed, .recipient = recipient};
             }
             return RestSegment{
@@ -162,7 +165,7 @@ auto SegmentOf(
             return WindowSegment{
                 .array = &windowed,
                 .element_width =
-                    FixedStreamShapeOf(unit, windowed.element)->width};
+                    mir::FixedStreamShapeOf(unit, windowed.element)->width};
           },
           [&](const StreamTarget& nested) -> Segment {
             return NestedSegmentOf(
@@ -381,14 +384,33 @@ auto DistributeRun(
                              unit, block,
                              BuildRunExtract(unit, block, run, at_now(), bits),
                              elements));
-              const mir::ExprId filled = EvaluatedOnce(
-                  frame,
-                  block.Add(
-                      mir::MakeBuiltinCall(
-                          unit, block.Body(), support::BuiltinFn::kWithWindow,
-                          PathValue(unit, block, windowed.array),
-                          {window->start, window->count, read},
-                          windowed.type)));
+              const mir::ExprId whole = PathValue(unit, block, windowed.array);
+              // An array whose elements a position names answers its window
+              // by its type's own body, handed each operand by reference.
+              const mir::ExprId filled =
+                  EvaluatedOnce(
+                      frame,
+                      block.Add(
+                          mir::Expr{
+                              .data =
+                                  mir::CallExpr{
+                                      .callee =
+                                          mir::Direct{
+                                              .target =
+                                                  mir::TypeOperationTarget{
+                                                      .type = windowed.type,
+                                                      .answers =
+                                                          support::BuiltinFn::
+                                                              kWithWindow},
+                                              .receiver = mir::Borrow(
+                                                  unit, block, whole)},
+                                      .arguments =
+                                          {mir::Borrow(
+                                               unit, block, window->start),
+                                           mir::Borrow(
+                                               unit, block, window->count),
+                                           mir::Borrow(unit, block, read)}},
+                              .type = windowed.type}));
               move_at(bits);
               sink(Share{.place = windowed.array, .value = filled});
               return {};

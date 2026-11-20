@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <optional>
 #include <span>
 #include <utility>
@@ -7,10 +8,14 @@
 
 #include "lyra/abi/library_records.hpp"
 #include "lyra/abi/records.hpp"
+#include "lyra/base/component_index.hpp"
 #include "lyra/base/internal_error.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/constant_id.hpp"
 #include "lyra/mir/constant_value.hpp"
+#include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/mir/type_id.hpp"
 
@@ -24,7 +29,7 @@ auto LibraryRecordMembersOf(const CompilationUnit& unit)
       unit.LibraryRecordMembers(abi::LibraryDeclOf<Record>());
   if (!members.has_value()) {
     throw InternalError(
-        "mir: a unit declares no structure of the library a constant is "
+        "mir: a unit declares no structure of the library a value is "
         "stated as -- please report this as a bug");
   }
   return *members;
@@ -35,6 +40,20 @@ template <typename Record, typename Member>
 auto LibraryRecordMemberType(
     const CompilationUnit& unit, Member Record::* member) -> TypeId {
   return LibraryRecordMembersOf<Record>(unit)[abi::PositionOf(member)];
+}
+
+// The member `member` of the structure of the library the place `record`
+// holds, as a place, reached by its position as every component is.
+template <typename Record, typename Member>
+auto LibraryRecordMemberPlace(
+    const CompilationUnit& unit, Builder block, ExprId record,
+    Member Record::* member) -> ExprId {
+  return block.Add(MakeFieldAccessExpr(
+      record,
+      ComponentFieldTarget{
+          .position = base::ComponentIndex{static_cast<std::uint32_t>(
+              abi::PositionOf(member))}},
+      LibraryRecordMemberType(unit, member)));
 }
 
 // An array constant of `elements`, each a value of `element`, and a view of

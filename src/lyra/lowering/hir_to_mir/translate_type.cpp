@@ -1,6 +1,5 @@
 #include <algorithm>
 #include <cstddef>
-#include <cstdint>
 #include <optional>
 #include <utility>
 #include <variant>
@@ -20,6 +19,8 @@
 #include "lyra/mir/record_id.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
+#include "lyra/mir/type_interface.hpp"
+#include "lyra/mir/value_parts.hpp"
 #include "lyra/support/float_width.hpp"
 #include "lyra/support/library_decl.hpp"
 #include "lyra/support/value_operation.hpp"
@@ -151,13 +152,13 @@ void UnitLowerer::DefineRecord(const hir::Type& source, mir::RecordId id) {
   // that can hold every member's bits, as a packed union's is (LRM 7.3.1,
   // 7.2.1).
   const bool four_state = std::ranges::any_of(members, [&](mir::TypeId member) {
-    return CarriesUnknowns(unit_, member);
+    return mir::CarriesUnknowns(unit_, member);
   });
   unit_.records.Define(
       id, declared(
               mir::UnionRecord{
                   .storage = mir::PackedVectorOf(
-                      unit_.types, WidestPositionCountOf(unit_, members),
+                      unit_.types, mir::WidestPositionCountOf(unit_, members),
                       four_state ? mir::IntegralStateKind::kFourState
                                  : mir::IntegralStateKind::kTwoState),
                   .members = std::move(members)}));
@@ -186,14 +187,16 @@ auto StructureOf(const hir::CompilationUnit& hir, const hir::Type& source)
 
 }  // namespace
 
-void UnitLowerer::DeclareRecordMethods(
-    const hir::Type& source, mir::RecordId id, mir::TypeId type) {
+void UnitLowerer::DeclareRecordMethods(mir::RecordId id, mir::TypeId type) {
   // A method of a record another unit declares is that unit's, so it is
   // declared here as stating nothing; one of this unit's own takes its
   // identity, and its body is built once every record's methods are declared.
+  // Which methods there are is the interface MIR states for the record, which
+  // follows from its members alone, so every unit reaching it lists the same.
   const bool is_own = !unit_.GetRecord(id).defining_unit.has_value();
-  for (const support::ValueOperation answers :
-       RecordOperationsOf(*this, StructureOf(*hir_, source), id, type)) {
+  const mir::TypeInterface interface =
+      mir::TypeInterfaceOf(unit_, type).value();
+  for (const support::ValueOperation answers : interface.operations) {
     if (is_own) {
       unit_.TakeRecordMethod(id, answers);
     } else {

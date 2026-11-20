@@ -3,14 +3,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
-#include <span>
 #include <string>
 #include <utility>
-#include <vector>
 
 #include "lyra/base/internal_error.hpp"
-#include "lyra/value/any_value.hpp"
-#include "lyra/value/element_sequence.hpp"
 #include "lyra/value/element_type.hpp"
 #include "lyra/value/formation.hpp"
 #include "lyra/value/integral.hpp"
@@ -20,7 +16,6 @@
 #include "lyra/value/position.hpp"
 #include "lyra/value/string.hpp"
 #include "lyra/value/value_type.hpp"
-#include "lyra/value/witnessed_elem.hpp"
 
 namespace lyra::value {
 
@@ -29,31 +24,6 @@ namespace {
 auto LayoutOf(const ValueType& element, std::size_t count) -> SequenceLayout {
   return SequenceLayoutOf(element.Layout(), count);
 }
-
-// The elements of one array as the sequence algorithms read them, and write
-// them where the array may be written.
-template <typename Bytes>
-class Elements {
- public:
-  Elements(const FixedArrayType& type, Bytes* array)
-      : type_(&type), array_(array), element_(type.ElementType()) {
-  }
-
-  [[nodiscard]] auto Element() const -> const WitnessedElem& {
-    return element_;
-  }
-  [[nodiscard]] auto Count() const -> std::size_t {
-    return type_->Count();
-  }
-  [[nodiscard]] auto At(std::size_t i) const -> Bytes* {
-    return type_->ElementAt(array_, i);
-  }
-
- private:
-  const FixedArrayType* type_;
-  Bytes* array_;
-  WitnessedElem element_;
-};
 
 }  // namespace
 
@@ -79,22 +49,24 @@ auto FixedArrayType::Stride() const -> std::size_t {
   return LayoutOf(element_->Type(), count_).stride;
 }
 
-auto FixedArrayType::ElementAt(const void* array, std::size_t position) const
+auto FixedArrayType::GetUnchecked(const void* array, std::size_t index) const
     -> const void* {
-  if (position >= count_) {
+  if (index >= count_) {
     throw InternalError(
-        "FixedArrayType::ElementAt: the position is past the last");
+        "the element of a fixed-size array is asked at an index past its "
+        "last -- please report this as a bug");
   }
-  return Offset(array, position * Stride());
+  return Offset(array, index * Stride());
 }
 
-auto FixedArrayType::ElementAt(void* array, std::size_t position) const
+auto FixedArrayType::GetUnchecked(void* array, std::size_t index) const
     -> void* {
-  if (position >= count_) {
+  if (index >= count_) {
     throw InternalError(
-        "FixedArrayType::ElementAt: the position is past the last");
+        "the element of a fixed-size array is asked at an index past its "
+        "last -- please report this as a bug");
   }
-  return Offset(array, position * Stride());
+  return Offset(array, index * Stride());
 }
 
 auto FixedArrayType::ElementMut(
@@ -102,27 +74,7 @@ auto FixedArrayType::ElementMut(
     -> void* {
   const std::optional<std::size_t> ordinal = ElementOrdinal(position, count_);
   formed = ordinal ? Formation::kExisting : Formation::kNowhere;
-  return ordinal ? ElementAt(array, *ordinal) : element_->DiscardedWrite();
-}
-
-auto FixedArrayType::SliceElements(
-    const void* array, std::optional<std::int64_t> start,
-    std::size_t count) const -> std::vector<const void*> {
-  return detail::SequenceSliceElements(Elements(*this, array), start, count);
-}
-
-auto FixedArrayType::AssignSlice(
-    void* array, std::optional<std::int64_t> start, std::size_t count,
-    std::span<const void* const> replacement) const -> bool {
-  Elements elements(*this, array);
-  return detail::SequenceAssignSlice(elements, start, count, replacement);
-}
-
-void FixedArrayType::Permute(
-    void* array, std::span<const std::size_t> order) const {
-  const AnyValue held = AnyValue::CopyOf(type_, array);
-  Elements elements(*this, array);
-  detail::SequencePermute(elements, Elements(*this, held.Bytes()), order);
+  return ordinal ? GetUnchecked(array, *ordinal) : element_->DiscardedWrite();
 }
 
 FixedArrayType::Building::Building(const FixedArrayType& type, void* out)
@@ -150,28 +102,6 @@ void FixedArrayType::Building::Finish() {
   finished_ = true;
 }
 
-namespace {
-
-auto ArrayOf(const ValueType& type) -> const FixedArrayType& {
-  return *type.AsFixedArray();
-}
-
-}  // namespace
-
-extern "C" {
-constinit const PartsWitnessTable lyra_rt_fixed_array_parts_witness_table{
-    .count = [](const ValueType& type, const void*) -> std::size_t {
-      return ArrayOf(type).Count();
-    },
-    .type = [](const ValueType& type, const void*) -> const ValueType& {
-      return ArrayOf(type).ElementType().Type();
-    },
-    .at = [](const ValueType& type, const void* value, std::size_t position)
-        -> const void* { return ArrayOf(type).ElementAt(value, position); },
-    .ref_at = [](const ValueType& type, void* value, std::size_t position)
-        -> void* { return ArrayOf(type).ElementAt(value, position); }};
-}
-
 auto ByteStringOf(const FixedArrayView& array) -> String {
   const IntegralValueType* byte_type = array.ElementType().Type().AsIntegral();
   if (byte_type == nullptr) {
@@ -183,7 +113,7 @@ auto ByteStringOf(const FixedArrayView& array) -> String {
   std::string text;
   text.reserve(count);
   for (std::size_t i = 0; i < count; ++i) {
-    const LoadedWords element = byte_type->Load(array.ElementAt(i));
+    const LoadedWords element = byte_type->Load(array.GetUnchecked(i));
     text.push_back(static_cast<char>(ToInt64(element.View()) & 0xFF));
   }
   return String{std::move(text)};

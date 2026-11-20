@@ -26,6 +26,8 @@
 
 namespace lyra::lir {
 
+struct CompilationUnit;
+
 // A value of a body: a parameter, a transient an assignment defines, or a
 // place local naming storage. Values are numbered per function in the
 // function's value arena.
@@ -282,22 +284,18 @@ struct ValueCellTarget {
 // designated within it. `kLand` is where the write lands: the part designated,
 // whose value from before the write the write keeps where anything will ask
 // whether the write changed the variable (LRM 4.3); it answers with where the
-// part lies. `kAssignElementSlice` writes a run of the elements of the array
-// designated within the write (LRM 7.4.6, 7.6), from where it starts and how
-// many it takes, telling it what moved; `kAssignQueueSlice` does the same for
-// a queue's slice, between the two positions the queue clamps (LRM 7.10.1).
-// `value` is what the part or the container holds, and the domain it is
-// realized in names the runtime entry.
-// A LIR-only target with no MIR twin: MIR states the landing as a dereference
-// and the slice write as the container's own slice write on the designation,
-// and a place is named by an address here, so each is a call on the
-// designation.
+// part lies. `kDesignated` answers where the part designated lies, for an
+// operation that writes a run of the part's elements itself and then tells
+// the write what it changed; it is handed where that run starts and how many
+// elements its type fixes, and keeps first what the run may change. `kMoved`
+// is that telling: the positions the operation answered it changed, from the
+// first to one past the last. `value` is what the part or the container
+// holds, and the domain it is realized in names the runtime entry. A LIR-only
+// target with no MIR twin: MIR states the landing as a dereference and a run's
+// write as the array's own run write on the designation, and a place is named
+// by an address here, so each is a call on the designation.
 struct OpenWriteTarget {
-  enum class Op : std::uint8_t {
-    kLand,
-    kAssignElementSlice,
-    kAssignQueueSlice
-  };
+  enum class Op : std::uint8_t { kLand, kDesignated, kMoved };
   Op op;
   TypeId value;
 };
@@ -327,13 +325,14 @@ struct DesignatedBitsTarget {
 };
 
 // The end of an owned value, a second owned value equal to one the body only
-// reads, and a value built out of one whose holder still ends it afterwards.
+// reads, and a value relocated out of one, whose storage is owed nothing
+// afterwards.
 // A value the body made ends where the lowering that made it says -- at the end
 // of the full-expression that made it, at the end of the block a declaration
 // bound it in, and on every way out of either. A copy is what a body takes
 // when a value it has to own, to store in a slot or hand back to its caller, is
-// one it was lent. A move is a step of a body carrying out its type's own move
-// part by part. Each is carried out as the value's type says.
+// one it was lent. A relocation is a step of a body carrying out its type's own
+// relocation part by part. Each is carried out as the value's type says.
 //
 // LIR-only targets with no MIR twin: a target whose own language ends a value
 // at the end of its scope states none of this.
@@ -341,7 +340,7 @@ struct EndValueTarget {};
 
 struct CopyValueTarget {};
 
-struct MoveValueTarget {};
+struct RelocateValueTarget {};
 
 // Storage of dynamic duration for one value: allocating it, which answers a
 // borrowed pointer to storage holding no value yet, and giving back storage so
@@ -432,19 +431,31 @@ using CallTarget = std::variant<
     BuiltinTarget, FunctionTarget, DispatchTarget, InterfaceDispatchTarget,
     IndirectTarget, ConstructTarget, CreationTarget, SymbolTarget,
     ForeignTarget, ValueCellTarget, OpenWriteTarget, DesignatedBitsTarget,
-    EndValueTarget, CopyValueTarget, MoveValueTarget, DynamicStorageTarget,
+    EndValueTarget, CopyValueTarget, RelocateValueTarget, DynamicStorageTarget,
     BuildCellTarget, ControlEffectTarget, CoroutineTarget>;
 
-// How a call to `target` ends, which is a property of the callee and never of
-// what it happens to do. The design's own code can depart, wherever it stands
-// and whatever artifact holds it, because a `disable` anywhere inside it
-// reaches every execution it encloses (LRM 9.6.2). Runtime code can be unwound
-// out of wherever it can raise, since a run-time error is a departure too; a
-// runtime entry answers for itself, and one that only moves memory raises
-// nothing. Foreign code no departure comes out of is unwound through all the
-// same where the stack it waits on is released. A call that can be unwound out
-// of names the landing it reaches, so it is a terminator.
-auto CallEndingOf(const CallTarget& target) -> support::CallEnding;
+// Whether a call to `target` comes back to the point after it, which is a
+// property of the callee, as rustc's call terminator states where it returns
+// to. One that never does is followed by nothing.
+auto CallReturns(const CallTarget& target) -> bool;
+
+// Whether a call to `target` in `unit` answering `answer` can be unwound out
+// of, which is a property of the callee and never of what it happens to do, as
+// rustc's call terminator states what an unwind out of it takes apart. The
+// design's own code can depart, wherever it stands and whatever artifact holds
+// it, because a `disable` anywhere inside it reaches every execution it
+// encloses (LRM 9.6.2), unless its declaration says it cannot. Runtime code can
+// be unwound out of wherever it can raise, since a run-time error is a
+// departure too; a runtime entry answers for itself, and one that only moves
+// memory raises nothing. Foreign code no departure comes out of is unwound
+// through all the same where the stack it waits on is released. A call that can
+// be unwound out of names the landing it reaches, so it is a terminator. A
+// construction is told apart by what it answers, which is the whole of its
+// callee: a value with no copy is its operand handed on and calls nothing, and
+// another construction is a library entry that may raise.
+auto CallCanUnwind(
+    const CompilationUnit& unit, const CallTarget& target, TypeId answer)
+    -> bool;
 
 struct CallInstr {
   CallTarget target;
@@ -461,7 +472,7 @@ struct ProductInstr {
 // Builds a callable value from its captures, in the order its declaration lists
 // them. Its result is that value, whose type names the declaration. Each
 // capture is taken the way its storage holds one -- a copy, or the pointer it
-// was handed -- and none of the design's code runs, so the build only returns.
+// was handed -- and none of the design's code runs, so the build cannot unwind.
 struct ClosureInstr {
   std::vector<Operand> captures;
 };
@@ -531,17 +542,14 @@ struct MemberProjection {
 
 // Selects one element of whatever container the projection has reached, by the
 // coordinate the program computed -- an ordinal, or the index an associative
-// array is keyed by. Only a container that holds each element as storage of
-// its own is stepped into this way (LRM 7.4, 7.8, 7.10); an element of a
-// sequence of handles is taken out of it by value instead. Which element the
-// step reaches depends on the access: a read of one that is not there reads
-// the default, and a write to one allocates or discards it by the container's
-// own rule, so the access, not the step, says which. A write that can grow what
-// it reaches and drop what it wrote is reported where it was written, which
-// `written_at` holds.
+// array is keyed by. Only a fixed-size array and an associative array are
+// stepped into this way (LRM 7.4, 7.8); an element of a dynamic array or a
+// queue is where its type's own body says. Which element the step reaches
+// depends on how it is taken: a read of one that is not there reads the
+// default, and a write to one allocates or discards it by the container's own
+// rule.
 struct ElementProjection {
   std::vector<Operand> coordinates;
-  std::optional<Operand> written_at = std::nullopt;
 };
 
 // Selects one component of whatever product or tagged union the projection

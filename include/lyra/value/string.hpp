@@ -50,14 +50,14 @@ class String {
   // viewed as a contiguous character sequence in element order. The low
   // byte of each element becomes one byte of the result, embedded NULs
   // included -- the scan itself decides what a NUL means there.
-  template <IntegralValue Element, std::size_t N>
+  template <IntegralValue Element, std::size_t N, typename Impl>
   [[nodiscard]] static auto FromByteArray(
-      const UnpackedArray<Element, N>& bytes) -> String {
+      const UnpackedArray<Element, N, Impl>& bytes) -> String {
     std::string out;
-    out.reserve(bytes.RawSize());
-    for (std::size_t i = 0; i < bytes.RawSize(); ++i) {
+    out.reserve(bytes.Count());
+    for (std::size_t i = 0; i < bytes.Count(); ++i) {
       const auto byte =
-          static_cast<unsigned char>(bytes.RawAt(i).ToInt64() & 0xFF);
+          static_cast<unsigned char>(bytes.GetUnchecked(i).ToInt64() & 0xFF);
       out.push_back(static_cast<char>(byte));
     }
     return String{std::move(out)};
@@ -432,9 +432,9 @@ static_assert(BitstreamSizable<String>);
 
 // Defined here rather than alongside the rest of `UnpackedArray` because it is
 // the one member that reads a `String`, whose definition depends on the array.
-template <typename T, std::size_t N>
-auto UnpackedArray<T, N>::FromString(const String& text)
-    -> UnpackedArray<T, N> {
+template <typename T, std::size_t N, typename Impl>
+auto UnpackedArray<T, N, Impl>::FromString(const String& text)
+    -> UnpackedArray<T, N, Impl> {
   return OfBytes(text.View());
 }
 

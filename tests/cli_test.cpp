@@ -2563,9 +2563,10 @@ TEST(LyraRun, AReportIsPlacedAtTheStatementThatMadeIt) {
   ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
 
   // Each report placed at the statement that made it, however deep in the
-  // library it is raised -- a growth of a bounded queue, a load that cannot
-  // open its file -- or however late, as a `unique` violation reported where
-  // the time step's checks mature (LRM 12.4.2.1).
+  // library it is raised -- a growth of a bounded queue, a write through an
+  // index naming no element of a queue held by a variable or by a local, a
+  // load that cannot open its file -- or however late, as a `unique` violation
+  // reported where the time step's checks mature (LRM 12.4.2.1).
   WriteFile(
       *tmp_or / "placed.sv",
       "class D;\n"
@@ -2589,6 +2590,8 @@ TEST(LyraRun, AReportIsPlacedAtTheStatementThatMadeIt) {
       "    q.push_back(1);\n"
       "    q.push_back(2);\n"
       "    q.push_back(3);\n"
+      "    q[5] = 1;\n"
+      "    begin automatic int local_q[$]; local_q[-1] = 1; end\n"
       "    $readmemh(\"no_such_file.mem\", m);\n"
       "    unique case (x)\n"
       "      0: ;\n"
@@ -2614,15 +2617,19 @@ TEST(LyraRun, AReportIsPlacedAtTheStatementThatMadeIt) {
           "placed.sv:21:5: warning: a bounded queue grew past its declared "
           "bound, and the elements past it were dropped\nnote: in 'Test' at "
           "time 0",
-          "placed.sv:22:5: error: '$readmemh' cannot open the file "
+          "placed.sv:22:5: warning: a queue was written at an invalid index, "
+          "and the write was ignored\nnote: in 'Test' at time 0",
+          "placed.sv:23:37: warning: a queue was written at an invalid index, "
+          "and the write was ignored\nnote: in 'Test' at time 0",
+          "placed.sv:24:5: error: '$readmemh' cannot open the file "
           "'no_such_file.mem'\nnote: in 'Test' at time 0",
-          "placed.sv:23:5: warning: 'unique' violation; no case item "
+          "placed.sv:25:5: warning: 'unique' violation; no case item "
           "matched\nnote: in 'Test.b' at time 0",
-          "placed.sv:27:5: error: assertion failed\nnote: in 'Test.b' at time "
+          "placed.sv:29:5: error: assertion failed\nnote: in 'Test.b' at time "
           "0",
-          "placed.sv:28:5: error: the '$cast' assignment is invalid, so the "
+          "placed.sv:30:5: error: the '$cast' assignment is invalid, so the "
           "destination is left unchanged\nnote: in 'Test.b' at time 0",
-          "placed.sv:30:21: error: a member reached through a null object "
+          "placed.sv:32:21: error: a member reached through a null object "
           "handle\nnote: in 'Test' at time 1"}) {
       EXPECT_NE(run.stderr_text.find(placed), std::string::npos)
           << backend << ": no '" << placed << "' in: " << run.stderr_text;
@@ -3102,8 +3109,8 @@ TEST(LyraRun, AFailureUnderATypesTableNamesTheStatement) {
         "under_a_table.sv:11:12: warning: a bounded queue grew past its "
         "declared bound, and the elements past it were dropped\n"
         "note: in 'Test' at time 0\n"
-        "under_a_table.sv:13:9: error: reading a class object as a stream of "
-        "bits is not yet supported\n"
+        "under_a_table.sv:13:9: error: streaming the object a class handle "
+        "refers to is not yet supported\n"
         "note: in 'Test' at time 0\n")
         << backend;
   }

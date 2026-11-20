@@ -9,9 +9,6 @@
 #include "lyra/runtime/var.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/laid_out_value.hpp"
-#include "lyra/value/runtime_associative_array.hpp"
-#include "lyra/value/runtime_dynamic_array.hpp"
-#include "lyra/value/runtime_queue.hpp"
 #include "lyra/value/wide.hpp"
 
 namespace lyra::runtime {
@@ -24,69 +21,27 @@ namespace lyra::runtime {
 // library's own code refers to that copy. Code compiled with the design's types
 // holds none of them, which is why nothing it includes states these.
 
-extern template class ValueStorageCore<value::RuntimeDynamicArray>;
-extern template class ValueStorageCore<value::RuntimeQueue>;
-extern template class ValueStorageCore<value::RuntimeAssociativeArray>;
-
 extern template class Cell<WordsStorage<value::StateDomain::kTwoState>>;
 extern template class Cell<WordsStorage<value::StateDomain::kFourState>>;
 extern template class Cell<LaidOutStorage>;
-extern template class Cell<ValueStorageCore<value::RuntimeDynamicArray>>;
-extern template class Cell<ValueStorageCore<value::RuntimeQueue>>;
-extern template class Cell<ValueStorageCore<value::RuntimeAssociativeArray>>;
 
 extern template class TailCell<WordsStorage<value::StateDomain::kTwoState>>;
 extern template class TailCell<WordsStorage<value::StateDomain::kFourState>>;
 extern template class TailCell<LaidOutStorage>;
-// A variable of a container is built only from the container's type, so it is
-// stated one member at a time rather than as a family, and only its write is:
-// GCC instantiates a member defaulted outside its class only with the whole
-// class, so its end, which ends the cell the family above compiles, is made
-// wherever one is ended.
-extern template auto Var<value::RuntimeDynamicArray>::Mutate()
-    -> ScopedMutation<VariableRef<value::RuntimeDynamicArray>>;
-extern template auto Var<value::RuntimeQueue>::Mutate()
-    -> ScopedMutation<VariableRef<value::RuntimeQueue>>;
-extern template auto Var<value::RuntimeAssociativeArray>::Mutate()
-    -> ScopedMutation<VariableRef<value::RuntimeAssociativeArray>>;
 
 extern template class CellRareState<
     WordsStorage<value::StateDomain::kTwoState>>;
 extern template class CellRareState<
     WordsStorage<value::StateDomain::kFourState>>;
 extern template class CellRareState<LaidOutStorage>;
-extern template class CellRareState<
-    ValueStorageCore<value::RuntimeDynamicArray>>;
-extern template class CellRareState<ValueStorageCore<value::RuntimeQueue>>;
-extern template class CellRareState<
-    ValueStorageCore<value::RuntimeAssociativeArray>>;
-
-extern template class VariableRef<value::RuntimeDynamicArray>;
-extern template class VariableRef<value::RuntimeQueue>;
-extern template class VariableRef<value::RuntimeAssociativeArray>;
-
-extern template class ScopedMutation<VariableRef<value::RuntimeDynamicArray>>;
-extern template class ScopedMutation<VariableRef<value::RuntimeQueue>>;
-extern template class ScopedMutation<
-    VariableRef<value::RuntimeAssociativeArray>>;
 
 extern template class Takeovers<value::WideBitVector>;
 extern template class Takeovers<value::WideLogicVector>;
 extern template class Takeovers<value::LaidOutValue>;
-extern template class Takeovers<value::RuntimeDynamicArray>;
-extern template class Takeovers<value::RuntimeQueue>;
-extern template class Takeovers<value::RuntimeAssociativeArray>;
-
-extern template class ValueCell<value::RuntimeDynamicArray>;
-extern template class ValueCell<value::RuntimeQueue>;
-extern template class ValueCell<value::RuntimeAssociativeArray>;
 
 extern template class SampledHistory<value::WideBitVector>;
 extern template class SampledHistory<value::WideLogicVector>;
 extern template class SampledHistory<value::LaidOutValue>;
-extern template class SampledHistory<value::RuntimeDynamicArray>;
-extern template class SampledHistory<value::RuntimeQueue>;
-extern template class SampledHistory<value::RuntimeAssociativeArray>;
 
 extern template class ResolvedNet<value::WideLogicVector>;
 extern template class ResolvedNet<value::LaidOutValue>;
@@ -96,14 +51,8 @@ extern template class Driver<value::WideLogicVector>;
 extern template class Driver<value::LaidOutValue>;
 
 extern template class CompletionSlot<value::LaidOutValue>;
-extern template class CompletionSlot<value::RuntimeDynamicArray>;
-extern template class CompletionSlot<value::RuntimeQueue>;
-extern template class CompletionSlot<value::RuntimeAssociativeArray>;
 
 extern template class Coroutine<value::LaidOutValue>;
-extern template class Coroutine<value::RuntimeDynamicArray>;
-extern template class Coroutine<value::RuntimeQueue>;
-extern template class Coroutine<value::RuntimeAssociativeArray>;
 
 // The same families over each layout an integral value no wider than a word
 // has: the storage unit one plane takes, and whether an unknown plane follows

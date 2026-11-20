@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <tuple>
 
 #include "lyra/base/source_location.hpp"
 #include "lyra/base/time.hpp"
@@ -357,11 +358,18 @@ struct InterfaceReach {
 // to the call's problem, to name the random objects its handles reach, and the
 // hooks before and after (LRM 18.6.2). Each entry is the body the nearest class
 // of the object's lineage declaring one gives, which does what its base does
-// and then what it adds; none where no class does, which does nothing.
+// and then what it adds; none where no class does, which does nothing. No
+// statement of the design makes the calls naming the variables and the random
+// objects, so each is handed where the call of `randomize()` was written, to
+// report what fails in it there.
 struct ClassObjectInfo {
-  void (*rand_variables)(runtime::GcObject*, const value::ObjectRef&) = nullptr;
+  void (*rand_variables)(
+      runtime::GcObject*, const value::ObjectRef&,
+      base::SourceLocation) = nullptr;
   void (*constrain)(runtime::GcObject*, const value::ObjectRef&) = nullptr;
-  void (*rand_objects)(runtime::GcObject*, const value::ObjectRef&) = nullptr;
+  void (*rand_objects)(
+      runtime::GcObject*, const value::ObjectRef&,
+      base::SourceLocation) = nullptr;
   void (*pre_randomize)(runtime::GcObject*) = nullptr;
   void (*post_randomize)(runtime::GcObject*) = nullptr;
 };
@@ -711,6 +719,14 @@ constexpr void ForEachField(
   visit(names);
   visit(width);
   visit(four_state);
+}
+
+// A structure the library states its members' order of itself.
+template <typename Record, typename Visit>
+  requires requires(const Record& record) { Record::Tie(record); }
+constexpr void ForEachField(const Record& record, const Visit& visit) {
+  std::apply(
+      [&](const auto&... field) { (visit(field), ...); }, Record::Tie(record));
 }
 
 // Where `member` stands among the members of `Record`: the one `ForEachField`

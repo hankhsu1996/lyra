@@ -33,6 +33,7 @@
 #include "lyra/runtime/words_storage.hpp"
 #include "lyra/support/region.hpp"
 #include "lyra/value/concepts.hpp"
+#include "lyra/value/container_class.hpp"
 #include "lyra/value/container_lease.hpp"
 #include "lyra/value/formation.hpp"
 #include "lyra/value/integral.hpp"
@@ -41,44 +42,22 @@
 #include "lyra/value/value_type.hpp"
 #include "lyra/value/wide.hpp"
 
-namespace lyra::value {
-
-template <typename T, std::int64_t kBound>
-class Queue;
-class RuntimeQueue;
-template <typename T>
-class DynamicArray;
-class RuntimeDynamicArray;
-template <typename K, typename V>
-class AssociativeArray;
-class RuntimeAssociativeArray;
-
-}  // namespace lyra::value
-
 namespace lyra::runtime {
 
 namespace detail {
 
+// Whether `Container` is an array whose size changes at run time, and whether
+// a write one past its last element appends one, each of which an array laid
+// out by its type states by its kind.
 template <typename Container>
-inline constexpr bool kIsQueue = false;
-template <typename T, std::int64_t kBound>
-inline constexpr bool kIsQueue<value::Queue<T, kBound>> = true;
-template <>
-inline constexpr bool kIsQueue<value::RuntimeQueue> = true;
-
+concept ChangesSizeByKind = requires { Container::kKind; } &&
+                            value::ChangesSizeAtRunTime(Container::kKind);
 template <typename Container>
-inline constexpr bool kIsDynamicArray = false;
-template <typename T>
-inline constexpr bool kIsDynamicArray<value::DynamicArray<T>> = true;
-template <>
-inline constexpr bool kIsDynamicArray<value::RuntimeDynamicArray> = true;
-
+concept AppendsPastItsLastByKind = requires { Container::kKind; } &&
+                                   value::AppendsPastItsLast(Container::kKind);
 template <typename Container>
-inline constexpr bool kIsAssociative = false;
-template <typename K, typename V>
-inline constexpr bool kIsAssociative<value::AssociativeArray<K, V>> = true;
-template <>
-inline constexpr bool kIsAssociative<value::RuntimeAssociativeArray> = true;
+concept NamedByIndexByKind =
+    requires { Container::kKind; } && value::NamedByIndex(Container::kKind);
 
 }  // namespace detail
 
@@ -86,8 +65,7 @@ inline constexpr bool kIsAssociative<value::RuntimeAssociativeArray> = true;
 // array, a queue (LRM 7.5, 7.8, 7.10) -- and so moves and ends its elements
 // while it lies where it is itself.
 template <class T>
-concept ResizableArray = detail::kIsQueue<T> || detail::kIsDynamicArray<T> ||
-                         detail::kIsAssociative<T>;
+concept ResizableArray = detail::ChangesSizeByKind<T>;
 
 // A value a wait reads by bit position (LRM 9.4.2): an integral value, of a
 // type known where it is compiled or one held as its words at a width it was
@@ -214,7 +192,7 @@ concept OverridableSink =
 // associative array, the stop there (LRM 7.8), whatever type its index has.
 template <typename Container, typename Key>
 [[nodiscard]] auto StepTo(const Key& key) -> PartPath {
-  if constexpr (detail::kIsAssociative<Container>) {
+  if constexpr (detail::NamedByIndexByKind<Container>) {
     return PartPath::Written(support::PartStep::kAssocElement, std::nullopt);
   } else {
     return PartPath::Written(support::PartStep::kElement, OrdinalOf(key));
@@ -252,11 +230,11 @@ template <typename Container, typename Key>
 template <typename Container, typename Key>
 [[nodiscard]] auto StepCanReshape(const Container& container, const Key& key)
     -> bool {
-  if constexpr (detail::kIsQueue<Container>) {
+  if constexpr (detail::AppendsPastItsLastByKind<Container>) {
     return StepTo<Container>(key) ==
-           PartPath::Element(value::ReadPosition(container.Size()));
+           PartPath::Element(static_cast<std::int64_t>(container.Count()));
   } else {
-    return detail::kIsAssociative<Container>;
+    return detail::NamedByIndexByKind<Container>;
   }
 }
 
@@ -1023,9 +1001,9 @@ struct ErasedReference {
   PartPath part{};
 
   // Whether the reference says which part of what holds it it names: the
-  // whole, or a part by the path it was formed by. One the solver forms, by a
-  // walk over storage whose type it does not hold, says neither, so a write
-  // through it keeps nothing.
+  // whole, or a part by the path it was formed by. One formed by no path,
+  // naming storage an object holds or storage nothing is told about, says
+  // neither, so a write through it keeps nothing.
   [[nodiscard]] auto NamesItsPart() const -> bool {
     return whole || !part.IsWhole();
   }
@@ -1091,7 +1069,7 @@ struct ErasedReference {
   // the same holder, which is told at once where forming it changed the
   // storage -- an associative entry made by being bound (LRM 7.8.7) -- with
   // `accumulated` saying whether the open interval accumulated that. An
-  // index naming no element names storage that belongs to nothing (LRM 7.4.6).
+  // index naming no element names storage that belongs to nothing (LRM 7.4.5).
   [[nodiscard]] auto Part(
       void* storage, value::Formation formed, const PartPath& within,
       bool accumulated) const -> ErasedReference;
@@ -1332,7 +1310,7 @@ class VariableRef {
     const bool accumulated =
         StepCanReshape(Storage(), key) && BeforeModifyWhole();
     value::Formation formed{};
-    auto& element = Storage().ElementMut(key, formed);
+    auto& element = value::ElementMut(Storage(), key, formed);
     return VariableRef<std::remove_reference_t<decltype(element)>>{
         erased_.Part(&element, formed, RetainedStepTo<T>(key), accumulated)};
   }
@@ -1347,13 +1325,13 @@ class VariableRef {
     const bool accumulated =
         StepCanReshape(Storage(), key) && BeforeModifyWhole();
     value::Formation formed{};
-    auto& element = Storage().ElementMut(key, formed);
+    auto& element = value::ElementMut(Storage(), key, formed);
     const ErasedReference part =
         erased_.Part(&element, formed, RetainedStepTo<T>(key), accumulated);
     if (formed == value::Formation::kNowhere) {
       return {StorageLease{}, part};
     }
-    return {StorageLease(Storage().Lease(&element)), part};
+    return {StorageLease(value::ElementLease(Storage(), element)), part};
   }
 
   template <std::size_t I>
@@ -1701,9 +1679,9 @@ void Cell<HeldAs>::Reevaluate() {
 //   - a step that forms the part it reaches can change the owner by forming it
 //     -- an element made by being written (LRM 7.8.7, 7.10.1) -- or reach no
 //     part of it at all, where an invalid index makes the write ignored
-//     (LRM 7.4.6), and either answers the question whatever is written;
+//     (LRM 7.4.5), and either answers the question whatever is written;
 //   - a slice write compares each element before writing it, so it says
-//     whether it moved one;
+//     which of them it changed;
 //   - otherwise the part landed on is compared with its value from before the
 //     write, kept only while something reads the answer.
 //
@@ -1804,19 +1782,21 @@ class WriteBracket {
     throw InternalError("WriteBracket: unknown formation");
   }
 
-  // A write of the `count` elements from `start` of the part reached (LRM 7.6)
-  // moved at least one of them. Those lying before the first element are no
-  // elements of it; the caller, which knows the part's size, ends the run at
-  // its last.
-  void Moved(std::int64_t start, std::int64_t count) {
+  // A write of a run of elements of the part reached (LRM 7.6) changed those
+  // from `begin` to one before `end`, which is all it does to the part; where
+  // the two are the same it changed none, which settles the write unchanged.
+  void Moved(std::int64_t begin, std::int64_t end) {
     if (!Open()) {
       return;
     }
+    if (begin == end) {
+      outcome_ = Outcome::kSettled;
+      return;
+    }
     outcome_ = Outcome::kChanged;
-    const std::int64_t first = std::max<std::int64_t>(start, 0);
     moved_ = {
-        .lsb = static_cast<std::uint64_t>(first),
-        .width = static_cast<std::uint64_t>(start + count - first)};
+        .lsb = static_cast<std::uint64_t>(begin),
+        .width = static_cast<std::uint64_t>(end - begin)};
   }
 
   // The write went on to a part of the one it had reached, by `step`.
@@ -1953,7 +1933,7 @@ class Designation {
       write_->BeforeModifyPart(*part_);
     }
     value::Formation formed{};
-    auto& element = part_->ElementMut(key, formed);
+    auto& element = value::ElementMut(*part_, key, formed);
     write_->Formed(formed);
     if (write_->Tells()) {
       write_->Stepped(StepTo<Part>(key));
@@ -2016,35 +1996,27 @@ class Designation {
     }
   }
 
-  // `value` written into `count` elements of the part from `start` (LRM 7.6),
-  // several elements rather than one place, so the write learns what moved
-  // from the assignment, which compares each element before writing it. A
-  // start that names no position assigns nothing, and an element past the
-  // last is skipped (LRM 7.4.5), so what moved ends at the part's end.
-  template <typename Position, typename Value>
-  void AssignSlice(
-      const Position& start, std::int64_t count, const Value& value) {
-    BeforeModifySlice(value::ReadPosition(start), count);
-    if (part_->AssignSlice(start, count, value)) {
-      const std::int64_t first = *value::ReadPosition(start);
-      const std::int64_t size = *value::ReadPosition(part_->Size());
-      write_->Moved(first, std::min(first + count, size) - first);
-    }
+  // A run of the part's elements written over (LRM 7.6) by `kAssign`, the
+  // part's own operation: a run of the run type's count from the position
+  // `start`, and a queue's slice from `lo` through `hi` (LRM 7.10.1), each
+  // reporting where it was written, `at`. The assignment compares each element
+  // before writing it and answers the positions it changed, and that answer is
+  // what the write is told and what this answers. What it may change is
+  // announced first, so a run written and written back leaves the part
+  // unchanged (LRM 9.2.2.2).
+  template <auto kAssign, typename Start, typename Run>
+  auto AssignSlice(
+      const Start& start, const Run& run, base::SourceLocation at) {
+    BeforeModifySlice(
+        value::ReadPosition(start), static_cast<std::int64_t>(Run::Count()));
+    return Tell(kAssign(*part_, start, run, at));
   }
-
-  // `value` written into the elements of a queue's slice from `lo` through
-  // `hi` (LRM 7.6, 7.10.1), the ones the queue's clamping names; the write
-  // learns from the assignment which it wrote, where any moved.
-  template <typename Position, typename Value>
-  void AssignSlice(
-      const Position& lo, const Position& hi, const Value& value,
+  template <auto kAssign, typename Position, typename Run>
+  auto AssignSlice(
+      const Position& lo, const Position& hi, const Run& run,
       base::SourceLocation at) {
-    write_->BeforeModifyPart(*part_);
-    if (const auto written = part_->AssignSlice(lo, hi, value, at)) {
-      write_->Moved(
-          static_cast<std::int64_t>(written->start),
-          static_cast<std::int64_t>(written->count));
-    }
+    BeforeModifySlice(value::ReadPosition(lo), 0);
+    return Tell(kAssign(*part_, lo, hi, run, at));
   }
 
   auto operator*() -> Part& {
@@ -2062,26 +2034,33 @@ class Designation {
   }
 
  private:
-  // Announces the `count` elements from `first` before a slice write modifies
-  // them: each where it lies in a fixed-size array, the whole of an array
-  // whose size changes, which moves its elements. A bound naming no position
-  // writes nothing.
+  // What a run write of `count` elements from `first` may change, announced
+  // before it writes: the whole of a part whose size changes, since such a
+  // write may move its elements and an announced element would lie in storage
+  // the part gives back, and of a fixed-size array each element the run
+  // reaches, where it lies, a bound naming no position writing nothing (LRM
+  // 7.4.5).
   void BeforeModifySlice(
       std::optional<std::int64_t> first, std::int64_t count) {
-    if constexpr (ResizableArray<Part>) {
+    if constexpr (detail::ChangesSizeByKind<Part>) {
       write_->BeforeModifyPart(*part_);
-    } else {
-      if (!write_->Announces()) {
-        return;
-      }
+    } else if (write_->Announces()) {
       for (const std::int64_t ordinal : PositionsASliceWrites(
-               first, count, *value::ReadPosition(part_->Size()))) {
-        value::Formation formed{};
+               first, count, static_cast<std::int64_t>(part_->Count()))) {
         write_->BeforeModifyPart(
-            part_->ElementMut(value::Position::FromInt(ordinal), formed),
+            part_->GetUnchecked(static_cast<std::size_t>(ordinal)),
             PartPath::Element(ordinal));
       }
     }
+  }
+
+  // The positions a run write answers it changed, told to the write.
+  template <typename Changed>
+  auto Tell(const Changed& changed) -> Changed {
+    write_->Moved(
+        *value::ReadPosition(changed.template Component<0>()),
+        *value::ReadPosition(changed.template Component<1>()));
+    return changed;
   }
 
   WriteBracket<Sink>* write_;

@@ -16,10 +16,10 @@ namespace lyra::value {
 
 // A DPI-C open array as the foreign side sees it (LRM 35.5.6.1, Annex H.12): a
 // canonical image of the whole actual, plus the coordinate system of each
-// dimension. It is an ABI temporary of one foreign call -- built from the SV
-// value before the call, read back into an SV value after -- and owns its
-// storage, so nothing here aliases the actual and no foreign write reaches SV
-// storage directly.
+// dimension. It is an ABI temporary of one foreign call -- built clear and
+// filled from the SV value by the actual's own code before the call, and read
+// back into an SV value the same way after -- and owns its storage, so nothing
+// here aliases the actual and no foreign write reaches SV storage directly.
 //
 // The image is a sequence of elements, each in the canonical form of its
 // declared width (Annex H.7.7), so its storage element type is the 32-bit group
@@ -33,7 +33,8 @@ namespace lyra::value {
 class DpiOpenArray {
  public:
   // An image with every element clear, each element `element_width` bits in
-  // the canonical form of `element_domain`. `bounds` states the declared range
+  // the canonical form of the four-state domain where `four_state` says and of
+  // the two-state one otherwise. `bounds` states the declared range
   // of each unpacked dimension, left bound then right, outermost first -- empty
   // where the actual is a single packed value. `addressable_elements` says an
   // individual value of the element type crosses in the same canonical form
@@ -44,43 +45,29 @@ class DpiOpenArray {
   // vector whatever the element is.
   DpiOpenArray(
       std::span<const std::int64_t> bounds, std::uint64_t element_width,
-      StateDomain element_domain, bool addressable_elements);
+      bool four_state, bool addressable_elements);
 
-  // The image of `sv`, a value whose unpacked layers are the bounds' dimensions
-  // and whose leaves are the elements, of the integral type its own type
-  // reaches under those layers.
-  template <typename T>
-  DpiOpenArray(
-      const T& sv, std::span<const std::int64_t> bounds,
-      bool addressable_elements)
-      : DpiOpenArray(
-            bounds, ElementOf<T>::kWidth, ElementOf<T>::kDomain,
-            addressable_elements) {
-    std::size_t position = 0;
-    Fill(sv, 0, position);
+  // The image's elements in its own order, as the actual's own code walks
+  // them to fill the image and to read it back: how many there are, the
+  // storage ordinal in the actual's unpacked dimension `dimension` that the
+  // element `k` lies at, and the element `k` written from a value as wide as
+  // an element and read back into one (Annex H.7.3 gives a packed element one
+  // canonical representation, a flat vector of its own width).
+  [[nodiscard]] auto ElementCount() const -> std::int64_t;
+  [[nodiscard]] auto Ordinal(std::int64_t k, std::int64_t dimension) const
+      -> std::int64_t;
+  void Put(std::int64_t k, const ConstIntegralView& value);
+  void Word(std::int64_t k, const IntegralView& out) const;
+  template <IntegralValue T>
+  void Put(std::int64_t k, const T& value) {
+    Put(k, value.AsWords().View());
   }
-
-  // The SV value of `T` the image now holds -- the write-back of an `output` or
-  // `inout` open array. How many elements each layer holds is `T`'s, every
-  // layer of an actual this boundary images being of a fixed size.
-  template <typename T>
-  [[nodiscard]] auto ToValue() const -> T {
-    std::size_t position = 0;
-    return Rebuild<T>(0, position);
+  template <IntegralValue T>
+  [[nodiscard]] auto Word(std::int64_t k) const -> T {
+    T read = T::Zero();
+    Word(k, read.AsMutableWords().MutableView());
+    return read;
   }
-
-  // One element's canonical groups at an image position: written from a value
-  // as wide as an element, and read back into one (Annex H.7.3 gives a packed
-  // element one canonical representation, a flat vector of its own width).
-  void WriteElement(std::size_t position, const ConstIntegralView& value);
-  void ReadElement(std::size_t position, const IntegralView& out) const;
-
-  // The storage ordinal of the element at C position `position` in a dimension:
-  // the two agree while the declared range ascends and mirror each other while
-  // it descends, since SV element order runs from the left bound (LRM 7.6) and
-  // the C layout runs from the lowest index (Annex H.7.3).
-  [[nodiscard]] auto OrdinalAt(
-      std::size_t dimension, std::size_t position) const -> std::size_t;
 
   [[nodiscard]] auto Handle() -> svOpenArrayHandle {
     return this;
@@ -120,24 +107,16 @@ class DpiOpenArray {
   }
 
  private:
-  // The integral type the leaves of a value of `T` are, under however many
-  // unpacked layers `T` has.
-  template <typename T>
-  struct Leaf {
-    using Type = typename Leaf<typename T::ElementType>::Type;
-  };
-  template <IntegralValue T>
-  struct Leaf<T> {
-    using Type = T;
-  };
-  template <typename T>
-  using ElementOf = typename Leaf<T>::Type;
-
   [[nodiscard]] auto GroupsPerElement() const -> std::size_t {
     return CanonicalGroups(element_width_);
   }
 
-  [[nodiscard]] auto ElementCount() const -> std::size_t;
+  // The storage ordinal of the element at C position `position` in a dimension:
+  // the two agree while the declared range ascends and mirror each other while
+  // it descends, since SV element order runs from the left bound (LRM 7.6) and
+  // the C layout runs from the lowest index (Annex H.7.3).
+  [[nodiscard]] auto OrdinalAt(
+      std::size_t dimension, std::size_t position) const -> std::size_t;
 
   // The image position of the element at the given declared indices, or nothing
   // where the index count or any index does not fit this array.
@@ -159,54 +138,6 @@ class DpiOpenArray {
     }
     const std::size_t groups = GroupsPerElement();
     return std::span{*words}.subspan(position * groups, groups);
-  }
-  template <typename Word>
-  [[nodiscard]] auto GroupsAt(std::size_t position) const
-      -> std::span<const Word> {
-    const auto* words = std::get_if<std::vector<Word>>(&storage_);
-    if (words == nullptr) {
-      return {};
-    }
-    const std::size_t groups = GroupsPerElement();
-    return std::span{*words}.subspan(position * groups, groups);
-  }
-
-  // Walks a value against the dimensions, descending one layer per dimension
-  // and visiting the leaves in C layout order so `position` advances with the
-  // image. A leaf ends the walk, so the innermost layer consumes no dimension.
-  template <typename T>
-  void Fill(const T& value, std::size_t dimension, std::size_t& position) {
-    if constexpr (IntegralValue<T>) {
-      WriteElement(position, value.AsWords().View());
-      ++position;
-    } else {
-      for (std::size_t p = 0; p < value.RawSize(); ++p) {
-        Fill(value.RawAt(OrdinalAt(dimension, p)), dimension + 1, position);
-      }
-    }
-  }
-
-  template <typename T>
-  [[nodiscard]] auto Rebuild(std::size_t dimension, std::size_t& position) const
-      -> T {
-    if constexpr (IntegralValue<T>) {
-      T read = T::Zero();
-      ReadElement(position, read.AsMutableWords().MutableView());
-      ++position;
-      return read;
-    } else {
-      using Element = typename T::ElementType;
-      constexpr std::size_t kCount = T::RawSize();
-      std::vector<Element> elements(kCount);
-      for (std::size_t p = 0; p < kCount; ++p) {
-        elements[OrdinalAt(dimension, p)] =
-            Rebuild<Element>(dimension + 1, position);
-      }
-      return T::Gathered(
-          [&](std::size_t ordinal) -> const typename T::ElementType& {
-            return elements[ordinal];
-          });
-    }
   }
 
   std::variant<std::vector<svBitVecVal>, std::vector<svLogicVecVal>> storage_;

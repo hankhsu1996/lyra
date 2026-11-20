@@ -56,10 +56,8 @@ enum class ClosureKind : std::uint8_t { kFn, kFnMut, kFnOnce };
 // use its entries make of one: an effect is handed nothing and answers
 // nothing, a condition answers whether it holds (LRM 12.4), a watch is told
 // whether it is arming and answers whether what it watches moved (LRM 9.4.2),
-// and an order is told two positions and answers whether the element at the
-// first comes before the one at the second (LRM 7.12.2), and the closure of an
-// attempt of a concurrent assertion is told what it is called for and the
-// attempt it acts on, and answers with what the event asks
+// and the closure of an attempt of a concurrent assertion is told what it is
+// called for and the attempt it acts on, and answers with what the event asks
 // (`support::AttemptEvent`). An entry's bounds and the library's parameter
 // holding the closure both name the signature here, so the two cannot disagree;
 // the closure's holder alone types the address it is handed as the attempt that
@@ -67,7 +65,6 @@ enum class ClosureKind : std::uint8_t { kFn, kFnMut, kFnOnce };
 using EffectSignature = void();
 using ConditionSignature = bool();
 using WatchSignature = bool(bool);
-using OrderSignature = bool(std::int64_t, std::int64_t);
 using AttemptClosureSignature = std::uint64_t(std::uint64_t, void*);
 
 // How long an entry of the runtime library keeps a closure, or a started body,

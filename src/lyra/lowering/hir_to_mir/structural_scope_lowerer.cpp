@@ -31,7 +31,6 @@
 #include "lyra/hir/subroutine.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/binding_origin.hpp"
-#include "lyra/lowering/hir_to_mir/bitstream.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
@@ -49,9 +48,7 @@
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/design_root_inputs.hpp"
 #include "lyra/lowering/hir_to_mir/endpoint.hpp"
-#include "lyra/lowering/hir_to_mir/entry_walk.hpp"
 #include "lyra/lowering/hir_to_mir/expression/dpi_call.hpp"
-#include "lyra/lowering/hir_to_mir/expression/selects.hpp"
 #include "lyra/lowering/hir_to_mir/extern_binding.hpp"
 #include "lyra/lowering/hir_to_mir/kept_piece.hpp"
 #include "lyra/lowering/hir_to_mir/lvalue.hpp"
@@ -86,6 +83,7 @@
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
+#include "lyra/mir/value_parts.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/force_targets.hpp"
 #include "lyra/support/library_callback.hpp"
@@ -1440,7 +1438,7 @@ auto JoinedSideOf(
     }
     // Every position of the part takes part, as many as its type numbers
     // (LRM 6.7.1).
-    const auto width = static_cast<std::uint32_t>(PositionCountOf(
+    const auto width = static_cast<std::uint32_t>(mir::PositionCountOf(
         unit, PathValueType(unit, resolve_frame.Builder().Body(), part)));
     operands.push_back(JoinedPart{.part = std::move(part), .width = width});
   }
@@ -3002,12 +3000,12 @@ auto DescribeDataObjects(
     // The tests, innermost first, each the whole of the block the one around
     // it takes.
     mir::Block then = std::move(innermost);
-    for (auto test = tests.rbegin(); test != tests.rend(); ++test) {
+    for (const mir::LocalId test : std::views::reverse(tests)) {
       mir::Block tested;
       mir::Builder inner = frame.WithBlock(&tested).Builder();
       inner.AppendStmt(
           mir::IfStmt{
-              .condition = inner.ReadLocal(*test, unit.builtins.machine_bool),
+              .condition = inner.ReadLocal(test, unit.builtins.machine_bool),
               .then_scope = inner.AddScope(std::move(then)),
               .else_scope = std::nullopt});
       then = std::move(tested);

@@ -23,8 +23,6 @@ template ClosureValue::ClosureValue(
     const ClosureDefinition<support::ConditionSignature>* definition);
 template ClosureValue::ClosureValue(
     const ClosureDefinition<support::WatchSignature>* definition);
-template ClosureValue::ClosureValue(
-    const ClosureDefinition<support::OrderSignature>* definition);
 template class OwnedClosure<support::EffectSignature>;
 template class OwnedClosure<support::ConditionSignature>;
 template class OwnedClosure<support::WatchSignature>;

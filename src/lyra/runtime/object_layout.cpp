@@ -12,54 +12,35 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
-#include "lyra/runtime/any.hpp"
 #include "lyra/runtime/cancellation.hpp"
 #include "lyra/runtime/class_definition.hpp"
 #include "lyra/runtime/class_object.hpp"
 #include "lyra/runtime/closure.hpp"
 #include "lyra/runtime/constraint_problem.hpp"
 #include "lyra/runtime/coroutine.hpp"
-#include "lyra/runtime/evaluation_attempts.hpp"
-#include "lyra/runtime/file_table.hpp"
-#include "lyra/runtime/hierarchy_segment.hpp"
 #include "lyra/runtime/loop_blocks.hpp"
 #include "lyra/runtime/net.hpp"
-#include "lyra/runtime/object_change.hpp"
 #include "lyra/runtime/object_ref.hpp"
-#include "lyra/runtime/observation.hpp"
-#include "lyra/runtime/open_write.hpp"
-#include "lyra/runtime/read_report.hpp"
 #include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/sampled_history.hpp"
 #include "lyra/runtime/scope.hpp"
-#include "lyra/runtime/shared_pointer.hpp"
 #include "lyra/runtime/stated_storage.hpp"
 #include "lyra/runtime/storage_for.hpp"
 #include "lyra/runtime/synchronization_object.hpp"
 #include "lyra/runtime/tail.hpp"
-#include "lyra/runtime/timer.hpp"
-#include "lyra/runtime/trigger.hpp"
 #include "lyra/runtime/value_cell.hpp"
 #include "lyra/runtime/var.hpp"
-#include "lyra/runtime/weak_reference.hpp"
 #include "lyra/value/any.hpp"
 #include "lyra/value/any_value.hpp"
 #include "lyra/value/bit_vec.hpp"
-#include "lyra/value/concepts.hpp"
-#include "lyra/value/dpi_canonical.hpp"
-#include "lyra/value/dpi_open_array.hpp"
 #include "lyra/value/element_type.hpp"
 #include "lyra/value/fixed_array_value.hpp"
 #include "lyra/value/format.hpp"
-#include "lyra/value/index_order.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_value_type.hpp"
 #include "lyra/value/laid_out_value.hpp"
 #include "lyra/value/object_ref.hpp"
 #include "lyra/value/real.hpp"
-#include "lyra/value/runtime_associative_array.hpp"
-#include "lyra/value/runtime_dynamic_array.hpp"
-#include "lyra/value/runtime_queue.hpp"
 #include "lyra/value/string.hpp"
 #include "lyra/value/unmanaged_ref.hpp"
 #include "lyra/value/value_type.hpp"
@@ -231,12 +212,6 @@ constexpr auto WithValueClass(ValueDomain domain, F f)
       return f.template operator()<value::UnmanagedRef>();
     case ValueDomain::kLaidOut:
       return f.template operator()<value::LaidOutValue>();
-    case ValueDomain::kDynArray:
-      return f.template operator()<value::RuntimeDynamicArray>();
-    case ValueDomain::kQueue:
-      return f.template operator()<value::RuntimeQueue>();
-    case ValueDomain::kAssocArray:
-      return f.template operator()<value::RuntimeAssociativeArray>();
     case ValueDomain::kManagedRef:
       return f.template operator()<value::ObjectRef>();
   }

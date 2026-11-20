@@ -1,6 +1,8 @@
 # A constraint describes a problem the runtime solves
 
-Date: 2026-10-22, revised 2026-10-28: a class the library defines. Status: accepted
+Date: 2026-10-22, revised 2026-10-28: a class the library defines. Revised 2026-11-19: a random
+array is walked by its own type's code, and a mode names its part by positions the compiler states.
+Status: accepted
 
 ## Context
 
@@ -27,8 +29,13 @@ constraint library writes it; MIR has no node for a constraint or for a random v
   its storage, so what a random variable is is the storage it names, and an object reached twice is
   one variable. A value a constraint reads that names no storage enters as a constant. Each operator
   is a call answering a term; each constraint is a requirement or a preference on one. A random
-  array enters element by element, walked by the runtime from the value's type, so the compiler
-  states a property once whatever its shape.
+  array enters element by element, walked by its own type's code: the call begins a walk on the
+  variable's reference, and the array type's body names the array to the problem -- one whose size
+  the program chooses before its elements, with its type's own body making it a count long -- then
+  enters each element at its position, names it by a reference formed from the array's as a write
+  through it would form one, walks it as its own type is, and leaves it. So the runtime is handed
+  references and positions and never a value's type to walk, and a write the solver makes is told at
+  the element it wrote.
 - **Every class object starts with the part the runtime library declares for it**, whatever defines
   its class, which holds the object's generator beside the modes every object keeps, and its class's
   definition states five bodies: declare the random variables, state the constraints, name the
@@ -41,7 +48,9 @@ constraint library writes it; MIR has no node for a constraint or for a random v
   `post_randomize` overrides the hook with a call to it; one that does not inherits its base's. A
   variable's mode and a `randc` variable's cycle are kept for the variable the class declares and
   the positions of an element within it, never for the element's storage, which moves when an array
-  holding it is resized and is then free for another variable.
+  holding it is resized and is then free for another variable. A call of `rand_mode()` on an element
+  hands the positions its selects name, which the compiler states, so nothing searches the variable
+  for the element's storage.
 - **A call of `randomize()`** runs `pre_randomize` on the object and on each object a random handle
   reaches, has every object declare its variables before any states a constraint, adds the inline
   constraints, settles what has to be chosen first, and solves. Settling chooses array sizes and the
@@ -102,6 +111,11 @@ by which completion a solver happened to find.
 
 - **A MIR node for a constraint, and one for a random variable.** Neither is a construct of a
   general-purpose language, and a backend meeting one would have to decide how it is solved.
+- **The runtime walking a random array from its type's description**, the shape this record first
+  took. It is a second realization of every array's layout in the runtime, walked at run time, and
+  the references it formed named no part, so a write the solver made was told as a change of the
+  whole variable. A C++ program handing a solver the parts of an array writes the loop over them
+  where it knows their type, which is where the compiler states the walk.
 - **Solving at compile time.** What a constraint reads, which variables are chosen and which blocks
   are on are all values of the running program.
 - **An external solver process.** It has to be installed wherever a program runs, and its answers
@@ -134,7 +148,12 @@ by which completion a solver happened to find.
   generator, a choice the standard leaves to the tool. It also holds a pointer to its modes, which
   are made the first time anything reads or sets one.
 - Each source class states three more bodies in its definition, whether or not it declares anything
-  random, so a class of another unit can call its base's without knowing what the base declares.
+  random, so a class of another unit can call its base's without knowing what the base declares. The
+  bodies declaring the variables and naming the random objects are handed where the call of
+  `randomize()` was written, since no statement of the design makes the steps they take, and a step
+  that can fail reports there.
+- Each array type a random variable is or holds states one more body of its own, the walk; an
+  associative array states none, its index and size being no random variable (LRM 18.4).
 - A real random variable, an associative array declared random and an array of structures declared
   random are refused when a call reaches them; the solver has integral terms only.
 - A program carries CUDD (BSD-3-Clause) and CaDiCaL (MIT) inside its runtime, with their notices,

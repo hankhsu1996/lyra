@@ -1,6 +1,7 @@
 #include "lyra/backend/llvm/codegen_types.hpp"
 
 #include <cstddef>
+#include <format>
 #include <optional>
 #include <ranges>
 #include <span>
@@ -11,21 +12,18 @@
 #include <llvm/IR/LLVMContext.h>
 
 #include "lyra/backend/llvm/codegen_module.hpp"
+#include "lyra/backend/llvm/constant_record.hpp"
 #include "lyra/backend/llvm/llvm_fn_abi.hpp"
-#include "lyra/backend/llvm/runtime_entry.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/lir/compilation_unit.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/value_step.hpp"
-#include "lyra/support/declared_member_storage.hpp"
 #include "lyra/support/float_width.hpp"
 #include "lyra/support/layout.hpp"
 #include "lyra/support/library_decl.hpp"
 #include "lyra/support/runtime_object.hpp"
-#include "lyra/support/value_domain.hpp"
 #include "lyra/value/integral.hpp"
-#include "lyra/value/integral_words.hpp"
 #include "lyra/value/layout.hpp"
 #include "lyra/value/scalar.hpp"
 
@@ -180,9 +178,7 @@ auto CodeGenTypes::GetFunctionType(const LlvmFnAbi& abi)
               params.push_back(flag);
             },
             [&](const ElementTypeArg&) { params.push_back(ptr_ty_); },
-            [&](const QueueTypeArg&) { params.push_back(ptr_ty_); },
             [&](const TakePositionsArg&) { params.push_back(ptr_ty_); },
-            [&](const IndexOrderArg&) { params.push_back(ptr_ty_); },
             [&](const OperationsArg&) { params.push_back(ptr_ty_); }},
         told);
   };
@@ -290,6 +286,11 @@ auto CodeGenTypes::MachineValueLayout(lir::TypeId type)
 auto CodeGenTypes::LayoutOf(lir::TypeId type) -> support::ObjectLayout {
   const std::optional<lir::Holding> held = unit_->types.Get(type).HeldAs();
   if (!held.has_value()) {
+    // A structure of the library reached only where it lies, a part of
+    // something else included, lies as the library declares it.
+    if (unit_->types.Get(type).Is<lir::LibraryType>()) {
+      return LayoutOfLibraryProduct(type).storage;
+    }
     return MachineDataLayout(type);
   }
   return std::visit(
@@ -313,6 +314,12 @@ auto CodeGenTypes::LayoutOf(lir::TypeId type) -> support::ObjectLayout {
           },
           // A value laid out by its type is as large as its parts are placed.
           [&](const lir::LaidOutByType&) -> support::ObjectLayout {
+            // A container is the record its core keeps its elements in, the
+            // storage its declaration states.
+            if (const auto* library =
+                    unit_->types.Get(type).As<lir::LibraryType>()) {
+              return *support::ObjectStorageOf(library->decl);
+            }
             return std::visit(
                 Overloaded{
                     [](const ProductLayout* product) {
@@ -339,6 +346,9 @@ auto CodeGenTypes::FieldsOf(lir::TypeId laid_out) -> FieldsShape {
   if (stated.Is<lir::TupleType>()) {
     return &LayoutOfProduct(laid_out);
   }
+  if (stated.Is<lir::LibraryType>()) {
+    return &LayoutOfLibraryProduct(laid_out);
+  }
   const lir::RecordId* record = lir::RecordOf(stated);
   if (record == nullptr) {
     throw InternalError(
@@ -362,6 +372,17 @@ auto CodeGenTypes::MachineDataLayout(lir::TypeId type)
     return support::ObjectLayout{
         .layout = {.size = bytes, .align = bytes}, .needs_end = false};
   }
+  // A machine boolean is one byte, as C's `bool` is.
+  if (ty.Is<lir::MachineBoolType>()) {
+    return support::ObjectLayout{
+        .layout = {.size = 1, .align = 1}, .needs_end = false};
+  }
+  // A raw pointer is an address, and ends nothing it points at.
+  if (ty.Is<lir::PointerType>()) {
+    return support::ObjectLayout{
+        .layout = {.size = sizeof(void*), .align = alignof(void*)},
+        .needs_end = false};
+  }
   // A sequence of machine values is the values one after another, and ends
   // none of them.
   if (const auto* sequence = ty.As<lir::MachineArrayType>()) {
@@ -373,8 +394,10 @@ auto CodeGenTypes::MachineDataLayout(lir::TypeId type)
         .needs_end = false};
   }
   throw InternalError(
-      "llvm codegen: storage asked of a type whose values are not owned -- "
-      "please report this as a bug");
+      std::format(
+          "llvm codegen: storage asked of a {}, whose values are not owned -- "
+          "please report this as a bug",
+          ty.KindName()));
 }
 
 // The library walks every whole array by the layout it states, so that
@@ -470,6 +493,37 @@ auto CodeGenTypes::LayoutOfProduct(lir::TypeId product)
       .offsets = std::move(laid.offsets),
       .storage = {
           .layout = laid.whole, .needs_end = lir::NeedsEnd(*unit_, product)}};
+  return products_.emplace(product, std::move(layout)).first->second;
+}
+
+// A structure of the library lies where the host's C++ compiler laid it out,
+// which the library's own declaration of it says.
+auto CodeGenTypes::LayoutOfLibraryProduct(lir::TypeId product)
+    -> const ProductLayout& {
+  if (const auto found = products_.find(product); found != products_.end()) {
+    return found->second;
+  }
+  const std::optional<std::span<const lir::TypeId>> components =
+      lir::ComponentTypes(*unit_, product);
+  if (!components.has_value()) {
+    throw InternalError(
+        "llvm codegen: a part of a structure of the library is reached that "
+        "no unit states the members of -- please report this as a bug");
+  }
+  const LibraryRecordLayout record = LayoutOfLibraryRecord(
+      unit_->types.Get(product).Get<lir::LibraryType>().decl);
+  // A structure a holder keeps a value of takes the storage stated for the
+  // value; one only reached where it lies takes what the compiler gave it.
+  ProductLayout layout{
+      .components = {components->begin(), components->end()},
+      .offsets = {},
+      .storage = unit_->types.Get(product).HeldAs().has_value()
+                     ? LayoutOf(product)
+                     : support::ObjectLayout{
+                           .layout = record.layout, .needs_end = false}};
+  for (const FieldLayout& field : record.fields) {
+    layout.offsets.push_back(field.offset);
+  }
   return products_.emplace(product, std::move(layout)).first->second;
 }
 

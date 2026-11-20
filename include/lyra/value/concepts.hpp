@@ -3,7 +3,7 @@
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
-#include <optional>
+#include <type_traits>
 #include <utility>
 
 #include "lyra/base/source_location.hpp"
@@ -143,19 +143,6 @@ concept NetResolvable =
                        } -> std::same_as<bool>;
                      });
 
-// LRM 11.4.11: where a conditional operator's condition is ambiguous it selects
-// neither arm, evaluates both, and combines them. A type made of parts that can
-// agree apart from each other defines how -- an integral bit by bit (Table
-// 11-20), an array other than an associative one element by element -- and a
-// type with no such parts does not satisfy this: its two arms are compared
-// whole, and it takes the Table 7-1 default of its own shape where they
-// differ.
-template <typename T>
-concept ConditionallyMergeable =
-    LyraValue<T> && requires(const T& a, const T& b) {
-      { a.MergeConditional(b) } -> std::same_as<T>;
-    };
-
 // LRM 11.4.4 relational `<` / `<=` / `>` / `>=` (Integral, real /
 // shortreal, `String`).
 template <typename T>
@@ -209,42 +196,13 @@ concept BitstreamSizable = requires(
 // as rustc's `Index` and `IndexMut` reach one. `Element` answers a read-only
 // reference to the element, or to the element default where the position
 // names none; `ElementMut` answers the element, or storage no read reaches
-// where the position names none (LRM 7.4.6), saying which in `formed`. A
+// where the position names none (LRM 7.4.5), saying which in `formed`. A
 // position is a value of the position type, which names none where it holds x
 // or z or lies outside the container.
 template <typename T>
 concept Indexable = requires(T& t, const Position& pos, Formation& formed) {
   { t.Element(pos) };
   { t.ElementMut(pos, formed) };
-};
-
-// AssocIndexable: the same two by key. A read of a key holding no entry
-// answers the array's default and creates nothing; `ElementMut` creates the
-// entry (LRM 7.8.6, 7.8.7).
-template <typename T, typename K>
-concept AssocIndexable = requires(T& t, const K& key, Formation& formed) {
-  { t.Element(key) };
-  { t.ElementMut(key, formed) };
-};
-
-// Sortable: the in-place ordering family (LRM 7.12.2). A sort is handed
-// whether the element at one position comes before the one at another.
-template <typename T>
-concept Sortable = requires(T& t, bool (*before)(std::int64_t, std::int64_t)) {
-  { t.Reverse() };
-  { t.Sort(before) };
-};
-
-// IndexTraversal: associative-array ordered-index navigation (LRM 7.9.4 --
-// 7.9.7). Each call returns the next / previous index relative to the probe
-// (or the smallest / largest with no probe), or nullopt on an empty receiver
-// or end-of-traversal.
-template <typename T, typename Index>
-concept IndexTraversal = requires(const T& t, const Index& probe) {
-  { t.FirstIndex() } -> std::same_as<std::optional<Index>>;
-  { t.LastIndex() } -> std::same_as<std::optional<Index>>;
-  { t.NextIndex(probe) } -> std::same_as<std::optional<Index>>;
-  { t.PrevIndex(probe) } -> std::same_as<std::optional<Index>>;
 };
 
 // OrdinalElements: the unpacked family's own elements, read by storage ordinal.
@@ -256,9 +214,16 @@ concept IndexTraversal = requires(const T& t, const Index& probe) {
 // either naming the other's kind.
 template <typename T>
 concept OrdinalElements = requires(const T& t, std::size_t ordinal) {
-  { t.RawSize() } -> std::same_as<std::size_t>;
-  { t.RawAt(ordinal) };
+  { t.Count() } -> std::same_as<std::size_t>;
+  { t.GetUnchecked(ordinal) };
 };
+
+// The element type of an array whose elements are read by storage ordinal,
+// which the element at an ordinal is a reference to, so every array -- one of
+// the library's own or a container type's -- states it the one way.
+template <OrdinalElements Array>
+using ElementOf =
+    std::remove_cvref_t<decltype(std::declval<const Array&>().GetUnchecked(0))>;
 
 // A held value that compares itself with, and takes, the bytes of a value laid
 // out as it is itself: an integral value as wide, or a tuple, a union or an

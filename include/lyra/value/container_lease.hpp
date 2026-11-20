@@ -1,6 +1,8 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
+#include <tuple>
 #include <utility>
 
 namespace lyra::value {
@@ -12,6 +14,21 @@ namespace lyra::value {
 struct LeaseCount {
   std::uint32_t held = 0;
   bool detached = false;
+
+  // Each member, in the order it is declared, and the one at position `N`,
+  // which generated code reaches a member by.
+  template <typename Self>
+  static auto Tie(Self& self) noexcept {
+    return std::tie(self.held, self.detached);
+  }
+  template <std::size_t N>
+  auto Component() noexcept -> auto& {
+    return std::get<N>(Tie(*this));
+  }
+  template <std::size_t N>
+  [[nodiscard]] auto Component() const noexcept -> const auto& {
+    return std::get<N>(Tie(*this));
+  }
 };
 
 // Ends storage its container detached: its value or values, then the storage

@@ -1,12 +1,11 @@
 #pragma once
 
-#include <cstdint>
 #include <memory>
 #include <new>
 
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/integral.hpp"
-#include "lyra/value/integral_words.hpp"
+#include "lyra/value/integral_value_type.hpp"
 #include "lyra/value/value_type.hpp"
 
 namespace lyra::value {
@@ -36,6 +35,14 @@ class AnyValue {
   [[nodiscard]] static auto CopyOf(const ValueType& type, const void* value)
       -> AnyValue;
 
+  // A copy of `value`, a value of the integral type `I`, held with that type:
+  // what an associative array with a wildcard index keeps the index the
+  // program wrote as (LRM 7.8.1).
+  template <IntegralValue I>
+  explicit AnyValue(const I& value)
+      : AnyValue(CopyOf(IntegralValueType::Of<I>().Type(), &value)) {
+  }
+
   AnyValue(const AnyValue& other);
   auto operator=(const AnyValue& other) -> AnyValue&;
   AnyValue(AnyValue&&) noexcept = default;
@@ -51,6 +58,16 @@ class AnyValue {
   }
 
   [[nodiscard]] auto IsBitIdentical(const AnyValue& other) const -> bool;
+
+  // The value relocated into `out`, answering `out`, which holds it from then
+  // on; this holds none afterwards, and its storage is given back with
+  // nothing ended, since a relocation leaves it owed nothing.
+  auto RelocateInto(void* out) && -> void* {
+    const ValueType& type = Type();
+    type.Relocate(bytes_.get(), out);
+    Deallocate{std::align_val_t{type.Align()}}(bytes_.release());
+    return out;
+  }
 
  private:
   // Frees storage a value was being built in, for a build that did not finish:

@@ -18,7 +18,6 @@
 #include <variant>
 #include <vector>
 
-#include "lyra/base/function_ref.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/simulation_error.hpp"
 #include "lyra/base/source_location.hpp"
@@ -81,11 +80,15 @@
 #include "lyra/support/random_qualifier.hpp"
 #include "lyra/value/any.hpp"
 #include "lyra/value/any_value.hpp"
+#include "lyra/value/array_report.hpp"
 #include "lyra/value/assert.hpp"
+#include "lyra/value/associative_array_type.hpp"
 #include "lyra/value/bit_vec.hpp"
+#include "lyra/value/container_core.hpp"
 #include "lyra/value/dpi_canonical.hpp"
 #include "lyra/value/dpi_open_array.hpp"
-#include "lyra/value/element_sequence.hpp"
+#include "lyra/value/dynamic_array_type.hpp"
+#include "lyra/value/element_policy.hpp"
 #include "lyra/value/element_type.hpp"
 #include "lyra/value/enumeration.hpp"
 #include "lyra/value/fixed_array_type.hpp"
@@ -97,13 +100,9 @@
 #include "lyra/value/integral_words.hpp"
 #include "lyra/value/laid_out_value.hpp"
 #include "lyra/value/library_value_types.hpp"
+#include "lyra/value/ptr_read.hpp"
 #include "lyra/value/queue_type.hpp"
 #include "lyra/value/real.hpp"
-#include "lyra/value/runtime_array_ordering.hpp"
-#include "lyra/value/runtime_associative_array.hpp"
-#include "lyra/value/runtime_dynamic_array.hpp"
-#include "lyra/value/runtime_memory.hpp"
-#include "lyra/value/runtime_queue.hpp"
 #include "lyra/value/scan.hpp"
 #include "lyra/value/string.hpp"
 #include "lyra/value/take_built.hpp"
@@ -111,8 +110,9 @@
 #include "lyra/value/unmanaged_ref.hpp"
 #include "lyra/value/unpacked_array.hpp"
 #include "lyra/value/unpacked_range.hpp"
+#include "lyra/value/value_type_kind.hpp"
 #include "lyra/value/wide.hpp"
-#include "lyra/value/witnessed_elem.hpp"
+#include "lyra/value/wildcard_index.hpp"
 #include "svdpi.h"
 
 namespace lyra::runtime {
@@ -413,10 +413,28 @@ auto TailRefSampledGet(void* reference, base::SourceLocation at) -> const
       lent.holder);
 }
 
-// The integral type an entry is told where it builds values of one and keeps
-// them with it -- a key of an associative memory, an element of a byte array.
+// The integral type an entry is told where it builds or reads values of one
+// -- a word of a memory, an element of a byte array.
 auto IntegralTypeAt(const void* type) -> const value::IntegralValueType& {
   return *static_cast<const value::IntegralValueType*>(type);
+}
+
+// The words of a memory task an entry is handed, and those words built in
+// `out` of the request a call made (LRM 21.4, 21.5).
+auto WordsAt(void* words) -> MemoryWords& {
+  return *static_cast<MemoryWords*>(words);
+}
+auto WordsAt(const void* words) -> const MemoryWords& {
+  return *static_cast<const MemoryWords*>(words);
+}
+auto MemoryRequest(
+    void* runtime, WordValues values, const void* name, void* dims,
+    std::uint64_t dims_count, std::int64_t base, std::int64_t start,
+    std::optional<std::int64_t> finish, void* out) -> void* {
+  return std::construct_at(
+      static_cast<MemoryWords*>(out), *static_cast<RuntimeEffects*>(runtime),
+      std::move(values), *static_cast<const value::String*>(name),
+      SpanAt<const std::int64_t>(dims, dims_count), base, start, finish);
 }
 
 // The type of a fixed-size unpacked array an entry is told beside the array's
@@ -431,16 +449,27 @@ auto TupleTypeAt(const void* type) -> const value::TupleType& {
   return *static_cast<const value::TupleType*>(type);
 }
 
-// The type of a queue an entry building one is told, which states its
-// elements and its bound.
+// The type of a queue an entry is told beside the queue, which states its
+// elements and its bound, and of a dynamic array, which states its elements.
 auto QueueTypeAt(const void* type) -> const value::QueueType& {
   return *static_cast<const value::QueueType*>(type);
 }
+auto DynamicArrayTypeAt(const void* type) -> const value::DynamicArrayType& {
+  return *static_cast<const value::DynamicArrayType*>(type);
+}
 
-// How an associative array an entry builds orders its keys (LRM 7.8), which
-// it is built holding.
-auto IndexOrderAt(const void* order) -> const value::IndexOrder& {
-  return *static_cast<const value::IndexOrder*>(order);
+auto AssociativeArrayTypeAt(const void* type)
+    -> const value::AssociativeArrayType& {
+  return *static_cast<const value::AssociativeArrayType*>(type);
+}
+
+// The core an associative array is, where it lies, to read or to write.
+auto AssociativeCoreAt(const void* array)
+    -> const value::AssociativeArrayCore& {
+  return *static_cast<const value::AssociativeArrayCore*>(array);
+}
+auto AssociativeCoreAt(void* array) -> value::AssociativeArrayCore& {
+  return *static_cast<value::AssociativeArrayCore*>(array);
 }
 
 // A type with how a value of it starts, as an entry is told one: by one
@@ -1037,14 +1066,9 @@ auto TypeAt(const void* type) -> const value::ValueType& {
   return *static_cast<const value::ValueType*>(type);
 }
 
-// The operations of a type, handed over as an address, and those of a
-// container type's element, which they name.
+// The operations of a type, handed over as an address.
 auto OperationsAt(const void* operations) -> const value::ValueOperations& {
   return *static_cast<const value::ValueOperations*>(operations);
-}
-auto ElementOperationsAt(const void* operations)
-    -> const value::ValueOperations& {
-  return *OperationsAt(operations).element;
 }
 
 // A copy of a value that crossed with its type, held with that type. The value
@@ -1059,11 +1083,6 @@ auto OwnedCopy(const void* value, const void* type) -> value::AnyValue {
 auto OwnedLaidOutCopy(const void* bytes, const void* type)
     -> value::LaidOutValue {
   return value::LaidOutValue::CopyOf(TypeAt(type), bytes);
-}
-
-// An index that crossed with its type, read where it lies.
-auto IndexAt(const void* index, const void* type) -> value::IndexView {
-  return {.bytes = index, .type = &TypeAt(type)};
 }
 
 // Storage for one value the generated program builds and then holds by address
@@ -1084,42 +1103,18 @@ auto DesignationAt(const void* designation) -> const ErasedDesignation& {
   return *static_cast<const ErasedDesignation*>(designation);
 }
 
-// The steps and the landing a write in progress takes, each over the value a
-// designation names; they do what a designation's own methods do where the
-// value's type is known. A container moves and ends its elements as it grows
-// and shrinks (LRM 7.5, 7.8, 7.10), so it is kept whole before a step into
-// it.
-template <typename Container, typename Index>
-auto DesignateElement(const void* designation, const Index& index, void* out)
-    -> void* {
-  const ErasedDesignation& within = DesignationAt(designation);
-  auto& container = *static_cast<Container*>(within.part);
-  within.write->BeforeModifyPart(container);
-  value::Formation formed{};
-  void* element = container.ElementMut(index, formed);
+// The designation of the element `element` a write stepped to within the part
+// it designates, which forming it did `formed` to, by the step `step` reports.
+auto ElementDesignation(
+    const ErasedDesignation& within, void* element, value::Formation formed,
+    const PartPath& step, void* out) -> void* {
   within.write->Formed(formed);
   if (within.write->Tells()) {
-    within.write->Stepped(StepTo<Container>(index));
+    within.write->Stepped(step);
   }
   return std::construct_at(
       static_cast<ErasedDesignation*>(out),
       ErasedDesignation{.write = within.write, .part = element});
-}
-
-// The same of a slice of a container, which is kept whole before it changes.
-template <typename Container, typename Replacement>
-void AssignDesignatedSlice(
-    const void* designation, std::optional<std::int64_t> start,
-    std::int64_t count, const Replacement& replacement) {
-  const ErasedDesignation& within = DesignationAt(designation);
-  auto& container = *static_cast<Container*>(within.part);
-  within.write->BeforeModifyPart(container);
-  // A start that names no position assigns nothing, so one that moved an
-  // element names one; an element past the last is skipped (LRM 7.4.5).
-  if (container.AssignSlice(start, count, replacement)) {
-    const std::int64_t size = *value::ReadPosition(container.Size());
-    within.write->Moved(*start, std::min(*start + count, size) - *start);
-  }
 }
 
 template <typename Part>
@@ -1152,46 +1147,78 @@ auto LandLaidOutDesignation(
   return landed.part;
 }
 
-auto DesignateArrayElement(
-    const void* designation, const value::FixedArrayType& type,
-    std::optional<std::int64_t> position, void* out) -> void* {
-  const ErasedDesignation& within = DesignationAt(designation);
-  value::Formation formed{};
-  void* element = type.ElementMut(within.part, position, formed);
-  within.write->Formed(formed);
-  if (within.write->Tells()) {
-    within.write->Stepped(
-        PartPath::Written(support::PartStep::kElement, position));
-  }
-  return std::construct_at(
-      static_cast<ErasedDesignation*>(out),
-      ErasedDesignation{.write = within.write, .part = element});
+// What a write through a position finds, as the formation a write in progress
+// is told and where it lands: storage no read reaches where it found none.
+auto FoundAs(
+    const value::FoundElement& found, const value::ElementType& element,
+    value::Formation& formed) -> void* {
+  formed = value::FormationOf(found.element != nullptr, found.made);
+  return found.element == nullptr ? element.DiscardedWrite() : found.element;
 }
 
-void AssignDesignatedArraySlice(
+// Whether a step into the queue `queue` at `at` appends an element, one past
+// its last (LRM 7.10.1), which moves the elements it holds, so the queue is
+// kept whole, as its type copies it, before the step. No other step into a
+// queue, and none into a dynamic array, reshapes it: a write past the end
+// anywhere else is discarded (LRM 7.5, 7.10.1).
+auto QueueStepAppends(const void* queue, std::optional<std::int64_t> at)
+    -> bool {
+  return at.has_value() &&
+         *at == static_cast<std::int64_t>(value::QueueType::Count(queue));
+}
+
+// LRM 7.4.5, 7.10.1: the element the position `position` points at names in a
+// dynamic array or a queue, as storage a write lands in, where no read reaches
+// where it names none: where its type's own body finds it, a queue appending
+// an element where the position is one past its last. A fixed-size array's
+// lies at its position, which its type answers itself.
+template <typename ArrayType>
+auto FoundElementMut(
+    const ArrayType& type, void* array, const void* position,
+    value::Formation& formed) -> void* {
+  return FoundAs(
+      type.ElementPlace(array, position), type.ElementType(), formed);
+}
+
+auto DesignateFixedArrayElement(
     const void* designation, const value::FixedArrayType& type,
-    std::optional<std::int64_t> start, std::int64_t count,
-    std::span<const void* const> replacement) {
+    const void* position, void* out) -> void* {
   const ErasedDesignation& within = DesignationAt(designation);
-  // Each element the slice writes is announced where it lies, before it
-  // changes; which exist is read off the array's count.
-  if (within.write->Announces()) {
-    for (const std::int64_t ordinal : PositionsASliceWrites(
-             start, count, static_cast<std::int64_t>(type.Count()))) {
-      value::Formation formed{};
-      within.write->BeforeModifyLaidOut(
-          type.ElementType().Type(),
-          type.ElementMut(within.part, ordinal, formed),
-          PartPath::Element(ordinal));
-    }
-  }
-  // A start that names no position assigns nothing, so one that moved an
-  // element names one; an element past the last is skipped (LRM 7.4.5).
-  if (type.AssignSlice(
-          within.part, start, static_cast<std::size_t>(count), replacement)) {
-    const auto size = static_cast<std::int64_t>(type.Count());
-    within.write->Moved(*start, std::min(*start + count, size) - *start);
-  }
+  const std::optional<std::int64_t> at = PositionNamedAt(position);
+  value::Formation formed{};
+  void* element = type.ElementMut(within.part, at, formed);
+  return ElementDesignation(
+      within, element, formed,
+      PartPath::Written(support::PartStep::kElement, at), out);
+}
+// A dynamic array or a queue moves and ends its elements as it grows and
+// shrinks (LRM 7.5, 7.10), so it is kept whole, as its type copies it, before
+// a write steps into it.
+template <typename ArrayType>
+auto DesignateFoundElement(
+    const void* designation, const ArrayType& type, const void* position,
+    void* out) -> void* {
+  const ErasedDesignation& within = DesignationAt(designation);
+  within.write->BeforeModifyLaidOut(type.Type(), within.part);
+  value::Formation formed{};
+  void* element = FoundElementMut(type, within.part, position, formed);
+  return ElementDesignation(
+      within, element, formed,
+      PartPath::Written(support::PartStep::kElement, PositionNamedAt(position)),
+      out);
+}
+// The same into an associative array, the entry an index names having no
+// position, so the path the write reports stops there (LRM 7.8).
+auto DesignateAssociativeArrayElement(
+    const void* designation, const value::AssociativeArrayType& type,
+    const void* index, void* out) -> void* {
+  const ErasedDesignation& within = DesignationAt(designation);
+  within.write->BeforeModifyLaidOut(type.Type(), within.part);
+  value::Formation formed{};
+  void* element = FoundElementMut(type, within.part, index, formed);
+  return ElementDesignation(
+      within, element, formed,
+      PartPath::Written(support::PartStep::kAssocElement, std::nullopt), out);
 }
 
 // A reference to storage nothing is told about -- a variable of a function, a
@@ -1217,48 +1244,46 @@ struct SteppedElement {
   ErasedReference part;
 };
 
-// The steps a reference takes into a part of what it names, each over the
-// value the reference names; they do what a reference's own methods do where
-// the value's type is known.
-template <typename Container, typename Index>
-auto StepIntoElement(
-    const ErasedReference& from, const Index& index, base::SourceLocation at)
-    -> SteppedElement {
+// The step a reference takes into an element of the associative array it
+// names, where the array type's own body finds or makes it (LRM 7.8.7). A step
+// that makes an entry changes the array whole, so the array is kept, as its
+// type copies it, before the step; the reference goes on naming the element
+// however the array changes around it (LRM 13.5.2), so its path stops at the
+// array, inexact.
+auto StepIntoAssociativeArrayElement(
+    const ErasedReference& from, const value::AssociativeArrayType& type,
+    const void* index, base::SourceLocation at) -> SteppedElement {
   const base::SourceLocationScope bound(at);
   from.AdmitStep();
-  auto& container = *static_cast<Container*>(from.storage);
-  const bool accumulated =
-      StepCanReshape(container, index) &&
-      WrittenPartThrough(from).BeforeModify(
-          PartPath{}, [&](EffectStorage& into) {
-            return NewOriginal<ValueOriginal<Container>>(into, container);
-          });
+  const bool accumulated = WrittenPartThrough(from).BeforeModify(
+      PartPath{}, [&](EffectStorage& into) {
+        return NewOriginal<LaidOutOriginal>(into, type.Type(), from.storage);
+      });
   value::Formation formed{};
-  void* element = container.ElementMut(index, formed);
+  void* element = FoundElementMut(type, from.storage, index, formed);
   return {
       .element = element,
       .formed = formed,
-      .part = from.Part(
-          element, formed, RetainedStepTo<Container>(index), accumulated)};
+      .part = from.Part(element, formed, PartPath::Inexact(), accumulated)};
 }
 
-template <typename Container, typename Index>
-auto ReferElement(
-    const void* reference, const Index& index, base::SourceLocation at,
-    void* out) -> void* {
+auto ReferAssociativeArrayElement(
+    const void* reference, const value::AssociativeArrayType& type,
+    const void* index, base::SourceLocation at, void* out) -> void* {
   return BuildReference(
-      out, StepIntoElement<Container>(ErasedAt(reference), index, at).part);
+      out, StepIntoAssociativeArrayElement(ErasedAt(reference), type, index, at)
+               .part);
 }
 
-// The same, bound by a call, with a lease on the element the container keeps,
-// which the container cannot then end before the call returns (LRM 13.5.2).
-// An index naming no element names nothing to lease.
-template <typename Container, typename Index>
-auto ReferElementLeased(
-    const void* reference, const Index& index, base::SourceLocation at,
-    void* out) -> void* {
+// The same, bound by a call, with a lease on the entry the array keeps, which
+// the array cannot then end before the call returns (LRM 13.5.2). An index
+// naming no element names nothing to lease.
+auto ReferAssociativeArrayElementLeased(
+    const void* reference, const value::AssociativeArrayType& type,
+    const void* index, base::SourceLocation at, void* out) -> void* {
   const ErasedReference& from = ErasedAt(reference);
-  const SteppedElement stepped = StepIntoElement<Container>(from, index, at);
+  const SteppedElement stepped =
+      StepIntoAssociativeArrayElement(from, type, index, at);
   auto* leased = static_cast<LeasedReference*>(out);
   if (stepped.formed == value::Formation::kNowhere) {
     return std::construct_at(leased, StorageLease{}, stepped.part);
@@ -1266,104 +1291,119 @@ auto ReferElementLeased(
   return std::construct_at(
       leased,
       StorageLease(
-          static_cast<Container*>(from.storage)->Lease(stepped.element)),
+          value::AssociativeArrayLease(
+              *static_cast<const value::AssociativeArrayCore*>(from.storage),
+              stepped.element)),
       stepped.part);
 }
 
-// The same step into a fixed-size unpacked array, which the reference names as
-// its elements where they lie, told the array's type.
-auto ReferArrayElement(
+// The same step into an array laid out by its type, each kind told its own
+// type. The step a reference into an element keeps (LRM 13.5.2) is to its
+// position, but an array whose size changes -- a dynamic array, a queue --
+// goes on holding the element while it grows, shrinks or is replaced around
+// it (LRM 7.10.3), so the path stops at the array, inexact.
+auto ReferFixedArrayElement(
     const void* reference, const value::FixedArrayType& type,
-    std::optional<std::int64_t> position, base::SourceLocation at, void* out)
-    -> void* {
+    const void* position, base::SourceLocation at, void* out) -> void* {
+  const base::SourceLocationScope bound(at);
+  const ErasedReference& from = ErasedAt(reference);
+  from.AdmitStep();
+  const std::optional<std::int64_t> named = PositionNamedAt(position);
+  value::Formation formed{};
+  void* element = type.ElementMut(from.storage, named, formed);
+  const bool accumulated = false;
+  return BuildReference(
+      out,
+      from.Part(
+          element, formed,
+          PartPath::Written(support::PartStep::kElement, named), accumulated));
+}
+auto ReferDynamicArrayElement(
+    const void* reference, const value::DynamicArrayType& type,
+    const void* position, base::SourceLocation at, void* out) -> void* {
   const base::SourceLocationScope bound(at);
   const ErasedReference& from = ErasedAt(reference);
   from.AdmitStep();
   value::Formation formed{};
-  void* element = type.ElementMut(from.storage, position, formed);
+  void* element = FoundElementMut(type, from.storage, position, formed);
   const bool accumulated = false;
   return BuildReference(
-      out, from.Part(
-               element, formed,
-               PartPath::Written(support::PartStep::kElement, position),
-               accumulated));
+      out, from.Part(element, formed, PartPath::Inexact(), accumulated));
+}
+// The queue a reference names kept whole, as its type copies it, before a
+// step into it at `position` that appends an element, and whether the open
+// interval accumulated that.
+auto KeepQueueBeforeAppend(
+    const ErasedReference& from, const value::QueueType& type,
+    const void* position) -> bool {
+  return QueueStepAppends(from.storage, PositionNamedAt(position)) &&
+         WrittenPartThrough(from).BeforeModify(
+             PartPath{}, [&](EffectStorage& into) {
+               return NewOriginal<LaidOutOriginal>(
+                   into, type.Type(), from.storage);
+             });
 }
 
-// Stores each of a literal's entries under the index it names (LRM 7.9.11). An
-// entry is the product of the two, of `entry_type`, which states each one's
-// type, so nothing here converts either.
-void StoreLiteralEntries(
-    value::RuntimeAssociativeArray& array, void* entries,
-    std::uint64_t entries_count, const value::TupleType& entry_type) {
-  const std::span<const void* const> handles =
-      SpanAt<const void* const>(entries, entries_count);
-  const value::TupleComponent& index = entry_type.Components()[0];
-  for (const void* entry : handles) {
-    const void* const stated = entry_type.ComponentAt(entry, 0);
-    // A wildcard index is held with the type it was written in (LRM 7.8.1),
-    // which is the type it is stored and compared by.
-    if (index.type == &value::lyra_rt_wildcard_index_value_type) {
-      const auto& held = *static_cast<const value::AnyValue*>(stated);
-      array.Store(
-          value::IndexView{.bytes = held.Bytes(), .type = &held.Type()},
-          entry_type.ComponentAt(entry, 1));
-      continue;
-    }
-    array.Store(
-        value::IndexView{.bytes = stated, .type = index.type},
-        entry_type.ComponentAt(entry, 1));
+auto ReferQueueElement(
+    const void* reference, const value::QueueType& type, const void* position,
+    base::SourceLocation at, void* out) -> void* {
+  const base::SourceLocationScope bound(at);
+  const ErasedReference& from = ErasedAt(reference);
+  from.AdmitStep();
+  const bool accumulated = KeepQueueBeforeAppend(from, type, position);
+  value::Formation formed{};
+  void* element = FoundElementMut(type, from.storage, position, formed);
+  return BuildReference(
+      out, from.Part(element, formed, PartPath::Inexact(), accumulated));
+}
+
+// The same, leased: a call's binding to an element of a dynamic array or a
+// queue, which the array cannot then end before the call returns (LRM 13.5.2):
+// a dynamic array's generation keeps the count of its leases, and a queue's
+// element keeps it in its own storage. A position naming no element names
+// nothing to lease.
+auto ReferDynamicArrayElementLeased(
+    const void* reference, const value::DynamicArrayType& type,
+    const void* position, base::SourceLocation at, void* out) -> void* {
+  const base::SourceLocationScope bound(at);
+  const ErasedReference& from = ErasedAt(reference);
+  from.AdmitStep();
+  value::Formation formed{};
+  void* element = FoundElementMut(type, from.storage, position, formed);
+  const bool accumulated = false;
+  const ErasedReference part =
+      from.Part(element, formed, PartPath::Inexact(), accumulated);
+  auto* leased = static_cast<LeasedReference*>(out);
+  if (formed == value::Formation::kNowhere) {
+    return std::construct_at(leased, StorageLease{}, part);
   }
+  return std::construct_at(
+      leased,
+      StorageLease(
+          value::DynamicArrayLease(
+              *static_cast<const value::DynamicArrayCore*>(from.storage),
+              element)),
+      part);
 }
-
-// The element count `new[N]` asks for (LRM 7.5.1), which the design computes,
-// so a negative one is its own failure.
-auto NewCount(std::int64_t count, base::SourceLocation at) -> std::size_t {
-  if (count < 0) {
-    const base::SourceLocationScope bound(at);
-    throw SimulationError(
-        "the size given to a dynamic array's new[] is negative");
+auto ReferQueueElementLeased(
+    const void* reference, const value::QueueType& type, const void* position,
+    base::SourceLocation at, void* out) -> void* {
+  const base::SourceLocationScope bound(at);
+  const ErasedReference& from = ErasedAt(reference);
+  from.AdmitStep();
+  const bool accumulated = KeepQueueBeforeAppend(from, type, position);
+  value::Formation formed{};
+  void* element = FoundElementMut(type, from.storage, position, formed);
+  const ErasedReference part =
+      from.Part(element, formed, PartPath::Inexact(), accumulated);
+  auto* leased = static_cast<LeasedReference*>(out);
+  if (formed == value::Formation::kNowhere) {
+    return std::construct_at(leased, StorageLease{}, part);
   }
-  return static_cast<std::size_t>(count);
-}
-
-// A literal's element handles repeated `count` times (LRM 10.9.1). An
-// enumerated element list is this with a count of one, which is why a uniform
-// array, a replicated pattern and a plain list all reach one entry. Each handle
-// is an element where the literal laid it out, which the container copies.
-auto ReplicateHandles(void* unit, std::uint64_t unit_count, std::int64_t count)
-    -> std::vector<const void*> {
-  const std::span<const void* const> handles =
-      SpanAt<const void* const>(unit, unit_count);
-  std::vector<const void*> collected;
-  collected.reserve(unit_count * static_cast<std::size_t>(count));
-  for (std::int64_t i = 0; i < count; ++i) {
-    collected.insert(collected.end(), handles.begin(), handles.end());
-  }
-  return collected;
-}
-
-// An array's elements in its own order, each where it lies (LRM 7.6), for a
-// container built from or extended by them, which copies each. The array is of
-// `type`, one of the kinds whose parts are ordered by position.
-auto ElementHandles(const void* array, const value::ValueType& type)
-    -> std::vector<const void*> {
-  const std::size_t count = type.PartCount(array);
-  std::vector<const void*> handles;
-  handles.reserve(count);
-  for (std::size_t position = 0; position < count; ++position) {
-    handles.push_back(type.PartAt(array, position));
-  }
-  return handles;
-}
-
-auto ElementHandles(const void* array, const void* type)
-    -> std::vector<const void*> {
-  return ElementHandles(array, TypeAt(type));
-}
-
-template <typename Container>
-auto ElementHandles(const Container& array) -> std::vector<const void*> {
-  return ElementHandles(&array, value::LibraryTypeOf<Container>());
+  return std::construct_at(
+      leased,
+      StorageLease(value::QueueLease(type.ElementType().Type(), element)),
+      part);
 }
 
 // What a body hands over when something longer-lived takes a closure: the box
@@ -1404,35 +1444,12 @@ auto IntegralFormatArg(const void* value, value::IntegralShape shape)
   return arg;
 }
 
-// The order an LRM 7.12.2 sort is handed, as the value layer takes it. The
-// closure is borrowed rather than taken: the sort asks it only before
-// returning, while the frame that made it is still alive.
-auto BorrowedOrder(void* order)
-    -> base::FunctionRef<lyra::support::OrderSignature> {
-  return Borrow<lyra::support::OrderSignature>(
-      *static_cast<ClosureValue*>(order));
-}
-
 // A value of one of the library's own kinds, held with its type.
 template <typename T>
 auto Held(T value) -> value::AnyValue {
   return value::AnyValue::Built(value::LibraryTypeOf<T>(), [&](void* out) {
     std::construct_at(static_cast<T*>(out), std::move(value));
   });
-}
-
-// A value laid out by its type that the runtime holds, which already holds it
-// with the type it was handed over with, so it is given up as it stands.
-auto Held(value::LaidOutValue laid_out) -> value::AnyValue {
-  return std::move(laid_out).IntoAnyValue();
-}
-
-// The components of a completion holding the one value `value`.
-template <typename T>
-auto Single(T value) -> std::vector<value::AnyValue> {
-  std::vector<value::AnyValue> components;
-  components.push_back(Held(std::move(value)));
-  return components;
 }
 
 // A call that answers with more than one value completes with the product of
@@ -1455,7 +1472,7 @@ auto EmplaceCompletion(
           "a completion's component is a value of a type its tuple type does "
           "not state -- please report this as a bug");
     }
-    component.Type().Move(component.Bytes(), type.ComponentAt(out, i));
+    std::move(component).RelocateInto(type.ComponentAt(out, i));
   }
   return out;
 }
@@ -1532,47 +1549,8 @@ auto EmplaceWithWords(
         "a completion is built from components its type does not state -- "
         "please report this as a bug");
   }
-  leading.Type().Move(leading.Bytes(), type.ComponentAt(out, 0));
+  std::move(leading).RelocateInto(type.ComponentAt(out, 0));
   second.StoreTo(type.ComponentAt(out, 1));
-  return out;
-}
-
-// The SV int a traversal answers with and the index it visited (LRM 7.9.4 --
-// 7.9.7), the visited index being the probe itself where the array holds no
-// such neighbour.
-auto EmplaceVisited(
-    void* out, const value::TupleType& type, const value::AnyValue* index,
-    const void* probe, const void* probe_type) -> void* {
-  const bool found = index != nullptr;
-  std::vector<value::AnyValue> components;
-  components.push_back(Held(value::Int::FromBool(found)));
-  components.push_back(found ? *index : OwnedCopy(probe, probe_type));
-  return EmplaceCompletion(out, type, std::move(components));
-}
-
-// The least or greatest index an array holds (LRM 20.7), built in `out` as a
-// value of `answer_type`, the integral type the query answers at, which need
-// not be the index type; where the array holds none, that type's default,
-// which is the 'x LRM 20.7 requires, since the query answers a 4-state type.
-auto IndexInto(void* out, const value::AnyValue* index, const void* answer_type)
-    -> void* {
-  const value::IntegralValueType* answered = TypeAt(answer_type).AsIntegral();
-  const value::IntegralValueType* indexed =
-      index == nullptr ? nullptr : index->Type().AsIntegral();
-  if (answered == nullptr || (index != nullptr && indexed == nullptr)) {
-    throw InternalError(
-        "an array query answers an integral index (LRM 20.7) -- please "
-        "report this as a bug");
-  }
-  value::WrittenWords answer(answered->Shape());
-  if (index == nullptr) {
-    value::FillDefault(answer.MutableView());
-  } else {
-    const value::LoadedWords key =
-        value::LoadedWords::Load(index->Bytes(), indexed->Shape());
-    value::Convert(answer.MutableView(), key.View());
-  }
-  answer.StoreTo(out);
   return out;
 }
 
@@ -1606,239 +1584,6 @@ auto EmplaceEnumerationMember(
   }
   landed.StoreTo(out);
   return out;
-}
-
-// The memory tasks (LRM 21.4, 21.5) over the memories this backend holds,
-// whose words are integral values where they lie: a token is parsed at the
-// type of the word it replaces, and a word is written out through its planes.
-// Each memory is read into a copy, which the load answers with: a fixed-size
-// one arrives as that copy, the entry having made it of the caller's bytes.
-void StoreParsed(
-    value::MemoryWord word, std::string_view token, unsigned base) {
-  value::ScopedWordsWrite parsed(word.bytes, word.type->Shape());
-  value::FromDigits(parsed.MutableView(), MemoryRadix(base), token);
-}
-
-auto RenderedWord(value::ConstMemoryWord word, unsigned base) -> std::string {
-  const value::LoadedWords words = word.type->Load(word.bytes);
-  return RenderedMemoryWord(words.View(), base);
-}
-
-auto ReadUnpackedMemory(
-    RuntimeEffects& runtime, value::LaidOutValue loaded,
-    const value::String& filename, std::span<const value::UnpackedRange> dims,
-    std::int64_t base, std::int64_t start, std::optional<std::int64_t> finish,
-    const WordValues& values, base::SourceLocation at) -> value::LaidOutValue {
-  const base::SourceLocationScope bound(at);
-  const auto radix = static_cast<unsigned>(base);
-  ReadMemGridCore(
-      runtime, filename, radix, dims[0].Low(), dims[0].High(),
-      detail::InnerLeafCount(dims.subspan(1)), start, finish, values,
-      [&](std::int64_t top, std::size_t ordinal, std::string_view token) {
-        StoreParsed(
-            value::MemoryLeaf(loaded, dims, top, ordinal), token, radix);
-      });
-  return loaded;
-}
-
-void WriteUnpackedMemory(
-    RuntimeEffects& runtime, const value::FixedArrayView& src,
-    const value::String& filename, std::span<const value::UnpackedRange> dims,
-    std::int64_t base, std::int64_t start, std::optional<std::int64_t> finish,
-    base::SourceLocation at) {
-  const base::SourceLocationScope bound(at);
-  const auto radix = static_cast<unsigned>(base);
-  WriteMemGridCore(
-      runtime, filename, radix, dims[0].Low(), dims[0].High(),
-      detail::InnerLeafCount(dims.subspan(1)), start, finish,
-      [&](std::int64_t top, std::size_t ordinal) {
-        return RenderedWord(value::MemoryLeaf(src, dims, top, ordinal), radix);
-      });
-}
-
-// A dynamic array or a queue, addressed `[0, size-1]` with one word per
-// address (LRM 21.4.1).
-template <typename Container>
-auto ReadFlatMemory(
-    RuntimeEffects& runtime, const Container& dest,
-    const value::String& filename, std::int64_t base, std::int64_t start,
-    std::optional<std::int64_t> finish, const WordValues& values,
-    base::SourceLocation at) -> Container {
-  const base::SourceLocationScope bound(at);
-  Container loaded = dest;
-  const auto radix = static_cast<unsigned>(base);
-  ReadMemGridCore(
-      runtime, filename, radix, 0,
-      static_cast<std::int64_t>(loaded.Count()) - 1, 1, start, finish, values,
-      [&](std::int64_t address, std::size_t, std::string_view token) {
-        StoreParsed(
-            value::MemoryWordOf(
-                loaded.ElementType().Type(),
-                loaded.ElementAt(static_cast<std::size_t>(address))),
-            token, radix);
-      });
-  return loaded;
-}
-
-template <typename Container>
-void WriteFlatMemory(
-    RuntimeEffects& runtime, const Container& src,
-    const value::String& filename, std::int64_t base, std::int64_t start,
-    std::optional<std::int64_t> finish, base::SourceLocation at) {
-  const base::SourceLocationScope bound(at);
-  const auto radix = static_cast<unsigned>(base);
-  WriteMemGridCore(
-      runtime, filename, radix, 0, static_cast<std::int64_t>(src.Count()) - 1,
-      1, start, finish, [&](std::int64_t address, std::size_t) {
-        return RenderedWord(
-            value::MemoryWordOf(
-                src.ElementType().Type(),
-                src.ElementAt(static_cast<std::size_t>(address))),
-            radix);
-      });
-}
-
-// An associative memory, addressed by key (LRM 21.4.1). The keys a load builds
-// are of the index type the array was declared with, which arrives beside the
-// call, so each compares equal to the key an ordinary access builds.
-auto ReadKeyedMemory(
-    RuntimeEffects& runtime, const value::RuntimeAssociativeArray& dest,
-    const value::String& filename, std::int64_t base, std::int64_t start,
-    std::optional<std::int64_t> finish, const void* key_type,
-    const WordValues& values, base::SourceLocation at)
-    -> value::RuntimeAssociativeArray {
-  const base::SourceLocationScope bound(at);
-  value::RuntimeAssociativeArray loaded = dest;
-  const auto radix = static_cast<unsigned>(base);
-  const value::IntegralValueType& index_type = IntegralTypeAt(key_type);
-  ReadMemKeyedCore(
-      runtime, filename, radix, start, finish, values,
-      [&](std::int64_t key, std::string_view token) {
-        value::WrittenWords words(index_type.Shape());
-        value::FromInt(words.MutableView(), key);
-        const value::AnyValue index = value::AnyValue::Built(
-            index_type.Type(), [&](void* out) { words.StoreTo(out); });
-        value::Formation formed{};
-        void* word = loaded.ElementMut(
-            value::IndexView{
-                .bytes = index.Bytes(), .type = &index_type.Type()},
-            formed);
-        StoreParsed(
-            value::MemoryWordOf(loaded.ElementType().Type(), word), token,
-            radix);
-      });
-  return loaded;
-}
-
-void WriteKeyedMemory(
-    RuntimeEffects& runtime, const value::RuntimeAssociativeArray& src,
-    const value::String& filename, std::int64_t base, std::int64_t start,
-    std::optional<std::int64_t> finish, base::SourceLocation at) {
-  const base::SourceLocationScope bound(at);
-  const auto radix = static_cast<unsigned>(base);
-  std::vector<RenderedMemoryEntry> entries;
-  for (const auto& [index, word] : src.Entries()) {
-    const value::ConstMemoryWord key =
-        value::MemoryWordOf(index->Type(), index->Bytes());
-    entries.push_back(
-        RenderedMemoryEntry{
-            .key = IntOf(key.type->Load(key.bytes)),
-            .key_text = RenderedWord(key, 16U),
-            .word_text = RenderedWord(
-                value::MemoryWordOf(src.ElementType().Type(), word), radix)});
-  }
-  WriteMemKeyedCore(runtime, filename, radix, start, finish, entries);
-}
-
-// A DPI-C open array's image (Annex H.12) of an actual this backend hands over
-// erased, and the write-back into one. Each level is reached through its type's
-// ordered parts in the image's C layout order, one level per unpacked
-// dimension, and the leaves there are integral values where they lie, read and
-// written through their planes.
-auto ImageLeafType(const value::ValueType& type)
-    -> const value::IntegralValueType& {
-  const value::IntegralValueType* leaf = type.AsIntegral();
-  if (leaf == nullptr) {
-    throw InternalError(
-        "an open array's element is an integral value (LRM 35.5.6.1) -- "
-        "please report this as a bug");
-  }
-  return *leaf;
-}
-
-// The type of one element of the actual `level`, a value of `type`, under its
-// `dimensions` unpacked layers. A fixed-size layer holds at least one element
-// (LRM 7.4.2), which is what the layer below is read through.
-auto ImageElementType(
-    const void* level, const value::ValueType& type, std::size_t dimensions)
-    -> const value::IntegralValueType& {
-  if (dimensions == 0) {
-    return ImageLeafType(type);
-  }
-  if (type.PartCount(level) == 0) {
-    throw InternalError(
-        "an open array's actual holds an element under each of its unpacked "
-        "dimensions (LRM 7.4.2) -- please report this as a bug");
-  }
-  return ImageElementType(
-      type.PartAt(level, 0), type.PartType(level), dimensions - 1);
-}
-
-void FillImage(
-    value::DpiOpenArray& image, const void* level, const value::ValueType& type,
-    std::size_t dimension, std::size_t dimensions, std::size_t& position) {
-  if (dimension == dimensions) {
-    const value::LoadedWords words = ImageLeafType(type).Load(level);
-    image.WriteElement(position, words.View());
-    ++position;
-    return;
-  }
-  const value::ValueType& part = type.PartType(level);
-  for (std::size_t p = 0; p < type.PartCount(level); ++p) {
-    FillImage(
-        image, type.PartAt(level, image.OrdinalAt(dimension, p)), part,
-        dimension + 1, dimensions, position);
-  }
-}
-
-// A value of `type` laid out in `out` that an image is read back into: a
-// fixed-size unpacked array under each of its `dimensions` layers, and under
-// them an integral leaf (LRM 35.5.6.1), laid out clear since the image then
-// writes every one.
-void BuildImageShape(
-    const value::ValueType& type, void* out, std::size_t dimensions) {
-  if (dimensions == 0) {
-    value::WrittenWords(ImageLeafType(type).Shape()).StoreTo(out);
-    return;
-  }
-  const value::FixedArrayType* array = type.AsFixedArray();
-  if (array == nullptr) {
-    throw InternalError(
-        "an open array's write-back is a fixed-size unpacked array under each "
-        "of its unpacked dimensions -- please report this as a bug");
-  }
-  array->BuildEach(out, [&](std::size_t, void* element) {
-    BuildImageShape(array->ElementType().Type(), element, dimensions - 1);
-  });
-}
-
-void ReadImageBack(
-    const value::DpiOpenArray& image, void* level, const value::ValueType& type,
-    std::size_t dimension, std::size_t dimensions, std::size_t& position) {
-  if (dimension == dimensions) {
-    {
-      value::ScopedWordsWrite words(level, ImageLeafType(type).Shape());
-      image.ReadElement(position, words.MutableView());
-    }
-    ++position;
-    return;
-  }
-  const value::ValueType& part = type.PartType(level);
-  for (std::size_t p = 0; p < type.PartCount(level); ++p) {
-    ReadImageBack(
-        image, type.PartAt(level, image.OrdinalAt(dimension, p)), part,
-        dimension + 1, dimensions, position);
-  }
 }
 
 // The layouts an integral value no wider than a word has, each named by the
@@ -2054,8 +1799,7 @@ using lyra::runtime::ArmWholeVariable;
 using lyra::runtime::ArrayAt;
 using lyra::runtime::ArrayTypeAt;
 using lyra::runtime::AssertionControl;
-using lyra::runtime::AssignDesignatedArraySlice;
-using lyra::runtime::AssignDesignatedSlice;
+using lyra::runtime::AssociativeCoreAt;
 using lyra::runtime::AttemptsOf;
 using lyra::runtime::BindPropertyEvaluation;
 using lyra::runtime::Bit16;
@@ -2088,8 +1832,9 @@ using lyra::runtime::Delay;
 using lyra::runtime::DelayReal;
 using lyra::runtime::DelayTicks;
 using lyra::runtime::DelayTicksReal;
-using lyra::runtime::DesignateArrayElement;
-using lyra::runtime::DesignateElement;
+using lyra::runtime::DesignateAssociativeArrayElement;
+using lyra::runtime::DesignateFixedArrayElement;
+using lyra::runtime::DesignateFoundElement;
 using lyra::runtime::DesignationAt;
 using lyra::runtime::DiagnosticDispatcher;
 using lyra::runtime::DriveFromNet;
@@ -2112,6 +1857,7 @@ using lyra::runtime::DumpPortsOn;
 using lyra::runtime::DumpVarsLevels;
 using lyra::runtime::DumpVarsOf;
 using lyra::runtime::DumpVarsOfVariable;
+using lyra::runtime::DynamicArrayTypeAt;
 using lyra::runtime::Emplace;
 using lyra::runtime::EndClosure;
 using lyra::runtime::EnterCancellationTarget;
@@ -2174,6 +1920,7 @@ using lyra::runtime::ProcessSelf;
 using lyra::runtime::ProcessStatus;
 using lyra::runtime::ProcessSuspend;
 using lyra::runtime::ProgramLifetime;
+using lyra::runtime::QueueStepAppends;
 using lyra::runtime::QueueTypeAt;
 using lyra::runtime::RaiseDeclinedDeparture;
 using lyra::runtime::Read;
@@ -2183,9 +1930,13 @@ using lyra::runtime::RefArmSampling;
 using lyra::runtime::RefBeginTakeover;
 using lyra::runtime::RefDriveTakeover;
 using lyra::runtime::RefEndTakeover;
-using lyra::runtime::ReferArrayElement;
-using lyra::runtime::ReferElement;
-using lyra::runtime::ReferElementLeased;
+using lyra::runtime::ReferAssociativeArrayElement;
+using lyra::runtime::ReferAssociativeArrayElementLeased;
+using lyra::runtime::ReferDynamicArrayElement;
+using lyra::runtime::ReferDynamicArrayElementLeased;
+using lyra::runtime::ReferFixedArrayElement;
+using lyra::runtime::ReferQueueElement;
+using lyra::runtime::ReferQueueElementLeased;
 using lyra::runtime::ReferToCell;
 using lyra::runtime::ReferToProperty;
 using lyra::runtime::ReferToStorage;
@@ -2248,9 +1999,7 @@ using lyra::value::MakeFormatArg;
 using lyra::value::ObjectRef;
 using lyra::value::PrintItem;
 using lyra::value::Real;
-using lyra::value::RuntimeAssociativeArray;
-using lyra::value::RuntimeDynamicArray;
-using lyra::value::RuntimeQueue;
+using lyra::value::Relocate;
 using lyra::value::ShortReal;
 using lyra::value::String;
 using lyra::value::TimeFormat;
@@ -2340,28 +2089,15 @@ auto lyra_rt_file_read(
       out, lyra::runtime::TupleTypeAt(answer_type), read, read_into);
 }
 
-auto lyra_rt_file_read_memory(
-    void* files, const void* dest, const void* dest_type, std::int64_t fd,
-    void* bounds, std::uint64_t bounds_count, std::int64_t start,
-    std::int64_t count, const void* answer_type, void* out) -> void* {
-  LaidOutValue memory = OwnedLaidOutCopy(dest, dest_type);
-  const std::vector<UnpackedRange> dims = lyra::value::UnpackedRangesOf(
-      SpanAt<const std::int64_t>(bounds, bounds_count));
-  const UnpackedRange range = dims.front();
-  const lyra::value::IntegralValueType& word_type =
-      *lyra::value::MemoryLeaf(memory, dims, range.Low(), 0).type;
-  const std::int32_t read = static_cast<FileTable*>(files)->ReadMemoryWords(
-      fd, word_type.Shape().width, range, start, count,
-      [&](std::int64_t sv, std::span<const char> bytes) {
-        lyra::value::WrittenWords word(word_type.Shape());
-        lyra::runtime::ReadBigEndian(word.MutableView(), bytes);
-        word.StoreTo(lyra::value::MemoryLeaf(memory, dims, sv, 0).bytes);
-      });
-  std::vector<lyra::value::AnyValue> components;
-  components.push_back(lyra::runtime::Held(lyra::value::Int::FromInt(read)));
-  components.push_back(lyra::runtime::Held(std::move(memory)));
-  return lyra::runtime::EmplaceCompletion(
-      out, lyra::runtime::TupleTypeAt(answer_type), std::move(components));
+auto lyra_rt_file_read_words(
+    void* files, std::int64_t fd, void* bounds, std::uint64_t bounds_count,
+    std::int64_t start, std::int64_t count, std::int64_t word_width, void* out)
+    -> void* {
+  return std::construct_at(
+      static_cast<lyra::runtime::MemoryWords*>(out),
+      static_cast<FileTable*>(files)->ReadWords(
+          fd, SpanAt<const std::int64_t>(bounds, bounds_count), start, count,
+          word_width));
 }
 
 auto lyra_rt_file_ungetc(
@@ -2715,14 +2451,8 @@ auto lyra_rt_randomize_scope(void* runtime, const void* location, void* out)
           *static_cast<RuntimeEffects*>(runtime), SourceLocationAt(location)));
 }
 
-void lyra_rt_randomize_list(
-    const void* problem, const void* reference, const void* value,
-    const void* value_type) {
-  const auto& p = Read<ObjectRef>(problem);
-  const lyra::runtime::ErasedReference& variable = ErasedAt(reference);
-  lyra::runtime::RandomizeListErased(
-      p, variable, value, lyra::runtime::TypeAt(value_type),
-      lyra::runtime::NamedMembers(p, variable), std::nullopt);
+void lyra_rt_randomize_list(const void* problem, const void* reference) {
+  lyra::runtime::RandomWalkList(Read<ObjectRef>(problem), ErasedAt(reference));
 }
 
 void lyra_rt_randomize_constrain(const void* problem) {
@@ -2740,26 +2470,42 @@ void lyra_rt_constraint_members(
       Read<Enumeration>(enumeration));
 }
 
-void lyra_rt_constraint_rand(
-    const void* problem, const void* reference, const void* value,
-    const void* value_type) {
-  const auto& p = Read<ObjectRef>(problem);
-  const lyra::runtime::ErasedReference& variable = ErasedAt(reference);
-  lyra::runtime::ConstraintDeclareErased(
-      p, variable, value, lyra::runtime::TypeAt(value_type),
-      lyra::support::RandomQualifier::kRand,
-      lyra::runtime::DeclaredWhole(p, variable));
+void lyra_rt_constraint_rand(const void* problem, const void* reference) {
+  lyra::runtime::RandomWalkDeclare(
+      Read<ObjectRef>(problem), ErasedAt(reference),
+      lyra::support::RandomQualifier::kRand);
 }
 
-void lyra_rt_constraint_randc(
-    const void* problem, const void* reference, const void* value,
-    const void* value_type) {
-  const auto& p = Read<ObjectRef>(problem);
-  const lyra::runtime::ErasedReference& variable = ErasedAt(reference);
-  lyra::runtime::ConstraintDeclareErased(
-      p, variable, value, lyra::runtime::TypeAt(value_type),
-      lyra::support::RandomQualifier::kRandc,
-      lyra::runtime::DeclaredWhole(p, variable));
+void lyra_rt_constraint_randc(const void* problem, const void* reference) {
+  lyra::runtime::RandomWalkDeclare(
+      Read<ObjectRef>(problem), ErasedAt(reference),
+      lyra::support::RandomQualifier::kRandc);
+}
+
+void lyra_rt_random_walk_fixed_array(const void* problem) {
+  lyra::runtime::RandomWalkFixedArray(Read<ObjectRef>(problem));
+}
+void lyra_rt_random_walk_resizable_array(
+    const void* problem, const void* reference, const void* type) {
+  const lyra::runtime::ErasedReference& array = ErasedAt(reference);
+  lyra::runtime::RandomWalkResizableArray(
+      Read<ObjectRef>(problem), array,
+      lyra::runtime::ResizeOf(array, lyra::runtime::TypeAt(type)));
+}
+void lyra_rt_random_walk_enter(const void* problem, std::int64_t position) {
+  lyra::runtime::RandomWalkEnter(Read<ObjectRef>(problem), position);
+}
+void lyra_rt_random_walk_leave(const void* problem) {
+  lyra::runtime::RandomWalkLeave(Read<ObjectRef>(problem));
+}
+void lyra_rt_random_walk_leaf(
+    const void* problem, const void* reference, const void* type) {
+  lyra::runtime::RandomWalkLeaf(
+      Read<ObjectRef>(problem), ErasedAt(reference),
+      &lyra::runtime::TypeAt(type));
+}
+void lyra_rt_random_walk_end(const void* problem) {
+  lyra::runtime::RandomWalkEnd(Read<ObjectRef>(problem));
 }
 
 auto lyra_rt_constraint_variable(
@@ -2777,16 +2523,9 @@ auto lyra_rt_constraint_constant(
       Read<ObjectRef>(problem), value, lyra::runtime::TypeAt(value_type));
 }
 
-void lyra_rt_randomize_nested(
-    const void* problem, const void* reference, const void* value,
-    const void* value_type) {
-  const lyra::runtime::ErasedReference& handle = ErasedAt(reference);
-  lyra::runtime::RandomizeNestedErased(
-      Read<ObjectRef>(problem), handle, value,
-      lyra::runtime::TypeAt(value_type),
-      lyra::runtime::RandomVariablePath{
-          .declared = handle.storage, .positions = {}},
-      true);
+void lyra_rt_randomize_nested(const void* problem, const void* reference) {
+  lyra::runtime::RandomWalkNested(
+      Read<ObjectRef>(problem), ErasedAt(reference));
 }
 
 auto lyra_rt_constraint_block_enabled(void* object, const void* name) -> bool {
@@ -2982,11 +2721,9 @@ void lyra_rt_constraint_unique_member(
 }
 
 void lyra_rt_constraint_unique_array(
-    const void* problem, std::int64_t set, const void* reference,
-    const void* value, const void* value_type) {
-  lyra::runtime::ConstraintUniqueArrayErased(
-      Read<ObjectRef>(problem), set, ErasedAt(reference), value,
-      lyra::runtime::TypeAt(value_type));
+    const void* problem, std::int64_t set, const void* reference) {
+  lyra::runtime::RandomWalkUnique(
+      Read<ObjectRef>(problem), set, ErasedAt(reference));
 }
 
 void lyra_rt_constraint_unique_require(
@@ -2995,11 +2732,10 @@ void lyra_rt_constraint_unique_require(
 }
 
 auto lyra_rt_constraint_array_size(
-    const void* problem, const void* reference, const void* value,
-    const void* value_type) -> std::int64_t {
-  return lyra::runtime::ConstraintArraySizeErased(
-      Read<ObjectRef>(problem), ErasedAt(reference),
-      lyra::runtime::TypeAt(value_type).PartCount(value));
+    const void* problem, const void* reference, std::int64_t count)
+    -> std::int64_t {
+  return lyra::runtime::ConstraintArraySize(
+      Read<ObjectRef>(problem), ErasedAt(reference), count);
 }
 
 void lyra_rt_constraint_want(const void* problem, std::int64_t variable) {
@@ -3011,20 +2747,20 @@ auto lyra_rt_randomize_settle_first(const void* problem) -> bool {
 }
 
 void lyra_rt_rand_mode_set(
-    const void* declared, const void* value, const void* value_type,
-    const void* part, bool on) {
-  lyra::runtime::RandModeSetErased(
-      ErasedAt(declared), value, lyra::runtime::TypeAt(value_type),
-      ErasedAt(part), on);
+    const void* declared, void* positions, std::uint64_t positions_count,
+    bool on) {
+  lyra::runtime::RandModeSet(
+      ErasedAt(declared),
+      SpanAt<const std::int64_t>(positions, positions_count), on);
 }
 
 auto lyra_rt_rand_mode_get(
-    const void* declared, const void* value, const void* value_type,
-    const void* part, void* out) -> void* {
+    const void* declared, void* positions, std::uint64_t positions_count,
+    void* out) -> void* {
   return Emplace(
-      out, lyra::runtime::RandModeGetErased(
-               ErasedAt(declared), value, lyra::runtime::TypeAt(value_type),
-               ErasedAt(part)));
+      out, lyra::runtime::RandModeGet(
+               ErasedAt(declared),
+               SpanAt<const std::int64_t>(positions, positions_count)));
 }
 
 void lyra_rt_object_rand_mode_set(void* object, bool on) {
@@ -3088,24 +2824,6 @@ auto lyra_rt_laidout_shared_cell_make(const void* held_type, void* out)
     -> void* {
   return MakeSharedCell<LaidOutValue>(
       out, lyra::runtime::ElementTypeAt(held_type));
-}
-
-auto lyra_rt_dynarray_shared_cell_make(const void* element_type, void* out)
-    -> void* {
-  return MakeSharedCell<RuntimeDynamicArray>(
-      out, lyra::runtime::ElementTypeAt(element_type));
-}
-
-auto lyra_rt_queue_shared_cell_make(const void* queue_type, void* out)
-    -> void* {
-  return MakeSharedCell<RuntimeQueue>(out, QueueTypeAt(queue_type));
-}
-
-auto lyra_rt_assocarray_shared_cell_make(
-    const void* key_index_order, const void* element_type, void* out) -> void* {
-  return MakeSharedCell<RuntimeAssociativeArray>(
-      out, lyra::runtime::IndexOrderAt(key_index_order),
-      lyra::runtime::ElementTypeAt(element_type));
 }
 
 auto lyra_rt_shared_pointer_deref(void* handle) -> void* {
@@ -4348,59 +4066,53 @@ auto lyra_rt_laidout_cell_refer(void* cell, void* out) -> void* {
   return ReferToCell<LaidOutValue>(cell, out);
 }
 
-auto lyra_rt_dynarray_cell_refer(void* cell, void* out) -> void* {
-  return ReferToCell<RuntimeDynamicArray>(cell, out);
-}
-auto lyra_rt_queue_cell_refer(void* cell, void* out) -> void* {
-  return ReferToCell<RuntimeQueue>(cell, out);
-}
-auto lyra_rt_assocarray_cell_refer(void* cell, void* out) -> void* {
-  return ReferToCell<RuntimeAssociativeArray>(cell, out);
-}
-
-auto lyra_rt_dynarray_refer_element(
-    const void* reference, const void* position, const void* location,
-    void* out) -> void* {
-  return ReferElement<RuntimeDynamicArray>(
-      reference, PositionNamedAt(position), SourceLocationAt(location), out);
-}
 auto lyra_rt_laidout_refer_element(
     const void* reference, const void* position, const void* location,
     const void* array_type, void* out) -> void* {
-  return ReferArrayElement(
-      reference, ArrayTypeAt(array_type), PositionNamedAt(position),
+  return ReferFixedArrayElement(
+      reference, ArrayTypeAt(array_type), position, SourceLocationAt(location),
+      out);
+}
+auto lyra_rt_laidout_dynamic_array_refer_element(
+    const void* reference, const void* position, const void* location,
+    const void* array_type, void* out) -> void* {
+  return ReferDynamicArrayElement(
+      reference, DynamicArrayTypeAt(array_type), position,
       SourceLocationAt(location), out);
 }
-auto lyra_rt_queue_refer_element(
+auto lyra_rt_laidout_queue_refer_element(
     const void* reference, const void* position, const void* location,
-    void* out) -> void* {
-  return ReferElement<RuntimeQueue>(
-      reference, PositionNamedAt(position), SourceLocationAt(location), out);
+    const void* array_type, void* out) -> void* {
+  return ReferQueueElement(
+      reference, QueueTypeAt(array_type), position, SourceLocationAt(location),
+      out);
 }
-auto lyra_rt_assocarray_refer_element(
-    const void* reference, const void* index, const void* index_type,
-    const void* location, void* out) -> void* {
-  return ReferElement<RuntimeAssociativeArray>(
-      reference, lyra::runtime::IndexAt(index, index_type),
+auto lyra_rt_laidout_assoc_refer_element(
+    const void* reference, const void* index, const void* location,
+    const void* array_type, void* out) -> void* {
+  return ReferAssociativeArrayElement(
+      reference, lyra::runtime::AssociativeArrayTypeAt(array_type), index,
       SourceLocationAt(location), out);
 }
-auto lyra_rt_dynarray_refer_element_leased(
+auto lyra_rt_laidout_dynamic_array_refer_element_leased(
     const void* reference, const void* position, const void* location,
-    void* out) -> void* {
-  return ReferElementLeased<RuntimeDynamicArray>(
-      reference, PositionNamedAt(position), SourceLocationAt(location), out);
+    const void* array_type, void* out) -> void* {
+  return ReferDynamicArrayElementLeased(
+      reference, DynamicArrayTypeAt(array_type), position,
+      SourceLocationAt(location), out);
 }
-auto lyra_rt_queue_refer_element_leased(
+auto lyra_rt_laidout_queue_refer_element_leased(
     const void* reference, const void* position, const void* location,
-    void* out) -> void* {
-  return ReferElementLeased<RuntimeQueue>(
-      reference, PositionNamedAt(position), SourceLocationAt(location), out);
+    const void* array_type, void* out) -> void* {
+  return ReferQueueElementLeased(
+      reference, QueueTypeAt(array_type), position, SourceLocationAt(location),
+      out);
 }
-auto lyra_rt_assocarray_refer_element_leased(
-    const void* reference, const void* index, const void* index_type,
-    const void* location, void* out) -> void* {
-  return ReferElementLeased<RuntimeAssociativeArray>(
-      reference, lyra::runtime::IndexAt(index, index_type),
+auto lyra_rt_laidout_assoc_refer_element_leased(
+    const void* reference, const void* index, const void* location,
+    const void* array_type, void* out) -> void* {
+  return ReferAssociativeArrayElementLeased(
+      reference, lyra::runtime::AssociativeArrayTypeAt(array_type), index,
       SourceLocationAt(location), out);
 }
 auto lyra_rt_laidout_refer_component(
@@ -4519,59 +4231,6 @@ void lyra_rt_laidout_ref_arm_sampling(void* reference) {
 auto lyra_rt_laidout_ref_sampled_get(void* reference, const void* location)
     -> const void* {
   return TailRefSampledGet<LaidOutValue>(reference, SourceLocationAt(location));
-}
-
-auto lyra_rt_dynarray_ref_get(void* reference) -> const void* {
-  return RefGet<RuntimeDynamicArray>(reference);
-}
-
-void lyra_rt_dynarray_ref_set(void* reference, const void* value) {
-  RefSet<RuntimeDynamicArray>(reference, value);
-}
-
-void lyra_rt_dynarray_ref_arm_sampling(void* reference) {
-  RefArmSampling<RuntimeDynamicArray>(reference);
-}
-
-auto lyra_rt_dynarray_ref_sampled_get(void* reference, const void* location)
-    -> const void* {
-  return RefSampledGet<RuntimeDynamicArray>(
-      reference, SourceLocationAt(location));
-}
-
-auto lyra_rt_queue_ref_get(void* reference) -> const void* {
-  return RefGet<RuntimeQueue>(reference);
-}
-
-void lyra_rt_queue_ref_set(void* reference, const void* value) {
-  RefSet<RuntimeQueue>(reference, value);
-}
-
-void lyra_rt_queue_ref_arm_sampling(void* reference) {
-  RefArmSampling<RuntimeQueue>(reference);
-}
-
-auto lyra_rt_queue_ref_sampled_get(void* reference, const void* location)
-    -> const void* {
-  return RefSampledGet<RuntimeQueue>(reference, SourceLocationAt(location));
-}
-
-auto lyra_rt_assocarray_ref_get(void* reference) -> const void* {
-  return RefGet<RuntimeAssociativeArray>(reference);
-}
-
-void lyra_rt_assocarray_ref_set(void* reference, const void* value) {
-  RefSet<RuntimeAssociativeArray>(reference, value);
-}
-
-void lyra_rt_assocarray_ref_arm_sampling(void* reference) {
-  RefArmSampling<RuntimeAssociativeArray>(reference);
-}
-
-auto lyra_rt_assocarray_ref_sampled_get(void* reference, const void* location)
-    -> const void* {
-  return RefSampledGet<RuntimeAssociativeArray>(
-      reference, SourceLocationAt(location));
 }
 
 auto lyra_rt_string_cell_get(void* cell) -> const void* {
@@ -4842,60 +4501,6 @@ auto lyra_rt_laidout_sampled_history_at(
     const void* history, std::int64_t ticks_back) -> const void* {
   return HandleTo(
       static_cast<const SampledHistory<LaidOutValue>*>(history)->At(
-          ticks_back));
-}
-
-void lyra_rt_dynarray_sampled_history_install(
-    void* history, const void* default_value, std::int64_t depth) {
-  static_cast<SampledHistory<RuntimeDynamicArray>*>(history)->Install(
-      Read<RuntimeDynamicArray>(default_value), depth);
-}
-
-void lyra_rt_dynarray_sampled_history_push(void* history, const void* value) {
-  static_cast<SampledHistory<RuntimeDynamicArray>*>(history)->Push(
-      Read<RuntimeDynamicArray>(value));
-}
-
-auto lyra_rt_dynarray_sampled_history_at(
-    const void* history, std::int64_t ticks_back) -> const void* {
-  return HandleTo(
-      static_cast<const SampledHistory<RuntimeDynamicArray>*>(history)->At(
-          ticks_back));
-}
-
-void lyra_rt_queue_sampled_history_install(
-    void* history, const void* default_value, std::int64_t depth) {
-  static_cast<SampledHistory<RuntimeQueue>*>(history)->Install(
-      Read<RuntimeQueue>(default_value), depth);
-}
-
-void lyra_rt_queue_sampled_history_push(void* history, const void* value) {
-  static_cast<SampledHistory<RuntimeQueue>*>(history)->Push(
-      Read<RuntimeQueue>(value));
-}
-
-auto lyra_rt_queue_sampled_history_at(
-    const void* history, std::int64_t ticks_back) -> const void* {
-  return HandleTo(
-      static_cast<const SampledHistory<RuntimeQueue>*>(history)->At(
-          ticks_back));
-}
-
-void lyra_rt_assocarray_sampled_history_install(
-    void* history, const void* default_value, std::int64_t depth) {
-  static_cast<SampledHistory<RuntimeAssociativeArray>*>(history)->Install(
-      Read<RuntimeAssociativeArray>(default_value), depth);
-}
-
-void lyra_rt_assocarray_sampled_history_push(void* history, const void* value) {
-  static_cast<SampledHistory<RuntimeAssociativeArray>*>(history)->Push(
-      Read<RuntimeAssociativeArray>(value));
-}
-
-auto lyra_rt_assocarray_sampled_history_at(
-    const void* history, std::int64_t ticks_back) -> const void* {
-  return HandleTo(
-      static_cast<const SampledHistory<RuntimeAssociativeArray>*>(history)->At(
           ticks_back));
 }
 
@@ -5723,216 +5328,112 @@ auto lyra_rt_laidout_value_cell_alloc(const void* held_type) noexcept -> void* {
       lyra::runtime::ElementTypeAt(held_type));
 }
 
-auto lyra_rt_dynamic_array_new(
-    std::int64_t size, const void* location, const void* answer_element_type,
-    void* out) -> void* {
-  return Emplace(
-      out,
-      RuntimeDynamicArray(
-          lyra::runtime::ElementTypeAt(answer_element_type),
-          lyra::runtime::NewCount(size, SourceLocationAt(location)), nullptr));
-}
-
-auto lyra_rt_dynamic_array_new_copy(
-    std::int64_t size, const void* src, const void* location,
-    const void* answer_element_type, void* out) -> void* {
-  return Emplace(
-      out, RuntimeDynamicArray(
-               lyra::runtime::ElementTypeAt(answer_element_type),
-               lyra::runtime::NewCount(size, SourceLocationAt(location)),
-               &Read<RuntimeDynamicArray>(src)));
-}
-
-auto lyra_rt_dynarray_default(const void* answer_element_type, void* out)
+auto lyra_rt_dynamic_array_construct(const void* element, void* out) noexcept
     -> void* {
-  return Emplace(
-      out, RuntimeDynamicArray::FromElements(
-               lyra::runtime::ElementTypeAt(answer_element_type), {}));
+  return std::construct_at(
+      static_cast<lyra::value::DynamicArrayCore*>(out),
+      lyra::value::DynamicArrayConstruct(
+          static_cast<const lyra::value::ValueType*>(element)));
 }
 
-auto lyra_rt_dynarray_from_list(
-    void* unit, std::uint64_t unit_count, std::int64_t count,
-    const void* location, const void* answer_element_type, void* out) -> void* {
-  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
-  return Emplace(
-      out, RuntimeDynamicArray::FromElements(
-               lyra::runtime::ElementTypeAt(answer_element_type),
-               lyra::runtime::ReplicateHandles(unit, unit_count, count)));
+auto lyra_rt_dynamic_array_generation(
+    const void* array, std::uint64_t count) noexcept -> void* {
+  return lyra::value::DynamicArrayGeneration(
+      *static_cast<const lyra::value::DynamicArrayCore*>(array), count);
 }
 
-auto lyra_rt_laidout_dynamic_array_from_array(
-    const void* source, const void* source_type,
-    const void* answer_element_type, void* out) -> void* {
-  return Emplace(
-      out, RuntimeDynamicArray::FromElements(
-               lyra::runtime::ElementTypeAt(answer_element_type),
-               lyra::runtime::ElementHandles(source, source_type)));
+void lyra_rt_dynamic_array_adopt(
+    void* array, void* data, std::uint64_t count) noexcept {
+  lyra::value::DynamicArrayAdopt(
+      *static_cast<lyra::value::DynamicArrayCore*>(array), data, count);
 }
 
-auto lyra_rt_queue_dynamic_array_from_array(
-    const void* source, const void* answer_element_type, void* out) -> void* {
-  return Emplace(
-      out, RuntimeDynamicArray::FromElements(
-               lyra::runtime::ElementTypeAt(answer_element_type),
-               lyra::runtime::ElementHandles(Read<RuntimeQueue>(source))));
+auto lyra_rt_dynamic_array_let_go(void* array) noexcept -> bool {
+  return lyra::value::DynamicArrayLetGo(
+      *static_cast<lyra::value::DynamicArrayCore*>(array));
 }
 
-// Reads the element at `position` where it lies. A position naming no element
-// reads the element default (LRM 7.4.5).
-auto lyra_rt_dynarray_element(const void* array, const void* position) -> const
-    void* {
-  return Read<RuntimeDynamicArray>(array).Element(PositionNamedAt(position));
+void lyra_rt_dynamic_array_free(void* array) noexcept {
+  lyra::value::DynamicArrayFree(
+      *static_cast<lyra::value::DynamicArrayCore*>(array));
 }
 
-auto lyra_rt_dynarray_element_mut(void* array, const void* position) -> void* {
-  lyra::value::Formation formed{};
-  return static_cast<RuntimeDynamicArray*>(array)->ElementMut(
-      PositionNamedAt(position), formed);
+auto lyra_rt_queue_construct(const void* element, void* out) noexcept -> void* {
+  return std::construct_at(
+      static_cast<lyra::value::QueueCore*>(out),
+      lyra::value::QueueConstruct(
+          static_cast<const lyra::value::ValueType*>(element)));
 }
 
-// LRM 7.5.3 `delete`, which empties the array where it lies.
-void lyra_rt_dynarray_delete(void* array) {
-  static_cast<RuntimeDynamicArray*>(array)->Delete();
+void lyra_rt_queue_reserve(void* queue, std::uint64_t count) noexcept {
+  lyra::value::QueueReserve(
+      *static_cast<lyra::value::QueueCore*>(queue), count);
 }
 
-auto lyra_rt_dynarray_element_slice(
-    const void* array, const void* start, std::int64_t count,
-    const void* answer_type, void* out) -> void* {
-  const auto& source = Read<RuntimeDynamicArray>(array);
-  return Emplace(
-      out, ArrayHolding(
-               ArrayTypeAt(answer_type),
-               source.SliceElements(PositionNamedAt(start), count)));
+void lyra_rt_queue_commit(
+    void* queue, std::uint64_t position, void* storage) noexcept {
+  lyra::value::QueueCommit(
+      *static_cast<lyra::value::QueueCore*>(queue), position, storage);
 }
 
-void lyra_rt_dynarray_assign_element_slice(
-    void* array, const void* start, std::int64_t count, const void* replacement,
-    const void* replacement_type) {
-  static_cast<RuntimeDynamicArray*>(array)->AssignSlice(
-      PositionNamedAt(start), count,
-      lyra::runtime::ElementHandles(replacement, replacement_type));
+void lyra_rt_queue_free_ring(void* queue) noexcept {
+  lyra::value::QueueFreeRing(*static_cast<lyra::value::QueueCore*>(queue));
 }
 
-auto lyra_rt_dynarray_size(const void* array, void* out) -> void* {
-  return Emplace(out, Read<RuntimeDynamicArray>(array).Size());
+void lyra_rt_queue_adopt(void* queue, void* from) noexcept {
+  lyra::value::QueueAdopt(
+      *static_cast<lyra::value::QueueCore*>(queue),
+      *static_cast<lyra::value::QueueCore*>(from));
 }
 
-auto lyra_rt_dynarray_eq(
-    const void* lhs, const void* rhs, const void* value_operations)
-    -> std::uint8_t {
-  return Compared(
-      Read<RuntimeDynamicArray>(lhs).Equal(
-          Read<RuntimeDynamicArray>(rhs),
-          lyra::runtime::ElementOperationsAt(value_operations)));
+void lyra_rt_queue_reverse(void* queue) noexcept {
+  lyra::value::QueueReverse(*static_cast<lyra::value::QueueCore*>(queue));
 }
 
-auto lyra_rt_dynarray_ne(
-    const void* lhs, const void* rhs, const void* value_operations)
-    -> std::uint8_t {
-  return Compared(
-      lyra::value::Inverted(
-          Read<RuntimeDynamicArray>(lhs).Equal(
-              Read<RuntimeDynamicArray>(rhs),
-              lyra::runtime::ElementOperationsAt(value_operations))));
+void lyra_rt_queue_grew_past_its_bound(const void* location) noexcept {
+  lyra::value::ReportQueueGrewPastItsBound(SourceLocationAt(location));
 }
 
-auto lyra_rt_dynarray_case_equal(
-    const void* lhs, const void* rhs, const void* value_operations, void* out)
-    -> void* {
-  return Emplace(
-      out, Read<RuntimeDynamicArray>(lhs).CaseEqual(
-               Read<RuntimeDynamicArray>(rhs),
-               lyra::runtime::ElementOperationsAt(value_operations)));
+void lyra_rt_queue_written_at_an_invalid_index(const void* location) noexcept {
+  lyra::value::ReportQueueWrittenAtAnInvalidIndex(SourceLocationAt(location));
 }
 
-auto lyra_rt_dynarray_merge_conditional(
-    const void* lhs, const void* rhs, const void* value_operations, void* out)
-    -> void* {
-  return Emplace(
-      out, Read<RuntimeDynamicArray>(lhs).MergeConditional(
-               Read<RuntimeDynamicArray>(rhs),
-               lyra::runtime::ElementOperationsAt(value_operations)));
-}
-
-auto lyra_rt_dynarray_cell_get(void* cell) -> const void* {
-  return &VariableAt<RuntimeDynamicArray>(cell).Get();
-}
-
-void lyra_rt_dynarray_cell_initialize(
-    void* cell, const void* prototype) noexcept {
-  VariableAt<RuntimeDynamicArray>(cell).Initialize(
-      Read<RuntimeDynamicArray>(prototype));
-}
-
-void lyra_rt_dynarray_cell_set(void* cell, const void* value) {
-  VariableAt<RuntimeDynamicArray>(cell).Set(Read<RuntimeDynamicArray>(value));
-}
-
-void lyra_rt_dynarray_cell_arm_sampling(void* cell) {
-  VariableAt<RuntimeDynamicArray>(cell).ArmSampling();
-}
-
-auto lyra_rt_dynarray_cell_sampled_get(void* cell, const void* location)
-    -> const void* {
-  return &VariableAt<RuntimeDynamicArray>(cell).SampledGet(
+void lyra_rt_assoc_read_at_an_invalid_index(const void* location) noexcept {
+  lyra::value::ReportAssociativeArrayReadAtAnInvalidIndex(
       SourceLocationAt(location));
 }
 
-auto lyra_rt_dynarray_cell_begin_takeover(
-    void* cell, std::int64_t level, std::int64_t first, std::int64_t count,
-    const void* location) -> std::int64_t {
-  return CellBeginTakeover<RuntimeDynamicArray>(
-      cell, level, first, count, SourceLocationAt(location));
+void lyra_rt_assoc_read_at_a_missing_entry(const void* location) noexcept {
+  lyra::value::ReportAssociativeArrayReadAtAMissingEntry(
+      SourceLocationAt(location));
 }
 
-auto lyra_rt_dynarray_cell_drive_takeover(
-    void* cell, std::int64_t level, std::int64_t generation, const void* value,
-    const void* location) -> bool {
-  return CellDriveTakeover<RuntimeDynamicArray>(
-      cell, level, generation, value, SourceLocationAt(location));
+void lyra_rt_assoc_written_at_an_invalid_index(const void* location) noexcept {
+  lyra::value::ReportAssociativeArrayWrittenAtAnInvalidIndex(
+      SourceLocationAt(location));
 }
 
-void lyra_rt_dynarray_cell_end_takeover(
-    void* cell, std::int64_t level, std::int64_t first, std::int64_t count,
-    const void* location) {
-  CellEndTakeover<RuntimeDynamicArray>(
-      cell, level, first, count, SourceLocationAt(location));
+auto lyra_rt_recycler_allocate(void* recycler) noexcept -> void* {
+  return lyra::value::RecyclerAllocate(
+      static_cast<lyra::value::Recycler*>(recycler));
 }
 
-auto lyra_rt_dynarray_ref_begin_takeover(
-    void* reference, std::int64_t level, std::int64_t first, std::int64_t count,
-    const void* location) -> std::int64_t {
-  return RefBeginTakeover<RuntimeDynamicArray>(
-      reference, level, first, count, SourceLocationAt(location));
+auto lyra_rt_default_placement_new(void* storage) noexcept -> void* {
+  return storage;
 }
 
-auto lyra_rt_dynarray_ref_drive_takeover(
-    void* reference, std::int64_t level, std::int64_t generation,
-    const void* value, const void* location) -> bool {
-  return RefDriveTakeover<RuntimeDynamicArray>(
-      reference, level, generation, value, SourceLocationAt(location));
-}
-
-void lyra_rt_dynarray_ref_end_takeover(
-    void* reference, std::int64_t level, std::int64_t first, std::int64_t count,
-    const void* location) {
-  RefEndTakeover<RuntimeDynamicArray>(
-      reference, level, first, count, SourceLocationAt(location));
-}
-
-auto lyra_rt_dynarray_value_cell_alloc(const void* element_type) noexcept
+auto lyra_rt_queue_unlink(void* queue, std::uint64_t position) noexcept
     -> void* {
-  return AllocateValueCell<RuntimeDynamicArray>(
-      lyra::runtime::ElementTypeAt(element_type));
+  return lyra::value::QueueUnlink(
+      *static_cast<lyra::value::QueueCore*>(queue), position);
 }
 
-void lyra_rt_dynarray_value_cell_store(void* cell, const void* value) noexcept {
-  ValueCellAt<RuntimeDynamicArray>(cell).Assign(
-      Read<RuntimeDynamicArray>(value));
-}
-
-auto lyra_rt_dynarray_value_cell_load(void* cell) noexcept -> void* {
-  return &ValueCellAt<RuntimeDynamicArray>(cell).Storage();
+// The positions a sort answers are 64-bit two-state integers, whose bytes are
+// the word each holds.
+void lyra_rt_queue_apply_order(void* queue, const void* order) noexcept {
+  lyra::value::QueueApplyOrder(
+      *static_cast<lyra::value::QueueCore*>(queue),
+      *static_cast<const lyra::value::DynamicArrayCore*>(order));
 }
 
 // LRM 10.9.1: an enumerated element list is the unit laid down once, and a
@@ -5958,44 +5459,6 @@ auto lyra_rt_laidout_from_elements(
   return out;
 }
 
-auto lyra_rt_dynarray_unpacked_array_from_array(
-    const void* source, const void* location, const void* answer_type,
-    void* out) -> void* {
-  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
-  return Emplace(
-      out,
-      ArrayFromElements(
-          ArrayTypeAt(answer_type),
-          lyra::runtime::ElementHandles(Read<RuntimeDynamicArray>(source))));
-}
-
-auto lyra_rt_queue_unpacked_array_from_array(
-    const void* source, const void* location, const void* answer_type,
-    void* out) -> void* {
-  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
-  return Emplace(
-      out, ArrayFromElements(
-               ArrayTypeAt(answer_type),
-               lyra::runtime::ElementHandles(Read<RuntimeQueue>(source))));
-}
-
-auto lyra_rt_laidout_merge_conditional(
-    const void* lhs, const void* rhs, const void* array_operations, void* out)
-    -> void* {
-  const lyra::value::ValueOperations& operations =
-      lyra::runtime::OperationsAt(array_operations);
-  const lyra::value::FixedArrayType& type = *operations.type->AsFixedArray();
-  const lyra::value::FixedArrayView left{.type = &type, .bytes = lhs};
-  const lyra::value::FixedArrayView right{.type = &type, .bytes = rhs};
-  const lyra::value::ElementType& element = left.ElementType();
-  const lyra::value::WitnessedOperations compared(*operations.element);
-  type.BuildEach(out, [&](std::size_t i, void* built) {
-    const bool agree = compared.Agree(left.ElementAt(i), right.ElementAt(i));
-    element.Type().Copy(agree ? left.ElementAt(i) : element.Default(), built);
-  });
-  return out;
-}
-
 auto lyra_rt_byte_array_from_string(
     const void* text, const void* answer_type, void* out) -> void* {
   return Emplace(
@@ -6011,16 +5474,6 @@ auto lyra_rt_byte_array_from_bits(
       out, ArrayFromIntegral(ArrayTypeAt(answer_type), words.View()));
 }
 
-auto lyra_rt_dynarray_count_bits(
-    const void* value, const void* control_bits, const void* location,
-    const void* value_operations, void* out) -> void* {
-  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
-  return Emplace(
-      out, Read<RuntimeDynamicArray>(value).CountBits(
-               Read<lyra::value::LogicVector<4>>(control_bits),
-               lyra::runtime::ElementOperationsAt(value_operations)));
-}
-
 auto lyra_rt_string_count_bits(
     const void* value, const void* control_bits, const void* location,
     void* out) -> void* {
@@ -6034,15 +5487,6 @@ auto lyra_rt_string_bitstream_width(
     const void* value, const void* location, void* out) -> void* {
   return Emplace(
       out, Read<String>(value).BitstreamWidth(SourceLocationAt(location)));
-}
-
-auto lyra_rt_dynarray_bitstream_width(
-    const void* value, const void* location, const void* value_operations,
-    void* out) -> void* {
-  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
-  return Emplace(
-      out, Read<RuntimeDynamicArray>(value).BitstreamWidth(
-               lyra::runtime::ElementOperationsAt(value_operations)));
 }
 
 auto lyra_rt_from_bitstream(
@@ -6113,11 +5557,8 @@ auto lyra_rt_run_write(
     std::uint64_t filled) -> std::uint64_t {
   const auto run = lyra::value::TakeBuilt<BitVec>(
       [&](void* storage) { run_of(value, nullptr, storage); });
-  const auto& into = *static_cast<const lyra::value::IntegralView*>(stream);
-  lyra::value::Insert(
-      into, run.View(),
-      static_cast<std::int64_t>(into.width - filled - run.View().width));
-  return filled + run.View().width;
+  return lyra::value::WriteRunToStream(
+      run, *static_cast<const lyra::value::IntegralView*>(stream), filled);
 }
 
 auto lyra_rt_run_build(
@@ -6125,7 +5566,7 @@ auto lyra_rt_run_build(
     std::uint64_t until, void* out) -> std::uint64_t {
   const auto& from =
       *static_cast<const lyra::value::ConstIntegralView*>(stream);
-  const BitVec run = BitVec::Of(from, taken, until);
+  const BitVec run = lyra::value::BitVec::Of(from, taken, until);
   built_from(&run, nullptr, out);
   return until;
 }
@@ -6147,10 +5588,8 @@ auto lyra_rt_wildcard_index_copy(const void* value, void* out) -> void* {
       *static_cast<const lyra::value::AnyValue*>(value));
 }
 
-auto lyra_rt_wildcard_index_move(void* value, void* out) -> void* {
-  return std::construct_at(
-      static_cast<lyra::value::AnyValue*>(out),
-      std::move(*static_cast<lyra::value::AnyValue*>(value)));
+auto lyra_rt_wildcard_index_relocate(void* value, void* out) -> void* {
+  return Relocate<lyra::value::AnyValue>(value, out);
 }
 
 void lyra_rt_wildcard_index_destroy(void* object) {
@@ -6204,10 +5643,8 @@ auto lyra_rt_any_copy(const void* value, void* out) -> void* {
       *static_cast<const lyra::value::Any*>(value));
 }
 
-auto lyra_rt_any_move(void* value, void* out) -> void* {
-  return std::construct_at(
-      static_cast<lyra::value::Any*>(out),
-      std::move(*static_cast<lyra::value::Any*>(value)));
+auto lyra_rt_any_relocate(void* value, void* out) -> void* {
+  return Relocate<lyra::value::Any>(value, out);
 }
 
 void lyra_rt_any_destroy(void* object) {
@@ -6312,16 +5749,6 @@ auto lyra_rt_unmanagedref_bit_identical(const void* lhs, const void* rhs)
     -> bool {
   return lyra::runtime::BitIdentical<UnmanagedRef>(lhs, rhs);
 }
-auto lyra_rt_dynarray_bit_identical(const void* lhs, const void* rhs) -> bool {
-  return lyra::runtime::BitIdentical<RuntimeDynamicArray>(lhs, rhs);
-}
-auto lyra_rt_queue_bit_identical(const void* lhs, const void* rhs) -> bool {
-  return lyra::runtime::BitIdentical<RuntimeQueue>(lhs, rhs);
-}
-auto lyra_rt_assocarray_bit_identical(const void* lhs, const void* rhs)
-    -> bool {
-  return lyra::runtime::BitIdentical<RuntimeAssociativeArray>(lhs, rhs);
-}
 auto lyra_rt_managedref_bit_identical(const void* lhs, const void* rhs)
     -> bool {
   return lyra::runtime::BitIdentical<ObjectRef>(lhs, rhs);
@@ -6338,21 +5765,6 @@ auto lyra_rt_shortreal_has_unknown(const void* value) -> bool {
 }
 auto lyra_rt_unmanagedref_has_unknown(const void* value) -> bool {
   return lyra::runtime::HasUnknown<UnmanagedRef>(value);
-}
-auto lyra_rt_dynarray_has_unknown(
-    const void* value, const void* value_operations) -> bool {
-  return Read<RuntimeDynamicArray>(value).HasUnknown(
-      lyra::runtime::ElementOperationsAt(value_operations));
-}
-auto lyra_rt_queue_has_unknown(const void* value, const void* value_operations)
-    -> bool {
-  return Read<RuntimeQueue>(value).HasUnknown(
-      lyra::runtime::ElementOperationsAt(value_operations));
-}
-auto lyra_rt_assocarray_has_unknown(
-    const void* value, const void* value_operations) -> bool {
-  return Read<RuntimeAssociativeArray>(value).HasUnknown(
-      lyra::runtime::ElementOperationsAt(value_operations));
 }
 auto lyra_rt_managedref_has_unknown(const void* value) -> bool {
   return lyra::runtime::HasUnknown<ObjectRef>(value);
@@ -6383,50 +5795,6 @@ auto lyra_rt_managedref_count_bits(
 auto lyra_rt_string_to_bitvec(
     const void* value, const void* location, void* out) -> void* {
   return Emplace(out, Read<String>(value).ToBitVec(SourceLocationAt(location)));
-}
-auto lyra_rt_dynarray_to_bitvec(
-    const void* value, const void* location, const void* value_operations,
-    void* out) -> void* {
-  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
-  return Emplace(
-      out, Read<RuntimeDynamicArray>(value).ToBitVec(
-               lyra::runtime::ElementOperationsAt(value_operations)));
-}
-auto lyra_rt_queue_to_bitvec(
-    const void* value, const void* location, const void* value_operations,
-    void* out) -> void* {
-  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
-  return Emplace(
-      out, Read<RuntimeQueue>(value).ToBitVec(
-               lyra::runtime::ElementOperationsAt(value_operations)));
-}
-auto lyra_rt_assocarray_to_bitvec(
-    const void* value, const void* location, const void* value_operations,
-    void* out) -> void* {
-  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
-  return Emplace(
-      out, Read<RuntimeAssociativeArray>(value).ToBitVec(
-               lyra::runtime::ElementOperationsAt(value_operations)));
-}
-
-auto lyra_rt_dynarray_from_bitvec(
-    const void* run, const void* location, const void* value_operations,
-    const void* answer_element_type, void* out) -> void* {
-  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
-  return Emplace(
-      out,
-      RuntimeDynamicArray::FromBitVec(
-          lyra::runtime::ElementTypeAt(answer_element_type), Read<BitVec>(run),
-          lyra::runtime::ElementOperationsAt(value_operations)));
-}
-auto lyra_rt_queue_from_bitvec(
-    const void* run, const void* location, const void* value_operations,
-    const void* answer_type, void* out) -> void* {
-  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
-  return Emplace(
-      out, RuntimeQueue::FromBitVec(
-               lyra::runtime::QueueTypeAt(answer_type), Read<BitVec>(run),
-               lyra::runtime::ElementOperationsAt(value_operations)));
 }
 auto lyra_rt_string_from_bitvec(
     const void* run, const void* location, void* out) -> void* {
@@ -6459,7 +5827,7 @@ auto lyra_rt_bitvec_reverse_blocks(
     const void* run, std::int64_t block, void* out) -> void* {
   return Emplace(out, Read<BitVec>(run).ReverseBlocks(block));
 }
-auto lyra_rt_bitvec_len(const void* run) -> std::int64_t {
+auto lyra_rt_bitvec_len(const void* run) noexcept -> std::int64_t {
   return Read<BitVec>(run).Len();
 }
 auto lyra_rt_bitvec_extract_bits(
@@ -6476,81 +5844,9 @@ auto lyra_rt_bitvec_load(
   bits.StoreTo(out);
   return out;
 }
-auto lyra_rt_bitvec_padded_to(const void* run, std::int64_t length, void* out)
-    -> void* {
+auto lyra_rt_bitvec_padded_to(
+    const void* run, std::int64_t length, void* out) noexcept -> void* {
   return Emplace(out, Read<BitVec>(run).PaddedTo(length));
-}
-
-auto lyra_rt_dynarray_window_to_bitvec(
-    const void* array, const void* start, std::int64_t count,
-    const void* location, const void* value_operations, void* out) -> void* {
-  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
-  return Emplace(
-      out, Read<RuntimeDynamicArray>(array).WindowToBitVec(
-               PositionNamedAt(start), lyra::value::WindowCount(count),
-               lyra::runtime::ElementOperationsAt(value_operations)));
-}
-auto lyra_rt_queue_window_to_bitvec(
-    const void* queue, const void* start, std::int64_t count,
-    const void* location, const void* value_operations, void* out) -> void* {
-  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
-  return Emplace(
-      out, Read<RuntimeQueue>(queue).WindowToBitVec(
-               PositionNamedAt(start), lyra::value::WindowCount(count),
-               lyra::runtime::ElementOperationsAt(value_operations)));
-}
-auto lyra_rt_laidout_window_to_bitvec(
-    const void* array, const void* start, std::int64_t count,
-    const void* location, const void* array_operations, void* out) -> void* {
-  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
-  const lyra::value::ValueOperations& operations =
-      lyra::runtime::OperationsAt(array_operations);
-  const lyra::value::FixedArrayType& type = *operations.type->AsFixedArray();
-  return Emplace(
-      out,
-      lyra::value::detail::StreamOfElements(
-          lyra::value::WitnessedOperations(*operations.element),
-          type.SliceElements(
-              array, PositionNamedAt(start), lyra::value::WindowCount(count))));
-}
-auto lyra_rt_dynarray_with_window(
-    const void* array, const void* start, std::int64_t count,
-    const void* values, const void* values_type, const void* location,
-    void* out) -> void* {
-  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
-  return Emplace(
-      out, Read<RuntimeDynamicArray>(array).WithWindow(
-               PositionNamedAt(start), lyra::value::WindowCount(count),
-               lyra::runtime::ElementHandles(values, values_type)));
-}
-auto lyra_rt_queue_with_window(
-    const void* queue, const void* start, std::int64_t count,
-    const void* values, const void* values_type, const void* location,
-    void* out) -> void* {
-  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
-  return Emplace(
-      out, Read<RuntimeQueue>(queue).WithWindow(
-               PositionNamedAt(start), lyra::value::WindowCount(count),
-               lyra::runtime::ElementHandles(values, values_type)));
-}
-auto lyra_rt_laidout_with_window(
-    const void* array, const void* start, std::int64_t count,
-    const void* values, const void* values_type, const void* location,
-    const void* array_type, void* out) -> void* {
-  const lyra::value::FixedArrayType& type = ArrayTypeAt(array_type);
-  const std::optional<std::int64_t> first = PositionNamedAt(start);
-  if (count > 0 && (!first.has_value() || *first < 0 ||
-                    *first + count > static_cast<std::int64_t>(type.Count()))) {
-    const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
-    throw lyra::SimulationError(
-        "the range a 'with' names reaches outside the array it is unpacked "
-        "into");
-  }
-  type.Type().Copy(array, out);
-  type.AssignSlice(
-      out, first, lyra::value::WindowCount(count),
-      lyra::runtime::ElementHandles(values, values_type));
-  return out;
 }
 
 auto lyra_rt_laidout_size(const void* array, const void* array_type, void* out)
@@ -6558,25 +5854,6 @@ auto lyra_rt_laidout_size(const void* array, const void* array_type, void* out)
   return Emplace(
       out, lyra::value::Int::FromInt(
                static_cast<std::int64_t>(ArrayAt(array, array_type).Count())));
-}
-
-auto lyra_rt_laidout_element_slice(
-    const void* array, const void* start, std::int64_t count,
-    const void* array_type, const void* answer_type, void* out) -> void* {
-  const std::vector<const void*> items =
-      ArrayTypeAt(array_type)
-          .SliceElements(
-              array, PositionNamedAt(start), lyra::value::SliceCount(count));
-  return Emplace(out, ArrayHolding(ArrayTypeAt(answer_type), items));
-}
-
-void lyra_rt_laidout_assign_element_slice(
-    void* array, const void* start, std::int64_t count, const void* replacement,
-    const void* replacement_type, const void* array_type) {
-  ArrayTypeAt(array_type)
-      .AssignSlice(
-          array, PositionNamedAt(start), static_cast<std::size_t>(count),
-          lyra::runtime::ElementHandles(replacement, replacement_type));
 }
 
 void lyra_rt_laidout_net_initialize_tri_state(
@@ -6869,879 +6146,184 @@ auto lyra_rt_managedref_driver_get(void* driver) -> const void* {
 void lyra_rt_managedref_driver_set(void* driver, const void* value) {
   DriverOf<ObjectRef>(driver).Set(Read<ObjectRef>(value));
 }
-auto lyra_rt_queue_default(const void* answer_type, void* out) -> void* {
-  return Emplace(out, RuntimeQueue(QueueTypeAt(answer_type)));
-}
 
-auto lyra_rt_queue_from_list(
-    void* unit, std::uint64_t unit_count, std::int64_t count,
-    const void* location, const void* answer_type, void* out) -> void* {
-  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
-  return Emplace(
-      out, RuntimeQueue::FromElements(
-               QueueTypeAt(answer_type),
-               lyra::runtime::ReplicateHandles(unit, unit_count, count)));
+auto lyra_rt_assoc_construct(
+    std::int64_t kind, const void* index, const void* element,
+    void* out) noexcept -> void* {
+  return std::construct_at(
+      static_cast<lyra::value::AssociativeArrayCore*>(out),
+      lyra::value::AssociativeArrayConstruct(
+          kind, &lyra::runtime::TypeAt(index),
+          &lyra::runtime::TypeAt(element)));
 }
-
-auto lyra_rt_queue_queue_from_array(
-    const void* source, const void* location, const void* answer_type,
-    void* out) -> void* {
-  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
-  return Emplace(
-      out, RuntimeQueue::FromElements(
-               QueueTypeAt(answer_type),
-               lyra::runtime::ElementHandles(Read<RuntimeQueue>(source))));
+auto lyra_rt_assoc_find(const void* array, const void* index) noexcept
+    -> void* {
+  return lyra::value::AssociativeArrayFind(AssociativeCoreAt(array), index);
 }
-
-auto lyra_rt_laidout_queue_from_array(
-    const void* source, const void* location, const void* source_type,
-    const void* answer_type, void* out) -> void* {
-  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
-  return Emplace(
-      out, RuntimeQueue::FromElements(
-               QueueTypeAt(answer_type),
-               lyra::runtime::ElementHandles(source, source_type)));
+auto lyra_rt_assoc_prepare(const void* array) noexcept -> void* {
+  return lyra::value::AssociativeArrayPrepare(AssociativeCoreAt(array));
 }
-
-auto lyra_rt_dynarray_queue_from_array(
-    const void* source, const void* location, const void* answer_type,
-    void* out) -> void* {
-  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
-  return Emplace(
-      out,
-      RuntimeQueue::FromElements(
-          QueueTypeAt(answer_type),
-          lyra::runtime::ElementHandles(Read<RuntimeDynamicArray>(source))));
+auto lyra_rt_assoc_index_of(const void* array, void* element) noexcept
+    -> void* {
+  return lyra::value::AssociativeArrayIndexOf(
+      AssociativeCoreAt(array), element);
 }
-
-auto lyra_rt_queue_element(const void* queue, const void* position) -> const
+void lyra_rt_assoc_commit(void* array, void* element) noexcept {
+  lyra::value::AssociativeArrayCommit(AssociativeCoreAt(array), element);
+}
+void lyra_rt_assoc_remove(void* array, void* element) noexcept {
+  lyra::value::AssociativeArrayRemove(AssociativeCoreAt(array), element);
+}
+void lyra_rt_assoc_clear(void* array) noexcept {
+  lyra::value::AssociativeArrayClear(AssociativeCoreAt(array));
+}
+auto lyra_rt_assoc_core_first(const void* array) noexcept -> void* {
+  return lyra::value::AssociativeArrayFirst(AssociativeCoreAt(array));
+}
+auto lyra_rt_assoc_core_last(const void* array) noexcept -> void* {
+  return lyra::value::AssociativeArrayLast(AssociativeCoreAt(array));
+}
+auto lyra_rt_assoc_core_next(const void* array, const void* element) noexcept
+    -> void* {
+  return lyra::value::AssociativeArrayNext(AssociativeCoreAt(array), element);
+}
+auto lyra_rt_assoc_core_previous(
+    const void* array, const void* element) noexcept -> void* {
+  return lyra::value::AssociativeArrayPrevious(
+      AssociativeCoreAt(array), element);
+}
+auto lyra_rt_assoc_after(const void* array, const void* index) noexcept
+    -> void* {
+  return lyra::value::AssociativeArrayAfter(AssociativeCoreAt(array), index);
+}
+auto lyra_rt_assoc_before(const void* array, const void* index) noexcept
+    -> void* {
+  return lyra::value::AssociativeArrayBefore(AssociativeCoreAt(array), index);
+}
+auto lyra_rt_assoc_prepare_default(const void* array) noexcept -> void* {
+  return lyra::value::AssociativeArrayPrepareDefault(AssociativeCoreAt(array));
+}
+void lyra_rt_assoc_set_default(void* array, void* element) noexcept {
+  lyra::value::AssociativeArraySetDefault(AssociativeCoreAt(array), element);
+}
+auto lyra_rt_assoc_core_stated_default(const void* array) noexcept -> const
     void* {
-  return Read<RuntimeQueue>(queue).Element(PositionNamedAt(position));
+  return lyra::value::AssociativeArrayStatedDefault(AssociativeCoreAt(array));
+}
+void lyra_rt_assoc_end(void* array) noexcept {
+  lyra::value::AssociativeArrayEnd(AssociativeCoreAt(array));
+}
+void lyra_rt_assoc_adopt(void* array, void* from) noexcept {
+  lyra::value::AssociativeArrayAdopt(
+      AssociativeCoreAt(array), AssociativeCoreAt(from));
+}
+auto lyra_rt_wildcard_index_has_unknown(const void* index) noexcept -> bool {
+  return lyra::value::WildcardIndexHasUnknown(
+      *static_cast<const lyra::value::AnyValue*>(index));
 }
 
-auto lyra_rt_queue_element_mut(
-    void* queue, const void* position, const void* location) -> void* {
-  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
-  lyra::value::Formation formed{};
-  return static_cast<RuntimeQueue*>(queue)->ElementMut(
-      PositionNamedAt(position), formed);
+auto lyra_rt_read_mem(
+    void* runtime, const void* name, void* dims, std::uint64_t dims_count,
+    std::int64_t base, std::int64_t start, void* out) -> void* {
+  return lyra::runtime::MemoryRequest(
+      runtime, lyra::runtime::AnyNumber{}, name, dims, dims_count, base, start,
+      std::nullopt, out);
+}
+auto lyra_rt_read_mem_within(
+    void* runtime, const void* name, void* dims, std::uint64_t dims_count,
+    std::int64_t base, std::int64_t start, std::int64_t finish, void* out)
+    -> void* {
+  return lyra::runtime::MemoryRequest(
+      runtime, lyra::runtime::AnyNumber{}, name, dims, dims_count, base, start,
+      finish, out);
+}
+auto lyra_rt_read_enumerated_mem(
+    void* runtime, const void* enumeration, const void* name, void* dims,
+    std::uint64_t dims_count, std::int64_t base, std::int64_t start, void* out)
+    -> void* {
+  return lyra::runtime::MemoryRequest(
+      runtime, lyra::runtime::MemberValues{Read<Enumeration>(enumeration)},
+      name, dims, dims_count, base, start, std::nullopt, out);
+}
+auto lyra_rt_read_enumerated_mem_within(
+    void* runtime, const void* enumeration, const void* name, void* dims,
+    std::uint64_t dims_count, std::int64_t base, std::int64_t start,
+    std::int64_t finish, void* out) -> void* {
+  return lyra::runtime::MemoryRequest(
+      runtime, lyra::runtime::MemberValues{Read<Enumeration>(enumeration)},
+      name, dims, dims_count, base, start, finish, out);
+}
+auto lyra_rt_write_mem(
+    void* runtime, const void* name, void* dims, std::uint64_t dims_count,
+    std::int64_t base, std::int64_t start, void* out) -> void* {
+  return lyra::runtime::MemoryRequest(
+      runtime, lyra::runtime::AnyNumber{}, name, dims, dims_count, base, start,
+      std::nullopt, out);
+}
+auto lyra_rt_write_mem_within(
+    void* runtime, const void* name, void* dims, std::uint64_t dims_count,
+    std::int64_t base, std::int64_t start, std::int64_t finish, void* out)
+    -> void* {
+  return lyra::runtime::MemoryRequest(
+      runtime, lyra::runtime::AnyNumber{}, name, dims, dims_count, base, start,
+      finish, out);
 }
 
-auto lyra_rt_queue_slice(
-    const void* queue, const void* lo, const void* hi, const void* answer_type,
-    void* out) -> void* {
-  return Emplace(
-      out,
-      Read<RuntimeQueue>(queue).Slice(
-          PositionNamedAt(lo), PositionNamedAt(hi), QueueTypeAt(answer_type)));
+void lyra_rt_memory_words_read_grid(void* words, const void* location) {
+  lyra::runtime::WordsAt(words).ReadGrid(SourceLocationAt(location));
 }
-
-void lyra_rt_queue_assign_element_slice(
-    void* queue, const void* lo, const void* hi, const void* replacement,
-    const void* replacement_type, const void* location) {
-  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
-  static_cast<RuntimeQueue*>(queue)->AssignSlice(
-      PositionNamedAt(lo), PositionNamedAt(hi),
-      lyra::runtime::ElementHandles(replacement, replacement_type));
+void lyra_rt_memory_words_read_dense(
+    void* words, std::int64_t count, const void* location) {
+  lyra::runtime::WordsAt(words).ReadDense(count, SourceLocationAt(location));
 }
-
-auto lyra_rt_queue_size(const void* queue, void* out) -> void* {
-  return Emplace(out, Read<RuntimeQueue>(queue).Size());
+void lyra_rt_memory_words_read_keyed(void* words, const void* location) {
+  lyra::runtime::WordsAt(words).ReadKeyed(SourceLocationAt(location));
 }
-
-void lyra_rt_queue_push_back(
-    void* queue, const void* item, const void* location) {
-  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
-  static_cast<RuntimeQueue*>(queue)->PushBack(item);
+void lyra_rt_memory_words_plan_grid(void* words) {
+  lyra::runtime::WordsAt(words).PlanGrid();
 }
-
-void lyra_rt_queue_push_front(
-    void* queue, const void* item, const void* location) {
-  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
-  static_cast<RuntimeQueue*>(queue)->PushFront(item);
+void lyra_rt_memory_words_plan_dense(void* words, std::int64_t count) {
+  lyra::runtime::WordsAt(words).PlanDense(count);
 }
-
-void lyra_rt_queue_insert(
-    void* queue, const void* position, const void* item, const void* location) {
-  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
-  static_cast<RuntimeQueue*>(queue)->Insert(PositionNamedAt(position), item);
+auto lyra_rt_memory_words_count(const void* words) noexcept -> std::int64_t {
+  return lyra::runtime::WordsAt(words).Count();
 }
-
-auto lyra_rt_queue_pop_front(void* queue, void* out) -> void* {
-  static_cast<RuntimeQueue*>(queue)->PopFront(out);
+auto lyra_rt_memory_words_ordinal(
+    const void* words, std::int64_t k, std::int64_t dimension) noexcept
+    -> std::int64_t {
+  return lyra::runtime::WordsAt(words).Ordinal(k, dimension);
+}
+auto lyra_rt_memory_words_key(const void* words, std::int64_t k) noexcept
+    -> std::int64_t {
+  return lyra::runtime::WordsAt(words).Key(k);
+}
+auto lyra_rt_memory_words_bytes_read(const void* words) noexcept
+    -> std::int64_t {
+  return lyra::runtime::WordsAt(words).BytesRead();
+}
+auto lyra_rt_memory_words_word(
+    const void* words, std::int64_t k, const void* answer_type, void* out)
+    -> void* {
+  lyra::value::WrittenWords word(
+      lyra::runtime::IntegralTypeAt(answer_type).Shape());
+  lyra::runtime::WordsAt(words).Word(k, word.MutableView());
+  word.StoreTo(out);
   return out;
 }
-
-auto lyra_rt_queue_pop_back(void* queue, void* out) -> void* {
-  static_cast<RuntimeQueue*>(queue)->PopBack(out);
-  return out;
-}
-
-void lyra_rt_queue_delete(void* queue) {
-  static_cast<RuntimeQueue*>(queue)->Delete();
-}
-
-void lyra_rt_queue_delete_index(void* queue, const void* position) {
-  static_cast<RuntimeQueue*>(queue)->DeleteIndex(PositionNamedAt(position));
-}
-
-auto lyra_rt_queue_eq(
-    const void* lhs, const void* rhs, const void* value_operations)
-    -> std::uint8_t {
-  return Compared(
-      Read<RuntimeQueue>(lhs).Equal(
-          Read<RuntimeQueue>(rhs),
-          lyra::runtime::ElementOperationsAt(value_operations)));
-}
-
-auto lyra_rt_queue_ne(
-    const void* lhs, const void* rhs, const void* value_operations)
-    -> std::uint8_t {
-  return Compared(
-      lyra::value::Inverted(
-          Read<RuntimeQueue>(lhs).Equal(
-              Read<RuntimeQueue>(rhs),
-              lyra::runtime::ElementOperationsAt(value_operations))));
-}
-
-auto lyra_rt_queue_case_equal(
-    const void* lhs, const void* rhs, const void* value_operations, void* out)
-    -> void* {
-  return Emplace(
-      out, Read<RuntimeQueue>(lhs).CaseEqual(
-               Read<RuntimeQueue>(rhs),
-               lyra::runtime::ElementOperationsAt(value_operations)));
-}
-
-auto lyra_rt_queue_merge_conditional(
-    const void* lhs, const void* rhs, const void* value_operations, void* out)
-    -> void* {
-  return Emplace(
-      out, Read<RuntimeQueue>(lhs).MergeConditional(
-               Read<RuntimeQueue>(rhs),
-               lyra::runtime::ElementOperationsAt(value_operations)));
-}
-
-auto lyra_rt_queue_bitstream_width(
-    const void* queue, const void* location, const void* value_operations,
-    void* out) -> void* {
-  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
-  return Emplace(
-      out, Read<RuntimeQueue>(queue).BitstreamWidth(
-               lyra::runtime::ElementOperationsAt(value_operations)));
-}
-
-auto lyra_rt_queue_count_bits(
-    const void* queue, const void* control_bits, const void* location,
-    const void* value_operations, void* out) -> void* {
-  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
-  return Emplace(
-      out, Read<RuntimeQueue>(queue).CountBits(
-               Read<lyra::value::LogicVector<4>>(control_bits),
-               lyra::runtime::ElementOperationsAt(value_operations)));
-}
-
-auto lyra_rt_queue_cell_get(void* cell) -> const void* {
-  return &VariableAt<RuntimeQueue>(cell).Get();
-}
-
-void lyra_rt_queue_cell_initialize(void* cell, const void* prototype) noexcept {
-  VariableAt<RuntimeQueue>(cell).Initialize(Read<RuntimeQueue>(prototype));
-}
-
-void lyra_rt_queue_cell_set(void* cell, const void* value) {
-  VariableAt<RuntimeQueue>(cell).Set(Read<RuntimeQueue>(value));
-}
-
-void lyra_rt_queue_cell_arm_sampling(void* cell) {
-  VariableAt<RuntimeQueue>(cell).ArmSampling();
-}
-
-auto lyra_rt_queue_cell_sampled_get(void* cell, const void* location) -> const
-    void* {
-  return &VariableAt<RuntimeQueue>(cell).SampledGet(SourceLocationAt(location));
-}
-
-auto lyra_rt_queue_cell_begin_takeover(
-    void* cell, std::int64_t level, std::int64_t first, std::int64_t count,
-    const void* location) -> std::int64_t {
-  return CellBeginTakeover<RuntimeQueue>(
-      cell, level, first, count, SourceLocationAt(location));
-}
-
-auto lyra_rt_queue_cell_drive_takeover(
-    void* cell, std::int64_t level, std::int64_t generation, const void* value,
-    const void* location) -> bool {
-  return CellDriveTakeover<RuntimeQueue>(
-      cell, level, generation, value, SourceLocationAt(location));
-}
-
-void lyra_rt_queue_cell_end_takeover(
-    void* cell, std::int64_t level, std::int64_t first, std::int64_t count,
-    const void* location) {
-  CellEndTakeover<RuntimeQueue>(
-      cell, level, first, count, SourceLocationAt(location));
-}
-
-auto lyra_rt_queue_ref_begin_takeover(
-    void* reference, std::int64_t level, std::int64_t first, std::int64_t count,
-    const void* location) -> std::int64_t {
-  return RefBeginTakeover<RuntimeQueue>(
-      reference, level, first, count, SourceLocationAt(location));
-}
-
-auto lyra_rt_queue_ref_drive_takeover(
-    void* reference, std::int64_t level, std::int64_t generation,
-    const void* value, const void* location) -> bool {
-  return RefDriveTakeover<RuntimeQueue>(
-      reference, level, generation, value, SourceLocationAt(location));
-}
-
-void lyra_rt_queue_ref_end_takeover(
-    void* reference, std::int64_t level, std::int64_t first, std::int64_t count,
-    const void* location) {
-  RefEndTakeover<RuntimeQueue>(
-      reference, level, first, count, SourceLocationAt(location));
-}
-
-auto lyra_rt_queue_value_cell_alloc(const void* queue_type) noexcept -> void* {
-  return AllocateValueCell<RuntimeQueue>(QueueTypeAt(queue_type));
-}
-
-void lyra_rt_queue_value_cell_store(void* cell, const void* value) noexcept {
-  ValueCellAt<RuntimeQueue>(cell).Assign(Read<RuntimeQueue>(value));
-}
-
-auto lyra_rt_queue_value_cell_load(void* cell) noexcept -> void* {
-  return &ValueCellAt<RuntimeQueue>(cell).Storage();
-}
-
-auto lyra_rt_assocarray_default(
-    const void* key_index_order, const void* answer_element_type, void* out)
-    -> void* {
-  return Emplace(
-      out, RuntimeAssociativeArray(
-               lyra::runtime::IndexOrderAt(key_index_order),
-               lyra::runtime::ElementTypeAt(answer_element_type)));
-}
-
-// LRM 7.9.11 `'{index: value, ...}`: each entry crosses as the product of the
-// index and the element it stores, a tuple whose type states each component's
-// type, which is what a keyed container needs of both: it knows the type of
-// neither in advance. The order the index type imposes (LRM 7.8) is the one
-// the array holds its entries in.
-auto lyra_rt_assocarray_from_entries(
-    void* entries, std::uint64_t entries_count, const void* entry_type,
-    const void* key_index_order, const void* answer_element_type, void* out)
-    -> void* {
-  RuntimeAssociativeArray array(
-      lyra::runtime::IndexOrderAt(key_index_order),
-      lyra::runtime::ElementTypeAt(answer_element_type));
-  lyra::runtime::StoreLiteralEntries(
-      array, entries, entries_count, lyra::runtime::TupleTypeAt(entry_type));
-  return Emplace(out, std::move(array));
-}
-
-auto lyra_rt_assocarray_assoc_with_default(
-    const void* array, const void* stated_default, void* out) -> void* {
-  return Emplace(
-      out, Read<RuntimeAssociativeArray>(array).WithDefault(stated_default));
-}
-
-auto lyra_rt_assocarray_assoc_has_stated_default(const void* array) -> bool {
-  return Read<RuntimeAssociativeArray>(array).HasStatedDefault();
-}
-
-auto lyra_rt_assocarray_assoc_absent_value(const void* array, void* out)
-    -> void* {
-  Read<RuntimeAssociativeArray>(array).AbsentValue(out);
-  return out;
-}
-
-auto lyra_rt_assocarray_element(
-    const void* array, const void* index, const void* index_type) -> const
-    void* {
-  return Read<RuntimeAssociativeArray>(array).Element(
-      lyra::runtime::IndexAt(index, index_type));
-}
-
-auto lyra_rt_assocarray_element_mut(
-    void* array, const void* index, const void* index_type) -> void* {
-  lyra::value::Formation formed{};
-  return static_cast<RuntimeAssociativeArray*>(array)->ElementMut(
-      lyra::runtime::IndexAt(index, index_type), formed);
-}
-
-auto lyra_rt_assocarray_exists(
-    const void* array, const void* index, const void* index_type, void* out)
-    -> void* {
-  return Emplace(
-      out, Read<RuntimeAssociativeArray>(array).Exists(
-               lyra::runtime::IndexAt(index, index_type)));
-}
-
-auto lyra_rt_assocarray_size(const void* array, void* out) -> void* {
-  return Emplace(out, Read<RuntimeAssociativeArray>(array).Size());
-}
-
-void lyra_rt_assocarray_delete(void* array) {
-  static_cast<RuntimeAssociativeArray*>(array)->Delete();
-}
-
-void lyra_rt_assocarray_delete_index(
-    void* array, const void* index, const void* index_type) {
-  static_cast<RuntimeAssociativeArray*>(array)->DeleteIndex(
-      lyra::runtime::IndexAt(index, index_type));
-}
-
-auto lyra_rt_assocarray_eq(
-    const void* lhs, const void* rhs, const void* value_operations)
-    -> std::uint8_t {
-  return Compared(
-      Read<RuntimeAssociativeArray>(lhs).Equal(
-          Read<RuntimeAssociativeArray>(rhs),
-          lyra::runtime::ElementOperationsAt(value_operations)));
-}
-
-auto lyra_rt_assocarray_ne(
-    const void* lhs, const void* rhs, const void* value_operations)
-    -> std::uint8_t {
-  return Compared(
-      lyra::value::Inverted(
-          Read<RuntimeAssociativeArray>(lhs).Equal(
-              Read<RuntimeAssociativeArray>(rhs),
-              lyra::runtime::ElementOperationsAt(value_operations))));
-}
-
-auto lyra_rt_assocarray_case_equal(
-    const void* lhs, const void* rhs, const void* value_operations, void* out)
-    -> void* {
-  return Emplace(
-      out, Read<RuntimeAssociativeArray>(lhs).CaseEqual(
-               Read<RuntimeAssociativeArray>(rhs),
-               lyra::runtime::ElementOperationsAt(value_operations)));
-}
-
-auto lyra_rt_assocarray_bitstream_width(
-    const void* array, const void* location, const void* value_operations,
-    void* out) -> void* {
-  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
-  return Emplace(
-      out, Read<RuntimeAssociativeArray>(array).BitstreamWidth(
-               lyra::runtime::ElementOperationsAt(value_operations)));
-}
-
-auto lyra_rt_assocarray_assoc_min_index(
-    const void* array, const void* answer_type, void* out) -> void* {
-  return lyra::runtime::IndexInto(
-      out, Read<RuntimeAssociativeArray>(array).FirstIndex(), answer_type);
-}
-
-auto lyra_rt_assocarray_assoc_max_index(
-    const void* array, const void* answer_type, void* out) -> void* {
-  return lyra::runtime::IndexInto(
-      out, Read<RuntimeAssociativeArray>(array).LastIndex(), answer_type);
-}
-
-auto lyra_rt_assocarray_assoc_first(
-    const void* array, const void* probe, const void* probe_type,
-    const void* answer_type, void* out) -> void* {
-  return lyra::runtime::EmplaceVisited(
-      out, lyra::runtime::TupleTypeAt(answer_type),
-      Read<RuntimeAssociativeArray>(array).FirstIndex(), probe, probe_type);
-}
-
-auto lyra_rt_assocarray_assoc_last(
-    const void* array, const void* probe, const void* probe_type,
-    const void* answer_type, void* out) -> void* {
-  return lyra::runtime::EmplaceVisited(
-      out, lyra::runtime::TupleTypeAt(answer_type),
-      Read<RuntimeAssociativeArray>(array).LastIndex(), probe, probe_type);
-}
-
-auto lyra_rt_assocarray_assoc_next(
-    const void* array, const void* probe, const void* probe_type,
-    const void* answer_type, void* out) -> void* {
-  return lyra::runtime::EmplaceVisited(
-      out, lyra::runtime::TupleTypeAt(answer_type),
-      Read<RuntimeAssociativeArray>(array).NextIndex(
-          lyra::runtime::IndexAt(probe, probe_type)),
-      probe, probe_type);
-}
-
-auto lyra_rt_assocarray_assoc_prev(
-    const void* array, const void* probe, const void* probe_type,
-    const void* answer_type, void* out) -> void* {
-  return lyra::runtime::EmplaceVisited(
-      out, lyra::runtime::TupleTypeAt(answer_type),
-      Read<RuntimeAssociativeArray>(array).PrevIndex(
-          lyra::runtime::IndexAt(probe, probe_type)),
-      probe, probe_type);
-}
-
-auto lyra_rt_assocarray_count_bits(
-    const void* array, const void* control_bits, const void* location,
-    const void* value_operations, void* out) -> void* {
-  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
-  return Emplace(
-      out, Read<RuntimeAssociativeArray>(array).CountBits(
-               Read<lyra::value::LogicVector<4>>(control_bits),
-               lyra::runtime::ElementOperationsAt(value_operations)));
-}
-
-auto lyra_rt_assocarray_cell_get(void* cell) -> const void* {
-  return &VariableAt<RuntimeAssociativeArray>(cell).Get();
-}
-
-void lyra_rt_assocarray_cell_initialize(
-    void* cell, const void* prototype) noexcept {
-  VariableAt<RuntimeAssociativeArray>(cell).Initialize(
-      Read<RuntimeAssociativeArray>(prototype));
-}
-
-void lyra_rt_assocarray_cell_set(void* cell, const void* value) {
-  VariableAt<RuntimeAssociativeArray>(cell).Set(
-      Read<RuntimeAssociativeArray>(value));
-}
-
-void lyra_rt_assocarray_cell_arm_sampling(void* cell) {
-  VariableAt<RuntimeAssociativeArray>(cell).ArmSampling();
-}
-
-auto lyra_rt_assocarray_cell_sampled_get(void* cell, const void* location)
-    -> const void* {
-  return &VariableAt<RuntimeAssociativeArray>(cell).SampledGet(
-      SourceLocationAt(location));
-}
-
-auto lyra_rt_assocarray_cell_begin_takeover(
-    void* cell, std::int64_t level, std::int64_t first, std::int64_t count,
-    const void* location) -> std::int64_t {
-  return CellBeginTakeover<RuntimeAssociativeArray>(
-      cell, level, first, count, SourceLocationAt(location));
-}
-
-auto lyra_rt_assocarray_cell_drive_takeover(
-    void* cell, std::int64_t level, std::int64_t generation, const void* value,
-    const void* location) -> bool {
-  return CellDriveTakeover<RuntimeAssociativeArray>(
-      cell, level, generation, value, SourceLocationAt(location));
-}
-
-void lyra_rt_assocarray_cell_end_takeover(
-    void* cell, std::int64_t level, std::int64_t first, std::int64_t count,
-    const void* location) {
-  CellEndTakeover<RuntimeAssociativeArray>(
-      cell, level, first, count, SourceLocationAt(location));
-}
-
-auto lyra_rt_assocarray_ref_begin_takeover(
-    void* reference, std::int64_t level, std::int64_t first, std::int64_t count,
-    const void* location) -> std::int64_t {
-  return RefBeginTakeover<RuntimeAssociativeArray>(
-      reference, level, first, count, SourceLocationAt(location));
-}
-
-auto lyra_rt_assocarray_ref_drive_takeover(
-    void* reference, std::int64_t level, std::int64_t generation,
-    const void* value, const void* location) -> bool {
-  return RefDriveTakeover<RuntimeAssociativeArray>(
-      reference, level, generation, value, SourceLocationAt(location));
-}
-
-void lyra_rt_assocarray_ref_end_takeover(
-    void* reference, std::int64_t level, std::int64_t first, std::int64_t count,
-    const void* location) {
-  RefEndTakeover<RuntimeAssociativeArray>(
-      reference, level, first, count, SourceLocationAt(location));
-}
-
-auto lyra_rt_assocarray_value_cell_alloc(
-    const void* key_index_order, const void* element_type) noexcept -> void* {
-  return AllocateValueCell<RuntimeAssociativeArray>(
-      lyra::runtime::IndexOrderAt(key_index_order),
-      lyra::runtime::ElementTypeAt(element_type));
-}
-
-void lyra_rt_assocarray_value_cell_store(
-    void* cell, const void* value) noexcept {
-  ValueCellAt<RuntimeAssociativeArray>(cell).Assign(
-      Read<RuntimeAssociativeArray>(value));
-}
-
-auto lyra_rt_assocarray_value_cell_load(void* cell) noexcept -> void* {
-  return &ValueCellAt<RuntimeAssociativeArray>(cell).Storage();
-}
-
-// LRM 7.12.2 ordering methods, which reorder the array where it lies.
-void lyra_rt_laidout_sort(
-    void* receiver, void* order, const void* receiver_type) {
-  lyra::value::RuntimeArraySort(
-      ArrayTypeAt(receiver_type), receiver,
-      lyra::runtime::BorrowedOrder(order));
-}
-
-void lyra_rt_dynarray_sort(void* receiver, void* order) {
-  auto& target = *static_cast<RuntimeDynamicArray*>(receiver);
-  lyra::value::RuntimeArraySort(target, lyra::runtime::BorrowedOrder(order));
-}
-
-void lyra_rt_queue_sort(void* receiver, void* order) {
-  auto& target = *static_cast<RuntimeQueue*>(receiver);
-  lyra::value::RuntimeArraySort(target, lyra::runtime::BorrowedOrder(order));
-}
-
-void lyra_rt_laidout_reverse(void* receiver, const void* receiver_type) {
-  lyra::value::RuntimeArrayReverse(ArrayTypeAt(receiver_type), receiver);
-}
-
-void lyra_rt_dynarray_reverse(void* receiver) {
-  auto& target = *static_cast<RuntimeDynamicArray*>(receiver);
-  lyra::value::RuntimeArrayReverse(target);
-}
-
-void lyra_rt_queue_reverse(void* receiver) {
-  auto& target = *static_cast<RuntimeQueue*>(receiver);
-  lyra::value::RuntimeArrayReverse(target);
-}
-
-auto lyra_rt_laidout_read_mem(
-    void* runtime, const void* memory, const void* name, void* dims,
-    std::uint64_t dims_count, std::int64_t base, std::int64_t start,
-    const void* location, const void* memory_type, const void* answer_type,
-    void* out) -> void* {
-  return lyra::runtime::EmplaceCompletion(
-      out, lyra::runtime::TupleTypeAt(answer_type),
-      lyra::runtime::Single(
-          lyra::runtime::ReadUnpackedMemory(
-              *static_cast<RuntimeEffects*>(runtime),
-              OwnedLaidOutCopy(memory, memory_type), Read<String>(name),
-              lyra::value::UnpackedRangesOf(
-                  SpanAt<const std::int64_t>(dims, dims_count)),
-              base, start, std::nullopt,
-              lyra::runtime::WordValues{lyra::runtime::AnyNumber{}},
-              SourceLocationAt(location))));
-}
-
-auto lyra_rt_laidout_read_mem_within(
-    void* runtime, const void* memory, const void* name, void* dims,
-    std::uint64_t dims_count, std::int64_t base, std::int64_t start,
-    std::int64_t finish, const void* location, const void* memory_type,
-    const void* answer_type, void* out) -> void* {
-  return lyra::runtime::EmplaceCompletion(
-      out, lyra::runtime::TupleTypeAt(answer_type),
-      lyra::runtime::Single(
-          lyra::runtime::ReadUnpackedMemory(
-              *static_cast<RuntimeEffects*>(runtime),
-              OwnedLaidOutCopy(memory, memory_type), Read<String>(name),
-              lyra::value::UnpackedRangesOf(
-                  SpanAt<const std::int64_t>(dims, dims_count)),
-              base, start, finish,
-              lyra::runtime::WordValues{lyra::runtime::AnyNumber{}},
-              SourceLocationAt(location))));
-}
-
-auto lyra_rt_laidout_read_enumerated_mem(
-    void* runtime, const void* memory, const void* enumeration,
-    const void* name, void* dims, std::uint64_t dims_count, std::int64_t base,
-    std::int64_t start, const void* location, const void* memory_type,
-    const void* answer_type, void* out) -> void* {
-  return lyra::runtime::EmplaceCompletion(
-      out, lyra::runtime::TupleTypeAt(answer_type),
-      lyra::runtime::Single(
-          lyra::runtime::ReadUnpackedMemory(
-              *static_cast<RuntimeEffects*>(runtime),
-              OwnedLaidOutCopy(memory, memory_type), Read<String>(name),
-              lyra::value::UnpackedRangesOf(
-                  SpanAt<const std::int64_t>(dims, dims_count)),
-              base, start, std::nullopt,
-              lyra::runtime::WordValues{
-                  lyra::runtime::MemberValues{Read<Enumeration>(enumeration)}},
-              SourceLocationAt(location))));
-}
-
-auto lyra_rt_laidout_read_enumerated_mem_within(
-    void* runtime, const void* memory, const void* enumeration,
-    const void* name, void* dims, std::uint64_t dims_count, std::int64_t base,
-    std::int64_t start, std::int64_t finish, const void* location,
-    const void* memory_type, const void* answer_type, void* out) -> void* {
-  return lyra::runtime::EmplaceCompletion(
-      out, lyra::runtime::TupleTypeAt(answer_type),
-      lyra::runtime::Single(
-          lyra::runtime::ReadUnpackedMemory(
-              *static_cast<RuntimeEffects*>(runtime),
-              OwnedLaidOutCopy(memory, memory_type), Read<String>(name),
-              lyra::value::UnpackedRangesOf(
-                  SpanAt<const std::int64_t>(dims, dims_count)),
-              base, start, finish,
-              lyra::runtime::WordValues{
-                  lyra::runtime::MemberValues{Read<Enumeration>(enumeration)}},
-              SourceLocationAt(location))));
-}
-
-void lyra_rt_laidout_write_mem(
-    void* runtime, const void* memory, const void* name, void* dims,
-    std::uint64_t dims_count, std::int64_t base, std::int64_t start,
-    const void* location, const void* memory_type) {
-  lyra::runtime::WriteUnpackedMemory(
-      *static_cast<RuntimeEffects*>(runtime), ArrayAt(memory, memory_type),
-      Read<String>(name),
-      lyra::value::UnpackedRangesOf(
-          SpanAt<const std::int64_t>(dims, dims_count)),
-      base, start, std::nullopt, SourceLocationAt(location));
-}
-
-void lyra_rt_laidout_write_mem_within(
-    void* runtime, const void* memory, const void* name, void* dims,
-    std::uint64_t dims_count, std::int64_t base, std::int64_t start,
-    std::int64_t finish, const void* location, const void* memory_type) {
-  lyra::runtime::WriteUnpackedMemory(
-      *static_cast<RuntimeEffects*>(runtime), ArrayAt(memory, memory_type),
-      Read<String>(name),
-      lyra::value::UnpackedRangesOf(
-          SpanAt<const std::int64_t>(dims, dims_count)),
-      base, start, finish, SourceLocationAt(location));
-}
-
-auto lyra_rt_dynarray_read_mem(
-    void* runtime, const void* memory, const void* name, std::int64_t base,
-    std::int64_t start, const void* location, const void* answer_type,
-    void* out) -> void* {
-  return lyra::runtime::EmplaceCompletion(
-      out, lyra::runtime::TupleTypeAt(answer_type),
-      lyra::runtime::Single(
-          lyra::runtime::ReadFlatMemory(
-              *static_cast<RuntimeEffects*>(runtime),
-              Read<RuntimeDynamicArray>(memory), Read<String>(name), base,
-              start, std::nullopt,
-              lyra::runtime::WordValues{lyra::runtime::AnyNumber{}},
-              SourceLocationAt(location))));
-}
-
-auto lyra_rt_dynarray_read_mem_within(
-    void* runtime, const void* memory, const void* name, std::int64_t base,
-    std::int64_t start, std::int64_t finish, const void* location,
-    const void* answer_type, void* out) -> void* {
-  return lyra::runtime::EmplaceCompletion(
-      out, lyra::runtime::TupleTypeAt(answer_type),
-      lyra::runtime::Single(
-          lyra::runtime::ReadFlatMemory(
-              *static_cast<RuntimeEffects*>(runtime),
-              Read<RuntimeDynamicArray>(memory), Read<String>(name), base,
-              start, finish,
-              lyra::runtime::WordValues{lyra::runtime::AnyNumber{}},
-              SourceLocationAt(location))));
-}
-
-auto lyra_rt_dynarray_read_enumerated_mem(
-    void* runtime, const void* memory, const void* enumeration,
-    const void* name, std::int64_t base, std::int64_t start,
-    const void* location, const void* answer_type, void* out) -> void* {
-  return lyra::runtime::EmplaceCompletion(
-      out, lyra::runtime::TupleTypeAt(answer_type),
-      lyra::runtime::Single(
-          lyra::runtime::ReadFlatMemory(
-              *static_cast<RuntimeEffects*>(runtime),
-              Read<RuntimeDynamicArray>(memory), Read<String>(name), base,
-              start, std::nullopt,
-              lyra::runtime::WordValues{
-                  lyra::runtime::MemberValues{Read<Enumeration>(enumeration)}},
-              SourceLocationAt(location))));
-}
-
-auto lyra_rt_dynarray_read_enumerated_mem_within(
-    void* runtime, const void* memory, const void* enumeration,
-    const void* name, std::int64_t base, std::int64_t start,
-    std::int64_t finish, const void* location, const void* answer_type,
-    void* out) -> void* {
-  return lyra::runtime::EmplaceCompletion(
-      out, lyra::runtime::TupleTypeAt(answer_type),
-      lyra::runtime::Single(
-          lyra::runtime::ReadFlatMemory(
-              *static_cast<RuntimeEffects*>(runtime),
-              Read<RuntimeDynamicArray>(memory), Read<String>(name), base,
-              start, finish,
-              lyra::runtime::WordValues{
-                  lyra::runtime::MemberValues{Read<Enumeration>(enumeration)}},
-              SourceLocationAt(location))));
-}
-
-void lyra_rt_dynarray_write_mem(
-    void* runtime, const void* memory, const void* name, std::int64_t base,
-    std::int64_t start, const void* location) {
-  lyra::runtime::WriteFlatMemory(
-      *static_cast<RuntimeEffects*>(runtime), Read<RuntimeDynamicArray>(memory),
-      Read<String>(name), base, start, std::nullopt,
-      SourceLocationAt(location));
-}
-
-void lyra_rt_dynarray_write_mem_within(
-    void* runtime, const void* memory, const void* name, std::int64_t base,
-    std::int64_t start, std::int64_t finish, const void* location) {
-  lyra::runtime::WriteFlatMemory(
-      *static_cast<RuntimeEffects*>(runtime), Read<RuntimeDynamicArray>(memory),
-      Read<String>(name), base, start, finish, SourceLocationAt(location));
-}
-
-auto lyra_rt_queue_read_mem(
-    void* runtime, const void* memory, const void* name, std::int64_t base,
-    std::int64_t start, const void* location, const void* answer_type,
-    void* out) -> void* {
-  return lyra::runtime::EmplaceCompletion(
-      out, lyra::runtime::TupleTypeAt(answer_type),
-      lyra::runtime::Single(
-          lyra::runtime::ReadFlatMemory(
-              *static_cast<RuntimeEffects*>(runtime),
-              Read<RuntimeQueue>(memory), Read<String>(name), base, start,
-              std::nullopt,
-              lyra::runtime::WordValues{lyra::runtime::AnyNumber{}},
-              SourceLocationAt(location))));
-}
-
-auto lyra_rt_queue_read_mem_within(
-    void* runtime, const void* memory, const void* name, std::int64_t base,
-    std::int64_t start, std::int64_t finish, const void* location,
-    const void* answer_type, void* out) -> void* {
-  return lyra::runtime::EmplaceCompletion(
-      out, lyra::runtime::TupleTypeAt(answer_type),
-      lyra::runtime::Single(
-          lyra::runtime::ReadFlatMemory(
-              *static_cast<RuntimeEffects*>(runtime),
-              Read<RuntimeQueue>(memory), Read<String>(name), base, start,
-              finish, lyra::runtime::WordValues{lyra::runtime::AnyNumber{}},
-              SourceLocationAt(location))));
-}
-
-auto lyra_rt_queue_read_enumerated_mem(
-    void* runtime, const void* memory, const void* enumeration,
-    const void* name, std::int64_t base, std::int64_t start,
-    const void* location, const void* answer_type, void* out) -> void* {
-  return lyra::runtime::EmplaceCompletion(
-      out, lyra::runtime::TupleTypeAt(answer_type),
-      lyra::runtime::Single(
-          lyra::runtime::ReadFlatMemory(
-              *static_cast<RuntimeEffects*>(runtime),
-              Read<RuntimeQueue>(memory), Read<String>(name), base, start,
-              std::nullopt,
-              lyra::runtime::WordValues{
-                  lyra::runtime::MemberValues{Read<Enumeration>(enumeration)}},
-              SourceLocationAt(location))));
-}
-
-auto lyra_rt_queue_read_enumerated_mem_within(
-    void* runtime, const void* memory, const void* enumeration,
-    const void* name, std::int64_t base, std::int64_t start,
-    std::int64_t finish, const void* location, const void* answer_type,
-    void* out) -> void* {
-  return lyra::runtime::EmplaceCompletion(
-      out, lyra::runtime::TupleTypeAt(answer_type),
-      lyra::runtime::Single(
-          lyra::runtime::ReadFlatMemory(
-              *static_cast<RuntimeEffects*>(runtime),
-              Read<RuntimeQueue>(memory), Read<String>(name), base, start,
-              finish,
-              lyra::runtime::WordValues{
-                  lyra::runtime::MemberValues{Read<Enumeration>(enumeration)}},
-              SourceLocationAt(location))));
-}
-
-void lyra_rt_queue_write_mem(
-    void* runtime, const void* memory, const void* name, std::int64_t base,
-    std::int64_t start, const void* location) {
-  lyra::runtime::WriteFlatMemory(
-      *static_cast<RuntimeEffects*>(runtime), Read<RuntimeQueue>(memory),
-      Read<String>(name), base, start, std::nullopt,
-      SourceLocationAt(location));
-}
-
-void lyra_rt_queue_write_mem_within(
-    void* runtime, const void* memory, const void* name, std::int64_t base,
-    std::int64_t start, std::int64_t finish, const void* location) {
-  lyra::runtime::WriteFlatMemory(
-      *static_cast<RuntimeEffects*>(runtime), Read<RuntimeQueue>(memory),
-      Read<String>(name), base, start, finish, SourceLocationAt(location));
-}
-
-auto lyra_rt_assocarray_read_mem(
-    void* runtime, const void* memory, const void* key_type, const void* name,
-    std::int64_t base, std::int64_t start, const void* location,
-    const void* answer_type, void* out) -> void* {
-  return lyra::runtime::EmplaceCompletion(
-      out, lyra::runtime::TupleTypeAt(answer_type),
-      lyra::runtime::Single(
-          lyra::runtime::ReadKeyedMemory(
-              *static_cast<RuntimeEffects*>(runtime),
-              Read<RuntimeAssociativeArray>(memory), Read<String>(name), base,
-              start, std::nullopt, key_type,
-              lyra::runtime::WordValues{lyra::runtime::AnyNumber{}},
-              SourceLocationAt(location))));
-}
-
-auto lyra_rt_assocarray_read_mem_within(
-    void* runtime, const void* memory, const void* key_type, const void* name,
-    std::int64_t base, std::int64_t start, std::int64_t finish,
-    const void* location, const void* answer_type, void* out) -> void* {
-  return lyra::runtime::EmplaceCompletion(
-      out, lyra::runtime::TupleTypeAt(answer_type),
-      lyra::runtime::Single(
-          lyra::runtime::ReadKeyedMemory(
-              *static_cast<RuntimeEffects*>(runtime),
-              Read<RuntimeAssociativeArray>(memory), Read<String>(name), base,
-              start, finish, key_type,
-              lyra::runtime::WordValues{lyra::runtime::AnyNumber{}},
-              SourceLocationAt(location))));
-}
-
-auto lyra_rt_assocarray_read_enumerated_mem(
-    void* runtime, const void* memory, const void* key_type,
-    const void* enumeration, const void* name, std::int64_t base,
-    std::int64_t start, const void* location, const void* answer_type,
-    void* out) -> void* {
-  return lyra::runtime::EmplaceCompletion(
-      out, lyra::runtime::TupleTypeAt(answer_type),
-      lyra::runtime::Single(
-          lyra::runtime::ReadKeyedMemory(
-              *static_cast<RuntimeEffects*>(runtime),
-              Read<RuntimeAssociativeArray>(memory), Read<String>(name), base,
-              start, std::nullopt, key_type,
-              lyra::runtime::WordValues{
-                  lyra::runtime::MemberValues{Read<Enumeration>(enumeration)}},
-              SourceLocationAt(location))));
-}
-
-auto lyra_rt_assocarray_read_enumerated_mem_within(
-    void* runtime, const void* memory, const void* key_type,
-    const void* enumeration, const void* name, std::int64_t base,
-    std::int64_t start, std::int64_t finish, const void* location,
-    const void* answer_type, void* out) -> void* {
-  return lyra::runtime::EmplaceCompletion(
-      out, lyra::runtime::TupleTypeAt(answer_type),
-      lyra::runtime::Single(
-          lyra::runtime::ReadKeyedMemory(
-              *static_cast<RuntimeEffects*>(runtime),
-              Read<RuntimeAssociativeArray>(memory), Read<String>(name), base,
-              start, finish, key_type,
-              lyra::runtime::WordValues{
-                  lyra::runtime::MemberValues{Read<Enumeration>(enumeration)}},
-              SourceLocationAt(location))));
-}
-
-void lyra_rt_assocarray_write_mem(
-    void* runtime, const void* memory, const void* name, std::int64_t base,
-    std::int64_t start, const void* location) {
-  lyra::runtime::WriteKeyedMemory(
-      *static_cast<RuntimeEffects*>(runtime),
-      Read<RuntimeAssociativeArray>(memory), Read<String>(name), base, start,
-      std::nullopt, SourceLocationAt(location));
-}
-
-void lyra_rt_assocarray_write_mem_within(
-    void* runtime, const void* memory, const void* name, std::int64_t base,
-    std::int64_t start, std::int64_t finish, const void* location) {
-  lyra::runtime::WriteKeyedMemory(
-      *static_cast<RuntimeEffects*>(runtime),
-      Read<RuntimeAssociativeArray>(memory), Read<String>(name), base, start,
-      finish, SourceLocationAt(location));
+void lyra_rt_memory_words_put(
+    void* words, std::int64_t k, const void* word, const void* word_type) {
+  const lyra::value::LoadedWords held =
+      lyra::runtime::IntegralTypeAt(word_type).Load(word);
+  lyra::runtime::WordsAt(words).Put(k, held.View());
+}
+void lyra_rt_memory_words_put_keyed(
+    void* words, std::int64_t key, const void* word, const void* word_type) {
+  const lyra::value::LoadedWords held =
+      lyra::runtime::IntegralTypeAt(word_type).Load(word);
+  lyra::runtime::WordsAt(words).PutKeyed(key, held.View());
+}
+void lyra_rt_memory_words_commit(void* words, const void* location) {
+  lyra::runtime::WordsAt(words).Commit(SourceLocationAt(location));
 }
 
 auto lyra_rt_format_runtime(
@@ -7846,35 +6428,42 @@ auto lyra_rt_to_sv_logic(
 // else. What the image needs of the actual's type is the type of one element,
 // which the actual's own type reaches under its unpacked layers.
 auto lyra_rt_dpi_open_array_make(
-    const void* sv, const void* sv_type, void* bounds,
-    std::uint64_t bounds_count, bool addressable_elements, void* out) -> void* {
-  const std::span<const std::int64_t> declared =
-      SpanAt<const std::int64_t>(bounds, bounds_count);
-  const std::vector<UnpackedRange> dims =
-      lyra::value::UnpackedRangesOf(declared);
-  const lyra::value::ValueType& type = lyra::runtime::TypeAt(sv_type);
-  const lyra::value::IntegralShape element =
-      lyra::runtime::ImageElementType(sv, type, dims.size()).Shape();
-  auto* image = std::construct_at(
-      static_cast<DpiOpenArray*>(out), declared, element.width, element.domain,
+    void* bounds, std::uint64_t bounds_count, std::int64_t element_width,
+    bool four_state, bool addressable_elements, void* out) -> void* {
+  return std::construct_at(
+      static_cast<DpiOpenArray*>(out),
+      SpanAt<const std::int64_t>(bounds, bounds_count),
+      static_cast<std::uint64_t>(element_width), four_state,
       addressable_elements);
-  std::size_t position = 0;
-  lyra::runtime::FillImage(*image, sv, type, 0, dims.size(), position);
-  return image;
 }
 
 auto lyra_rt_dpi_open_array_handle(void* image) -> void* {
   return static_cast<DpiOpenArray*>(image)->Handle();
 }
 
-auto lyra_rt_dpi_open_array_value(
-    const void* image, const void* answer_type, void* out) -> void* {
-  const lyra::value::ValueType& type = lyra::runtime::TypeAt(answer_type);
-  const auto& read = *static_cast<const DpiOpenArray*>(image);
-  const auto dimensions = static_cast<std::size_t>(read.Dimensions());
-  lyra::runtime::BuildImageShape(type, out, dimensions);
-  std::size_t position = 0;
-  lyra::runtime::ReadImageBack(read, out, type, 0, dimensions, position);
+auto lyra_rt_dpi_open_array_element_count(const void* image) noexcept
+    -> std::int64_t {
+  return static_cast<const DpiOpenArray*>(image)->ElementCount();
+}
+auto lyra_rt_dpi_open_array_ordinal(
+    const void* image, std::int64_t k, std::int64_t dimension) noexcept
+    -> std::int64_t {
+  return static_cast<const DpiOpenArray*>(image)->Ordinal(k, dimension);
+}
+void lyra_rt_dpi_open_array_put(
+    void* image, std::int64_t k, const void* element,
+    const void* element_type) {
+  const lyra::value::LoadedWords held =
+      lyra::runtime::IntegralTypeAt(element_type).Load(element);
+  static_cast<DpiOpenArray*>(image)->Put(k, held.View());
+}
+auto lyra_rt_dpi_open_array_word(
+    const void* image, std::int64_t k, const void* answer_type, void* out)
+    -> void* {
+  lyra::value::WrittenWords word(
+      lyra::runtime::IntegralTypeAt(answer_type).Shape());
+  static_cast<const DpiOpenArray*>(image)->Word(k, word.MutableView());
+  word.StoreTo(out);
   return out;
 }
 
@@ -7905,16 +6494,6 @@ auto lyra_rt_laidout_cell_open_for_write(void* cell, void* out) -> void* {
   return OpenTailCellWrite<LaidOutValue>(cell, out);
 }
 
-auto lyra_rt_dynarray_cell_open_for_write(void* cell, void* out) -> void* {
-  return OpenCellWrite<RuntimeDynamicArray>(cell, out);
-}
-auto lyra_rt_queue_cell_open_for_write(void* cell, void* out) -> void* {
-  return OpenCellWrite<RuntimeQueue>(cell, out);
-}
-auto lyra_rt_assocarray_cell_open_for_write(void* cell, void* out) -> void* {
-  return OpenCellWrite<RuntimeAssociativeArray>(cell, out);
-}
-
 auto lyra_rt_string_ref_open_for_write(void* reference, void* out) -> void* {
   return OpenRefWrite<String>(reference, out);
 }
@@ -7938,16 +6517,6 @@ auto lyra_rt_laidout_ref_open_for_write(
       reference, lyra::runtime::TypeAt(value_type), out);
 }
 
-auto lyra_rt_dynarray_ref_open_for_write(void* reference, void* out) -> void* {
-  return OpenRefWrite<RuntimeDynamicArray>(reference, out);
-}
-auto lyra_rt_queue_ref_open_for_write(void* reference, void* out) -> void* {
-  return OpenRefWrite<RuntimeQueue>(reference, out);
-}
-auto lyra_rt_assocarray_ref_open_for_write(void* reference, void* out)
-    -> void* {
-  return OpenRefWrite<RuntimeAssociativeArray>(reference, out);
-}
 auto lyra_rt_laidout_driver_open_for_write(void* driver, void* out) -> void* {
   return OpenTailDriverWrite<LaidOutValue>(driver, out);
 }
@@ -8121,15 +6690,6 @@ auto lyra_rt_managedref_cell_reports_to(void* cell) -> void* {
 auto lyra_rt_laidout_cell_reports_to(void* cell) -> void* {
   return CellReportsTo<LaidOutValue>(cell);
 }
-auto lyra_rt_dynarray_cell_reports_to(void* cell) -> void* {
-  return CellReportsTo<RuntimeDynamicArray>(cell);
-}
-auto lyra_rt_queue_cell_reports_to(void* cell) -> void* {
-  return CellReportsTo<RuntimeQueue>(cell);
-}
-auto lyra_rt_assocarray_cell_reports_to(void* cell) -> void* {
-  return CellReportsTo<RuntimeAssociativeArray>(cell);
-}
 auto lyra_rt_any_cell_reports_to(void* cell) -> void* {
   return CellReportsTo<lyra::value::Any>(cell);
 }
@@ -8179,15 +6739,6 @@ auto lyra_rt_managedref_ref_reports_to(const void* reference) -> void* {
   return RefReportsTo(reference);
 }
 auto lyra_rt_laidout_ref_reports_to(const void* reference) -> void* {
-  return RefReportsTo(reference);
-}
-auto lyra_rt_dynarray_ref_reports_to(const void* reference) -> void* {
-  return RefReportsTo(reference);
-}
-auto lyra_rt_queue_ref_reports_to(const void* reference) -> void* {
-  return RefReportsTo(reference);
-}
-auto lyra_rt_assocarray_ref_reports_to(const void* reference) -> void* {
   return RefReportsTo(reference);
 }
 auto lyra_rt_any_ref_reports_to(const void* reference) -> void* {
@@ -8248,32 +6799,34 @@ auto lyra_rt_designate_whole(void* write, void* out) -> void* {
       static_cast<OpenWrite*>(write)->Whole());
 }
 
-auto lyra_rt_dynarray_designate_element(
-    const void* designation, const void* position, void* out) -> void* {
-  return DesignateElement<RuntimeDynamicArray>(
-      designation, PositionNamedAt(position), out);
-}
-
 auto lyra_rt_laidout_designate_element(
     const void* designation, const void* position, const void* array_type,
     void* out) -> void* {
-  return DesignateArrayElement(
-      designation, ArrayTypeAt(array_type), PositionNamedAt(position), out);
+  return DesignateFixedArrayElement(
+      designation, ArrayTypeAt(array_type), position, out);
 }
 
-auto lyra_rt_queue_designate_element(
+auto lyra_rt_laidout_dynamic_array_designate_element(
+    const void* designation, const void* position, const void* array_type,
+    void* out) -> void* {
+  return DesignateFoundElement(
+      designation, DynamicArrayTypeAt(array_type), position, out);
+}
+auto lyra_rt_laidout_queue_designate_element(
     const void* designation, const void* position, const void* location,
-    void* out) -> void* {
+    const void* array_type, void* out) -> void* {
   const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
-  return DesignateElement<RuntimeQueue>(
-      designation, PositionNamedAt(position), out);
+  return DesignateFoundElement(
+      designation, QueueTypeAt(array_type), position, out);
 }
 
-auto lyra_rt_assocarray_designate_element(
-    const void* designation, const void* index, const void* index_type,
-    void* out) -> void* {
-  return DesignateElement<RuntimeAssociativeArray>(
-      designation, lyra::runtime::IndexAt(index, index_type), out);
+auto lyra_rt_laidout_assoc_designate_element(
+    const void* designation, const void* index, const void* location,
+    const void* array_type, void* out) -> void* {
+  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
+  return DesignateAssociativeArrayElement(
+      designation, lyra::runtime::AssociativeArrayTypeAt(array_type), index,
+      out);
 }
 
 auto lyra_rt_laidout_designate_component(
@@ -8307,40 +6860,6 @@ auto lyra_rt_laidout_designate_member(
   return std::construct_at(static_cast<ErasedDesignation*>(out), within);
 }
 
-void lyra_rt_dynarray_assign_slice(
-    const void* designation, const void* start, std::int64_t count,
-    const void* replacement, const void* replacement_type) {
-  AssignDesignatedSlice<RuntimeDynamicArray>(
-      designation, PositionNamedAt(start), count,
-      lyra::runtime::ElementHandles(replacement, replacement_type));
-}
-
-void lyra_rt_laidout_assign_slice(
-    const void* designation, const void* start, std::int64_t count,
-    const void* replacement, const void* replacement_type,
-    const void* array_type) {
-  AssignDesignatedArraySlice(
-      designation, ArrayTypeAt(array_type), PositionNamedAt(start), count,
-      lyra::runtime::ElementHandles(replacement, replacement_type));
-}
-
-void lyra_rt_queue_assign_slice(
-    const void* designation, const void* lo, const void* hi,
-    const void* replacement, const void* replacement_type,
-    const void* location) {
-  const lyra::base::SourceLocationScope bound(SourceLocationAt(location));
-  const ErasedDesignation& within = DesignationAt(designation);
-  auto& queue = *static_cast<RuntimeQueue*>(within.part);
-  within.write->BeforeModifyPart(queue);
-  if (const auto written = queue.AssignSlice(
-          PositionNamedAt(lo), PositionNamedAt(hi),
-          lyra::runtime::ElementHandles(replacement, replacement_type))) {
-    within.write->Moved(
-        static_cast<std::int64_t>(written->start),
-        static_cast<std::int64_t>(written->count));
-  }
-}
-
 auto lyra_rt_string_land(const void* designation) noexcept -> void* {
   return LandDesignation<String>(designation);
 }
@@ -8356,20 +6875,44 @@ auto lyra_rt_shortreal_land(const void* designation) noexcept -> void* {
 auto lyra_rt_unmanagedref_land(const void* designation) noexcept -> void* {
   return LandDesignation<UnmanagedRef>(designation);
 }
+auto lyra_rt_laidout_designated(
+    const void* designation, const void* first, std::int64_t count,
+    const void* value_type) noexcept -> void* {
+  const ErasedDesignation& designated = DesignationAt(designation);
+  const lyra::value::ValueType& type = lyra::runtime::TypeAt(value_type);
+  void* const part = designated.part;
+  if (lyra::value::ChangesSizeAtRunTime(type.Kind())) {
+    designated.write->BeforeModifyLaidOut(type, part);
+    return part;
+  }
+  if (!designated.write->Announces()) {
+    return part;
+  }
+  // A run is written into an array, and one whose size cannot change is of a
+  // fixed size.
+  const lyra::value::FixedArrayType& array = *type.AsFixedArray();
+  for (const std::int64_t ordinal : lyra::runtime::PositionsASliceWrites(
+           PositionNamedAt(first), count,
+           static_cast<std::int64_t>(array.Count()))) {
+    designated.write->BeforeModifyLaidOut(
+        array.ElementType().Type(),
+        array.GetUnchecked(part, static_cast<std::size_t>(ordinal)),
+        lyra::runtime::PartPath::Element(ordinal));
+  }
+  return part;
+}
+
+void lyra_rt_laidout_moved(
+    const void* designation, const void* begin, const void* end) noexcept {
+  DesignationAt(designation)
+      .write->Moved(*PositionNamedAt(begin), *PositionNamedAt(end));
+}
+
 auto lyra_rt_laidout_land(
     const void* designation, const void* value_type) noexcept -> void* {
   return LandLaidOutDesignation(designation, lyra::runtime::TypeAt(value_type));
 }
 
-auto lyra_rt_dynarray_land(const void* designation) noexcept -> void* {
-  return LandDesignation<RuntimeDynamicArray>(designation);
-}
-auto lyra_rt_queue_land(const void* designation) noexcept -> void* {
-  return LandDesignation<RuntimeQueue>(designation);
-}
-auto lyra_rt_assocarray_land(const void* designation) noexcept -> void* {
-  return LandDesignation<RuntimeAssociativeArray>(designation);
-}
 auto lyra_rt_managedref_land(const void* designation) noexcept -> void* {
   return LandDesignation<ObjectRef>(designation);
 }
@@ -8383,17 +6926,6 @@ void lyra_rt_string_assign(void* storage, const void* value) {
 }
 void lyra_rt_bitvec_assign(void* storage, const void* value) {
   *static_cast<BitVec*>(storage) = Read<BitVec>(value);
-}
-void lyra_rt_dynarray_assign(void* storage, const void* value) {
-  *static_cast<RuntimeDynamicArray*>(storage) =
-      Read<RuntimeDynamicArray>(value);
-}
-void lyra_rt_queue_assign(void* storage, const void* value) {
-  *static_cast<RuntimeQueue*>(storage) = Read<RuntimeQueue>(value);
-}
-void lyra_rt_assocarray_assign(void* storage, const void* value) {
-  *static_cast<RuntimeAssociativeArray*>(storage) =
-      Read<RuntimeAssociativeArray>(value);
 }
 void lyra_rt_managedref_assign(void* storage, const void* value) {
   *static_cast<ObjectRef*>(storage) = Read<ObjectRef>(value);
@@ -8413,10 +6945,10 @@ void lyra_rt_wait_assign(void* storage, void* value) {
   *static_cast<Wait*>(storage) = std::move(*static_cast<Wait*>(value));
 }
 
-auto lyra_rt_element_default(const void* element_type) -> const void* {
+auto lyra_rt_element_default(const void* element_type) noexcept -> const void* {
   return lyra::runtime::ElementTypeAt(element_type).Default();
 }
-auto lyra_rt_discarded_write(const void* element_type) -> void* {
+auto lyra_rt_discarded_write(const void* element_type) noexcept -> void* {
   return lyra::runtime::ElementTypeAt(element_type).DiscardedWrite();
 }
 
@@ -8428,15 +6960,6 @@ void lyra_rt_string_destroy(void* object) {
 }
 void lyra_rt_bitvec_destroy(void* object) {
   std::destroy_at(static_cast<BitVec*>(object));
-}
-void lyra_rt_dynarray_destroy(void* object) {
-  std::destroy_at(static_cast<RuntimeDynamicArray*>(object));
-}
-void lyra_rt_queue_destroy(void* object) {
-  std::destroy_at(static_cast<RuntimeQueue*>(object));
-}
-void lyra_rt_assocarray_destroy(void* object) {
-  std::destroy_at(static_cast<RuntimeAssociativeArray*>(object));
 }
 void lyra_rt_managedref_destroy(void* object) {
   std::destroy_at(static_cast<ObjectRef*>(object));
@@ -8465,6 +6988,9 @@ void lyra_rt_dpi_logic_buffer_destroy(void* object) {
 void lyra_rt_dpi_open_array_destroy(void* object) {
   std::destroy_at(static_cast<DpiOpenArray*>(object));
 }
+void lyra_rt_memory_words_destroy(void* object) {
+  std::destroy_at(static_cast<lyra::runtime::MemoryWords*>(object));
+}
 void lyra_rt_channel_cancellation_destroy(void* object) {
   std::destroy_at(static_cast<ChannelCancellation*>(object));
 }
@@ -8491,15 +7017,6 @@ auto lyra_rt_string_copy(const void* value, void* out) -> void* {
 }
 auto lyra_rt_bitvec_copy(const void* value, void* out) -> void* {
   return Emplace(out, Read<BitVec>(value));
-}
-auto lyra_rt_dynarray_copy(const void* value, void* out) -> void* {
-  return Emplace(out, Read<RuntimeDynamicArray>(value));
-}
-auto lyra_rt_queue_copy(const void* value, void* out) -> void* {
-  return Emplace(out, Read<RuntimeQueue>(value));
-}
-auto lyra_rt_assocarray_copy(const void* value, void* out) -> void* {
-  return Emplace(out, Read<RuntimeAssociativeArray>(value));
 }
 auto lyra_rt_managedref_copy(const void* value, void* out) -> void* {
   return Emplace(out, Read<ObjectRef>(value));
@@ -8553,77 +7070,67 @@ auto lyra_rt_weak_reference_copy(const void* value, void* out) -> void* {
   return Emplace(out, Read<WeakObjectRef>(value));
 }
 
-// A value moved into storage that takes it over. What is left behind is still
-// an object, which the body then ends.
-auto lyra_rt_string_move(void* value, void* out) -> void* {
-  return Emplace(out, std::move(*static_cast<String*>(value)));
+// A value relocated into storage that takes it over; the storage it left is
+// owed nothing afterwards.
+auto lyra_rt_string_relocate(void* value, void* out) -> void* {
+  return Relocate<String>(value, out);
 }
-auto lyra_rt_bitvec_move(void* value, void* out) -> void* {
-  return Emplace(out, std::move(*static_cast<BitVec*>(value)));
+auto lyra_rt_bitvec_relocate(void* value, void* out) -> void* {
+  return Relocate<BitVec>(value, out);
 }
-auto lyra_rt_dynarray_move(void* value, void* out) -> void* {
-  return Emplace(out, std::move(*static_cast<RuntimeDynamicArray*>(value)));
+auto lyra_rt_managedref_relocate(void* value, void* out) -> void* {
+  return Relocate<ObjectRef>(value, out);
 }
-auto lyra_rt_queue_move(void* value, void* out) -> void* {
-  return Emplace(out, std::move(*static_cast<RuntimeQueue*>(value)));
+auto lyra_rt_shared_pointer_relocate(void* value, void* out) -> void* {
+  return Relocate<SharedPointer>(value, out);
 }
-auto lyra_rt_assocarray_move(void* value, void* out) -> void* {
-  return Emplace(out, std::move(*static_cast<RuntimeAssociativeArray*>(value)));
+auto lyra_rt_print_item_relocate(void* value, void* out) -> void* {
+  return Relocate<PrintItem>(value, out);
 }
-auto lyra_rt_managedref_move(void* value, void* out) -> void* {
-  return Emplace(out, std::move(*static_cast<ObjectRef*>(value)));
+auto lyra_rt_format_spec_relocate(void* value, void* out) -> void* {
+  return Relocate<FormatSpec>(value, out);
 }
-auto lyra_rt_shared_pointer_move(void* value, void* out) -> void* {
-  return Emplace(out, std::move(*static_cast<SharedPointer*>(value)));
+auto lyra_rt_format_arg_relocate(void* value, void* out) -> void* {
+  return Relocate<FormatArg>(value, out);
 }
-auto lyra_rt_print_item_move(void* value, void* out) -> void* {
-  return Emplace(out, std::move(*static_cast<PrintItem*>(value)));
+auto lyra_rt_hierarchy_segment_relocate(void* value, void* out) -> void* {
+  return Relocate<HierarchySegment>(value, out);
 }
-auto lyra_rt_format_spec_move(void* value, void* out) -> void* {
-  return Emplace(out, std::move(*static_cast<FormatSpec*>(value)));
+auto lyra_rt_trigger_relocate(void* value, void* out) -> void* {
+  return Relocate<Trigger>(value, out);
 }
-auto lyra_rt_format_arg_move(void* value, void* out) -> void* {
-  return Emplace(out, std::move(*static_cast<FormatArg*>(value)));
+auto lyra_rt_observation_relocate(void* value, void* out) -> void* {
+  return Relocate<Observation>(value, out);
 }
-auto lyra_rt_hierarchy_segment_move(void* value, void* out) -> void* {
-  return Emplace(out, std::move(*static_cast<HierarchySegment*>(value)));
+auto lyra_rt_read_report_relocate(void* value, void* out) -> void* {
+  return Relocate<ReadReport>(value, out);
 }
-auto lyra_rt_trigger_move(void* value, void* out) -> void* {
-  return Emplace(out, std::move(*static_cast<Trigger*>(value)));
+auto lyra_rt_wait_relocate(void* value, void* out) -> void* {
+  return Relocate<Wait>(value, out);
 }
-auto lyra_rt_observation_move(void* value, void* out) -> void* {
-  return Emplace(out, std::move(*static_cast<Observation*>(value)));
+auto lyra_rt_dpi_bit_buffer_relocate(void* value, void* out) -> void* {
+  return Relocate<DpiBitBuffer>(value, out);
 }
-auto lyra_rt_read_report_move(void* value, void* out) -> void* {
-  return Emplace(out, std::move(*static_cast<ReadReport*>(value)));
+auto lyra_rt_dpi_logic_buffer_relocate(void* value, void* out) -> void* {
+  return Relocate<DpiLogicBuffer>(value, out);
 }
-auto lyra_rt_wait_move(void* value, void* out) -> void* {
-  return Emplace(out, std::move(*static_cast<Wait*>(value)));
+auto lyra_rt_dpi_open_array_relocate(void* value, void* out) -> void* {
+  return Relocate<DpiOpenArray>(value, out);
 }
-auto lyra_rt_dpi_bit_buffer_move(void* value, void* out) -> void* {
-  return Emplace(out, std::move(*static_cast<DpiBitBuffer*>(value)));
+auto lyra_rt_channel_cancellation_relocate(void* value, void* out) -> void* {
+  return Relocate<ChannelCancellation>(value, out);
 }
-auto lyra_rt_dpi_logic_buffer_move(void* value, void* out) -> void* {
-  return Emplace(out, std::move(*static_cast<DpiLogicBuffer*>(value)));
+auto lyra_rt_no_thread_context_relocate(void* value, void* out) -> void* {
+  return Relocate<lyra::runtime::NoThreadContext>(value, out);
 }
-auto lyra_rt_dpi_open_array_move(void* value, void* out) -> void* {
-  return Emplace(out, std::move(*static_cast<DpiOpenArray*>(value)));
+auto lyra_rt_reference_relocate(void* value, void* out) -> void* {
+  return Relocate<ErasedReference>(value, out);
 }
-auto lyra_rt_channel_cancellation_move(void* value, void* out) -> void* {
-  return Emplace(out, std::move(*static_cast<ChannelCancellation*>(value)));
+auto lyra_rt_any_reference_relocate(void* value, void* out) -> void* {
+  return Relocate<AnyReference>(value, out);
 }
-auto lyra_rt_no_thread_context_move(void* value, void* out) -> void* {
-  return Emplace(
-      out, std::move(*static_cast<lyra::runtime::NoThreadContext*>(value)));
-}
-auto lyra_rt_reference_move(void* value, void* out) -> void* {
-  return Emplace(out, Read<ErasedReference>(value));
-}
-auto lyra_rt_any_reference_move(void* value, void* out) -> void* {
-  return Emplace(out, Read<AnyReference>(value));
-}
-auto lyra_rt_weak_reference_move(void* value, void* out) -> void* {
-  return Emplace(out, std::move(*static_cast<WeakObjectRef*>(value)));
+auto lyra_rt_weak_reference_relocate(void* value, void* out) -> void* {
+  return Relocate<WeakObjectRef>(value, out);
 }
 
 void lyra_rt_borrowed_handle_construct(void* storage) {
@@ -8658,19 +7165,6 @@ void lyra_rt_laidout_cell_construct(const void* held_type, void* storage) {
       storage, lyra::runtime::ElementTypeAt(held_type));
 }
 
-void lyra_rt_dynarray_cell_construct(const void* element_type, void* storage) {
-  BuildAt<Var<RuntimeDynamicArray>>(
-      storage, lyra::runtime::ElementTypeAt(element_type));
-}
-void lyra_rt_queue_cell_construct(const void* queue_type, void* storage) {
-  BuildAt<Var<RuntimeQueue>>(storage, QueueTypeAt(queue_type));
-}
-void lyra_rt_assocarray_cell_construct(
-    const void* key_index_order, const void* element_type, void* storage) {
-  BuildAt<Var<RuntimeAssociativeArray>>(
-      storage, lyra::runtime::IndexOrderAt(key_index_order),
-      lyra::runtime::ElementTypeAt(element_type));
-}
 void lyra_rt_managedref_cell_construct(void* storage) {
   BuildAt<Var<ObjectRef>>(storage);
 }
@@ -8695,20 +7189,6 @@ void lyra_rt_laidout_value_cell_construct(
       storage, lyra::runtime::ElementTypeAt(held_type));
 }
 
-void lyra_rt_dynarray_value_cell_construct(
-    const void* element_type, void* storage) {
-  BuildAt<ValueCell<RuntimeDynamicArray>>(
-      storage, lyra::runtime::ElementTypeAt(element_type));
-}
-void lyra_rt_queue_value_cell_construct(const void* queue_type, void* storage) {
-  BuildAt<ValueCell<RuntimeQueue>>(storage, QueueTypeAt(queue_type));
-}
-void lyra_rt_assocarray_value_cell_construct(
-    const void* key_index_order, const void* element_type, void* storage) {
-  BuildAt<ValueCell<RuntimeAssociativeArray>>(
-      storage, lyra::runtime::IndexOrderAt(key_index_order),
-      lyra::runtime::ElementTypeAt(element_type));
-}
 void lyra_rt_managedref_value_cell_construct(void* storage) {
   BuildAt<ValueCell<ObjectRef>>(storage);
 }
@@ -8749,15 +7229,6 @@ void lyra_rt_laidout_sampled_history_construct(void* storage) {
   BuildAt<SampledHistory<LaidOutValue>>(storage);
 }
 
-void lyra_rt_dynarray_sampled_history_construct(void* storage) {
-  BuildAt<SampledHistory<RuntimeDynamicArray>>(storage);
-}
-void lyra_rt_queue_sampled_history_construct(void* storage) {
-  BuildAt<SampledHistory<RuntimeQueue>>(storage);
-}
-void lyra_rt_assocarray_sampled_history_construct(void* storage) {
-  BuildAt<SampledHistory<RuntimeAssociativeArray>>(storage);
-}
 void lyra_rt_managedref_sampled_history_construct(void* storage) {
   BuildAt<SampledHistory<ObjectRef>>(storage);
 }
@@ -8805,15 +7276,6 @@ void lyra_rt_laidout_cell_destroy(void* storage) {
   std::destroy_at(&VariableAt<LaidOutValue>(storage));
 }
 
-void lyra_rt_dynarray_cell_destroy(void* storage) {
-  std::destroy_at(&VariableAt<RuntimeDynamicArray>(storage));
-}
-void lyra_rt_queue_cell_destroy(void* storage) {
-  std::destroy_at(&VariableAt<RuntimeQueue>(storage));
-}
-void lyra_rt_assocarray_cell_destroy(void* storage) {
-  std::destroy_at(&VariableAt<RuntimeAssociativeArray>(storage));
-}
 void lyra_rt_managedref_cell_destroy(void* storage) {
   std::destroy_at(&VariableAt<ObjectRef>(storage));
 }
@@ -8827,15 +7289,6 @@ void lyra_rt_laidout_value_cell_destroy(void* storage) {
   std::destroy_at(static_cast<ValueCellFor<LaidOutValue>::Type*>(storage));
 }
 
-void lyra_rt_dynarray_value_cell_destroy(void* storage) {
-  std::destroy_at(&ValueCellAt<RuntimeDynamicArray>(storage));
-}
-void lyra_rt_queue_value_cell_destroy(void* storage) {
-  std::destroy_at(&ValueCellAt<RuntimeQueue>(storage));
-}
-void lyra_rt_assocarray_value_cell_destroy(void* storage) {
-  std::destroy_at(&ValueCellAt<RuntimeAssociativeArray>(storage));
-}
 void lyra_rt_managedref_value_cell_destroy(void* storage) {
   std::destroy_at(&ValueCellAt<ObjectRef>(storage));
 }
@@ -8871,16 +7324,6 @@ void lyra_rt_laidout_sampled_history_destroy(void* storage) {
   std::destroy_at(static_cast<SampledHistory<LaidOutValue>*>(storage));
 }
 
-void lyra_rt_dynarray_sampled_history_destroy(void* storage) {
-  std::destroy_at(static_cast<SampledHistory<RuntimeDynamicArray>*>(storage));
-}
-void lyra_rt_queue_sampled_history_destroy(void* storage) {
-  std::destroy_at(static_cast<SampledHistory<RuntimeQueue>*>(storage));
-}
-void lyra_rt_assocarray_sampled_history_destroy(void* storage) {
-  std::destroy_at(
-      static_cast<SampledHistory<RuntimeAssociativeArray>*>(storage));
-}
 void lyra_rt_managedref_sampled_history_destroy(void* storage) {
   std::destroy_at(static_cast<SampledHistory<ObjectRef>*>(storage));
 }

@@ -7,7 +7,10 @@
 // same value, so the comparison fails. They yield x when x or z in an element
 // leaves the relation ambiguous, which makes the result unusable as a
 // condition. === and !== instead take x and z as values that have to match,
-// so they always yield a known bit (LRM 11.2.2, 11.4.5, 7.4.6, 7.5).
+// so they always yield a known bit (LRM 11.2.2, 11.4.5, 7.4.6, 7.5). An
+// array of another kind whose elements are dynamic arrays -- a fixed-size
+// array, a queue, an associative array -- compares its elements the same
+// way, each a dynamic array compared as a whole (LRM 7.4.6, 7.9.10).
 module Top;
   int values [] = '{10, 20, 30};
   int same_values [] = '{10, 20, 30};
@@ -24,6 +27,20 @@ module Top;
   logic [3:0] also_empty_x [];
 
   int resized [];
+
+  typedef int row_t [];
+  row_t rows [2];
+  row_t same_rows [2];
+  row_t queued [$];
+  row_t same_queued [$];
+  row_t keyed [string];
+  row_t same_keyed [string];
+  logic equal_rows;
+  logic case_equal_rows;
+  logic equal_rows_after_write;
+  logic equal_queued;
+  logic equal_keyed;
+  logic equal_keyed_after_write;
 
   logic equal_same;
   logic unequal_same;
@@ -81,6 +98,22 @@ module Top;
     resized = new[3](resized);
     resized[2] = 30;
     equal_after_resize = (resized == values);
+
+    rows[0] = values;
+    rows[1] = shorter;
+    same_rows = rows;
+    equal_rows = (rows == same_rows);
+    case_equal_rows = (rows === same_rows);
+    same_rows[1][0] = 11;
+    equal_rows_after_write = (rows == same_rows);
+    queued.push_back(values);
+    same_queued.push_back(same_values);
+    equal_queued = (queued == same_queued);
+    keyed["a"] = values;
+    same_keyed["a"] = same_values;
+    equal_keyed = (keyed == same_keyed);
+    same_keyed["a"] = diverging;
+    equal_keyed_after_write = (keyed == same_keyed);
   end
 
   final begin
@@ -141,6 +174,21 @@ module Top;
              equal_before_resize);
     if (equal_after_resize !== 1'b1)
       $fatal(1, "equal_after_resize was %b, expected 1", equal_after_resize);
+
+    if (equal_rows !== 1'b1)
+      $fatal(1, "equal_rows was %b, expected 1", equal_rows);
+    if (case_equal_rows !== 1'b1)
+      $fatal(1, "case_equal_rows was %b, expected 1", case_equal_rows);
+    if (equal_rows_after_write !== 1'b0)
+      $fatal(1, "equal_rows_after_write was %b, expected 0",
+             equal_rows_after_write);
+    if (equal_queued !== 1'b1)
+      $fatal(1, "equal_queued was %b, expected 1", equal_queued);
+    if (equal_keyed !== 1'b1)
+      $fatal(1, "equal_keyed was %b, expected 1", equal_keyed);
+    if (equal_keyed_after_write !== 1'b0)
+      $fatal(1, "equal_keyed_after_write was %b, expected 0",
+             equal_keyed_after_write);
     $display("All checks passed");
   end
 endmodule

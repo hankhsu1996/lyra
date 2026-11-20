@@ -176,7 +176,7 @@ interior moves from "a location realized by a reference" to "a projection throug
   that lies where a write can land do not take that path on either backend.
 - A `ref`, `output`, or `inout` bound to an unpacked interior becomes expressible on the execution
   backend.
-- The queue and associative-array value domains may land their representation and read operations
+- The queue and the associative array may land their representation and read operations
   independently, but their interior writes connect to the common designator path, never a new
   per-type gate.
 - Where the functional form is taken, the whole-value store back through the owner is a semantic

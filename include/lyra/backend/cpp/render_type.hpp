@@ -15,6 +15,7 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
+#include "lyra/support/library_decl.hpp"
 
 namespace lyra::backend::cpp {
 
@@ -53,6 +54,12 @@ class CppType {
 };
 
 void WriteOne(TargetText& out, const CppType& spelling);
+
+// The library's class a library type stands for, at the type's arguments
+// where they make it different classes.
+void WriteLibraryClass(
+    TargetText& out, const mir::CompilationUnit& unit,
+    const mir::LibraryType& type);
 
 // What follows a type to say whether it may be written through, ` const` for
 // read-only and nothing otherwise. It is written after the type, so it
@@ -215,6 +222,16 @@ class CppClassRef {
 };
 
 void WriteOne(TargetText& out, const CppClassRef& ref);
+
+// The struct holding a run-time-sized container type's implementation of the
+// library's traits, which the type's spelling and a call of an item name,
+// and whose header each needs.
+struct CppImplStruct {
+  const mir::CompilationUnit* unit;
+  mir::TypeId type;
+};
+
+void WriteOne(TargetText& out, const CppImplStruct& impl);
 
 // A class named as the base of another (LRM 8.13). C++ lays the derived
 // class out over its base, so the name needs the base defined.

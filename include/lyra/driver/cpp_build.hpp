@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <span>
 #include <string>
@@ -11,6 +12,7 @@
 #include <vector>
 
 #include "lyra/backend/cpp/artifact.hpp"
+#include "lyra/backend/cpp/type_operation_bodies.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/sink.hpp"
 #include "lyra/driver/action_cache.hpp"
@@ -18,6 +20,7 @@
 #include "lyra/driver/pch.hpp"
 #include "lyra/driver/project_layout.hpp"
 #include "lyra/driver/runtime_export.hpp"
+#include "lyra/mir/code_source.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/stable_hash/fingerprint.hpp"
 #include "lyra/support/sanitizer.hpp"
@@ -79,15 +82,17 @@ struct EmittedCppSources {
 
 // What writing one body of a unit left in the project: the files, the one a
 // build compiles, and the text of what the unit states of the program's
-// foreign name space where it states anything; and its declarations, which
-// every body of the unit states alike and which are written where the bodies
-// are collected, once.
+// foreign name space where it states anything; its declarations, which every
+// body of the unit states alike; and code every unit naming a container type
+// writes alike, which a build compiles once. The last two are written where
+// the bodies are collected, once.
 struct WrittenUnit {
   std::string body_name;
   std::vector<std::string> files;
   TranslationUnit translation_unit;
   std::optional<std::string> dpi_fragment;
   std::vector<backend::cpp::CppArtifact> declarations;
+  std::vector<backend::cpp::CppArtifact> shared_code;
 };
 
 // A unit this target has no form for somewhere: every construct it refused,
@@ -110,28 +115,37 @@ using EmittedUnit = std::variant<WrittenUnit, RefusedUnit>;
 // reported produces nothing any later step carries forward.
 class CppProjectSink {
  public:
+  // How the body of an operation of one unit's type is built, as the pipeline
+  // builds it, which this target asks of each unit it writes.
+  using BodyBuilderFor =
+      std::function<backend::cpp::BodyBuilder(const mir::CompilationUnit&)>;
+
   // `refusals` is the run's sink: what a unit has no form for on this target is
   // reported into it, and once anything has been, nothing more is written,
   // because files short of the design are not a program.
   CppProjectSink(
       std::filesystem::path dir, SourceFormatting formatting,
-      diag::DiagnosticSink& refusals)
-      : dir_(std::move(dir)), formatting_(formatting), refusals_(&refusals) {
+      BodyBuilderFor body_builder_for, diag::DiagnosticSink& refusals)
+      : dir_(std::move(dir)),
+        formatting_(formatting),
+        body_builder_for_(std::move(body_builder_for)),
+        refusals_(&refusals) {
   }
 
   // Writes the translation unit realizing one body of a unit, or nothing where
   // the unit holds a construct this target has no form for, and hands back the
-  // unit's declarations. Every file a body writes is named for it, and nothing
-  // here reads what the sink collects, so several bodies may be written at
-  // once.
+  // unit's declarations, among them the class of each run-time-sized
+  // container type it names. Every file a body writes is named for it, and
+  // nothing here reads what the sink collects, so several bodies may be
+  // written at once.
   [[nodiscard]] auto Write(const mir::CompilationUnit& unit) const
       -> diag::Result<EmittedUnit>;
 
   // Collects what writing a body left, in the order it is called, which is the
   // order a build compiles the units in; what a body refused is reported. The
-  // declarations it handed back are written here: the bodies of one unit state
-  // them alike, so one another body wrote already is not written again, and
-  // one that reads otherwise is this compiler's defect.
+  // declarations and the shared code it handed back are written here: every
+  // body stating one states it alike, so one another body wrote already is not
+  // written again, and one that reads otherwise is this compiler's defect.
   void Collect(EmittedUnit unit);
 
   // Closes the project: the design root's own files and the program entry,
@@ -146,14 +160,24 @@ class CppProjectSink {
   [[nodiscard]] auto WriteArtifact(const backend::cpp::CppArtifact& file) const
       -> diag::Result<void>;
   // Writes the declarations `written` handed back that no body collected
-  // before it wrote, reporting a file that could not be written.
+  // before it wrote, reporting a file that could not be written; and the
+  // shared code it handed back the same way, each such file a translation
+  // unit of its own.
   void WriteDeclarations(WrittenUnit& written);
+  void WriteSharedCode(WrittenUnit& written);
+  // Whether `file`, which `written` states, is written for the first time; a
+  // file stated before that reads otherwise is this compiler's defect.
+  auto FirstStated(
+      const WrittenUnit& written, const backend::cpp::CppArtifact& file)
+      -> bool;
 
   std::filesystem::path dir_;
   SourceFormatting formatting_;
+  BodyBuilderFor body_builder_for_;
   diag::DiagnosticSink* refusals_;
-  // Each declaration written so far, by its path, as a digest of what it says.
-  std::unordered_map<std::string, stable_hash::Fingerprint> declared_;
+  // Each file every body states alike written so far -- a declaration, or
+  // shared code -- by its path, as a digest of what it says.
+  std::unordered_map<std::string, stable_hash::Fingerprint> stated_;
   // The files of the project each declaration written so far includes, by its
   // path.
   std::unordered_map<std::string, std::vector<std::string>> includes_of_;

@@ -1,7 +1,6 @@
 #pragma once
 
 #include "lyra/base/source_location.hpp"
-#include "lyra/runtime/object_change.hpp"
 #include "lyra/runtime/object_ref.hpp"
 #include "lyra/runtime/rng.hpp"
 #include "lyra/value/integral.hpp"
@@ -51,10 +50,12 @@ class ClassObject : public GcObject {
 // What `randomize()` asks of `object` (LRM 18.6), each the body its class's
 // definition states, or nothing where it states none. `problem` is the call's
 // problem, a handle to it, through which a class states what it adds and
-// hands nested objects on.
-void ObjectRandVariables(GcObject& object, const value::ObjectRef& problem);
+// hands nested objects on; `at` is where the call was written.
+void ObjectRandVariables(
+    GcObject& object, const value::ObjectRef& problem, base::SourceLocation at);
 void ObjectConstrain(GcObject& object, const value::ObjectRef& problem);
-void ObjectRandObjects(GcObject& object, const value::ObjectRef& problem);
+void ObjectRandObjects(
+    GcObject& object, const value::ObjectRef& problem, base::SourceLocation at);
 
 // The built-in `pre_randomize()` and `post_randomize()` (LRM 18.6.2), where no
 // class of the object's lineage writes its own: the part every object starts

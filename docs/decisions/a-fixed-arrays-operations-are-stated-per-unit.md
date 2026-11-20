@@ -2,7 +2,15 @@
 
 Date: 2026-10-15 Status: accepted. Revised 2026-10-16: a union is a declaration, as a structure is.
 Revised 2026-11-01: a unit builds an operation where something needs it, found below MIR on finished
-LIR, not every operation of every type it names.
+LIR, not every operation of every type it names. Revised 2026-11-06: MIR states each operation's
+declaration apart from its body, from the type alone, and verifies every call against it; this said
+no signature was stated before the body, because every caller is compiler output, which still holds
+but leaves the verifier nothing to hold a call to and lets each builder state the signature again.
+Revised 2026-11-16: the C++ backend renders the same bodies, where it called the library template's
+members, so both backends carry out one definition of each operation. Revised 2026-11-18: a
+fixed-size array implements the library's traits its interface meets, and the C++ class asks those
+items, so every question a library template asks of an array reaches the same bodies; the library's
+merge of two arms under an ambiguous condition goes, the array's own body answering it.
 
 ## Context
 
@@ -51,15 +59,14 @@ structure's methods follow.
   whoever chooses the target passes it. The set of types, constants and functions only grows while
   it runs, and a chain of bodies that would not end, which only a generator making an ever larger
   type could be, stops the compile.
-- MIR holds none of these bodies, and a call names the pair whether or not a body exists yet, so MIR
-  checks only that the type can have the operation. What the call hands and takes is checked where
-  both sides exist: LIR verification holds every call of a function of the unit to what that
-  function takes and answers, and on the C++ path the host compiler holds the call to the library's
-  member. No signature is stated apart from the body, since each caller is compiler output and no
-  overload has to be chosen before the body exists, which is what makes clang declare an implicit
-  member first. The body is built from the unit's types alone and rewritten as rustc runs its passes
-  over a shim, one body at a time. A structure's and a union's methods read their declaration and
-  stay where the declaration is lowered.
+- MIR holds none of these bodies, and a call names the pair whether or not a body exists yet. Which
+  operations the type has is its interface, and what each takes and answers is its declaration, both
+  stated by MIR from the type alone, as rustc's shim takes its signature from the trait method's
+  `fn_sig` instantiated at the type; an operation's declaration is the same at every type that has
+  it, a structure's method and a dynamic array's operation alike. MIR's verifier holds every call to
+  that declaration, and each body is built from it. The body is built from the unit's types alone
+  and rewritten as rustc runs its passes over a shim, one body at a time. A structure's and a
+  union's methods are the operations its interface names, and stay where the declaration is lowered.
 - A record the library keeps -- a type, an element type, what a net asks of a value's positions --
   is made whole by the unit that makes it, so a value travelling to another unit carries what will
   be asked of it. What a call asks by operation is handed by the calling unit, which no holder keeps
@@ -71,26 +78,27 @@ structure's methods follow.
 
 - The body is a loop over the positions, the element's operation applied at each; its count is a
   constant of the body.
-- The call takes each value by reference, as a structure's method does. The C++ backend spells it as
-  the library template's own member, `a.UnpackedArray<T, 4>::operator==(b)`, which the host compiler
-  instantiates where the call is written, and renders none of the bodies, as it renders no element
-  default. The execution backend compiles each body stated, none of which another unit names, into
-  the records handed to whatever asks one
+- The call takes each value by reference, as a structure's method does. Each backend carries out the
+  same body: the C++ backend renders it as an item of the type's implementation of the library's
+  traits, defined in the type's code file, `sv_type_1a2b_impl::Equal(a, b)`, or, for the array's own
+  methods, as a function of the code file calling it, and the execution backend compiles each body
+  stated, none of which another unit names, into the records handed to whatever asks one
   ([a-type-is-told-to-the-library-as-a-record-both-sides-read](a-type-is-told-to-the-library-as-a-record-both-sides-read.md)
-  D4), and fills the type's table with its copy, move, assignment and ending, each taking every
-  element's step, which the lowering to LIR states
+  D4), and fills the type's table with its copy, relocation, assignment and ending, each taking
+  every element's step, which the lowering to LIR states
   ([a-types-steps-are-stated-in-lir](a-types-steps-are-stated-in-lir.md)).
 - A tuple's records are generated the same way. Its default is its declaration's method where it is
   a structure, and otherwise a body the unit states from each component's default, stated only where
   every component has one (no declaration holds a wildcard index, LRM 7.8.1).
 - What the prebuilt library keeps is what needs no knowledge of the type: reaching an element, a run
-  of them and their order by position, building an array from its elements and merging two under an
-  ambiguous condition, for each of which the array's constant states a count and the element's
-  table, as the dynamic containers' entries are told theirs.
-- The C++ library template is the operation's generic definition, as Rust's core states
-  `impl<T, U, const N: usize> PartialEq<[U; N]> for [T; N]` once and `std::array` its `operator==`;
-  each unit's body is that generic instantiated by Lyra for the backend with no host compiler, as
-  rustc monomorphizes.
+  of them and their order by position, and building an array from its elements, for each of which
+  the array's constant states a count and the element's table.
+- The C++ library template is the array's representation: its storage, what C++ does with every
+  value of it with no call naming it -- building, copying, assigning and ending, each element's --
+  and each question a library template asks of the array, which it asks of the item of the type's
+  implementation answering it. Every operation a call names is a body of the unit's, on both
+  backends, as rustc monomorphizes `impl<T, U, const N: usize> PartialEq<[U; N]> for [T; N]` for
+  every backend alike.
 
 ## Rejected
 
@@ -100,10 +108,17 @@ structure's methods follow.
 - **The code generator instantiates each operation itself**, as clang instantiates a template's
   body. That would be a third statement of the operation's meaning, in the code generator, which the
   backend contract gives to MIR alone.
-- **The C++ backend rendering the unit's bodies** in place of the library template's members. A
-  rendered body names constants of its own unit, so two units' definitions of one array type would
-  differ in text, which the one-definition rule forbids; and the library's own generic code reaches
-  every value's operations as members of its type.
+- **The C++ backend calling the library template's members** for the operations, this record's form
+  until 2026-11-16. Its reasons were that a rendered body names constants of its own unit, which the
+  one-definition rule forbids two units to state differently, and that the host compiler
+  instantiates the members anyway. The first no longer holds: the C++ backend writes a constant a
+  definition every unit states alike names in place, and a body of the code file calling it is that
+  file's own (`../architecture/backend_contract.md`, how a definition is linked). The second is a
+  convenience of one target, and its cost is two definitions of every array operation, one per
+  backend, which the two backends seeing one program forbids: a run-time-sized container of the
+  array's elements then also had to answer every question the template asks of its elements, by a
+  rule only the C++ backend held
+  ([a-type-implements-the-librarys-traits](a-type-implements-the-librarys-traits.md)).
 - **A union stated per unit the same way.** It was, first. But the language identifies a union by
   its declaration (LRM 6.22.1 c, d), as it does a structure, and the front end hands over that
   declaration with the type; keyed by its members, two unions declared alike would share what is
@@ -134,8 +149,8 @@ structure's methods follow.
   template.
 - A body is internal to its module, so one nothing refers to an optimizer can remove.
 - `lyra dump mir` shows no such body, since MIR holds none; `lyra dump lir` shows each.
-- The library's whole-value array entries go. Its array type keeps element access, and building an
-  array from its elements or merging two, told the count and the element's table.
+- The library's whole-value array entries go. Its array type keeps element access and building an
+  array from its elements, told the count and the element's table.
 - A unit's count of distinct constants can fall where a constant an array's body states coincides in
   value with another; a measurement comparing two sizes chooses sizes where it does not.
 

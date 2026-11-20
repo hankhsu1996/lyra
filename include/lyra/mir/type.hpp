@@ -19,7 +19,6 @@
 #include "lyra/support/library_decl.hpp"
 #include "lyra/support/library_type.hpp"
 #include "lyra/support/movability.hpp"
-#include "lyra/support/value_operation.hpp"
 #include "lyra/value/integral_fwd.hpp"
 
 namespace lyra::mir {
@@ -51,6 +50,9 @@ struct IntegralType {
 
 // The states a bit of a type holds, as the value library names them.
 [[nodiscard]] auto StateDomainOf(IntegralStateKind state) -> value::StateDomain;
+
+// Whether a bit of a type of `state` can be x or z.
+[[nodiscard]] auto IsFourState(IntegralStateKind state) -> bool;
 
 // The planes a value of `integral` is held in, every position clear: one word
 // per 64 bits of its width, and an unknown plane only where a bit of the type
@@ -505,7 +507,7 @@ struct OpenWriteType {
 // storage of its own, reached by a step taken within the write. It borrows the
 // write rather than holding it, so it ends with nothing to do. A step to an
 // element reports what forming it did to the variable -- an element made by
-// being written, or an index naming none (LRM 7.8.7, 7.10.1, 7.4.6) -- and
+// being written, or an index naming none (LRM 7.8.7, 7.10.1, 7.4.5) -- and
 // dereferencing it is where the write lands, so that part's value before the
 // write is what its value after is compared with.
 struct DesignationType {
@@ -735,18 +737,21 @@ enum class StructuralOperationsType : std::uint8_t { kFixedArray, kTuple };
 // from: an array's passage into or out of the form of it with no queue bounded
 // (LRM 7.6, 7.10.5), the parts of a value no declaration states operations for,
 // or the default of a data type, which code holding an array asks for by the
-// element type alone (LRM 7.4.5).
+// element type alone (LRM 7.4.5), and every operation of a run-time-sized
+// container (LRM 7.5, 7.8, 7.10), built over the core the library keeps its
+// elements in.
 enum class TypeOperationKind : std::uint8_t {
   kToBoundFree,
   kFromBoundFree,
   kStructural,
-  kDefault
+  kDefault,
+  kContainer
 };
 
-// Which of those `answers` is at `type`, and nothing where no unit can state
-// it.
-[[nodiscard]] auto TypeOperationKindOf(
-    const TypePool& types, TypeId type, support::ValueOperation answers)
-    -> std::optional<TypeOperationKind>;
+// Whether `type` is a run-time-sized container (LRM 7.5, 7.8, 7.10) whose
+// operations are bodies built for its type, over the core the library keeps
+// its elements in.
+[[nodiscard]] auto IsLaidOutContainer(const TypePool& types, TypeId type)
+    -> bool;
 
 }  // namespace lyra::mir

@@ -136,7 +136,12 @@ two ways.
    library declares, that place is its declaration, which states the C++ type a holder names it by
    and the C spelling a DPI-C prototype names, and which each type mapping reads rather than
    restating. Where it holds one by value, every backend gives it the storage the declaration
-   states, which the runtime checks every class each backend builds there against.
+   states, which the runtime checks every class each backend builds there against. Two MIR types map
+   to one target type only where a value of either is held and operated on alike, and whatever tells
+   them apart MIR states in its nodes rather than in the value: an enumeration and its base type,
+   whose names MIR asks of a member table it states at the use; handles of two classes, whose class
+   a dispatch or a cast states; a reference and a reference wrapper, whose rebinding is a node of
+   its own. Whatever a target builds once for the one type is then right for both.
 
    A target also needs types for what MIR states as **structure** rather than as a value -- an
    extent whose exit is an effect, the root a managed object is emitted over -- and no MIR type
@@ -204,6 +209,31 @@ two ways.
    that calls the function the construct would have reached -- is handed the same fact from the
    type. How every target reaches a runtime entry is the shared declaration's to say (invariant 8),
    so a render that has to work it out names a defect in the declaration.
+
+10. **A type's interface determines the operation, and a backend only exposes it in the form its
+    target language asks for.** A type whose value's life is its own states in MIR, in its
+    interface, the record its value is laid out as and its four operations on a whole value: its
+    default and a copy, each answering a value, writing a copy over a value, and ending one. A move
+    is no operation of a type's: it relocates a value whatever the type, and nothing ends its source
+    (`mir.md`). A type that states none has the steps its parts give it. A backend writes each
+    operation as any declaration is written, from the declaration MIR states, and composes no
+    declaration out of text of its own. Where the target's object model asks more of a type than the
+    four operations say -- a C++ class must have constructors, assignments and a destructor, and C++
+    destroys a moved-from object -- the target's library realizes that once for every type of a
+    kind, as a class template whose members call the type's operations and relocate its record,
+    leaving a moved-from object inert, so its destruction does nothing observable; the backend's
+    type mapping names that template at the struct declaring the type's implementation, and chooses
+    no operation, no adapter and no runtime name. Which operations the library asks of a type is the
+    type's implementation of the library's traits, which MIR states and every backend reaches as it
+    stands. What the library's own steps ask of an array of any kind is asked in the shapes MIR's
+    declarations already have -- an element by reference, and where a write lands as an element's
+    address or none and whether the write made it -- and what only the library needs, a lease on an
+    element, it takes on the record, as the execution backend's runtime does. The record the
+    execution backend hands the library for the type, and a construction of the type there, run the
+    same operations, the execution backend building a copy in its return place. So the two are two
+    ways of reaching one set of operations, never two implementations of them. Which artifact holds
+    a definition already decided is a backend's packaging (`emission_model.md` invariant 11), and
+    choosing it decides nothing about what exists or what it does.
 
 ## Boundary to Adjacent Layers
 
@@ -284,6 +314,11 @@ two ways.
   semantic IR should not carry, because it is a realization rather than a language concept, is
   materialized by a step both backends consume, not by one backend for itself.
 
+- A render entry that writes a class's special member, an adapter or a library name the shared
+  declarations do not state for it -- choosing which operation a step or a question calls, or
+  supplying an argument the declaration does not have. It decides what the class does, which the
+  execution backend then decides again (invariant 10).
+
 ## Notes / Examples
 
 What a target's realization asks of a type's operations is that target's to state, and it is stated
@@ -296,7 +331,14 @@ it walks LIR and by emission as it arranges; a record is made whole, as a vtable
 method of its trait, and what a type's constant names of other types is one list both read. An
 operation the query did not ask for is a compile-time defect at emission, never a failure at run
 time, and one the language does not give the type fills its slot with the library's failing of it.
-The C++ backend asks for nothing: the host compiler instantiates what a call names.
+The C++ backend writes a type's implementation of the library's traits, as MIR states it, as a
+struct declaring each item, and the type is the library's class at that struct -- over its core for
+a run-time-sized container, over its elements in place for a fixed-size array -- whose members ask
+each item and state no algorithm of their own (invariant 10); each item is defined once in the
+type's own code file, and every other operation of a type -- a container's or a fixed-size array's
+own methods and language traits' items, a tuple's -- is a function the code file calling it defines,
+each a definition every unit states alike. Neither backend asks for a type's whole interface, which
+would be choosing among its operations.
 
 The canonical write rule for any value-emission entry: write it as if the target were LLVM IR. If
 you cannot write a mechanical translation rule for it -- if your draft contains an `if` whose arms
@@ -380,14 +422,15 @@ with no use.
 
 How a definition MIR states is linked -- every body of the unit alike, one body for others to name,
 or one body alone -- is one answer read off MIR's facts, and each backend spells it: a target's
-linkage, or for C++ the namespace with no name, `inline` in a header and a weak definition in a code
-file. A backend that worked it out for itself would be a second answer to one question, and the two
-answers are held in step by nothing. What a target builds below MIR for its own realization -- the
-records it hands the library of a type, the data it holds a constant as -- is linked as that target
-decides. A definition every body states alike is kept in place of the others, and how a target makes
-the kept copy mean what each dropped one did is that target's: LLVM's `weak_odr` asks only that the
-copies behave alike, so each may read its own module's data, as clang's and rustc's constants are
-each module's private data; C++ asks that every name in them denote the same entity
+linkage, or for C++ the namespace with no name, `inline` in a header, a weak definition in a code
+file, and a definition in a code file of a type's own that every unit writes alike and the project
+compiles once. A backend that worked it out for itself would be a second answer to one question, and
+the two answers are held in step by nothing. What a target builds below MIR for its own realization
+-- the records it hands the library of a type, the data it holds a constant as -- is linked as that
+target decides. A definition every body states alike is kept in place of the others, and how a
+target makes the kept copy mean what each dropped one did is that target's: LLVM's `weak_odr` asks
+only that the copies behave alike, so each may read its own module's data, as clang's and rustc's
+constants are each module's private data; C++ asks that every name in them denote the same entity
 ([basic.def.odr]/16), which a constant of one file's own is not and a static of an inline definition
 is ([dcl.inline]), so the C++ backend writes a constant such a definition names in place, as a
 static of its own. The text of such a definition is a function of what it states and nothing else: a

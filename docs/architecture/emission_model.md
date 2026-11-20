@@ -160,6 +160,17 @@ many of them it works on at a time.
     needs a different pipeline shape from another backend has put something in the wrong place, and
     the thing in the wrong place is upstream of both.
 
+11. **An artifact several units may write has a canonical identity, and its content is a function of
+    that identity alone, never of which units ask for it.** A container type's header and the code
+    file of what is needed wherever the type is named are identified by the type; an operation of
+    the type that only some units call is identified by the type and the operation, and is a file of
+    its own. Every unit asking for one writes the same text, a unit asking for it adds nothing to
+    what another unit's artifacts hold, and the build keeps one copy for the link. A file whose
+    content followed the set of units asking for it would depend on the whole program, so an edit to
+    one unit would change what others share, which invariants 1 and 7 rule out. Which artifact a
+    definition goes in is the backend's packaging; which definitions exist, and what each does, is
+    decided above it.
+
 ## Boundary to Adjacent Layers
 
 - `compilation_unit_model.md` defines the unit and its signature; this doc defines what a unit's

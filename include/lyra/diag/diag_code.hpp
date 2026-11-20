@@ -14,7 +14,6 @@ namespace lyra::diag {
 // does need is an entry in that registry: a code without one is a lookup that
 // fails while reporting something else, in front of a user.
 enum class DiagCode : std::uint32_t {
-  kUnsupportedAssociativeArrayType,
   kUnsupportedTypeKind,
 
   kUnsupportedNonStaticVariableLifetime,

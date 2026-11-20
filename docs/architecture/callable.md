@@ -5,9 +5,9 @@
 A callable is MIR's one shape for "a body with a signature, run when invoked." There is a single
 callable concept; the apparent variety of SystemVerilog forms -- function, task, process,
 constructor, and the compiler-synthesized closures (a fork-join branch, a non-blocking assignment, a
-postponed `$strobe`, an event control's watch, the order a sort is handed, a deferred assertion
-action) -- are all this one concept, distinguished only by their signature, how they bind their
-environment, and how a referencing site uses them. None is a distinct kind of callable.
+postponed `$strobe`, an event control's watch, a deferred assertion action) -- are all this one
+concept, distinguished only by their signature, how they bind their environment, and how a
+referencing site uses them. None is a distinct kind of callable.
 
 The concept has two structural levels:
 
@@ -34,8 +34,8 @@ closure is code plus a captured environment, and "async" is the result type (`as
 ## Does Not Own
 
 - How a referencing site invokes or registers a callable -- a direct call, a fork spawn, a region
-  submit, a sort handed an order, a constructor-time lifecycle registration. That is the referencing
-  site's concern; `scheduling.md` owns spawn and submission.
+  submit, a constructor-time lifecycle registration. That is the referencing site's concern;
+  `scheduling.md` owns spawn and submission.
 - The suspension protocol of a coroutine body (`scheduling.md`).
 - Object and class layout, dispatch tables, and inheritance. How a call resolves its target --
   directly or by dynamic dispatch -- is a property of the call site and the object's type layout,
@@ -115,9 +115,9 @@ closure is code plus a captured environment, and "async" is the result type (`as
   forwarding), and the carrier-versus-view choice the field's snapshot-or-alias type records. This
   doc owns the environment as structure; that doc owns what fills it.
 - The referencing site decides use: a direct call, a fork that spawns each branch value, a region
-  submit, a sort handed an order, or a constructor-time lifecycle registration (a process is an
-  instance-bound callable value registered during construction; a finalization hook is a distinct
-  registration from a startup one). The callable does not know which.
+  submit, or a constructor-time lifecycle registration (a process is an instance-bound callable
+  value registered during construction; a finalization hook is a distinct registration from a
+  startup one). The callable does not know which.
 - A backend realizes a callable from its signature, its environment, and its body by a fixed
   function of each node's kind and type: the snapshot-versus-alias of each bound field from its
   type, the call protocol from the result type. The param-versus-capture realization of `self` and

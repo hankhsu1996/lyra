@@ -95,7 +95,7 @@ mapping answers.
 ### D3. An element of an array is two calls, each answering a reference
 
 The standard gives a read and a write of an element different outcomes. A read through an invalid
-index answers the element default and a write through one is ignored (LRM 7.4.6), and the default of
+index answers the element default and a write through one is ignored (LRM 7.4.5), and the default of
 a structure element carries its members' initializers (7.2.2), so the outcome belongs to the step
 and not to a guard after it: reading `a[9].f[0]` of `struct { int f[2] = '{5,5}; } a[4]` answers 5.
 An associative entry is allocated by a write, a `ref` actual or a read-modify-write, never by a read

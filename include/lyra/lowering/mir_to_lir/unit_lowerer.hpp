@@ -27,12 +27,16 @@
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_ref.hpp"
 #include "lyra/mir/closure_id.hpp"
+#include "lyra/mir/code_source.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/constant_id.hpp"
 #include "lyra/mir/constant_value.hpp"
+#include "lyra/mir/expr.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
+#include "lyra/mir/type_interface.hpp"
 #include "lyra/support/value_operation.hpp"
+#include "lyra/support/value_step.hpp"
 
 namespace lyra::lowering::mir_to_lir {
 
@@ -47,7 +51,7 @@ namespace lyra::lowering::mir_to_lir {
 // language gives the type no such operation. It is handed in, since building
 // one is the work of the layer above and which are needed is learned below.
 using OperationBodyProvider = std::function<std::optional<mir::CallableCode>(
-    mir::TypeId, support::ValueOperation)>;
+    const mir::TypeOperationSource&)>;
 
 // Per-unit lowerer for the MIR-to-LIR pass. Reads the source MIR, owns the
 // in-progress LIR unit, and memoizes type translation so each distinct MIR type
@@ -167,10 +171,14 @@ class UnitLowerer {
   [[nodiscard]] auto StaticPropertySymbolOf(
       const mir::StaticPropertyRef& ref) const -> std::string;
 
-  // The function of this unit answering `answers` at `type`, which a call names
-  // whether or not its body is lowered yet.
+  // The function of this unit answering the operation `target` names, which a
+  // call names whether or not its body is lowered yet.
   [[nodiscard]] auto TypeOperationFunction(
-      mir::TypeId type, support::ValueOperation answers) -> lir::FunctionId;
+      const mir::TypeOperationTarget& target) -> lir::FunctionId;
+  // The same of the operation LIR names, whose types the unit's model's
+  // translate to.
+  [[nodiscard]] auto TypeOperationFunction(lir::TypeOperation operation)
+      -> lir::FunctionId;
 
   // The behavior a MIR dispatch slot names, as LIR names one: the declaration
   // that introduced it, and which of that declaration's introductions it is.
@@ -306,16 +314,25 @@ class UnitLowerer {
   auto TableBodyPrototype() const -> lir::TypeId;
 
   [[nodiscard]] auto NeedsStepFunction(
-      lir::TypeId type, lir::ValueStep step) const -> bool;
+      lir::TypeId type, support::ValueStep step) const -> bool;
   // The function carrying out `step` of a value of `type`, built from its
   // parts: it takes where the value lies, and where the value it builds or
   // writes lies.
-  auto BuildStepFunction(lir::TypeId type, lir::ValueStep step)
+  auto BuildStepFunction(lir::TypeId type, support::ValueStep step)
       -> lir::Function;
   // States, for every class this unit defines that a value is built of, how
   // the parts it places begin and end and how an object of it is created and
   // ended whole.
   void StateClassSteps();
+  // The MIR source the operation LIR names is built from, at the first MIR
+  // type each of its types translates.
+  [[nodiscard]] auto SourceOf(const lir::TypeOperation& operation) const
+      -> mir::TypeOperationSource;
+  // Declares the function answering `operation` with the attributes the
+  // operation's declaration in MIR states, which hold of the function before
+  // its body is lowered, or the default where MIR declares nothing for it.
+  auto DeclareTypeOperationFunction(const lir::TypeOperation& operation)
+      -> lir::FunctionId;
 
   const mir::CompilationUnit* mir_;
   lir::CompilationUnit out_;
@@ -333,11 +350,11 @@ class UnitLowerer {
   base::Translation<mir::CallableId, std::optional<lir::FunctionId>> functions_;
   base::Translation<mir::CallableId, std::optional<lir::DispatchOrdinal>>
       ordinals_;
-  // An operation marked used and not yet lowered, with the MIR type it is built
-  // at.
+  // An operation marked used and not yet lowered, with the MIR source it is
+  // built from.
   struct PendingOperation {
     lir::TypeOperation operation;
-    mir::TypeId mir_type;
+    mir::TypeOperationSource source;
   };
   std::vector<PendingOperation> pending_;
   // Every operation ever handed to `pending_`, so each is lowered once.

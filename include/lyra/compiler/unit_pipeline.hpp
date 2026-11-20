@@ -1,11 +1,14 @@
 #pragma once
 
 #include <functional>
+#include <optional>
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_manager.hpp"
 #include "lyra/hir/compilation_unit.hpp"
 #include "lyra/lir/compilation_unit.hpp"
+#include "lyra/mir/callable_code.hpp"
+#include "lyra/mir/code_source.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir_transform/pass.hpp"
 #include "lyra/support/combinational_updates.hpp"
@@ -29,6 +32,13 @@ auto LowerUnitToSemantic(
 // for the whole design is modelled from no unit of the design, so whoever
 // composes it tells of it.
 void RecordSemanticForm(const mir::CompilationUnit& unit);
+
+// The body answering `source` for `unit`, rewritten as `passes` asks, where
+// the type has one.
+auto BuiltTypeOperationBody(
+    const mir::CompilationUnit& unit, const mir::TypeOperationSource& source,
+    const mir_transform::PassOptions& passes,
+    const diag::SourceManager& sources) -> std::optional<mir::CallableCode>;
 
 // What a target finds a unit uses of the operations of types no declaration
 // states them for, read off LIR as the unit grows: each call answers what the

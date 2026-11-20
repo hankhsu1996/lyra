@@ -5,35 +5,20 @@
 #include <cstddef>
 #include <cstdint>
 #include <type_traits>
-#include <utility>
 
-#include "lyra/base/internal_error.hpp"
 #include "lyra/support/layout.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/integral_words.hpp"
+#include "lyra/value/value_type_kind.hpp"
 
 namespace lyra::value {
 
+class AssociativeArrayType;
+class DynamicArrayType;
 class FixedArrayType;
 class IntegralValueType;
+class QueueType;
 class ValueType;
-
-// What a value whose parts are ordered by position -- a fixed-size array, a
-// dynamic array, a queue (LRM 7.4, 7.5, 7.10) -- answers about them, one
-// function each, handed the value's type first: how many
-// it holds, the type they are, and where the one at storage position
-// `position` lies, for reading and as storage a write lands in. What walks a
-// value down to its leaves -- imaging it for a foreign call (LRM H.12),
-// loading a memory file into it (LRM 21.4) -- asks these of the type at each
-// level. Generated code names the library's own for a fixed-size array, whose
-// functions read everything off the type they are handed.
-struct PartsWitnessTable {
-  std::size_t (*count)(const ValueType& type, const void* value);
-  const ValueType& (*type)(const ValueType& type, const void* value);
-  const void* (*at)(
-      const ValueType& type, const void* value, std::size_t position);
-  void* (*ref_at)(const ValueType& type, void* value, std::size_t position);
-};
 
 // Where a type states one of its numbers: how far into the record the number
 // lies, and how many bytes it takes.
@@ -128,20 +113,17 @@ struct ValueOperations {
 // read: generated code states one for each type it compiles the operations
 // of, placing each function where this record lays it out.
 //
-// Every value is passed as its address. Copying and moving build in `out` a
-// value the source still has to end; `assign` writes into a value already
-// there, which goes on being that value.
+// Every value is passed as its address. Copying builds in `out` a second value
+// equal to the source; relocating builds the value itself there and takes it
+// from the source, whose storage is owed nothing afterwards; `assign` writes
+// into a value already there, which goes on being that value.
 struct ValueWitnessTable {
   void (*copy)(const ValueType& type, const void* value, void* out);
-  void (*move)(const ValueType& type, void* value, void* out) noexcept;
+  void (*relocate)(const ValueType& type, void* value, void* out) noexcept;
   void (*destroy)(const ValueType& type, void* value) noexcept;
   void (*assign)(const ValueType& type, void* storage, const void* value);
   bool (*bit_identical)(
       const ValueType& type, const void* lhs, const void* rhs);
-
-  // What a value of the type answers about its parts, where they are ordered
-  // by position, and nothing for a type whose parts are not.
-  const PartsWitnessTable* parts;
 };
 
 // What every witness of an operation the language does not define for its type
@@ -181,10 +163,9 @@ using TakePositionsWitness = void (*)(
     const std::int64_t* first, const std::int64_t* count, void* out);
 
 // The tables of the witnesses `W` states: a static member for each entry, a
-// function or a lambda taking and answering what the entry does, and, for a
-// type's table, `W::kParts` for its parts. Every such table the library states
-// for its own kinds is made this way, so a witness is written once and a table
-// only lists them.
+// function or a lambda taking and answering what the entry does. Every such
+// table the library states for its own kinds is made this way, so a witness
+// is written once and a table only lists them.
 template <typename W>
 inline constexpr OperationFunctions kOperationFunctionsFor{
     .equal = W::Equal,
@@ -198,21 +179,10 @@ inline constexpr OperationFunctions kOperationFunctionsFor{
 template <typename W>
 inline constexpr ValueWitnessTable kValueWitnessTableFor{
     .copy = W::Copy,
-    .move = W::Move,
+    .relocate = W::Relocate,
     .destroy = W::Destroy,
     .assign = W::Assign,
-    .bit_identical = W::BitIdentical,
-    .parts = W::kParts};
-
-// Which of the records the library reads a type through this one opens, where
-// it opens one: an integral type's (LRM 6.11), whose values a facility
-// compiled for every type reads the bits of, and a fixed-size unpacked array
-// type's (LRM 7.4.2). Every other type is its table and its numbers alone.
-enum class ValueTypeKind : std::uint32_t {
-  kIntegral,
-  kFixedArray,
-  kOther,
-};
+    .bit_identical = W::BitIdentical};
 
 // A type as code compiled before any design existed is handed it: how much
 // storage a value of it takes, its table, and which record it opens. A library
@@ -256,8 +226,8 @@ class ValueType {
   void Copy(const void* value, void* out) const {
     witnesses_->copy(*this, value, out);
   }
-  void Move(void* value, void* out) const noexcept {
-    witnesses_->move(*this, value, out);
+  void Relocate(void* value, void* out) const noexcept {
+    witnesses_->relocate(*this, value, out);
   }
   void Destroy(void* value) const noexcept {
     witnesses_->destroy(*this, value);
@@ -271,49 +241,27 @@ class ValueType {
     return witnesses_->bit_identical(*this, lhs, rhs);
   }
 
-  // Whether a value of the type holds parts ordered by position, which a walk
-  // down to a value's leaves asks of each type it meets.
-  [[nodiscard]] auto HasParts() const -> bool {
-    return witnesses_->parts != nullptr;
+  // Which record this type opens; and this type as an integral one, as a
+  // fixed-size unpacked array type, as a dynamic array type, as a queue type
+  // or as an associative array type, where it opens that record, and nothing
+  // otherwise.
+  [[nodiscard]] auto Kind() const -> ValueTypeKind {
+    return kind_;
   }
-
-  // The parts of the value lying at `value`, for a type whose parts are
-  // ordered by position.
-  [[nodiscard]] auto PartCount(const void* value) const -> std::size_t {
-    return Parts().count(*this, value);
-  }
-  [[nodiscard]] auto PartType(const void* value) const -> const ValueType& {
-    return Parts().type(*this, value);
-  }
-  [[nodiscard]] auto PartAt(const void* value, std::size_t position) const
-      -> const void* {
-    return Parts().at(*this, value, position);
-  }
-  [[nodiscard]] auto PartAt(void* value, std::size_t position) const -> void* {
-    return Parts().ref_at(*this, value, position);
-  }
-
-  // This type as an integral one, or as a fixed-size unpacked array type,
-  // where it opens that record, and nothing otherwise.
   [[nodiscard]] auto AsIntegral() const -> const IntegralValueType* {
-    switch (kind_) {
-      case ValueTypeKind::kIntegral:
-        return std::bit_cast<const IntegralValueType*>(this);
-      case ValueTypeKind::kFixedArray:
-      case ValueTypeKind::kOther:
-        return nullptr;
-    }
-    std::unreachable();
+    return Opened<IntegralValueType, ValueTypeKind::kIntegral>();
   }
   [[nodiscard]] auto AsFixedArray() const -> const FixedArrayType* {
-    switch (kind_) {
-      case ValueTypeKind::kFixedArray:
-        return std::bit_cast<const FixedArrayType*>(this);
-      case ValueTypeKind::kIntegral:
-      case ValueTypeKind::kOther:
-        return nullptr;
-    }
-    std::unreachable();
+    return Opened<FixedArrayType, ValueTypeKind::kFixedArray>();
+  }
+  [[nodiscard]] auto AsDynamicArray() const -> const DynamicArrayType* {
+    return Opened<DynamicArrayType, ValueTypeKind::kDynamicArray>();
+  }
+  [[nodiscard]] auto AsQueue() const -> const QueueType* {
+    return Opened<QueueType, ValueTypeKind::kQueue>();
+  }
+  [[nodiscard]] auto AsAssociativeArray() const -> const AssociativeArrayType* {
+    return Opened<AssociativeArrayType, ValueTypeKind::kAssociativeArray>();
   }
 
   // Where the type states the address of its table, and its size, its
@@ -332,13 +280,11 @@ class ValueType {
   }
 
  private:
-  [[nodiscard]] auto Parts() const -> const PartsWitnessTable& {
-    if (witnesses_->parts == nullptr) {
-      throw InternalError(
-          "a value is walked by position whose type orders no parts so -- "
-          "please report this as a bug");
-    }
-    return *witnesses_->parts;
+  // This type as the record `Record` that the kind `kOpens` opens, which
+  // begins with this one, where this type opens it.
+  template <typename Record, ValueTypeKind kOpens>
+  [[nodiscard]] auto Opened() const -> const Record* {
+    return kind_ == kOpens ? std::bit_cast<const Record*>(this) : nullptr;
   }
 
   const ValueWitnessTable* witnesses_;
@@ -347,7 +293,6 @@ class ValueType {
   ValueTypeKind kind_;
 };
 
-static_assert(std::is_standard_layout_v<PartsWitnessTable>);
 static_assert(std::is_standard_layout_v<OperationFunctions>);
 static_assert(std::is_standard_layout_v<ValueOperations>);
 static_assert(std::is_standard_layout_v<ValueWitnessTable>);

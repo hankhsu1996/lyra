@@ -7,7 +7,6 @@
 #include <memory>
 #include <optional>
 #include <string>
-#include <utility>
 #include <variant>
 #include <vector>
 
@@ -25,12 +24,11 @@
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/var.hpp"
 #include "lyra/support/random_qualifier.hpp"
+#include "lyra/value/dynamic_array_type.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_value_type.hpp"
-#include "lyra/value/library_value_types.hpp"
 #include "lyra/value/object_ref.hpp"
-#include "lyra/value/runtime_dynamic_array.hpp"
-#include "lyra/value/runtime_queue.hpp"
+#include "lyra/value/queue_type.hpp"
 #include "lyra/value/string.hpp"
 #include "lyra/value/value_type.hpp"
 
@@ -85,13 +83,13 @@ auto Begin(
   // reaches none.
   ObjectPreRandomize(object);
   if (!listed) {
-    ObjectRandObjects(*object, handle);
+    ObjectRandObjects(*object, handle, at);
   }
   std::size_t position = 0;
   while (position < problem->Nested().size()) {
     GcObject& nested = *ObjectRootOf(problem->Nested()[position]);
     ObjectPreRandomize(&nested);
-    ObjectRandObjects(nested, handle);
+    ObjectRandObjects(nested, handle, at);
     ++position;
   }
   return handle;
@@ -127,9 +125,9 @@ void RandomizeConstrain(const value::ObjectRef& problem) {
   // Every object declares its random variables before any states a
   // constraint, so a constraint naming one, of its own object or of another
   // the call reaches (LRM 18.5.8), names the variable that was declared.
-  ObjectRandVariables(*object, problem);
+  ObjectRandVariables(*object, problem, p.WrittenAt());
   for (const value::ObjectRef& nested : p.Nested()) {
-    ObjectRandVariables(*ObjectRootOf(nested), problem);
+    ObjectRandVariables(*ObjectRootOf(nested), problem, p.WrittenAt());
   }
   ObjectConstrain(*object, problem);
   for (const value::ObjectRef& nested : p.Nested()) {
@@ -153,45 +151,41 @@ auto RandomizeFinish(const value::ObjectRef& problem) -> value::Int {
   return value::Int::FromInt(1);
 }
 
-// How the array the storage `whole` names, of the library's own type `type`,
-// is resized: kept as far as it reaches and grown by elements at their
-// default (LRM 7.5.1), written as an assignment to it is, and put back by
-// writing what it held. Nothing for a type that is no array of a size the
-// program chooses.
 auto ResizeOf(const ErasedReference& whole, const value::ValueType& type)
-    -> std::optional<ArrayResizer> {
-  if (&type == &value::lyra_rt_dynarray_value_type) {
-    return [whole, &type](std::size_t count) -> std::function<void()> {
-      const auto& current =
-          *static_cast<const value::RuntimeDynamicArray*>(whole.storage);
-      auto before = std::make_shared<value::RuntimeDynamicArray>(current);
-      const value::RuntimeDynamicArray resized(
-          current.ElementType(), count, &current);
-      WriteLaidOutThrough(whole, type, &resized);
+    -> ArrayResizer {
+  const auto resizer = [&](auto resized_into) -> ArrayResizer {
+    return [whole, &type,
+            resized_into](std::size_t count) -> std::function<void()> {
+      auto before = std::make_shared<value::AnyValue>(
+          value::AnyValue::CopyOf(type, whole.storage));
+      const value::AnyValue resized = value::AnyValue::Built(
+          type, [&](void* out) { resized_into(whole.storage, count, out); });
+      WriteLaidOutThrough(whole, type, resized.Bytes());
       return [whole, &type, before] {
-        WriteLaidOutThrough(whole, type, before.get());
+        WriteLaidOutThrough(whole, type, before->Bytes());
       };
     };
+  };
+  switch (type.Kind()) {
+    case value::ValueTypeKind::kDynamicArray:
+      return resizer([dynamic = type.AsDynamicArray()](
+                         const void* array, std::size_t count, void* out) {
+        dynamic->Resized(array, count, out);
+      });
+    case value::ValueTypeKind::kQueue:
+      return resizer([queue = type.AsQueue()](
+                         const void* array, std::size_t count, void* out) {
+        queue->Resized(array, count, out);
+      });
+    case value::ValueTypeKind::kAssociativeArray:
+    case value::ValueTypeKind::kIntegral:
+    case value::ValueTypeKind::kFixedArray:
+    case value::ValueTypeKind::kOther:
+      break;
   }
-  if (&type == &value::lyra_rt_queue_value_type) {
-    return [whole, &type](std::size_t count) -> std::function<void()> {
-      const auto& current =
-          *static_cast<const value::RuntimeQueue*>(whole.storage);
-      auto before = std::make_shared<value::RuntimeQueue>(current);
-      value::RuntimeQueue resized = current;
-      while (resized.Count() < count) {
-        resized.PushBack(resized.ElementType().Default());
-      }
-      while (resized.Count() > count) {
-        resized.DeleteIndex(static_cast<std::int64_t>(resized.Count() - 1));
-      }
-      WriteLaidOutThrough(whole, type, &resized);
-      return [whole, &type, before] {
-        WriteLaidOutThrough(whole, type, before.get());
-      };
-    };
-  }
-  return std::nullopt;
+  throw InternalError(
+      "randomize: an array whose size the program chooses is told a type "
+      "that is no dynamic array or queue -- please report this as a bug");
 }
 
 namespace {
@@ -211,67 +205,184 @@ auto CycleOf(
 
 }  // namespace
 
-// Each integral part of the storage `variable` names, holding `value` now, of
-// type `type`, declared as `declared` says: the storage itself where it is
-// integral, and every element of an array, at any depth, each by its own
-// storage (LRM 18.4), within the innermost array whose size the program
-// chooses. An element is chosen where the array's mode and its own are both
-// on.
-void DeclareParts(
-    ConstraintProblem& problem, RandomizationModes& modes,
-    const ErasedReference& variable, const void* value,
-    const value::ValueType& type, support::RandomQualifier declared,
-    const DeclaredPart& part) {
-  const bool chosen = part.enabled && modes.RandEnabled(part.path);
-  if (const value::IntegralValueType* integral = type.AsIntegral()) {
-    ConstraintCycle* cycle =
-        declared == support::RandomQualifier::kRandc
-            ? &CycleOf(modes, part, integral->Shape().width)
-            : nullptr;
-    problem.Declare(
-        variable, value, type, declared, chosen, cycle, part.members,
-        part.within);
-    return;
-  }
-  if (!type.HasParts()) {
-    const base::SourceLocationScope bound(problem.WrittenAt());
-    throw SimulationError(
-        "randomizing a random variable of this type is not yet supported");
-  }
-  std::optional<std::int64_t> array = part.within;
-  if (std::optional<ArrayResizer> resize = ResizeOf(variable, type)) {
-    array = problem.DeclareArray(variable, *std::move(resize), chosen);
-  }
-  const value::ValueType& element = type.PartType(value);
-  const std::size_t count = type.PartCount(value);
-  for (std::size_t position = 0; position < count; ++position) {
-    DeclareParts(
-        problem, modes,
-        ErasedReference{
-            .holder = variable.holder,
-            .storage = type.PartAt(variable.storage, position)},
-        type.PartAt(value, position), element, declared,
-        part.Into(position, chosen, array));
-  }
+namespace {
+
+// The walk the problem `problem` names begun on the whole of the variable
+// `whole` names, for `purpose`: the whole is the walk's first part, chosen
+// where its mode is on, of the members its enumeration declares where it is
+// one.
+void BeginWalk(
+    const value::ObjectRef& problem, const ErasedReference& whole,
+    WalkPurpose purpose) {
+  ConstraintProblem& p = ProblemOf(problem);
+  p.Walk() = RandomWalk{
+      .purpose = purpose,
+      .whole = whole,
+      .parts = {WalkedPart{
+          .part =
+              DeclaredPart{
+                  .path =
+                      RandomVariablePath{
+                          .declared = whole.storage, .positions = {}},
+                  .enabled = true,
+                  .members = p.MembersOf(whole),
+                  .within = std::nullopt},
+          .elements_chosen = false,
+          .elements_within = std::nullopt}}};
 }
 
-void ConstraintDeclareErased(
-    const value::ObjectRef& problem, const ErasedReference& variable,
-    const void* value, const value::ValueType& type,
-    support::RandomQualifier declared, const DeclaredPart& part) {
-  DeclareParts(
-      ProblemOf(problem), ModesOf(variable), variable, value, type, declared,
-      part);
+// The part of the walk the type's code is at.
+auto PartAt(RandomWalk& walk) -> WalkedPart& {
+  if (walk.parts.empty()) {
+    throw InternalError(
+        "randomize: a part of a random variable is walked outside any walk -- "
+        "please report this as a bug");
+  }
+  return walk.parts.back();
 }
 
-auto DeclaredWhole(
-    const value::ObjectRef& problem, const ErasedReference& variable)
-    -> DeclaredPart {
-  return DeclaredPart{
-      .path = RandomVariablePath{.declared = variable.storage, .positions = {}},
-      .enabled = true,
-      .members = ProblemOf(problem).MembersOf(variable),
-      .within = std::nullopt};
+}  // namespace
+
+void RandomWalkDeclare(
+    const value::ObjectRef& problem, const ErasedReference& whole,
+    support::RandomQualifier declared) {
+  BeginWalk(problem, whole, DeclaringWalk{.declared = declared});
+}
+void RandomWalkList(
+    const value::ObjectRef& problem, const ErasedReference& whole) {
+  BeginWalk(problem, whole, ListingWalk{});
+}
+void RandomWalkNested(
+    const value::ObjectRef& problem, const ErasedReference& whole) {
+  BeginWalk(problem, whole, NestingWalk{});
+}
+void RandomWalkUnique(
+    const value::ObjectRef& problem, std::int64_t set,
+    const ErasedReference& whole) {
+  BeginWalk(problem, whole, UniqueWalk{.set = set});
+}
+
+namespace {
+
+// The array the walk is at (LRM 18.4): its elements are chosen where its mode
+// and the array's own are both on, and lie within the arrays around it.
+auto EnterArrayPart(RandomWalk& walk) -> WalkedPart& {
+  WalkedPart& at = PartAt(walk);
+  at.elements_chosen =
+      at.part.enabled && ModesOf(walk.whole).RandEnabled(at.part.path);
+  at.elements_within = at.part.within;
+  return at;
+}
+
+}  // namespace
+
+void RandomWalkFixedArray(const value::ObjectRef& problem) {
+  EnterArrayPart(ProblemOf(problem).Walk());
+}
+
+// One whose size the program chooses is declared, or listed, before its
+// elements, as the array they lie within, and made as long as the solve
+// chooses by `resize`.
+void RandomWalkResizableArray(
+    const value::ObjectRef& problem, const ErasedReference& array,
+    const ArrayResizer& resize) {
+  ConstraintProblem& p = ProblemOf(problem);
+  RandomWalk& walk = p.Walk();
+  WalkedPart& at = EnterArrayPart(walk);
+  std::visit(
+      Overloaded{
+          [&](const DeclaringWalk&) {
+            at.elements_within =
+                p.DeclareArray(array, resize, at.elements_chosen);
+          },
+          [&](const ListingWalk&) {
+            at.elements_within = p.ListArray(array, resize);
+          },
+          [](const NestingWalk&) {}, [](const UniqueWalk&) {}},
+      walk.purpose);
+}
+
+void RandomWalkEnter(const value::ObjectRef& problem, std::int64_t position) {
+  RandomWalk& walk = ProblemOf(problem).Walk();
+  const WalkedPart& at = PartAt(walk);
+  walk.parts.push_back(
+      WalkedPart{
+          .part = at.part.Into(
+              static_cast<std::size_t>(position), at.elements_chosen,
+              at.elements_within),
+          .elements_chosen = false,
+          .elements_within = std::nullopt});
+}
+
+void RandomWalkLeave(const value::ObjectRef& problem) {
+  RandomWalk& walk = ProblemOf(problem).Walk();
+  PartAt(walk);
+  walk.parts.pop_back();
+}
+
+// A value the walk reaches that is no array: declared random, listed, the
+// object a handle names joined to the call, or entered into a uniqueness set,
+// as the walk is for.
+void RandomWalkLeaf(
+    const value::ObjectRef& problem, const ErasedReference& lent,
+    const value::ValueType* type) {
+  ConstraintProblem& p = ProblemOf(problem);
+  RandomWalk& walk = p.Walk();
+  const DeclaredPart& part = PartAt(walk).part;
+  void* const storage = lent.storage;
+  RandomizationModes& modes = ModesOf(walk.whole);
+  const value::IntegralValueType* integral = type->AsIntegral();
+  std::visit(
+      Overloaded{
+          [&](const DeclaringWalk& declaring) {
+            if (integral == nullptr) {
+              const base::SourceLocationScope bound(p.WrittenAt());
+              throw SimulationError(
+                  "randomizing a random variable of this type is not yet "
+                  "supported");
+            }
+            const bool chosen = part.enabled && modes.RandEnabled(part.path);
+            ConstraintCycle* cycle =
+                declaring.declared == support::RandomQualifier::kRandc
+                    ? &CycleOf(modes, part, integral->Shape().width)
+                    : nullptr;
+            p.Declare(
+                lent, storage, *type, declaring.declared, chosen, cycle,
+                part.members, part.within);
+          },
+          [&](const ListingWalk&) {
+            if (integral == nullptr) {
+              const base::SourceLocationScope bound(p.WrittenAt());
+              throw SimulationError(
+                  "randomizing a listed variable of this type is not yet "
+                  "supported");
+            }
+            p.List(lent, storage, *type, part.members, part.within);
+          },
+          [&](const NestingWalk&) {
+            if (!part.enabled || !modes.RandEnabled(part.path)) {
+              return;
+            }
+            const auto& reached =
+                *static_cast<const value::ObjectRef*>(storage);
+            if (ObjectRootOf(reached) != nullptr) {
+              p.AddNested(reached);
+            }
+          },
+          [&](const UniqueWalk& unique) {
+            if (integral == nullptr) {
+              const base::SourceLocationScope bound(p.WrittenAt());
+              throw SimulationError(
+                  "a uniqueness constraint over values of this type is not "
+                  "yet supported");
+            }
+            p.UniqueMember(unique.set, p.Named(lent, storage, *type));
+          }},
+      walk.purpose);
+}
+
+void RandomWalkEnd(const value::ObjectRef& problem) {
+  ProblemOf(problem).Walk().parts.clear();
 }
 
 void ConstraintMembersOf(
@@ -286,52 +397,10 @@ auto NamedMembers(
   return ProblemOf(problem).MembersOf(variable);
 }
 
-void RandomizeListErased(
-    const value::ObjectRef& problem, const ErasedReference& variable,
-    const void* value, const value::ValueType& type,
-    const value::Enumeration* members, std::optional<std::int64_t> within) {
-  ConstraintProblem& p = ProblemOf(problem);
-  if (type.AsIntegral() != nullptr) {
-    p.List(variable, value, type, members, within);
-    return;
-  }
-  if (!type.HasParts()) {
-    const base::SourceLocationScope bound(p.WrittenAt());
-    throw SimulationError(
-        "randomizing a listed variable of this type is not yet supported");
-  }
-  std::optional<std::int64_t> array = within;
-  if (std::optional<ArrayResizer> resize = ResizeOf(variable, type)) {
-    array = p.ListArray(variable, *std::move(resize));
-  }
-  const value::ValueType& part = type.PartType(value);
-  const std::size_t count = type.PartCount(value);
-  for (std::size_t position = 0; position < count; ++position) {
-    RandomizeListErased(
-        problem,
-        ErasedReference{
-            .holder = variable.holder,
-            .storage = type.PartAt(variable.storage, position)},
-        type.PartAt(value, position), part, members, array);
-  }
-}
-
-auto RandomizeListArrayErased(
+auto ConstraintArraySize(
     const value::ObjectRef& problem, const ErasedReference& array,
-    ArrayResizer resize) -> std::int64_t {
-  return ProblemOf(problem).ListArray(array, std::move(resize));
-}
-
-auto ConstraintDeclareArrayErased(
-    const value::ObjectRef& problem, const ErasedReference& array,
-    ArrayResizer resize, bool enabled) -> std::int64_t {
-  return ProblemOf(problem).DeclareArray(array, std::move(resize), enabled);
-}
-
-auto ConstraintArraySizeErased(
-    const value::ObjectRef& problem, const ErasedReference& array,
-    std::size_t count) -> std::int64_t {
-  return ProblemOf(problem).ArraySize(array, count);
+    std::int64_t count) -> std::int64_t {
+  return ProblemOf(problem).ArraySize(array, static_cast<std::size_t>(count));
 }
 
 auto RandomizeSettleFirst(const value::ObjectRef& problem) -> bool {
@@ -357,44 +426,6 @@ auto ConstraintConstantErased(
     const value::ObjectRef& problem, const void* value,
     const value::ValueType& type) -> std::int64_t {
   return ProblemOf(problem).Constant(value, type);
-}
-
-// Each object the handles in the storage `handle` names reach, holding
-// `value` now: the handle itself, or every element of an array of them, at any
-// depth (LRM 18.4).
-void NestedParts(
-    ConstraintProblem& problem, RandomizationModes& modes,
-    const ErasedReference& handle, const void* value,
-    const value::ValueType& type, const RandomVariablePath& path,
-    bool enabled) {
-  if (!enabled || !modes.RandEnabled(path)) {
-    return;
-  }
-  if (!type.HasParts()) {
-    const auto& reached = *static_cast<const value::ObjectRef*>(value);
-    if (ObjectRootOf(reached) != nullptr) {
-      problem.AddNested(reached);
-    }
-    return;
-  }
-  const value::ValueType& part = type.PartType(value);
-  const std::size_t count = type.PartCount(value);
-  for (std::size_t position = 0; position < count; ++position) {
-    NestedParts(
-        problem, modes,
-        ErasedReference{
-            .holder = handle.holder,
-            .storage = type.PartAt(handle.storage, position)},
-        type.PartAt(value, position), part, path.Into(position), true);
-  }
-}
-
-void RandomizeNestedErased(
-    const value::ObjectRef& problem, const ErasedReference& handle,
-    const void* value, const value::ValueType& type,
-    const RandomVariablePath& path, bool enabled) {
-  NestedParts(
-      ProblemOf(problem), ModesOf(handle), handle, value, type, path, enabled);
 }
 
 auto ConstraintBlockEnabled(GcObject* self, const value::String& name) -> bool {
@@ -550,95 +581,34 @@ void ConstraintUniqueRequire(
   ProblemOf(p).UniqueRequire(set, guard);
 }
 
-void ConstraintUniqueArrayErased(
-    const value::ObjectRef& p, std::int64_t set, const ErasedReference& array,
-    const void* value, const value::ValueType& type) {
-  ConstraintProblem& problem = ProblemOf(p);
-  if (type.AsIntegral() != nullptr) {
-    problem.UniqueMember(set, problem.Named(array, value, type));
-    return;
-  }
-  if (!type.HasParts()) {
-    const base::SourceLocationScope bound(problem.WrittenAt());
-    throw SimulationError(
-        "a uniqueness constraint over values of this type is not yet "
-        "supported");
-  }
-  const value::ValueType& part = type.PartType(value);
-  const std::size_t count = type.PartCount(value);
-  for (std::size_t position = 0; position < count; ++position) {
-    ConstraintUniqueArrayErased(
-        p, set,
-        ErasedReference{
-            .holder = array.holder,
-            .storage = type.PartAt(array.storage, position)},
-        type.PartAt(value, position), part);
-  }
-}
-
 namespace {
 
-// The positions of the part `part` names within storage `declared`, holding
-// `value` now, of type `type`.
-auto ErasedPositionsOf(
-    const void* value, void* declared, const value::ValueType& type,
-    const void* part, std::vector<std::size_t>& out) -> bool {
-  if (declared == part) {
-    return true;
-  }
-  if (!type.HasParts()) {
-    return false;
-  }
-  const value::ValueType& element = type.PartType(value);
-  const std::size_t count = type.PartCount(value);
-  for (std::size_t position = 0; position < count; ++position) {
-    out.push_back(position);
-    if (ErasedPositionsOf(
-            type.PartAt(value, position), type.PartAt(declared, position),
-            element, part, out)) {
-      return true;
-    }
-    out.pop_back();
-  }
-  return false;
-}
-
-auto ErasedPathOf(
-    const ErasedReference& declared, const void* value,
-    const value::ValueType& type, const ErasedReference& part)
+// The random variable the storage `declared` names is the root of, at
+// `positions` within it.
+auto PathAt(
+    const ErasedReference& declared, std::span<const std::int64_t> positions)
     -> RandomVariablePath {
   RandomVariablePath path{.declared = declared.storage, .positions = {}};
-  if (!ErasedPositionsOf(
-          value, declared.storage, type, part.storage, path.positions)) {
-    throw InternalError(
-        "rand_mode: the part named lies outside the variable declared");
+  path.positions.reserve(positions.size());
+  for (const std::int64_t position : positions) {
+    path.positions.push_back(static_cast<std::size_t>(position));
   }
   return path;
 }
 
 }  // namespace
 
-void RandModeSetAt(
-    const ErasedReference& declared, const RandomVariablePath& path, bool on) {
-  ModesOf(declared).SetRand(path, on);
+void RandModeSet(
+    const ErasedReference& declared, std::span<const std::int64_t> positions,
+    bool on) {
+  ModesOf(declared).SetRand(PathAt(declared, positions), on);
 }
 
-auto RandModeGetAt(
-    const ErasedReference& declared, const RandomVariablePath& path)
+auto RandModeGet(
+    const ErasedReference& declared, std::span<const std::int64_t> positions)
     -> value::Int {
-  return value::Int::FromInt(ModesOf(declared).RandEnabled(path) ? 1 : 0);
-}
-
-void RandModeSetErased(
-    const ErasedReference& declared, const void* value,
-    const value::ValueType& type, const ErasedReference& part, bool on) {
-  RandModeSetAt(declared, ErasedPathOf(declared, value, type, part), on);
-}
-
-auto RandModeGetErased(
-    const ErasedReference& declared, const void* value,
-    const value::ValueType& type, const ErasedReference& part) -> value::Int {
-  return RandModeGetAt(declared, ErasedPathOf(declared, value, type, part));
+  return value::Int::FromInt(
+      ModesOf(declared).RandEnabled(PathAt(declared, positions)) ? 1 : 0);
 }
 
 void ObjectRandModeSet(GcObject* object, bool on) {

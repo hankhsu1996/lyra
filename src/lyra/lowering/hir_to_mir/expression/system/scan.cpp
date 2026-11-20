@@ -34,6 +34,7 @@
 #include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/mir/value_parts.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/library_decl.hpp"
 #include "lyra/support/system_subroutine.hpp"
@@ -120,7 +121,7 @@ auto EmitScanOperandsKnown(
     std::span<const mir::ExprId> operands) -> mir::ExprId {
   std::vector<mir::ExprId> known;
   for (const mir::ExprId operand : operands) {
-    if (!CarriesUnknowns(unit, body.Get(operand).type)) continue;
+    if (!mir::CarriesUnknowns(unit, body.Get(operand).type)) continue;
     const mir::ExprId unknown_id =
         ConvertToType(unit, body, BuildUnknownTest(unit, body, operand), bit_t);
     known.push_back(BuildLogicalNot(unit, body, unknown_id));
@@ -322,7 +323,7 @@ auto LowerScanSystemSubroutineCall(
         mir::MakeBinary(
             unit, scan_body_builder.Body(), mir::BinaryOp::kGreaterEqual,
             count_read_id, k_lit_id,
-            OneBitAnswerType(unit, std::array{integer_t, integer_t})));
+            mir::OneBitAnswerType(unit, std::array{integer_t, integer_t})));
 
     mir::Block then_body;
     const WalkFrame then_frame = scan_frame.WithBlock(&then_body);

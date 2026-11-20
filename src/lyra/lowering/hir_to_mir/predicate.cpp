@@ -31,6 +31,7 @@
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
+#include "lyra/mir/value_parts.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -57,15 +58,14 @@ auto BuildCombinedArms(
   if (combines_by_part) {
     const mir::ExprId one_value = block.ReadLocal(one, result_type);
     const mir::ExprId other_value = block.ReadLocal(other, result_type);
-    return block.Add(
-        mir::MakeBuiltinCall(
-            unit, block.Body(), support::BuiltinFn::kMergeConditional,
-            one_value, {other_value}, result_type));
+    return BuildValueOperation(
+        unit, block, support::UnknownItem::kMergeConditional, one_value,
+        {other_value}, result_type);
   }
   const std::array compared{result_type, result_type};
   const mir::ExprId lhs = block.LocalPlace(one, result_type);
   const mir::ExprId rhs = block.LocalPlace(other, result_type);
-  const mir::TypeId answer_type = OneBitAnswerType(unit, compared);
+  const mir::TypeId answer_type = mir::OneBitAnswerType(unit, compared);
   const mir::ExprId equal = block.Add(BuildMirBinaryExpr(
       unit, block, hir::BinaryOp::kEquality, lhs, rhs, answer_type));
   const std::array shared{SelectedValue{
@@ -412,7 +412,7 @@ auto BuildSearch(
   if (terms.size() < 2) {
     throw InternalError("BuildSearch: a search has fewer than two terms");
   }
-  if (CarriesUnknowns(unit, type)) {
+  if (mir::CarriesUnknowns(unit, type)) {
     return BuildSearchSteps(unit, frame, rule, terms, type);
   }
   return BuildDecidedSearch(unit, frame, rule, terms, type);
@@ -433,7 +433,7 @@ auto BuildLogicalNot(
   return block.Add(
       mir::MakeUnary(
           unit, block.Body(), mir::UnaryOp::kLogicalNot, value,
-          OneBitAnswerType(unit, {&type, 1})));
+          mir::OneBitAnswerType(unit, {&type, 1})));
 }
 
 auto BuildTruth(
@@ -447,13 +447,13 @@ auto BuildTruth(
   // A one-bit value that can hold no x or z already is its own truth. One that
   // can is not: a truth is 1, 0 or x and never z (LRM 11.4.7), which is what
   // reducing it by OR answers.
-  if (type.Integral().bit_width == 1 && !CarriesUnknowns(unit, type_id)) {
+  if (type.Integral().bit_width == 1 && !mir::CarriesUnknowns(unit, type_id)) {
     return value;
   }
   return block.Add(
       mir::MakeBuiltinCall(
           unit, block.Body(), support::BuiltinFn::kReductionOr, value, {},
-          OneBitAnswerType(unit, {&type_id, 1})));
+          mir::OneBitAnswerType(unit, {&type_id, 1})));
 }
 
 template <ExprLowerer Lowerer>
@@ -470,7 +470,7 @@ auto ExpressionPredicate(Lowerer& lowerer, hir::ExprId id) -> Predicate {
 
 auto Negated(const mir::CompilationUnit& unit, Predicate predicate)
     -> Predicate {
-  const mir::TypeId type = OneBitAnswerType(unit, {&predicate.type, 1});
+  const mir::TypeId type = mir::OneBitAnswerType(unit, {&predicate.type, 1});
   return Predicate{
       .type = type,
       .evaluate = [&unit, operand = std::move(predicate)](
@@ -496,7 +496,7 @@ auto SeriesPredicate(
   for (const Predicate& term : terms) {
     term_types.push_back(term.type);
   }
-  const mir::TypeId type = OneBitAnswerType(unit, term_types);
+  const mir::TypeId type = mir::OneBitAnswerType(unit, term_types);
   return Predicate{
       .type = type,
       .evaluate = [&unit, type, terms = std::move(terms)](
@@ -526,7 +526,7 @@ auto BuildSelection(
   }
   const bool can_be_unknown =
       std::ranges::any_of(arms, [&](const SelectionArm& arm) {
-        return CarriesUnknowns(unit, arm.predicate.type);
+        return mir::CarriesUnknowns(unit, arm.predicate.type);
       });
   if (can_be_unknown) {
     return BuildMergingSelection(unit, frame, arms, otherwise, result_type);

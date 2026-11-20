@@ -47,6 +47,10 @@ namespace lyra::lowering::mir_to_lir {
 
 namespace {
 
+auto AttributesOf(const mir::CallableCode& code) -> lir::FunctionAttributes {
+  return lir::FunctionAttributes{.can_unwind = code.can_unwind};
+}
+
 // Where the block body an entry makes a block of stands among its body's, or
 // none for the entry making an object of the body itself.
 auto BlockOrdinalOf(std::optional<mir::BlockBodyOrdinal> block)
@@ -103,7 +107,8 @@ auto UnitLowerer::Populate() -> diag::Result<void> {
       mir_->callables.size(), std::nullopt);
   for (const mir::CallableId id : mir_->callables.Ids()) {
     if (mir::IsDefinedHere(mir_->callables.Get(id))) {
-      functions.at(id.value) = out_.functions.Declare();
+      functions.at(id.value) =
+          out_.functions.Declare(AttributesOf(mir_->callables.Get(id).code));
     }
   }
   functions_ = {mir_->callables.size(), std::move(functions)};
@@ -134,6 +139,10 @@ auto UnitLowerer::Populate() -> diag::Result<void> {
     closures.push_back(out_.closures.Declare());
   }
   closure_identities_ = {mir_->closures.size(), std::move(closures)};
+
+  for (const mir::LibraryRecordDecl& record : mir_->library_records) {
+    out_.library_records.emplace(record.decl, TranslateTypes(record.members));
+  }
 
   // What every record is made of is settled before any body lowers, since a
   // body reaching a member of one reads it -- a method of the record
@@ -201,7 +210,7 @@ auto UnitLowerer::Populate() -> diag::Result<void> {
       return std::unexpected(std::move(fn.error()));
     }
     fn->linkage = mir::ForeignScopeEntryLinkage();
-    out_.functions.Add(*std::move(fn));
+    out_.functions.Add(AttributesOf(shared.definition), *std::move(fn));
   }
 
   // A callable the unit's namespace owns -- a package's own body (LRM 26.3) --
@@ -284,26 +293,51 @@ auto UnitLowerer::Populate() -> diag::Result<void> {
   return {};
 }
 
+auto UnitLowerer::SourceOf(const lir::TypeOperation& operation) const
+    -> mir::TypeOperationSource {
+  const auto stated_of = [&](lir::TypeId type) {
+    const auto stated = mir_type_of_.find(type);
+    if (stated == mir_type_of_.end()) {
+      throw InternalError(
+          std::format(
+              "mir_to_lir: the operation \"{}\" is asked at a type no type of "
+              "the unit's model translates to -- please report this as a bug",
+              support::ValueOperationName(operation.answers)));
+    }
+    return stated->second;
+  };
+  mir::TypeOperationSource source{
+      .type = stated_of(operation.type), .answers = operation.answers};
+  for (const lir::TypeId argument : operation.arguments) {
+    source.arguments.push_back(stated_of(argument));
+  }
+  return source;
+}
+
+auto UnitLowerer::DeclareTypeOperationFunction(
+    const lir::TypeOperation& operation) -> lir::FunctionId {
+  const std::optional<mir::CallableCode> declared =
+      mir::OperationDeclarationOf(*mir_, SourceOf(operation));
+  const lir::FunctionId function = out_.functions.Declare(
+      declared.has_value() ? AttributesOf(*declared)
+                           : lir::FunctionAttributes{});
+  out_.type_operations.insert_or_assign(operation, function);
+  return function;
+}
+
 void UnitLowerer::MarkOperationUsed(const lir::TypeOperation& operation) {
-  const auto stated = mir_type_of_.find(operation.type);
-  if (stated == mir_type_of_.end()) {
-    throw InternalError(
-        std::format(
-            "mir_to_lir: the operation \"{}\" is asked of a type no type of "
-            "the unit's model translates to -- please report this as a bug",
-            support::ValueOperationName(operation.answers)));
+  if (!visited_.insert(operation).second) {
+    return;
   }
-  if (visited_.insert(operation).second) {
-    pending_.push_back(
-        PendingOperation{.operation = operation, .mir_type = stated->second});
-  }
+  pending_.push_back(
+      PendingOperation{.operation = operation, .source = SourceOf(operation)});
 }
 
 auto UnitLowerer::StateTypeOperations(const OperationBodyProvider& bodies)
     -> diag::Result<bool> {
   std::vector<PendingOperation> pending = std::exchange(pending_, {});
-  for (const auto& [operation, mir_type] : pending) {
-    std::optional<mir::CallableCode> body = bodies(mir_type, operation.answers);
+  for (const auto& [operation, source] : pending) {
+    std::optional<mir::CallableCode> body = bodies(source);
     const auto called = out_.type_operations.find(operation);
     if (!body.has_value()) {
       if (called != out_.type_operations.end()) {
@@ -312,22 +346,25 @@ auto UnitLowerer::StateTypeOperations(const OperationBodyProvider& bodies)
       out_.type_operations.emplace(operation, std::nullopt);
       continue;
     }
-    const lir::FunctionId function = called != out_.type_operations.end()
-                                         ? *called->second
-                                         : out_.functions.Declare();
-    out_.type_operations.insert_or_assign(operation, function);
+    const lir::FunctionId function =
+        called != out_.type_operations.end()
+            ? *called->second
+            : DeclareTypeOperationFunction(operation);
+    std::vector<lir::SymbolPart> arguments;
+    arguments.reserve(operation.arguments.size());
+    for (const lir::TypeId argument : operation.arguments) {
+      arguments.push_back(lir::SymbolPartOf(out_, argument));
+    }
     auto fn = FunctionLowerer(
                   *this, *body,
                   lir::TypeOperationSymbol(
                       out_.body_name, lir::SymbolPartOf(out_, operation.type),
-                      operation.answers))
+                      operation.answers, arguments))
                   .Run();
     if (!fn) {
       return std::unexpected(std::move(fn.error()));
     }
-    fn->linkage = mir::LinkageOf(
-        *mir_, mir::TypeOperationSource{
-                   .type = mir_type, .answers = operation.answers});
+    fn->linkage = mir::LinkageOf(*mir_, source);
     out_.functions.Define(function, *std::move(fn));
   }
   return !pending.empty();
@@ -955,19 +992,26 @@ auto UnitLowerer::RecordDeclaration(mir::RecordId record) const
   return record_identities_.Get(record);
 }
 
-auto UnitLowerer::TypeOperationFunction(
-    mir::TypeId type, support::ValueOperation answers) -> lir::FunctionId {
-  const lir::TypeOperation operation{
-      .type = TranslateType(type), .answers = answers};
+auto UnitLowerer::TypeOperationFunction(const mir::TypeOperationTarget& target)
+    -> lir::FunctionId {
+  lir::TypeOperation operation{
+      .type = TranslateType(target.type), .answers = target.answers};
+  for (const mir::TypeId argument : target.arguments) {
+    operation.arguments.push_back(TranslateType(argument));
+  }
+  return TypeOperationFunction(std::move(operation));
+}
+
+auto UnitLowerer::TypeOperationFunction(lir::TypeOperation operation)
+    -> lir::FunctionId {
   const auto found = out_.type_operations.find(operation);
   if (found != out_.type_operations.end()) {
     if (!found->second.has_value()) {
-      RefuseOperationNotGiven(answers);
+      RefuseOperationNotGiven(operation.answers);
     }
     return *found->second;
   }
-  const lir::FunctionId function = out_.functions.Declare();
-  out_.type_operations.emplace(operation, function);
+  const lir::FunctionId function = DeclareTypeOperationFunction(operation);
   MarkOperationUsed(operation);
   return function;
 }

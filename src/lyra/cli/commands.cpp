@@ -28,6 +28,7 @@
 #include <slang/driver/Driver.h>
 #include <slang/text/Json.h>
 
+#include "lyra/backend/cpp/type_operation_bodies.hpp"
 #include "lyra/backend/llvm/emit.hpp"
 #include "lyra/backend/llvm/link_time_optimization.hpp"
 #include "lyra/backend/llvm/type_operation_collector.hpp"
@@ -38,6 +39,7 @@
 #include "lyra/cli/manifest.hpp"
 #include "lyra/compiler/compile.hpp"
 #include "lyra/compiler/lower_design.hpp"
+#include "lyra/compiler/unit_pipeline.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/failure_context.hpp"
@@ -196,7 +198,15 @@ auto WriteCppSources(
     return std::nullopt;
   }
   const status::Phase phase("Generating C++");
-  driver::CppProjectSink sources(dir, ctx.args->formatting, *ctx.sink);
+  driver::CppProjectSink sources(
+      dir, ctx.args->formatting,
+      [&](const mir::CompilationUnit& unit) -> backend::cpp::BodyBuilder {
+        return [&ctx, &unit](const mir::TypeOperationSource& source) {
+          return compiler::BuiltTypeOperationBody(
+              unit, source, ctx.args->mir_passes, ctx.elaborated->diag_sources);
+        };
+      },
+      *ctx.sink);
   auto lowered = compiler::LowerToSemantic(
       *design, ctx.args->mir_passes, *ctx.sink, ctx.args->compile_width,
       [&](mir::CompilationUnit unit) { return sources.Write(unit); },

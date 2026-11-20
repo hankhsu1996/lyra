@@ -29,7 +29,7 @@ struct IntegralWitnesses {
     std::memcpy(out, value, type.Size());
   }
 
-  static void Move(const ValueType& type, void* value, void* out) noexcept {
+  static void Relocate(const ValueType& type, void* value, void* out) noexcept {
     std::memcpy(out, value, type.Size());
   }
 
@@ -49,10 +49,6 @@ struct IntegralWitnesses {
       const ValueType& type, const void* lhs, const void* rhs) -> bool {
     return std::memcmp(lhs, rhs, type.Size()) == 0;
   }
-
-  // A packed value's bits are no storage of their own (LRM 7.4.1), so an
-  // integral value holds no parts a walk reaches where they lie.
-  static constexpr const PartsWitnessTable* kParts = nullptr;
 };
 
 // The language's operations on an integral value, each reading the shape off

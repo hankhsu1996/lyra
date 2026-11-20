@@ -126,6 +126,8 @@ class CodeGenTypes {
   // Where a tagged union's members and tag lie. Asked only of a tagged union.
   auto LayoutOfTaggedUnion(lir::TypeId tagged_union)
       -> const TaggedUnionFields&;
+  // Where each member of a structure of the library lies. Asked only of one.
+  auto LayoutOfLibraryProduct(lir::TypeId product) -> const ProductLayout&;
   // How a value laid out by its type places its parts. Asked only of one.
   auto FieldsOf(lir::TypeId laid_out) -> FieldsShape;
   // Where a tagged union keeps its tag. Asked only of a tagged union.

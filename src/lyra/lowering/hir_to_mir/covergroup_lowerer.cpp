@@ -2441,7 +2441,7 @@ auto HoldsObject(
   return ReduceToCondition(
       unit, block,
       BuildEquality(
-          unit, block, support::ValueOperator::kInequality, handle,
+          unit, block, support::EqualityItem::kNotEqual, handle,
           block.Add(mir::Expr{.data = mir::NullLiteral{}, .type = type}),
           unit.builtins.bit1));
 }

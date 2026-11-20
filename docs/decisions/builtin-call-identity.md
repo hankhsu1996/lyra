@@ -86,22 +86,22 @@ Three shapes were considered.
 call is "method M on the type T of the receiver". Most source-true -- mirrors the SV programmer's
 mental model of "len belongs to string". But the LRM 7.12 family (sort, sum, find, ...) is _defined_
 as a single set of methods that applies uniformly to multiple unpacked-array containers (fixed
-unpacked, dynamic, queue). D1 forces every container to spell `kSort` separately, three different
+unpacked, dynamic, queue). D1 forces every container to spell `kReverse` separately, three different
 identifiers for one LRM concept. The IR cannot represent "the same method, shared across container
 kinds" in a single entry, which is the load-bearing structural fact for LRM 7.12.
 
 **D2: method-as-concept-member.** `(ConceptId, MethodInConcept)`. Methods grouped by runtime concept
-(Indexable, Sortable, Reducible, Searchable, ...) -- the structure that the runtime container types
-already implement via `lyra::value::concepts`. SV-faithful in the trait sense but adds an
-indirection (name -> concept -> method) the AST-to-HIR receiver-type dispatch does not naturally
-walk, and a single method may participate in multiple concepts (`kSize` is Sized; `kReverse` is
-Sortable; `kElement` is Indexable). The concept axis is cross-cutting; making it the identity axis
-forces choosing one concept per method, and the choice is artificial.
+(Sized, Indexable, ...) -- the structure that the runtime container types already implement via
+`lyra::value::concepts`. SV-faithful in the trait sense but adds an indirection (name -> concept ->
+method) the AST-to-HIR receiver-type dispatch does not naturally walk, and a single method may
+participate in multiple concepts (`kSize` is Sized; `kReverse` orders; `kElement` is Indexable). The
+concept axis is cross-cutting; making it the identity axis forces choosing one concept per method,
+and the choice is artificial.
 
 **D3: flat closed-namespace.** One enum, one entry per runtime function. Receiver type carries the
 container/element shape; the enum carries the function identity. The LRM 7.12 family is one entry
-per method (`kSort` once), and which container realizes it is the receiver type's job. Adding a new
-container kind is zero-touch on the enum. Adding a new method is one entry. Adding a new method
+per method (`kReverse` once), and which container realizes it is the receiver type's job. Adding a
+new container kind is zero-touch on the enum. Adding a new method is one entry. Adding a new method
 shared across N containers is still one entry.
 
 D3 wins on every evolution axis (cross-container sharing, scalability under new types, scalability

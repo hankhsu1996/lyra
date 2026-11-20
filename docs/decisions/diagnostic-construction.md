@@ -73,7 +73,7 @@ fits:
   lowered; downgrading it to a warning produces no IR to continue with. The axis Roslyn's category
   configures does not exist here.
 - **`--explain <code>`** is served by the code name and message, which already state the nature of
-  the gap; a `[category: type]` tag beside `unsupported_associative_array_type` is redundant.
+  the gap; a `[category: type]` tag beside `unsupported_type_kind` is redundant.
 - **A maturity / triage summary** ("8 unsupported: 4 type, 3 feature, 1 operation") is the one
   surface that would fit, but it does not exist and is not on the near-term roadmap.
 

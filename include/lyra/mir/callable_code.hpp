@@ -66,6 +66,11 @@ struct CallableCode {
   // something that reports there hands this on. Absent for a body that reports
   // at its own lines.
   std::optional<LocalId> caller_location;
+  // Whether a call of the callable can be unwound out of, as clang's exception
+  // specification, rustc's `fn_can_unwind` and LLVM's `nounwind` say it. One
+  // that cannot promises that no unwind leaves it, which the unit's
+  // verification holds its body to and a C++ target spells `noexcept`.
+  bool can_unwind = true;
 
   // A code skeleton for a callable this program defines, lowered from
   // `lowered_from`: the body starts present and empty, ready for a builder to

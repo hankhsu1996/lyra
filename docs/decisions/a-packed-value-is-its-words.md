@@ -341,12 +341,13 @@ declaration and from nothing about the value in hand.** The set of readings is c
 has one, and a reading names one way of passing. An operand whose planes are read is passed with its
 width and whether it has an unknown plane, and one read as a quantity with its signedness as well.
 One put into, or taken out of, something that already knows its layout is passed with nothing. An
-ordinal is passed as a position, which the lowering converted it to. A value the entry keeps, and
-the key an associative array is reached by, are passed with their type. A count, a flag, a
-descriptor and the storage the entry acts on are passed as the machine values they are. This is how
-clang arranges a call from the callee's signature and never from the argument
-(`clang/include/clang/CodeGen/CGFunctionInfo.h`, one `ABIArgInfo` per formal) and rustc from the
-callee's `FnAbi` (`compiler/rustc_target/src/callconv/mod.rs`).
+ordinal is passed as a position, which the lowering converted it to. A value the entry keeps is
+passed with its type; an index an associative array's core is handed is passed by its address alone,
+since the core was built told its index type. A count, a flag, a descriptor and the storage the
+entry acts on are passed as the machine values they are. This is how clang arranges a call from the
+callee's signature and never from the argument (`clang/include/clang/CodeGen/CGFunctionInfo.h`, one
+`ABIArgInfo` per formal) and rustc from the callee's `FnAbi`
+(`compiler/rustc_target/src/callconv/mod.rs`).
 
 What a realization for one layout is told beyond its operands is stated with that realization. The
 library realizes an entry acting on storage once per layout of what the storage holds. Storage
@@ -357,7 +358,7 @@ of the member it is to hold.
 An entry is over one kind of value. An operation the source states over values of several kinds is
 an entry of its own over integral values, and that entry is the operation of D3. An associative
 array is reached by a key and every other container by a position, so each access into one is an
-entry of its own. MIR's own check holds a call to its entry's one declaration.
+operation of its own. MIR's own check holds a call to its entry's one declaration.
 
 Arranging how arguments are passed is a step apart from emitting the call, as clang keeps
 `CodeGenTypes::arrange*` apart from `CodeGenFunction::EmitCall`. A test holds every prototype the

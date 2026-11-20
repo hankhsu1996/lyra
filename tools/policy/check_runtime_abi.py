@@ -38,7 +38,7 @@ Rules:
         neither has a prototype to read the answer off.
 
   R008  Whether an entry can raise is stated once, the same way as R004.
-        Its runtime entry declaration says a call to it only returns, and its
+        Its runtime entry declaration says a call to it cannot unwind, and its
         prototype is `noexcept`; a call site builds no landing for the first,
         and the compiler holds the definition to the second. A row claiming an
         entry cannot raise while its definition can sends a departure through
@@ -121,7 +121,7 @@ AFTER_EVERY_OPERAND = frozenset({
     "answer_type", "answer_element_type", "answer_operations", "array_type",
     "array_operations", "memory_type", "source_type", "value_operations",
     "value_take_positions", "out"})
-RETURN_PROPERTY = ".ending = CallEnding::kReturns"
+CANNOT_UNWIND_PROPERTY = ".can_unwind = false"
 
 VIOLATION_HINT = (
     "An entry is one contract written in three places. Add the side that is "
@@ -160,7 +160,7 @@ class Abi(NamedTuple):
     handle_rows: dict[str, bool] = {}
     report_rows: dict[str, bool] = {}
     location_rows: dict[str, bool] = {}
-    return_rows: dict[str, bool] = {}
+    cannot_unwind_rows: dict[str, bool] = {}
     misplaced_locations: list[Entry] = []
     table_named: list[str] = []
     table_defined: list[str] = []
@@ -391,7 +391,7 @@ def check_r011(abi: Abi) -> list[str]:
 
 def check_r008(abi: Abi) -> list[str]:
     return check_agreement(
-        abi, "R008", abi.return_rows, abi.non_raisers, "cannot raise",
+        abi, "R008", abi.cannot_unwind_rows, abi.non_raisers, "cannot raise",
         "declares")
 
 
@@ -431,7 +431,7 @@ def load(root: Path) -> Abi:
         handle_rows=rows_of(entries, HANDLE_PROPERTY),
         report_rows=rows_of(entries, REPORT_PROPERTY),
         location_rows=location_rows_of(entries),
-        return_rows=rows_of(entries, RETURN_PROPERTY))
+        cannot_unwind_rows=rows_of(entries, CANNOT_UNWIND_PROPERTY))
 
 
 def run_self_tests() -> bool:
@@ -454,12 +454,12 @@ def run_self_tests() -> bool:
             handle_rows=rows_of(entries, HANDLE_PROPERTY),
             report_rows=rows_of(entries, REPORT_PROPERTY),
             location_rows=location_rows_of(entries),
-            return_rows=rows_of(entries, RETURN_PROPERTY))
+            cannot_unwind_rows=rows_of(entries, CANNOT_UNWIND_PROPERTY))
 
     ok = True
     ok &= expect(
-        entries_of("auto lyra_rt_dynarray_new(const void* n) -> void*;")
-        == [Entry("lyra_rt_dynarray_new", 1)],
+        entries_of("auto lyra_rt_dpi_open_array_word(const void* n) -> void*;")
+        == [Entry("lyra_rt_dpi_open_array_word", 1)],
         "an entry returning a value is read, with its line")
     ok &= expect(
         entries_of("\n\nvoid lyra_rt_cell_packed_set(void* cell);")
@@ -476,11 +476,13 @@ def run_self_tests() -> bool:
         == ["lyra_rt_a"],
         "an entry an attribute leads is still an entry")
     ok &= expect(
-        bindings_of('add("lyra_rt_dynarray_new", &lyra_rt_dynarray_new);')
-        == [Binding("lyra_rt_dynarray_new", "lyra_rt_dynarray_new", 1)],
+        bindings_of(
+            'add("lyra_rt_dpi_open_array_word", &lyra_rt_dpi_open_array_word);')
+        == [Binding(
+            "lyra_rt_dpi_open_array_word", "lyra_rt_dpi_open_array_word", 1)],
         "a binding yields the name it publishes and the function it names")
     ok &= expect(
-        not bindings_of("auto lyra_rt_dynarray_new(void* p) -> void*;"),
+        not bindings_of("auto lyra_rt_dpi_open_array_word(void* p) -> void*;"),
         "a declaration is not a binding")
 
     ok &= expect(
@@ -598,19 +600,19 @@ def run_self_tests() -> bool:
 
     raises_none = "void lyra_rt_a(void* p) noexcept;"
     raises = "void lyra_rt_a(void* p);"
-    says_returns = row.format(", .ending = CallEnding::kReturns")
+    says_cannot_unwind = row.format(", .can_unwind = false")
     ok &= expect(
         non_raisers_of(raises_none) == {"lyra_rt_a"}
         and not non_raisers_of(raises),
         "a prototype is read for whether it can raise")
     ok &= expect(
-        len(check_r008(abi(header=raises, entries=says_returns))) == 1,
+        len(check_r008(abi(header=raises, entries=says_cannot_unwind))) == 1,
         "R008 reports a row claiming an entry the prototype lets raise")
     ok &= expect(
         len(check_r008(abi(header=raises_none, entries=states_none))) == 1,
         "R008 reports a prototype that cannot raise under a row that may depart")
     ok &= expect(
-        not check_r008(abi(header=raises_none, entries=says_returns)),
+        not check_r008(abi(header=raises_none, entries=says_cannot_unwind)),
         "R008 is silent when the two sides agree")
 
     named = 'kIntegralEntriesSymbol =\n    "lyra_rt_t";'

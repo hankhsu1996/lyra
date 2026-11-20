@@ -15,11 +15,13 @@
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/concatenation.hpp"
+#include "lyra/lowering/hir_to_mir/container_bodies.hpp"
 #include "lyra/lowering/hir_to_mir/container_construction.hpp"
 #include "lyra/lowering/hir_to_mir/declared_initial_value.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/entry_walk.hpp"
 #include "lyra/lowering/hir_to_mir/equivalence_identity.hpp"
+#include "lyra/lowering/hir_to_mir/expression/calls.hpp"
 #include "lyra/lowering/hir_to_mir/expression/selects.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/queue_building.hpp"
@@ -106,8 +108,7 @@ auto BuildUnpackedConcatSteps(
   BlockBuilder steps(frame);
   mir::Builder body = steps.Body();
   const mir::LocalId appended = steps.DeclareLocal(
-      queue_type,
-      body.Add(BuildArrayConstructionCall(unit, body, queue_type, {})));
+      queue_type, body.Add(BuildDefaultValueExpr(unit, body, queue_type)));
   for (const hir::ExprId id : parts) {
     const hir::Expr& part = lowerer.HirExprs().Get(id);
     auto lowered = lowerer.LowerExpr(part, steps.Frame());
@@ -255,11 +256,30 @@ auto LowerHirReplicationExpr(
       .type = result_type};
 }
 
+// Each of `items` at the element type of the container `type` it is
+// assigned into (LRM 10.8, 10.9.1).
+auto ItemsAt(
+    const mir::CompilationUnit& unit, mir::Builder block,
+    std::vector<mir::ExprId> items, mir::TypeId type)
+    -> std::vector<mir::ExprId> {
+  const mir::TypeId element = RequiredContainerElementType(unit, type);
+  for (mir::ExprId& item : items) {
+    item = AtType(unit, block, item, element);
+  }
+  return items;
+}
+
 auto BuildPositionalAggregate(
     const mir::CompilationUnit& unit, const WalkFrame& frame,
     mir::TypeId result_type, std::vector<mir::ExprId> elements) -> mir::Expr {
   mir::Builder block = frame.Builder();
   const auto& result_ty = unit.types.Get(result_type);
+  if (mir::IsLaidOutContainer(unit.types, result_type)) {
+    return BuildContainerFromList(
+        unit, frame, result_type,
+        ItemsAt(unit, block, std::move(elements), result_type),
+        mir::BuildMachineIntLiteral(unit, block, 1));
+  }
   if (BuildsFromAnElementList(result_ty)) {
     return BuildArrayConstructionCall(
         unit, block, result_type, std::move(elements));
@@ -473,6 +493,11 @@ auto LowerHirAssignmentPatternReplicationExpr(
     if (!count_or) return std::unexpected(std::move(count_or.error()));
     const mir::ExprId count_value = block.Add(*std::move(count_or));
     const mir::ExprId count_id = BuildToInt64Call(unit, block, count_value);
+    if (mir::IsLaidOutContainer(unit.types, result_type)) {
+      return BuildContainerFromList(
+          unit, frame, result_type,
+          ItemsAt(unit, block, std::move(item_ids), result_type), count_id);
+    }
     return BuildArrayRepeatCall(
         unit, block, result_type, std::move(item_ids), count_id);
   }
@@ -518,18 +543,8 @@ auto LowerHirDynamicArrayNewExpr(
         ConvertToType(unit, block, block.Add(*std::move(init_or)), result_type);
   }
   const auto made = [&](mir::ExprId count, std::optional<mir::ExprId> from) {
-    std::vector<mir::ExprId> args{BuildToInt64Call(unit, block, count)};
-    if (from.has_value()) args.push_back(*from);
-    return mir::Expr{
-        .data =
-            mir::CallExpr{
-                .callee =
-                    mir::Direct{
-                        .target = from.has_value()
-                                      ? support::BuiltinFn::kDynamicArrayNewCopy
-                                      : support::BuiltinFn::kDynamicArrayNew},
-                .arguments = std::move(args)},
-        .type = result_type};
+    return BuildDynamicArrayNew(
+        unit, block, result_type, BuildToInt64Call(unit, block, count), from);
   };
   if (!HoldsADeclaredEvent(unit_lowerer.Hir(), element)) {
     return made(size, source);
@@ -557,15 +572,12 @@ auto LowerHirDynamicArrayNewExpr(
   const mir::LocalId array =
       DeclareLocal(frame, block.Add(made(read_size, read_source)));
   const mir::LocalId given = DeclareLocal(
-      frame, held_source.has_value()
-                 ? block.Add(
-                       mir::MakeCallExpr(
-                           mir::Direct{
-                               .target = support::BuiltinFn::kSize,
-                               .receiver =
-                                   block.LocalPlace(*held_source, source_type)},
-                           {}, int_type))
-                 : mir::BuildIntLiteral(unit, block, 0));
+      frame,
+      held_source.has_value()
+          ? block.Add(BuildBuiltinMethodCall(
+                unit, block, support::BuiltinFn::kSize,
+                block.LocalPlace(*held_source, source_type), {}, int_type))
+          : mir::BuildIntLiteral(unit, block, 0));
   const mir::ExprId first = block.ReadLocal(given, int_type);
   const mir::ExprId lhs = ConvertToType(
       unit, block, block.ReadLocal(held_size, size_type), int_type);
@@ -608,8 +620,8 @@ auto LowerHirAssociativeAssignmentPatternExpr(
     if (!default_or) return std::unexpected(std::move(default_or.error()));
     stated_default = block.Add(*std::move(default_or));
   }
-  return BuildAssociativeConstructionCall(
-      unit, block, result_type, std::move(entries), stated_default);
+  return BuildAssociativeConstruction(
+      unit, frame, result_type, std::move(entries), stated_default);
 }
 
 // One concrete instantiation per pass class. The handler templates are defined

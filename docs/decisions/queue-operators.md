@@ -25,7 +25,13 @@ a queue's type names its element type, which states what an element holds before
 an empty `{}` is an empty queue of the result's type. The bound argument of decision 3 is superseded
 by that record's D6: the bound is the queue type's, and the builder is told the type rather than
 handed the bound, so neither argument decision 3 names remains. Decision 4's conforming at the store
-boundary stands, a conversion of its own told the destination's type.
+boundary stands, a conversion of its own told the destination's type. Where decision 1 puts the LRM
+7.10.1 clamping and the append-vs-discard rules -- in the runtime queue's methods -- is superseded
+by
+[a-containers-operations-are-built-for-its-type-over-a-core](a-containers-operations-are-built-for-its-type-over-a-core.md):
+the slice is the queue type's own body, compiled by both backends, and the write form appending or
+discarding is the queue type's own body every path reaches, which also says where a write through an
+invalid index was ignored, as the clause requires.
 
 ## Context
 
@@ -111,14 +117,10 @@ unpacked container, so the operators cannot reuse the packed-array operator lowe
 
 ## Consequences
 
-- Queue access operators are built-in method calls today; the packed part-select, packed struct
-  field access, unpacked slice, and fixed/dynamic element access still use the dedicated select
-  nodes. This cut is the role model for migrating those to the same call form when that work is
-  taken up; until then the two forms coexist deliberately.
+- A queue's access operators are built-in method calls, and a dynamic array's element access is a
+  call of its type's own body in the same way.
 - All three queue slice forms (`q[a:b]`, `q[base+:w]`, `q[base-:w]`) are supported: they reduce to a
   low / high pair fed to the same `Slice` method call, so the indexed forms cost no extra machinery.
-- An unpacked concatenation whose result is a dynamic or fixed array rather than a queue is rejected
-  with a diagnostic; it extends the same builder mechanism when a consumer needs it.
 - `$` is supported in procedural contexts, where every documented queue idiom lives. A `$` in a
   structural context (a continuous assignment) surfaces as unsupported rather than silently
   mis-lowering.

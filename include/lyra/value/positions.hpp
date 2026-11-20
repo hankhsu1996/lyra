@@ -92,21 +92,4 @@ template <class T>
   }
 }
 
-// The value of `T` an integral value of its positions holds, as
-// `ToPositionsOf` lays them out.
-template <class T, class Positions>
-[[nodiscard]] auto FromPositionsOf(const Positions& positions) -> T {
-  if constexpr (IntegralValue<T>) {
-    return T::Built([&](T& out) {
-      detail::WriteRun(
-          out.MutableView(), positions.View(), 0,
-          {.lsb = 0, .width = T::kWidth});
-    });
-  } else if constexpr (std::same_as<T, Real> || std::same_as<T, ShortReal>) {
-    return T::FromBits(positions.ToInt64());
-  } else {
-    return T::FromPositions(positions);
-  }
-}
-
 }  // namespace lyra::value

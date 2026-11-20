@@ -161,7 +161,8 @@ class BodyBoxing {
         .named_locals = code_->named_locals,
         .body = RewrittenBody(),
         .span = code_->span,
-        .caller_location = code_->caller_location};
+        .caller_location = code_->caller_location,
+        .can_unwind = code_->can_unwind};
   }
 
   // Whether the rewrite changes the body at all.

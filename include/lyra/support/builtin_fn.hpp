@@ -23,7 +23,7 @@ enum class BuiltinFn : std::uint16_t {
   // LRM 7.4 / 7.8 / 7.10 element of an array, reached for reading and for
   // writing. The two have different outcomes where the position names no
   // element -- a read answers the element default and creates nothing, a write
-  // lands nowhere or creates the element (LRM 7.4.6, 7.8.6, 7.8.7) -- so they
+  // lands nowhere or creates the element (LRM 7.4.5, 7.8.6, 7.8.7) -- so they
   // are two entries, each answering a reference to the element whose
   // dereference is the element's place, as rustc's `Index::index` and
   // `IndexMut::index_mut` are. Which a source position calls is settled where
@@ -36,9 +36,10 @@ enum class BuiltinFn : std::uint16_t {
   // They are three operations, each with operands of its own. Bits of an
   // integral value are named by where they start, and are as many as the type
   // they are read at is wide (LRM 11.5.1). Elements of a fixed-size or dynamic
-  // array are named by where they start and how many there are (LRM 7.4.6). A
-  // queue's slice is bounded by two positions the running program can move,
-  // and is read as a queue the slice builds (LRM 7.10.1).
+  // array are named by where they start, and are as many as the array type
+  // they are read at holds (LRM 7.4.6). A queue's slice is bounded by two
+  // positions the running program can move, and is read as a queue the slice
+  // builds (LRM 7.10.1).
   kSlice,
   kElementSlice,
   kQueueSlice,
@@ -51,15 +52,28 @@ enum class BuiltinFn : std::uint16_t {
   // reference's `set`.
   kSliceMut,
   // LRM 7.6: a value written into several elements of a fixed-size or dynamic
-  // array in a row, one assignment to the whole window. A window is several
-  // elements rather than one storage, so it is written by the array's own
-  // operation on the place the array lies in, or on the array designated
-  // within a write in progress, as `putc` writes a character.
+  // array in a row, one assignment to the whole window, answering the
+  // positions of the elements it changed (LRM 4.3). A window is several
+  // elements rather than one storage, so it is written by the array type's own
+  // operation on the place the array lies in.
   kAssignElementSlice,
   // LRM 7.6, 7.10.1: the same for a queue's slice. It is bounded, as a read of
   // it is, by two positions the running program can move, so the queue clamps
   // them and checks the value holds as many elements as they name.
   kAssignQueueSlice,
+  // Storage for one element of a queue, holding no value and leased by no
+  // call, which a placement new-expression builds the element in: what the
+  // queue's recycler was given back, or fresh storage from it.
+  kQueueAllocate,
+  // The queue held to its bound, which drops what lies past it and says so
+  // (LRM 7.10.5); a queue of no bound holds whatever it is given.
+  kQueueHoldToBound,
+  // The same for the array a write in progress designates, taken on the
+  // designation, as `putc` writes a character: the array type's own slice
+  // write on the part the designation answers, whose answer -- the positions
+  // it changed -- the write is told and this answers (LRM 4.3). Its operands
+  // are what that slice write takes, each by reference, handed on unread.
+  kAssignDesignatedRun,
   // LRM 11.5.1: an integral value with the bits a position names replaced,
   // which is how bits of a value lying in no storage are written.
   kWithSlice,
@@ -138,53 +152,89 @@ enum class BuiltinFn : std::uint16_t {
   // spelling is resolved where the source is read.
   kDelete,
   kDeleteIndex,
-  // LRM 7.12.2 ordering. A sort is handed the order its entries' keys stand
-  // in, as a borrowed callable answering whether the entry at one position
-  // comes before the one at another, and puts the entries in that order,
-  // equal ones keeping theirs: a descending sort is the same entry handed the
-  // reversed comparison, as Rust sorts descending by `sort_by`.
+  // LRM 7.12.2 reverse: the array's elements in the opposite order.
   kReverse,
-  kSort,
+  // An array whose elements a position names is sorted by its keys instead:
+  // the positions its keys come from once in ascending order, or descending,
+  // which a dynamic array of positions answers by a body of its own for the
+  // keys' type, comparing them by that type's own operators -- integral, real
+  // or string, the only types the relational operators order (LRM 11.4.4,
+  // 6.16) -- and the array's elements put in an order of positions where they
+  // lie, which the array type's own body does.
+  kSortOrder,
+  kApplyOrder,
   // LRM 7.10 queue insertion / removal.
   kInsert,
   kPopFront,
   kPopBack,
   kPushFront,
   kPushBack,
-  // LRM 7.9. The traversal family (LRM 7.9.4 -- 7.9.7) writes the
-  // visited key through a `ref` index argument and returns 0 / 1 / -1.
+  // LRM 7.9: whether an index names an entry, and where the least, the
+  // greatest, the next greater and the next lesser index the array holds lies
+  // (LRM 7.9.4 -- 7.9.7), none where there is no such index; the use writes
+  // the one visited back and answers 1 or 0 (LRM 7.9.8).
   kExists,
   kAssocFirst,
   kAssocLast,
   kAssocNext,
   kAssocPrev,
-  // The smallest and largest currently allocated index (LRM 20.7 `$low` /
-  // `$high` over an associative dimension). Where no index is allocated each
-  // answers its answer type's default, which is the `'x` LRM 20.7 requires,
-  // since the query answers a 4-state type.
+  // The smallest and largest index an associative dimension holds (LRM 20.7
+  // `$low` / `$high`), each the array's first or last index read at the answer
+  // type, which holds its default where none is held: the `'x` LRM 20.7
+  // requires, since the query answers a 4-state type.
   kAssocMinIndex,
   kAssocMaxIndex,
-  // LRM 7.9.11: an associative array equal to the one acted on whose read of
-  // an index holding no entry yields the value stated, which is what a
-  // literal's `default:` asks for.
-  kAssocWithDefault,
-  // LRM 7.9.11: whether the array acted on was given a value its absent indexes
-  // read, as a machine boolean, and the value they read, which is the element
-  // type's default where none was given (LRM 7.8.6). An array built out of
-  // another's entries carries that value with them, as an assignment of the
-  // whole array does.
-  kAssocHasStatedDefault,
-  kAssocAbsentValue,
+  // LRM 7.9.11: where the value a `default:` clause gave an associative array
+  // lies, none where no clause gave one, which every index naming no entry
+  // reads; and that value set.
+  kAssocStatedDefault,
+  kAssocSetStatedDefault,
   // The accesses and the removal above as an associative array takes them (LRM
-  // 7.8, 7.9.3): by the key the source wrote, a value of the type it was
-  // written in, where every other container is reached by a position. A key
-  // and a position are different operands, so each access is an entry of its
-  // own, named where the source is read and the array's type is in hand.
+  // 7.8, 7.9.2): by the index the source wrote, where every other container is
+  // reached by a position. An index and a position are different operands, so
+  // each access is an entry of its own, named where the source is read and the
+  // array's type is in hand.
   kAssocElement,
   kAssocElementMut,
   kAssocDesignateElement,
   kAssocReferElement,
   kAssocDeleteIndex,
+  // What an associative array's core does with its entries (LRM 7.8), each a
+  // function of the library compiled once: an array of no entries told its
+  // index kind and the records of its index and element types; finding the
+  // entry an index of a kind whose order the core knows names; storage for an
+  // entry, where its index lies, and committing it; removing one or every
+  // entry; the entries in order, and the one after or before an index; the
+  // value a `default:` clause gives, its storage and setting it; ending the
+  // whole.
+  kAssociativeArrayConstruct,
+  kAssociativeArrayFind,
+  kAssociativeArrayPrepare,
+  kAssociativeArrayIndexOf,
+  kAssociativeArrayCommit,
+  kAssociativeArrayRemove,
+  kAssociativeArrayClear,
+  kAssociativeArrayFirst,
+  kAssociativeArrayLast,
+  kAssociativeArrayNext,
+  kAssociativeArrayPrevious,
+  kAssociativeArrayAfter,
+  kAssociativeArrayBefore,
+  kAssociativeArrayPrepareDefault,
+  kAssociativeArraySetDefault,
+  kAssociativeArrayStatedDefault,
+  kAssociativeArrayEnd,
+  kAssociativeArrayAdopt,
+  // LRM 7.8.6: a read through an index holding x or z, or naming no entry, of
+  // an array with no `default:` value, which reads the element default, and a
+  // write through an index holding x or z, which is ignored; each said where
+  // it was written.
+  kAssociativeArrayReadAtAnInvalidIndex,
+  kAssociativeArrayReadAtAMissingEntry,
+  kAssociativeArrayWrittenAtAnInvalidIndex,
+  // LRM 7.8.1: whether a wildcard index holds an x or a z, which names no
+  // entry (LRM 7.8.6).
+  kWildcardIndexHasUnknown,
   // LRM 6.16 string methods.
   kGetc,
   kPutc,
@@ -450,14 +500,16 @@ enum class BuiltinFn : std::uint16_t {
   // it lands on. The write hears what the step did to the variable where the
   // part
   // cannot say so itself -- an element made by being written, an index naming
-  // none (LRM 7.8.7, 7.10.1, 7.4.6); a component is formed by nothing, so its
+  // none (LRM 7.8.7, 7.10.1, 7.4.5); a component is formed by nothing, so its
   // step has nothing to tell. A tagged union's member lies where every other
   // member does (LRM 7.3.2), so the change is reported at the union.
   // Dereferencing what the steps designate is where the write lands. Bits and a
   // run of elements are no storage of their own, and are
   // written within the write by the value's own operations taken on its
-  // designation.
+  // designation. Each kind of array has its own, which the call names by the
+  // type it is over: a fixed-size array's, a dynamic array's and a queue's.
   kDesignateElement,
+  kDynamicArrayDesignateElement,
   kQueueDesignateElement,
   kDesignateComponent,
   // A step into a member of a tagged union a write designates. Every member
@@ -469,8 +521,12 @@ enum class BuiltinFn : std::uint16_t {
   // with a reference to that part, which belongs to whatever the reference it
   // was taken on belongs to, so a write through it is a write of the same
   // variable. Forming an element can change that variable (LRM 7.8.7), and the
-  // step says so where it is taken.
+  // step says so where it is taken. Each kind of array has its own, which the
+  // call names by the type it is over: a fixed-size array's, a dynamic array's
+  // and a queue's.
   kReferElement,
+  kDynamicArrayReferElement,
+  kQueueReferElement,
   kReferComponent,
   // A reference to a property of an object (LRM 13.5.2, 8.4), a step taken on
   // the object. A write through it tells the object as it lands (LRM 9.4.2), so
@@ -484,10 +540,11 @@ enum class BuiltinFn : std::uint16_t {
   // property reference names storage of, which the reference itself states;
   // and an element of a queue or an associative array, or a dynamic array's
   // elements, which only the step into the element can lease, so that step
-  // takes the lease. Then the reference a
-  // leased one carries, which is what the call is handed.
+  // takes the lease, each kind its own. Then the reference a leased one
+  // carries, which is what the call is handed.
   kLeaseObject,
   kReferElementLeased,
+  kQueueReferElementLeased,
   kAssocReferElementLeased,
   kLeasedReference,
   // Where occurrences at the storage a capability wrapper stands for are
@@ -762,7 +819,7 @@ enum class BuiltinFn : std::uint16_t {
   kFileGets,
   kFileScan,
   kFileRead,
-  kFileReadMemory,
+  kFileReadWords,
   kFileSeek,
   kFileRewind,
   kFileTell,
@@ -855,11 +912,11 @@ enum class BuiltinFn : std::uint16_t {
   kRunHostCommand,
   kRunNullHostCommand,
   // LRM 21.4 $readmemh / $readmemb and LRM 21.5 $writememh / $writememb. Free
-  // functions on `lyra::runtime` taking the runtime handle, the memory, the
-  // file name, whatever addressing that memory's own kind states, the digit
-  // radix (16 / 2), and the address the run starts from. A load completes with
-  // the memory it filled, since a word the file does not address keeps what it
-  // held.
+  // functions on `lyra::runtime` taking the runtime handle, the file name, the
+  // declared ranges of a memory of fixed size and none of any other, the digit
+  // radix (16 / 2), and the address the run starts from, each answering the
+  // words the task moves between the file and the memory, which the memory
+  // type's own code then reads or writes through the entries below.
   //
   // Running upward from a start and running within a start-and-finish window
   // are two requests: the window bounds the addresses the file may name, lets
@@ -869,13 +926,45 @@ enum class BuiltinFn : std::uint16_t {
   //
   // A load into a memory of an enumerated type takes only the members' values
   // as words (LRM 21.4.2), so it is a load of its own, handed the
-  // enumeration's member list after the memory.
+  // enumeration's member list before the file name.
   kReadMem,
   kReadMemWithin,
   kReadEnumeratedMem,
   kReadEnumeratedMemWithin,
   kWriteMem,
   kWriteMemWithin,
+  // What a memory's own code asks of the words a task moves. A load reads the
+  // file by the addressing of the memory's kind -- its declared ranges, a count
+  // of elements from 0, or keys -- and a dump plans the order it writes in;
+  // then each word is asked its position in each dimension or its key, a
+  // load's word at the type of the memory's words, and a dump's word or entry
+  // is handed over, before the dump is written.
+  kMemoryWordsReadGrid,
+  kMemoryWordsReadDense,
+  kMemoryWordsReadKeyed,
+  kMemoryWordsPlanGrid,
+  kMemoryWordsPlanDense,
+  kMemoryWordsCount,
+  kMemoryWordsOrdinal,
+  kMemoryWordsKey,
+  kMemoryWordsBytesRead,
+  kMemoryWordsWord,
+  kMemoryWordsPut,
+  kMemoryWordsPutKeyed,
+  kMemoryWordsCommit,
+  // A memory's own code for a memory task (LRM 21.4, 21.5): its words taken
+  // from what a load read, each landing on the element its address names, and
+  // its words handed to a dump in the order the dump writes them.
+  kLoadWords,
+  kStoreWords,
+  // An array's own code for a DPI-C open array (LRM 35.5.6.1, Annex H.12): its
+  // elements written into the image in the image's order before the foreign
+  // call, and read back out of it after.
+  kToImage,
+  kFromImage,
+  // An array's own code walking it for a call of `randomize()` (LRM 18.4),
+  // after the call began the walk on the variable it is or lies in.
+  kWalkRandom,
   // LRM 9.4.1 `#N`. The runtime free functions answering the wait of a delay.
   // Each call takes the runtime handle, the amount of time the design asked to
   // wait, and the calling scope's time unit and precision powers; the runtime
@@ -1079,6 +1168,56 @@ enum class BuiltinFn : std::uint16_t {
   // stays where it was made, and is called, and for a box ended, from then on
   // through the definition it opens with.
   kUnsize,
+  // The value the storage a raw pointer points at holds, taken out of it and
+  // leaving it holding none, as rustc's `ptr::read` is a call in THIR that its
+  // MIR then states as a read of `*p`. It is how a container's own code moves
+  // an element out of storage it keeps, which a move of a whole local cannot
+  // state; nothing but such code calls it.
+  kPtrRead,
+  // The allocation function answering the storage a raw pointer points at,
+  // which holds no value, as C++'s reserved placement `operator new(size_t,
+  // void*)` answers its argument: a placement new-expression naming it builds
+  // its value there. It is how a container's own code puts an element into
+  // storage it took; nothing but such code names it.
+  kDefaultPlacementNew,
+  // Fresh storage from the run's recycler of storage of one size, whose free
+  // list is empty, as LLVM's `RecyclingAllocator` asks its allocator for
+  // storage it has none of; a container's own code takes what was given back
+  // first.
+  kRecyclerAllocate,
+  // Where a read through a position naming no element of an array finds the
+  // element default, and where a write through one lands (LRM 7.4.5, 7.10.1),
+  // each at the element type it is called at: the addresses an array's own
+  // element step answers such a position with.
+  kElementDefault,
+  kDiscardedWrite,
+  // Where the record the library keeps of the type the call is at lies, which
+  // a container's core is told its element type by, as Rust's `type_id::<T>()`
+  // answers the type it is called at.
+  kTypeRecordOf,
+  // Where a write through a position into a run-time-sized array lands, and
+  // whether the write made the element there (LRM 7.10.1): the address of the
+  // element the position names, or none where it names none, and whether the
+  // array appended it for the write. The array type's own body answers it,
+  // told where the write was written: a queue's, which can grow past its bound
+  // or be written through an invalid index, says so there.
+  kElementPlace,
+  // What a library template holding a value of any type asks of a
+  // run-time-sized array, each taking the value read or written over as its
+  // receiver: the element a machine index names, by reference, the index
+  // naming one, which an array type's own bodies ask of every array whose
+  // elements they walk, a fixed-size one's included, as Rust's core reaches a
+  // slice's elements by `get_unchecked` in its own loops; and the array made a
+  // count of elements long, kept as far as
+  // it reaches and grown by element defaults (LRM 7.5.1), a queue then held to
+  // its bound (LRM 7.10.5). And the empty array of the call's type a core
+  // answers, told its element type's record, which the type's default asks for
+  // and which does the same for every element type.
+  kGetUnchecked,
+  kGetUncheckedMut,
+  kResized,
+  kQueueConstruct,
+  kDynamicArrayConstruct,
   // A value of any type (LRM 15.4.9), holding a copy of its operand, kept with
   // the operand's type and the identity the call's second operand names.
   kAnyMake,
@@ -1215,6 +1354,18 @@ enum class BuiltinFn : std::uint16_t {
   kConstraintMembers,
   kConstraintRand,
   kConstraintRandc,
+  // A random variable walked by its own type's code after a call above, or a
+  // listing, a reach through handles or a uniqueness set, begins the walk on
+  // the whole of it (LRM 18.4): an array of a fixed size it holds, one whose
+  // size the program chooses, and a value, the last two named by a reference
+  // and the type a record names, and each element's position entered before
+  // it and left after it, until the walk ends.
+  kRandomWalkFixedArray,
+  kRandomWalkResizableArray,
+  kRandomWalkEnter,
+  kRandomWalkLeave,
+  kRandomWalkLeaf,
+  kRandomWalkEnd,
   kConstraintVariable,
   kConstraintConstant,
   kRandomizeNested,
@@ -1413,13 +1564,17 @@ enum class BuiltinFn : std::uint16_t {
   kDpiLogicBufferData,
   // The open-array boundary image (LRM 35.5.6.1, Annex H.12).
   // `kDpiOpenArrayHandle` reads the opaque handle the foreign side receives in
-  // place of the actual; `kDpiOpenArrayValue` reads the image back as an SV
-  // value of the type it answers, whose every layer is of fixed size, which is
-  // what an `output` / `inout` open array stores into its actual. Each takes as
-  // its receiver the image, which the call site builds from the actual before
-  // the foreign call.
+  // place of the actual. The rest are what the actual's own code asks of the
+  // image as it fills it before the foreign call and reads it back after: how
+  // many elements it holds, the ordinal in the actual's unpacked dimension
+  // where its element at a position lies, and that element written from a
+  // value and read back at the type of the actual's elements. Each takes the
+  // image as its receiver.
   kDpiOpenArrayHandle,
-  kDpiOpenArrayValue,
+  kDpiOpenArrayElementCount,
+  kDpiOpenArrayOrdinal,
+  kDpiOpenArrayPut,
+  kDpiOpenArrayWord,
   // Runs a DPI-C import task's foreign call (LRM 35.5.2) on a fiber whose
   // native stack can be parked while simulation time advances. It is where the
   // import's caller stops, so it answers whether the caller must give up
@@ -1491,24 +1646,47 @@ enum class BuiltinFn : std::uint16_t {
   // factory.
   kDynamicArrayNew,
   kDynamicArrayNewCopy,
+  // What the core keeping a dynamic array's elements does (LRM 7.5): storage
+  // for as many elements as a count, holding no value; the place one of them
+  // lies, where a placement new-expression builds it; that storage made the
+  // array's elements, once it let go of the ones it held; letting go of its
+  // elements, answering whether the array's own code ends them, which it does
+  // not where a call leases them (LRM 13.5.2); and the storage of elements so
+  // ended given back.
+  kDynamicArrayGeneration,
+  kDynamicArrayPlace,
+  kDynamicArrayAdopt,
+  kDynamicArrayLetGo,
+  kDynamicArrayFree,
+  // What the core keeping a queue's elements does (LRM 7.10): a ring long
+  // enough for as many elements as a count; the element built in storage the
+  // queue's own allocation answers put at a position; the report that a queue
+  // grew past its bound, where its own code dropped what lay past it; the ring
+  // of a queue holding no element given back; another queue's elements made
+  // its own, once it let go of the ones it held (LRM 7.10.3); the element at a
+  // position taken out of the order, answering where it still lies; and its
+  // elements put in an order of positions a sort answered, or in the opposite
+  // order (LRM 7.12.2).
+  kQueueReserve,
+  kQueueCommit,
+  kQueueGrewPastItsBound,
+  kQueueWrittenAtAnInvalidIndex,
+  kQueueFreeRing,
+  kQueueAdopt,
+  kQueueUnlink,
+  kQueueApplyOrder,
+  kQueueReverse,
   // The values the types the library declares start as, each built out of no
   // operands and called at the type it builds: a string of no characters, a
   // value of any type holding none and a run of no bits (LRM Table 6-7,
-  // 15.4.9, 11.4.14.1); a dynamic array, a queue and an associative array of no
-  // elements, each told the type it builds (LRM Table 7-1); and a weak
-  // reference referring to nothing (LRM 8.30).
+  // 15.4.9, 11.4.14.1); and a weak reference referring to nothing (LRM 8.30).
   kDefault,
-  kContainerDefault,
   kWeakReferenceDefault,
   // The constructors of the types the library declares, each reached by a
   // construction of the type it builds and by no call. A string is built from
-  // the host text it holds; a dynamic array and a queue from an element list
-  // laid down a stated number of times, and an associative array from its
-  // entries (LRM 7.9.11); a wildcard index from the integral value it is,
-  // which keeps the type it was written in (LRM 7.8.1).
+  // the host text it holds, and a wildcard index from the integral value it
+  // is, which keeps the type it was written in (LRM 7.8.1).
   kStringFromText,
-  kSequenceFromList,
-  kAssociativeArrayFromEntries,
   kWildcardIndexMake,
   // What a print, a wait and a call across the DPI-C boundary are built from:
   // the identity a child of the hierarchy carries (LRM 23.3.3.5), a leaf of a
@@ -1656,6 +1834,12 @@ struct StaticFactory {
 // alignment a new-expression assumes, which no other type's exceeds.
 struct AllocationFunction {};
 
+// C++'s reserved placement form, `operator new(std::size_t, void*)`: the
+// storage its one argument points at, holding no value; it allocates nothing
+// ([new.delete.placement]). A target that calls the function itself hands it
+// that address alone, since where the value goes is all it answers.
+struct ReservedPlacementForm {};
+
 // A constructor of the type the entry builds, as a C++ class's is: no call
 // reaches it, a construction of that type does, naming the type. A target whose
 // construction names the type writes it; one that calls the entry itself is
@@ -1663,25 +1847,14 @@ struct AllocationFunction {};
 struct Constructor {};
 
 // How code reaches the entry -- a call in one of three forms, a placement
-// new-expression naming it as its allocation function, or a construction of the
-// type it builds. Every entry is one of these, because an operation no runtime
-// library carries out is not named here at all: it is answered where the source
-// is read and no layer below meets it.
+// new-expression naming it as its allocation function or placing its value
+// where it points, or a construction of the type it builds. Every entry is one
+// of these, because an operation no runtime library carries out is not named
+// here at all: it is answered where the source is read and no layer below
+// meets it.
 using EntryDeclaration = std::variant<
-    FreeFunction, Method, StaticFactory, AllocationFunction, Constructor>;
-
-// The ways a call can end, which decide what follows it: a call that returns
-// is followed by the statement after it, one that is unwound out of by the
-// cleanups between it and whatever takes the raise, and one that can do either
-// by both. A call is unwound out of by a departure, by a run-time error, and by
-// the release of the stack it waits on, which is why one no departure leaves
-// can still be. A call that only unwinds is followed by nothing, so what stands
-// after it in the source is never reached.
-enum class CallEnding : std::uint8_t {
-  kReturns,
-  kReturnsOrUnwinds,
-  kUnwinds,
-};
+    FreeFunction, Method, StaticFactory, AllocationFunction,
+    ReservedPlacementForm, Constructor>;
 
 // What a call to an entry answers with -- the C++ distinction between returning
 // `T` and returning `T&`. Most entries build a value, which the caller then
@@ -1741,8 +1914,9 @@ enum class OperandReading : std::uint8_t {
   // A value of a type the entry keeps and acts on afterwards, crossing with
   // that type, since the entry was compiled without it.
   kTyped,
-  // The key an associative array is reached by, crossing with its type,
-  // since the array holds no index type of its own. Only an entry acting on
+  // The key an associative array is reached by, brought to the array's index
+  // type where the source wrote it (LRM 7.8.4), so its bytes are all that
+  // crosses: the array's type states its index type. Only an entry acting on
   // an associative array reads an operand so (LRM 7.8).
   kKey,
   // A count, a flag, a code address, storage the entry acts on, or a value or
@@ -1899,17 +2073,27 @@ struct RuntimeEntry {
   // runs the design's own code, what it reports is the run's own, or it reports
   // at a location a library object kept.
   bool takes_the_location = true;
-  // How a call to the entry ends. An entry can be unwound out of unless its
-  // definition cannot raise: a run-time error it raises is a departure too,
-  // and it may run the design's own code, which a `disable` anywhere reaches
-  // (LRM 9.6.2), so what is owed between the call site and the frame's edge has
-  // to get its turn before the departure carries on past it. Two kinds of entry
-  // raise none, and their definitions say so by being `noexcept`: one that runs
-  // on a way out of a body -- a cleanup, or a region's test of what it caught
-  // -- where a raise would have nowhere to go, and one that only moves memory,
-  // whose one possible failure is running out of it, which ends the program
-  // rather than the design.
-  CallEnding ending = CallEnding::kReturnsOrUnwinds;
+  // Whether a call to the entry comes back to the point after it, as a C++
+  // function not declared `[[noreturn]]` does and a Rust function whose
+  // result type is not `!`. One that never does -- an end of the run -- is
+  // followed by nothing, so what stands after it in the source is never
+  // reached.
+  bool returns = true;
+  // Whether a call to the entry can be unwound out of, as a C++ function not
+  // declared `noexcept` can and LLVM's `nounwind` and rustc's
+  // `fn_can_unwind` say. An entry can be unwound out of unless its definition
+  // cannot raise: a run-time error it raises is a departure too, and it may
+  // run the design's own code, which a `disable` anywhere reaches (LRM
+  // 9.6.2), so what is owed between the call site and the frame's edge has to
+  // get its turn before the departure carries on past it. A call is unwound
+  // out of by the release of the stack it waits on as well, so one no
+  // departure leaves can still be. Two kinds of entry raise none, and their
+  // definitions say so by being `noexcept`: one that runs on a way out of a
+  // body -- a cleanup, or a region's test of what it caught -- where a raise
+  // would have nowhere to go, and one that only moves memory, whose one
+  // possible failure is running out of it, which ends the program rather than
+  // the design.
+  bool can_unwind = true;
   // Whether the entry updates the object it acts on, so that object names a
   // place rather than a value -- which is what makes a receiver reaching
   // through a capability wrapper reach its write access. Where the update
@@ -1942,9 +2126,13 @@ struct RuntimeEntry {
   // one kind. A call below the source's own layer names that entry where its
   // first operand is integral, and this one everywhere else.
   std::optional<BuiltinFn> over_integral_values = std::nullopt;
-  // The same over a queue, the one kind whose write of an element can report:
+  // The same over a queue and over a dynamic array, whose element is found by
+  // its type's own body where a fixed-size array's lies at its position; a
+  // queue's write of an element can also report: a position naming neither an
+  // element nor the one past the last ignores the write (LRM 7.10.1), and
   // growing one past its bound drops what it wrote (LRM 7.10.5).
   std::optional<BuiltinFn> over_queues = std::nullopt;
+  std::optional<BuiltinFn> over_dynamic_arrays = std::nullopt;
   // What the entry asks of each closure and started body it is handed, how
   // long it keeps each, which bounds how long it can run and so what it may
   // refer to, and the signature it calls each closure at.
@@ -1958,5 +2146,20 @@ struct RuntimeEntry {
 // anywhere in the pipeline fails to build until every property it has is
 // written down here.
 [[nodiscard]] auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry;
+
+// Whether an entry declared as `declared` hands out storage a new-expression
+// forms its value in, holding no value yet: an allocation function, or the
+// reserved placement form.
+[[nodiscard]] auto HandsOutStorage(const EntryDeclaration& declared) -> bool;
+// Whether that storage is where the entry's one argument points, as the
+// reserved placement form's is, rather than what an allocation hands out.
+[[nodiscard]] auto PlacesAtItsArgument(const EntryDeclaration& declared)
+    -> bool;
+// Whether an entry declared as `declared` acts on an object -- the receiver of
+// a method, the first argument of a free function, the object a constructor
+// builds -- rather than answering a value from its
+// arguments alone, as a factory does, or storage, as an allocation function
+// and the reserved placement form do.
+[[nodiscard]] auto ActsOnAnObject(const EntryDeclaration& declared) -> bool;
 
 }  // namespace lyra::support

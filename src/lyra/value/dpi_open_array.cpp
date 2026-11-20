@@ -11,7 +11,6 @@
 
 #include "lyra/base/overloaded.hpp"
 #include "lyra/value/dpi_canonical.hpp"
-#include "lyra/value/integral.hpp"
 #include "lyra/value/integral_words.hpp"
 #include "svdpi.h"
 
@@ -19,27 +18,21 @@ namespace lyra::value {
 
 DpiOpenArray::DpiOpenArray(
     std::span<const std::int64_t> bounds, std::uint64_t element_width,
-    StateDomain element_domain, bool addressable_elements)
+    bool four_state, bool addressable_elements)
     : dims_(UnpackedRangesOf(bounds)),
       element_width_(static_cast<std::uint32_t>(element_width)),
       addressable_elements_(addressable_elements) {
-  const std::size_t groups = ElementCount() * GroupsPerElement();
-  switch (element_domain) {
-    case StateDomain::kTwoState:
-      storage_ = std::vector<svBitVecVal>(groups);
-      break;
-    case StateDomain::kFourState:
-      storage_ = std::vector<svLogicVecVal>(groups);
-      break;
+  const std::size_t groups =
+      static_cast<std::size_t>(ElementCount()) * GroupsPerElement();
+  if (four_state) {
+    storage_ = std::vector<svLogicVecVal>(groups);
+  } else {
+    storage_ = std::vector<svBitVecVal>(groups);
   }
 }
 
-auto DpiOpenArray::ElementCount() const -> std::size_t {
-  std::size_t count = 1;
-  for (const UnpackedRange& dim : dims_) {
-    count *= dim.Count();
-  }
-  return count;
+auto DpiOpenArray::ElementCount() const -> std::int64_t {
+  return static_cast<std::int64_t>(ElementsSpanned(dims_));
 }
 
 auto DpiOpenArray::Bounds(int dimension) const -> UnpackedRange {
@@ -109,8 +102,15 @@ auto DpiOpenArray::ElementAddress(std::span<const int> indices) -> void* {
   return position.has_value() ? AddressAt(*position) : nullptr;
 }
 
-void DpiOpenArray::WriteElement(
-    std::size_t position, const ConstIntegralView& value) {
+auto DpiOpenArray::Ordinal(std::int64_t k, std::int64_t dimension) const
+    -> std::int64_t {
+  const auto d = static_cast<std::size_t>(dimension);
+  return static_cast<std::int64_t>(
+      OrdinalAt(d, AscendingPositionIn(dims_, d, static_cast<std::size_t>(k))));
+}
+
+void DpiOpenArray::Put(std::int64_t k, const ConstIntegralView& value) {
+  const auto position = static_cast<std::size_t>(k);
   const std::size_t groups = GroupsPerElement();
   std::visit(
       Overloaded{
@@ -127,8 +127,8 @@ void DpiOpenArray::WriteElement(
       storage_);
 }
 
-void DpiOpenArray::ReadElement(
-    std::size_t position, const IntegralView& out) const {
+void DpiOpenArray::Word(std::int64_t k, const IntegralView& out) const {
+  const auto position = static_cast<std::size_t>(k);
   const std::size_t groups = GroupsPerElement();
   std::visit(
       Overloaded{

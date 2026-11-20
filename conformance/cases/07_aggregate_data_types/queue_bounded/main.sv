@@ -1,4 +1,4 @@
-// @reports: warning count=9
+// @reports: warning count=10
 //
 // A queue declared with a right bound shall hold no element whose index is
 // greater than that bound, so after any write that would leave it longer the
@@ -10,7 +10,9 @@
 // unspecified so that which of its elements stay is too, and it still applies
 // to every later write (LRM 7.6, 7.10.5, 7.12.1, 10.10). A slice of a bounded
 // queue is a queue (LRM 7.10.1) and no variable, so it carries no bound into a
-// queue of no bound it is joined into (LRM 7.10.5).
+// queue of no bound it is joined into (LRM 7.10.5). A write one past the last
+// element appends one (LRM 7.10.1), which a bounded queue already full then
+// discards (LRM 7.10.5), so the write lands nowhere and the queue stays as it was.
 module Top;
   bit [7:0] grown [$:3];
   bit [7:0] from_pattern [$:2] = '{1, 2, 3, 4, 5};
@@ -18,6 +20,8 @@ module Top;
   bit [7:0] from_concatenation [$:2];
   bit [7:0] partly_filled [$:3] = '{1, 2};
   bit [7:0] longer [$] = '{10, 20, 30, 40, 50};
+  bit [7:0] room [$:2] = '{1};
+  bit [7:0] full [$:1] = '{1, 2};
   bit [7:0] from_queue [$:2];
   bit [7:0] fixed_source [5] = '{11, 12, 13, 14, 15};
   bit [7:0] from_fixed [$:2];
@@ -137,6 +141,12 @@ module Top;
     if (joined_slice[1] !== 2 || joined_slice[3] !== 4)
       $fatal(1, "joined_slice held %0d .. %0d, expected 2 .. 4",
              joined_slice[1], joined_slice[3]);
+    room[$+1] = 5;
+    full[$+1] = 9;
+    if (room.size() !== 2 || room[1] !== 5)
+      $fatal(1, "room held %p, expected 1 and 5", room);
+    if (full.size() !== 2 || full[0] !== 1 || full[1] !== 2)
+      $fatal(1, "full held %p, expected 1 and 2", full);
     $display("All checks passed");
   end
 endmodule

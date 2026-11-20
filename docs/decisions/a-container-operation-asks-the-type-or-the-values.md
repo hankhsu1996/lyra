@@ -98,9 +98,10 @@ that is D1 -- the fact the declaration fixes arrives as an operand.
 
 ### D3. A position type is realized as what reaches it
 
-A wildcard index type has a runtime realization -- the integral one -- even though it fixes no
-width. This is what keeps one concept stated once: the container's key type and the key component of
-its entries are the same type, and the widths live in the values underneath.
+A wildcard index type has a runtime realization -- a value held with the integral type it was
+written in -- even though it fixes no width. This is what keeps one concept stated once: the
+container's key type and the key component of its entries are the same type, and the widths live in
+the values underneath.
 
 ## Rejected alternatives
 

@@ -14,14 +14,17 @@
 #include <vector>
 
 #include "lyra/base/diag_message.hpp"
+#include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/runtime/diagnostic.hpp"
+#include "lyra/runtime/file_table.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/value/enumeration.hpp"
 #include "lyra/value/format.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_words.hpp"
 #include "lyra/value/string.hpp"
+#include "lyra/value/unpacked_range.hpp"
 
 namespace lyra::runtime {
 
@@ -213,23 +216,20 @@ auto IsAddress(std::string_view token) -> bool {
 }
 
 // The addresses a call names, from the first toward the last (LRM 21.4,
-// 21.5): the memory's own from its lowest where it names none, and from a
-// start alone upward toward the memory's highest.
+// 21.5): from the start the call names, or the memory's lowest, upward toward
+// the memory's highest, or toward the finish a window names.
 struct AddressRun {
   std::int64_t first;
   std::int64_t last;
 };
 
 auto AddressRunOf(
-    std::int64_t top_lo, std::int64_t top_hi, std::optional<std::int64_t> start,
-    std::optional<std::int64_t> finish) -> AddressRun {
-  if (start.has_value() && finish.has_value()) {
-    return {.first = *start, .last = *finish};
+    std::int64_t top_hi, std::int64_t start, std::optional<std::int64_t> finish)
+    -> AddressRun {
+  if (finish.has_value()) {
+    return {.first = start, .last = *finish};
   }
-  if (start.has_value()) {
-    return {.first = *start, .last = std::max(*start, top_hi)};
-  }
-  return {.first = top_lo, .last = top_hi};
+  return {.first = start, .last = std::max(start, top_hi)};
 }
 
 }  // namespace
@@ -241,18 +241,228 @@ auto RenderedMemoryWord(const value::ConstIntegralView& word, unsigned base)
   return value::FormatIntegralOperand(spec, word, nullptr);
 }
 
-void ReadMemKeyedCore(
-    RuntimeEffects& runtime, const value::String& filename, unsigned base,
-    std::optional<std::int64_t> start, std::optional<std::int64_t> finish,
-    const WordValues& values, const StoreKeyedWord& store) {
-  const auto text = SlurpFile(runtime, filename, base);
+// What one task asked for and the words it moves.
+struct MemoryWords::State {
+  // Where the words come from and go: the file of radix-`base` words a memory
+  // task names (LRM 21.4, 21.5), or the next `count` words of `width` bits the
+  // open file `fd` holds, as `$fread` reads them (LRM 21.3.4.4), which answers
+  // how many bytes it read.
+  struct TextFile {
+    RuntimeEffects* runtime;
+    value::String filename;
+    unsigned base;
+  };
+  struct OpenFile {
+    FileTable* files;
+    std::int64_t fd;
+    std::int64_t count;
+    std::uint64_t width;
+    std::int64_t bytes_read = 0;
+  };
+
+  WordValues values;
+  std::variant<TextFile, OpenFile> source;
+  std::vector<value::UnpackedRange> dims;
+  std::int64_t start;
+  std::optional<std::int64_t> finish;
+
+  // One word of a task: the address it names, which leaf of that address it is
+  // where an address expands to several, and its text -- the token a load
+  // read, the bytes `$fread` read, or the word a dump writes.
+  struct Text {
+    std::int64_t address;
+    std::size_t ordinal;
+    std::string text;
+  };
+  std::vector<Text> words;
+  bool keyed = false;
+
+  // The file of words a memory task names, which a dump and a load by key
+  // always have.
+  [[nodiscard]] auto Named() -> TextFile& {
+    auto* text = std::get_if<TextFile>(&source);
+    if (text == nullptr) {
+      throw InternalError(
+          "memory words: a task naming a file of words is asked of the words "
+          "$fread read -- please report this as a bug");
+    }
+    return *text;
+  }
+
+  // The grid's words, `top_lo` to `top_hi` highest-dimension addresses each
+  // expanding to `inner_count` leaves.
+  void ReadGrid(
+      std::int64_t top_lo, std::int64_t top_hi, std::size_t inner_count);
+  void ReadText(
+      TextFile& file, std::int64_t top_lo, std::int64_t top_hi,
+      std::size_t inner_count);
+  void ReadBytes(OpenFile& file, std::int64_t top_lo, std::int64_t top_hi);
+  void PlanGrid(
+      std::int64_t top_lo, std::int64_t top_hi, std::size_t inner_count);
+};
+
+MemoryWords::MemoryWords(
+    RuntimeEffects& runtime, WordValues values, const value::String& filename,
+    std::span<const std::int64_t> bounds, std::int64_t base, std::int64_t start,
+    std::optional<std::int64_t> finish)
+    : state_(
+          std::make_unique<State>(State{
+              .values = std::move(values),
+              .source =
+                  State::TextFile{
+                      .runtime = &runtime,
+                      .filename = filename,
+                      .base = static_cast<unsigned>(base)},
+              .dims = value::UnpackedRangesOf(bounds),
+              .start = start,
+              .finish = finish,
+              .words = {}})) {
+}
+
+MemoryWords::MemoryWords(
+    FileTable& files, std::int64_t fd, std::span<const std::int64_t> bounds,
+    std::int64_t start, std::int64_t count, std::int64_t width)
+    : state_(
+          std::make_unique<State>(State{
+              .values = AnyNumber{},
+              .source =
+                  State::OpenFile{
+                      .files = &files,
+                      .fd = fd,
+                      .count = count,
+                      .width = static_cast<std::uint64_t>(width)},
+              .dims = value::UnpackedRangesOf(bounds),
+              .start = start,
+              .finish = std::nullopt,
+              .words = {}})) {
+}
+MemoryWords::MemoryWords(MemoryWords&&) noexcept = default;
+auto MemoryWords::operator=(MemoryWords&&) noexcept -> MemoryWords& = default;
+MemoryWords::~MemoryWords() = default;
+
+void MemoryWords::ReadGrid(base::SourceLocation at) {
+  const base::SourceLocationScope bound(at);
+  const std::span<const value::UnpackedRange> dims = state_->dims;
+  state_->ReadGrid(
+      dims.front().Low(), dims.front().High(),
+      value::ElementsSpanned(dims.subspan(1)));
+}
+
+void MemoryWords::ReadDense(std::int64_t count, base::SourceLocation at) {
+  const base::SourceLocationScope bound(at);
+  state_->ReadGrid(0, count - 1, 1);
+}
+
+void MemoryWords::PlanGrid() {
+  const std::span<const value::UnpackedRange> dims = state_->dims;
+  state_->PlanGrid(
+      dims.front().Low(), dims.front().High(),
+      value::ElementsSpanned(dims.subspan(1)));
+}
+
+void MemoryWords::PlanDense(std::int64_t count) {
+  state_->PlanGrid(0, count - 1, 1);
+}
+
+auto MemoryWords::Count() const -> std::int64_t {
+  return static_cast<std::int64_t>(state_->words.size());
+}
+
+auto MemoryWords::Ordinal(std::int64_t k, std::int64_t dimension) const
+    -> std::int64_t {
+  const State::Text& word = state_->words.at(static_cast<std::size_t>(k));
+  const std::span<const value::UnpackedRange> dims = state_->dims;
+  if (dims.empty()) {
+    return word.address;
+  }
+  const auto d = static_cast<std::size_t>(dimension);
+  const std::int64_t address =
+      d == 0 ? word.address
+             : dims[d].Low() +
+                   static_cast<std::int64_t>(
+                       value::AscendingPositionIn(dims, d, word.ordinal));
+  return dims[d].ToOrdinal(address);
+}
+
+auto MemoryWords::Key(std::int64_t k) const -> std::int64_t {
+  return state_->words.at(static_cast<std::size_t>(k)).address;
+}
+
+auto MemoryWords::BytesRead() const -> std::int64_t {
+  const auto* file = std::get_if<State::OpenFile>(&state_->source);
+  return file == nullptr ? 0 : file->bytes_read;
+}
+
+void MemoryWords::Word(std::int64_t k, const value::IntegralView& out) const {
+  const std::string& text = state_->words.at(static_cast<std::size_t>(k)).text;
+  std::visit(
+      Overloaded{
+          [&](const State::TextFile& file) {
+            value::FromDigits(out, MemoryRadix(file.base), text);
+          },
+          // LRM 21.3.4.4: the bytes most significant first, a word the file
+          // ended inside holding zeros in the bytes it lacked.
+          [&](const State::OpenFile&) { ReadBigEndian(out, text); }},
+      state_->source);
+}
+
+void MemoryWords::Put(std::int64_t k, const value::ConstIntegralView& word) {
+  state_->words.at(static_cast<std::size_t>(k)).text =
+      RenderedMemoryWord(word, state_->Named().base);
+}
+
+void MemoryWords::PutKeyed(
+    std::int64_t key, const value::ConstIntegralView& word) {
+  state_->keyed = true;
+  state_->words.push_back(
+      State::Text{
+          .address = key,
+          .ordinal = 0,
+          .text = RenderedMemoryWord(word, state_->Named().base)});
+}
+
+void MemoryWords::Commit(base::SourceLocation at) {
+  const base::SourceLocationScope bound(at);
+  State& state = *state_;
+  const State::TextFile& named = state.Named();
+  auto out = CreateFile(*named.runtime, named.filename, named.base);
+  if (!out) return;
+  // An associative memory's entries are written each as an `@key` line before
+  // its word, in key order, so a sparse array round-trips through a load (LRM
+  // 21.5.3); a window bounds the keys written.
+  const std::int64_t lo =
+      state.finish.has_value() ? std::min(state.start, *state.finish) : 0;
+  const std::int64_t hi =
+      state.finish.has_value() ? std::max(state.start, *state.finish) : 0;
+  for (const State::Text& word : state.words) {
+    if (state.keyed) {
+      if (state.finish.has_value() && (word.address < lo || word.address > hi))
+        continue;
+      value::WrittenWords key(
+          {.width = 64, .domain = value::StateDomain::kTwoState});
+      value::FromInt(key.MutableView(), word.address);
+      *out << '@' << RenderedMemoryWord(key.View(), 16U) << '\n';
+    }
+    *out << word.text << '\n';
+  }
+}
+
+void MemoryWords::ReadKeyed(base::SourceLocation at) {
+  const base::SourceLocationScope bound(at);
+  State& state = *state_;
+  const State::TextFile& named = state.Named();
+  RuntimeEffects& runtime = *named.runtime;
+  const unsigned base = named.base;
+  const auto text = SlurpFile(runtime, named.filename, base);
   if (!text) return;
 
-  const bool bounded = start.has_value() && finish.has_value();
-  const std::int64_t active_lo = bounded ? std::min(*start, *finish) : 0;
-  const std::int64_t active_hi = bounded ? std::max(*start, *finish) : 0;
-  std::int64_t cursor = start.value_or(0);
-  const std::int64_t step = (bounded && *start > *finish) ? -1 : 1;
+  const bool bounded = state.finish.has_value();
+  const std::int64_t active_lo =
+      bounded ? std::min(state.start, *state.finish) : 0;
+  const std::int64_t active_hi =
+      bounded ? std::max(state.start, *state.finish) : 0;
+  std::int64_t cursor = state.start;
+  const std::int64_t step = (bounded && state.start > *state.finish) ? -1 : 1;
 
   for (const std::string& token : Tokenize(*text)) {
     if (IsAddress(token)) {
@@ -270,38 +480,55 @@ void ReadMemKeyedCore(
 
     if (bounded && (cursor < active_lo || cursor > active_hi)) break;
 
-    if (!AdmitWord(runtime, values, base, token)) return;
-    store(cursor, token);
+    if (!AdmitWord(runtime, state.values, base, token)) return;
+    state.words.push_back(
+        State::Text{.address = cursor, .ordinal = 0, .text = token});
     cursor += step;
   }
 }
 
-void WriteMemKeyedCore(
-    RuntimeEffects& runtime, const value::String& filename, unsigned base,
-    std::optional<std::int64_t> start, std::optional<std::int64_t> finish,
-    std::span<const RenderedMemoryEntry> entries) {
-  auto out = CreateFile(runtime, filename, base);
-  if (!out) return;
-
-  const bool bounded = start.has_value() && finish.has_value();
-  const std::int64_t lo = bounded ? std::min(*start, *finish) : 0;
-  const std::int64_t hi = bounded ? std::max(*start, *finish) : 0;
-  for (const RenderedMemoryEntry& entry : entries) {
-    if (bounded && (entry.key < lo || entry.key > hi)) continue;
-    *out << '@' << entry.key_text << '\n' << entry.word_text << '\n';
-  }
+void MemoryWords::State::ReadGrid(
+    std::int64_t top_lo, std::int64_t top_hi, std::size_t inner_count) {
+  std::visit(
+      Overloaded{
+          [&](TextFile& text) { ReadText(text, top_lo, top_hi, inner_count); },
+          [&](OpenFile& file) {
+            // `$fread` reads a memory of one dimension (LRM 21.3.4.4), whose
+            // every address is one word.
+            if (inner_count != 1) {
+              throw InternalError(
+                  "memory words: $fread reads a memory of more than one "
+                  "dimension -- please report this as a bug");
+            }
+            ReadBytes(file, top_lo, top_hi);
+          }},
+      source);
 }
 
-void ReadMemGridCore(
-    RuntimeEffects& runtime, const value::String& filename, unsigned base,
-    std::int64_t top_lo, std::int64_t top_hi, std::size_t inner_count,
-    std::optional<std::int64_t> start, std::optional<std::int64_t> finish,
-    const WordValues& values, const StoreMemoryWord& store) {
-  const auto text = SlurpFile(runtime, filename, base);
+void MemoryWords::State::ReadBytes(
+    OpenFile& file, std::int64_t top_lo, std::int64_t top_hi) {
+  file.bytes_read = file.files->ReadMemoryWords(
+      file.fd, file.width,
+      value::UnpackedRange{.left = top_lo, .right = top_hi}, start, file.count,
+      [&](std::int64_t address, std::span<const char> bytes) {
+        words.push_back(
+            Text{
+                .address = address,
+                .ordinal = 0,
+                .text = std::string(bytes.begin(), bytes.end())});
+      });
+}
+
+void MemoryWords::State::ReadText(
+    TextFile& file, std::int64_t top_lo, std::int64_t top_hi,
+    std::size_t inner_count) {
+  RuntimeEffects* runtime = file.runtime;
+  const unsigned base = file.base;
+  const auto text = SlurpFile(*runtime, file.filename, base);
   if (!text) return;
 
   // The addresses index the highest dimension.
-  const AddressRun run = AddressRunOf(top_lo, top_hi, start, finish);
+  const AddressRun run = AddressRunOf(top_hi, start, finish);
   const std::int64_t active_lo = std::min(run.first, run.last);
   const std::int64_t active_hi = std::max(run.first, run.last);
   const std::int64_t step = run.first <= run.last ? 1 : -1;
@@ -312,11 +539,11 @@ void ReadMemGridCore(
   bool reported_outside = false;
   for (const std::string& token : tokens) {
     if (IsAddress(token)) {
-      const auto a = ParseAtAddress(runtime, base, token);
+      const auto a = ParseAtAddress(*runtime, base, token);
       if (!a) return;
       if (*a < active_lo || *a > active_hi) {
         Error(
-            runtime, "'{}' read address {}, which is outside the load range",
+            *runtime, "'{}' read address {}, which is outside the load range",
             TaskName(base, Direction::kLoad), *a);
         return;
       }
@@ -333,12 +560,12 @@ void ReadMemGridCore(
     // words the file gives the rest. That clause lets a tool warn, and a load
     // is told once, at its first word stored nowhere: a file addressing bytes
     // of a memory of wider rows loses all of it this way (LRM 21.4.3).
-    if (!AdmitWord(runtime, values, base, token)) return;
+    if (!AdmitWord(*runtime, values, base, token)) return;
     if (cursor >= top_lo && cursor <= top_hi) {
-      store(cursor, inner, token);
+      words.push_back(Text{.address = cursor, .ordinal = inner, .text = token});
     } else if (!reported_outside) {
       Warn(
-          runtime,
+          *runtime,
           "'{}' read a word for address {}, which the memory does not hold; "
           "no word for an address outside {} to {} is stored",
           TaskName(base, Direction::kLoad), cursor, top_lo, top_hi);
@@ -355,33 +582,26 @@ void ReadMemGridCore(
   // is between the file and the range, so every data word the file holds
   // counts, loaded or not. The range spans its highest-dimension words times
   // the leaves each expands to.
-  if (start.has_value() && finish.has_value() &&
-      std::ranges::none_of(tokens, IsAddress)) {
-    const auto words = static_cast<std::int64_t>(tokens.size());
+  if (finish.has_value() && std::ranges::none_of(tokens, IsAddress)) {
+    const auto held = static_cast<std::int64_t>(tokens.size());
     const std::int64_t expected =
         (active_hi - active_lo + 1) * static_cast<std::int64_t>(inner_count);
-    if (words != expected) {
+    if (held != expected) {
       Warn(
-          runtime,
+          *runtime,
           "'{}' read a file holding {} words, while the address range "
           "spans {}",
-          TaskName(base, Direction::kLoad), words, expected);
+          TaskName(base, Direction::kLoad), held, expected);
     }
   }
 }
 
-void WriteMemGridCore(
-    RuntimeEffects& runtime, const value::String& filename, unsigned base,
-    std::int64_t top_lo, std::int64_t top_hi, std::size_t inner_count,
-    std::optional<std::int64_t> start, std::optional<std::int64_t> finish,
-    const RenderMemoryWord& rendered) {
-  auto out = CreateFile(runtime, filename, base);
-  if (!out) return;
-
+void MemoryWords::State::PlanGrid(
+    std::int64_t top_lo, std::int64_t top_hi, std::size_t inner_count) {
   // Only the addresses the memory holds are written, since an address is an
   // index into it and a read at one it does not hold names no element (LRM
   // 7.4.5).
-  const AddressRun run = AddressRunOf(top_lo, top_hi, start, finish);
+  const AddressRun run = AddressRunOf(top_hi, start, finish);
   const std::int64_t lowest = std::max(std::min(run.first, run.last), top_lo);
   const std::int64_t highest = std::min(std::max(run.first, run.last), top_hi);
   const std::int64_t step = run.first <= run.last ? 1 : -1;
@@ -389,9 +609,48 @@ void WriteMemGridCore(
   for (std::int64_t i = 0; i <= highest - lowest; ++i) {
     const std::int64_t top = from + (step * i);
     for (std::size_t ordinal = 0; ordinal < inner_count; ++ordinal) {
-      *out << rendered(top, ordinal) << '\n';
+      words.push_back(Text{.address = top, .ordinal = ordinal, .text = {}});
     }
   }
+}
+
+auto ReadMem(
+    RuntimeEffects& runtime, const value::String& filename,
+    std::span<const std::int64_t> bounds, std::int64_t base, std::int64_t start)
+    -> MemoryWords {
+  return {runtime, AnyNumber{}, filename, bounds, base, start, std::nullopt};
+}
+auto ReadMemWithin(
+    RuntimeEffects& runtime, const value::String& filename,
+    std::span<const std::int64_t> bounds, std::int64_t base, std::int64_t start,
+    std::int64_t finish) -> MemoryWords {
+  return {runtime, AnyNumber{}, filename, bounds, base, start, finish};
+}
+auto ReadMem(
+    RuntimeEffects& runtime, const value::Enumeration& members,
+    const value::String& filename, std::span<const std::int64_t> bounds,
+    std::int64_t base, std::int64_t start) -> MemoryWords {
+  return {runtime, MemberValues{members}, filename, bounds, base,
+          start,   std::nullopt};
+}
+auto ReadMemWithin(
+    RuntimeEffects& runtime, const value::Enumeration& members,
+    const value::String& filename, std::span<const std::int64_t> bounds,
+    std::int64_t base, std::int64_t start, std::int64_t finish) -> MemoryWords {
+  return {runtime, MemberValues{members}, filename, bounds, base, start,
+          finish};
+}
+auto WriteMem(
+    RuntimeEffects& runtime, const value::String& filename,
+    std::span<const std::int64_t> bounds, std::int64_t base, std::int64_t start)
+    -> MemoryWords {
+  return {runtime, AnyNumber{}, filename, bounds, base, start, std::nullopt};
+}
+auto WriteMemWithin(
+    RuntimeEffects& runtime, const value::String& filename,
+    std::span<const std::int64_t> bounds, std::int64_t base, std::int64_t start,
+    std::int64_t finish) -> MemoryWords {
+  return {runtime, AnyNumber{}, filename, bounds, base, start, finish};
 }
 
 }  // namespace lyra::runtime

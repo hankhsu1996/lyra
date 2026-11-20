@@ -35,6 +35,11 @@ namespace lyra::lowering::hir_to_mir {
     const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId condition)
     -> mir::ExprId;
 
+// Whether the address `address` is no address, as a machine boolean.
+[[nodiscard]] auto BuildIsNull(
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId address)
+    -> mir::ExprId;
+
 // Whether `value` holds as a condition, as a one-bit value: 1 where the
 // condition is true and 0 where it is false, x or z, so never unknown.
 [[nodiscard]] auto ConditionAsBit(

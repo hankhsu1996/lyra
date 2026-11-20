@@ -35,6 +35,8 @@
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/storage_part.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/mir/type_builders.hpp"
+#include "lyra/mir/type_interface.hpp"
 #include "lyra/mir/unary_op.hpp"
 #include "lyra/profiling/time_trace.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -43,19 +45,6 @@
 namespace lyra::lowering::mir_to_lir {
 
 namespace {
-
-// Whether a call ending this way can be unwound out of, which is what obliges
-// it to name the landing unwinding reaches.
-auto MayUnwind(support::CallEnding ending) -> bool {
-  switch (ending) {
-    case support::CallEnding::kReturns:
-      return false;
-    case support::CallEnding::kReturnsOrUnwinds:
-    case support::CallEnding::kUnwinds:
-      return true;
-  }
-  throw InternalError("mir_to_lir: unknown call ending");
-}
 
 template <typename... Args>
 auto Unsupported(base::DiagFormatFor<Args...> format, Args&&... args)
@@ -217,8 +206,7 @@ auto FunctionLowerer::LowerCallTarget(
                     [&](const mir::TypeOperationTarget& t)
                         -> diag::Result<lir::CallTarget> {
                       return lir::CallTarget{lir::FunctionTarget{
-                          .function =
-                              unit_->TypeOperationFunction(t.type, t.answers)}};
+                          .function = unit_->TypeOperationFunction(t)}};
                     },
                     [&](const mir::ExternalBringUpTarget& t)
                         -> diag::Result<lir::CallTarget> {
@@ -431,7 +419,6 @@ auto FunctionLowerer::Run() -> diag::Result<lir::Function> {
   for (const auto& [param, argument] : taken) {
     BindParam(param, argument);
   }
-
   auto lowered = LowerBlockInto(code_->Body());
   if (!lowered) {
     return std::unexpected(std::move(lowered.error()));
@@ -767,22 +754,6 @@ auto FunctionLowerer::Terminated() const -> bool {
   return blocks_[current_.value].terminator.has_value();
 }
 
-namespace {
-
-// A callee that can be unwound out of is called as an invoke, so that whatever
-// is owed between here and the frame's edge gets its turn.
-void RequireReturns(const lir::Rvalue& value) {
-  if (const auto* call = std::get_if<lir::CallInstr>(&value);
-      call != nullptr && MayUnwind(lir::CallEndingOf(call->target))) {
-    throw InternalError(
-        "mir_to_lir: a callee that can be unwound out of is called as an "
-        "instruction rather than as an invoke -- please report this as a "
-        "bug");
-  }
-}
-
-}  // namespace
-
 auto FunctionLowerer::OwningTransient(
     const lir::Destination& destination, bool makes_value) const
     -> std::optional<lir::ValueId> {
@@ -803,7 +774,6 @@ auto FunctionLowerer::OwningTransient(
 }
 
 void FunctionLowerer::Assign(lir::Destination destination, lir::Rvalue value) {
-  RequireReturns(value);
   const std::optional<lir::ValueId> owner =
       OwningTransient(destination, lir::MakesValue(value));
   blocks_[current_.value].instrs.push_back(
@@ -887,8 +857,8 @@ void FunctionLowerer::EmitCleanup(const ReleaseStorage& release) {
 auto FunctionLowerer::IsLentCopyable(const lir::Operand& value) const -> bool {
   const lir::TypeId type = lir::OperandType(fn_, value);
   return unit_->Types().Get(type).IsOwnedValue() &&
-         !std::holds_alternative<lir::NoSuchStep>(
-             lir::StepOf(unit_->Lir(), type, lir::ValueStep::kCopy)) &&
+         !std::holds_alternative<lir::DeletedStep>(
+             lir::StepOf(unit_->Lir(), type, support::ValueStep::kCopy)) &&
          !OwedEndAt(value).has_value();
 }
 
@@ -1982,25 +1952,12 @@ auto FunctionLowerer::PartStep(
   }
   switch (*selects) {
     case support::PartSelection::kElement: {
-      // A call handed where it was written hands it last, which is no
-      // coordinate of the element.
-      const bool located = support::RuntimeEntryOf(*mir::DirectBuiltinFn(part))
-                               .takes_the_location;
-      const std::span<const mir::ExprId> arguments(part.arguments);
-      auto coordinates = LowerEachExpr(
-          block, located ? arguments.first(arguments.size() - 1) : arguments);
+      auto coordinates = LowerEachExpr(block, part.arguments);
       if (!coordinates) {
         return std::unexpected(std::move(coordinates.error()));
       }
-      lir::ElementProjection element{.coordinates = *std::move(coordinates)};
-      if (located) {
-        auto written_at = LowerExpr(block, arguments.back());
-        if (!written_at) {
-          return std::unexpected(std::move(written_at.error()));
-        }
-        element.written_at = *std::move(written_at);
-      }
-      return lir::Projection{std::move(element)};
+      return lir::Projection{
+          lir::ElementProjection{.coordinates = *std::move(coordinates)}};
     }
     case support::PartSelection::kComponent:
     case support::PartSelection::kSlice:
@@ -2545,12 +2502,10 @@ auto FunctionLowerer::LowerNew(
 auto FunctionLowerer::LowerPlacementNew(
     const mir::Block& block, const mir::NewExpr& allocation, lir::TypeId held)
     -> diag::Result<lir::Operand> {
-  // The placement's arguments, then the size and the alignment a value of
-  // `held` is laid out at, as the entry declares them; clang hands a placement
-  // `operator new` the same facts, then forms the initializer in what it
-  // answers. The function owns that storage, so a way out before the
-  // value is made gives nothing back: no deallocation function matches, as in
-  // C++.
+  // The value is formed in what the allocation function answers, as clang
+  // forms the initializer of a placement `operator new`. The function owns
+  // that storage, so a way out before the value is made gives nothing back:
+  // no deallocation function matches, as in C++.
   std::vector<lir::Operand> arguments;
   for (const mir::ExprId argument : allocation.placement->arguments) {
     auto lowered = LowerExpr(block, argument);
@@ -2559,17 +2514,16 @@ auto FunctionLowerer::LowerPlacementNew(
     }
     arguments.push_back(*std::move(lowered));
   }
-  const lir::TypeId number =
-      unit_->TranslateType(unit_->Mir().builtins.machine_int64);
-  for (const lir::LayoutConst::Measure measure :
-       {lir::LayoutConst::Measure::kSize,
-        lir::LayoutConst::Measure::kAlignment}) {
-    arguments.emplace_back(
-        lir::LayoutConst{.of = held, .measure = measure, .type = number});
-  }
-  auto storage = EmitCallTo(
-      lir::BuiltinTarget{.fn = allocation.placement->allocate},
-      std::move(arguments), AddressType(held));
+  // The reserved placement form is handed the address alone, as C++'s
+  // `operator new(std::size_t, void*)` needs no more than where the value
+  // goes; every other allocation function is told what it allocates for.
+  const bool reserved = support::PlacesAtItsArgument(
+      support::RuntimeEntryOf(allocation.placement->allocate).declaration);
+  auto storage =
+      reserved ? EmitCallTo(
+                     lir::BuiltinTarget{.fn = allocation.placement->allocate},
+                     std::move(arguments), AddressType(held))
+               : Allocated(allocation, std::move(arguments), held);
   if (!storage) {
     return storage;
   }
@@ -2579,6 +2533,25 @@ auto FunctionLowerer::LowerPlacementNew(
     return std::unexpected(std::move(made.error()));
   }
   return storage;
+}
+
+auto FunctionLowerer::Allocated(
+    const mir::NewExpr& allocation, std::vector<lir::Operand> arguments,
+    lir::TypeId held) -> diag::Result<lir::Operand> {
+  // The placement's arguments, then the size and the alignment a value of
+  // `held` is laid out at, as the entry declares them and as clang hands them
+  // to a placement `operator new`.
+  const lir::TypeId number =
+      unit_->TranslateType(unit_->Mir().builtins.machine_int64);
+  for (const lir::LayoutConst::Measure measure :
+       {lir::LayoutConst::Measure::kSize,
+        lir::LayoutConst::Measure::kAlignment}) {
+    arguments.emplace_back(
+        lir::LayoutConst{.of = held, .measure = measure, .type = number});
+  }
+  return EmitCallTo(
+      lir::BuiltinTarget{.fn = allocation.placement->allocate},
+      std::move(arguments), AddressType(held));
 }
 
 auto FunctionLowerer::LowerCellNew(
@@ -2848,6 +2821,22 @@ auto FunctionLowerer::LowerCallInto(
     if (*fn == support::BuiltinFn::kUnsize) {
       return settled(LowerReadAsAnother(block, call.arguments.front(), type));
     }
+    // A value taken out of storage is read where it lies, as a move out of a
+    // local is, and owned by what was read from then on, so whatever takes it
+    // takes it whole rather than copying it; the storage owes no end, which is
+    // what leaving it holding no value means.
+    if (*fn == support::BuiltinFn::kPtrRead) {
+      auto storage = LowerExpr(block, call.arguments.front());
+      if (!storage) {
+        return std::unexpected(std::move(storage.error()));
+      }
+      const lir::TypeId taken_type = unit_->TranslateType(type);
+      lir::Operand taken = Load(StorageAt(*std::move(storage)), taken_type);
+      if (unit_->Types().Get(taken_type).IsOwnedValue()) {
+        OpenScope(EndValue{.value = std::get<lir::Use>(taken).value});
+      }
+      return settled(std::move(taken));
+    }
     if (*fn == support::BuiltinFn::kReferProperty) {
       return settled(LowerPropertyReference(block, call, type));
     }
@@ -2864,6 +2853,16 @@ auto FunctionLowerer::LowerCallInto(
       // The gate answers nothing.
       return settled(VoidValue());
     }
+  }
+
+  // A construction that is its type's default is a call of it, which
+  // answers the value.
+  if (const std::optional<mir::TypeOperationTarget> operation =
+          mir::ConstructedByTheTypesDefault(unit_->Mir().types, call, type)) {
+    return CallInto(
+        lir::FunctionTarget{
+            .function = unit_->TypeOperationFunction(*operation)},
+        {}, destination);
   }
 
   auto args = LowerCallOperands(block, call);
@@ -2991,28 +2990,26 @@ auto FunctionLowerer::CallInto(
     AssignFrom(std::move(destination), lir::Use{.value = answer});
     return {};
   }
-  switch (lir::CallEndingOf(target)) {
-    case support::CallEnding::kReturns:
-      Assign(
-          std::move(destination),
-          lir::CallInstr{.target = std::move(target), .args = std::move(args)});
-      return {};
-    case support::CallEnding::kReturnsOrUnwinds:
-      return EmitInvoke(
-          std::move(target), std::move(args), std::move(destination));
-    case support::CallEnding::kUnwinds: {
-      auto unwound = EmitInvoke(
-          std::move(target), std::move(args), std::move(destination));
-      if (!unwound) {
-        return unwound;
-      }
-      // Nothing comes back to the point the call returns to, so whatever the
-      // source wrote after the call is never reached and has no lowering.
-      Terminate(lir::UnreachableTerm{});
-      return {};
+  const bool returns = lir::CallReturns(target);
+  if (lir::CallCanUnwind(
+          unit_->Lir(), target,
+          lir::DestinationType(unit_->Lir(), fn_, destination))) {
+    auto invoked =
+        EmitInvoke(std::move(target), std::move(args), std::move(destination));
+    if (!invoked) {
+      return invoked;
     }
+  } else {
+    Assign(
+        std::move(destination),
+        lir::CallInstr{.target = std::move(target), .args = std::move(args)});
   }
-  throw InternalError("mir_to_lir: unknown call ending");
+  // Nothing comes back to the point the call returns to, so whatever the
+  // source wrote after the call is never reached and has no lowering.
+  if (!returns) {
+    Terminate(lir::UnreachableTerm{});
+  }
+  return {};
 }
 
 auto FunctionLowerer::LowerCoroutineAwait(
@@ -3185,6 +3182,84 @@ auto FunctionLowerer::LowerBitsParts(
   return parts;
 }
 
+auto FunctionLowerer::LowerRunWrittenOnDesignation(
+    const mir::Block& block, const mir::CallExpr& call,
+    const mir::TypeOperationTarget& target, mir::TypeId type)
+    -> diag::Result<lir::Operand> {
+  const mir::ExprId receiver = *mir::CalleeReceiver(call.callee);
+  const mir::TypeId value = unit_->Mir()
+                                .types.Get(block.exprs.Get(receiver).type)
+                                .Get<mir::DesignationType>()
+                                .value;
+  auto designation = LowerExpr(block, receiver);
+  if (!designation) {
+    return std::unexpected(std::move(designation.error()));
+  }
+  std::vector<lir::Operand> operands;
+  for (const mir::ExprId argument : call.arguments) {
+    auto lowered = LowerArgument(block, argument);
+    if (!lowered) {
+      return std::unexpected(std::move(lowered.error()));
+    }
+    operands.push_back(*std::move(lowered));
+  }
+  // The part is told the run written next, by where it starts -- the run
+  // write's first operand, the position it takes by reference -- and how many
+  // elements its type fixes it to take. A queue's slice keeps the whole queue,
+  // so a count its type fixes none of is never read.
+  const lir::Operand first = Load(
+      StorageAt(operands.front()),
+      unit_->TranslateType(mir::PositionType(unit_->Mir().types)));
+  const lir::Operand count = lir::IntConst{
+      .value =
+          lir::IntegralConstant{
+              .value_words =
+                  {mir::RunWriteElementCount(unit_->Mir(), target).value_or(0)},
+              .state_words = {}},
+      .type = unit_->TranslateType(unit_->Mir().builtins.machine_int64)};
+  const lir::TypeId part_type = unit_->TranslateType(unit_->Mir().types.Intern(
+      mir::Type{mir::ReferenceType{
+          .referent = value, .mutability = mir::Mutability::kMutable}}));
+  auto part = EmitCallTo(
+      lir::OpenWriteTarget{
+          .op = lir::OpenWriteTarget::Op::kDesignated,
+          .value = unit_->TranslateType(value)},
+      {*designation, first, count}, part_type);
+  if (!part) {
+    return std::unexpected(std::move(part.error()));
+  }
+  std::vector<lir::Operand> args{*std::move(part)};
+  args.insert(args.end(), operands.begin(), operands.end());
+  const lir::TypeId changed_type = unit_->TranslateType(type);
+  auto changed = EmitCallTo(
+      lir::FunctionTarget{.function = unit_->TypeOperationFunction(target)},
+      std::move(args), changed_type);
+  if (!changed) {
+    return std::unexpected(std::move(changed.error()));
+  }
+  // The write is told the positions the run write answers it changed, read
+  // out of that answer.
+  const lir::ValueId held = HeldInSlot(*changed, changed_type);
+  const lir::TypeId position =
+      unit_->TranslateType(mir::PositionType(unit_->Mir().types));
+  const auto bound = [&](std::uint32_t at) {
+    lir::Place place = LocalPlace(held);
+    place.chain.emplace_back(
+        lir::ComponentProjection{.index = base::ComponentIndex{at}});
+    return Load(std::move(place), position);
+  };
+  auto told = EmitCallTo(
+      lir::OpenWriteTarget{
+          .op = lir::OpenWriteTarget::Op::kMoved,
+          .value = unit_->TranslateType(value)},
+      {*designation, bound(0), bound(1)},
+      unit_->TranslateType(unit_->Mir().builtins.void_type));
+  if (!told) {
+    return std::unexpected(std::move(told.error()));
+  }
+  return Load(LocalPlace(held), changed_type);
+}
+
 auto FunctionLowerer::LowerMutatingCall(
     const mir::Block& block, const mir::CallExpr& call, support::BuiltinFn fn,
     mir::TypeId type) -> diag::Result<lir::Operand> {
@@ -3196,8 +3271,7 @@ auto FunctionLowerer::LowerMutatingCall(
   }
   // The entry changes the object it is handed where it lies, and answers with
   // whatever result of its own the method states (LRM 7.10.2.4).
-  const auto apply_as = [&](lir::CallTarget target,
-                            lir::Operand object) -> diag::Result<lir::Operand> {
+  const auto apply = [&](lir::Operand object) -> diag::Result<lir::Operand> {
     std::vector<lir::Operand> args;
     args.reserve(call.arguments.size() + 1);
     args.push_back(std::move(object));
@@ -3209,38 +3283,23 @@ auto FunctionLowerer::LowerMutatingCall(
       args.push_back(*std::move(arg));
     }
     return EmitCallTo(
-        std::move(target), std::move(args), unit_->TranslateType(type));
-  };
-  const auto apply = [&](lir::Operand object) {
-    return apply_as(lir::BuiltinTarget{.fn = fn}, std::move(object));
+        lir::BuiltinTarget{.fn = fn}, std::move(args),
+        unit_->TranslateType(type));
   };
 
-  // A value a write in progress designates is changed by the write's own
-  // operation, which hears what moved; the one a designation is handed is a
-  // run of its elements written over (LRM 7.6), an array's or a queue's.
-  if (const auto* designated = unit_->Mir()
-                                   .types.Get(block.exprs.Get(*receiver).type)
-                                   .As<mir::DesignationType>()) {
-    const auto slice_write = [&]() -> lir::OpenWriteTarget::Op {
-      if (fn == support::BuiltinFn::kAssignElementSlice) {
-        return lir::OpenWriteTarget::Op::kAssignElementSlice;
-      }
-      if (fn == support::BuiltinFn::kAssignQueueSlice) {
-        return lir::OpenWriteTarget::Op::kAssignQueueSlice;
-      }
+  // A value a write in progress designates is changed only by a run of its
+  // elements written over (LRM 7.6, 7.10.1): the array type's own run write on
+  // the part the designation answers, which then tells the write what moved.
+  if (unit_->Mir()
+          .types.Get(block.exprs.Get(*receiver).type)
+          .Is<mir::DesignationType>()) {
+    if (fn != support::BuiltinFn::kAssignDesignatedRun) {
       throw InternalError(
           "mir_to_lir: what a write in progress designates is changed only by "
           "a run of its elements written over -- please report this as a bug");
-    };
-    auto designation = LowerExpr(block, *receiver);
-    if (!designation) {
-      return std::unexpected(std::move(designation.error()));
     }
-    return apply_as(
-        lir::OpenWriteTarget{
-            .op = slice_write(),
-            .value = unit_->TranslateType(designated->value)},
-        *std::move(designation));
+    return LowerRunWrittenOnDesignation(
+        block, call, mir::DesignatedRunWrite(unit_->Mir(), block, call), type);
   }
   // The receiver is storage, changed where it lies.
   auto place = LowerPlace(block, *receiver);

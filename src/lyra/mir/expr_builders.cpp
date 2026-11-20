@@ -335,8 +335,8 @@ auto BuildMachineIntBinary(
 void AppendRunTimeCheck(
     const CompilationUnit& unit, Builder block, ExprId holds,
     std::string message) {
-  const ExprId text =
-      block.Add(MakeStringLiteral(unit.builtins.string, std::move(message)));
+  const ExprId text = block.Add(
+      MakeStringLiteral(unit.builtins.machine_c_string, std::move(message)));
   block.AppendStmt(
       ExprStmt{
           .expr =
@@ -427,13 +427,25 @@ auto EntryOver(
   if (declared.over_integral_values.has_value() && type.IsIntegral()) {
     return *declared.over_integral_values;
   }
-  // A step within a write is over the value its designation names.
-  const auto* designation = type.As<DesignationType>();
-  const Type& value =
-      designation == nullptr ? type : unit.types.Get(designation->value);
+  // A step within a write is over the value its designation names, and one
+  // taken on a reference over what the reference names.
+  const auto stepped_over = [&]() -> const Type& {
+    if (const auto* designation = type.As<DesignationType>()) {
+      return unit.types.Get(designation->value);
+    }
+    if (const auto* reference = type.As<VariableRefType>()) {
+      return unit.types.Get(reference->pointee);
+    }
+    return type;
+  };
+  const Type& value = stepped_over();
   if (declared.over_queues.has_value() &&
       value.IsDeclaredBy(support::LibraryDecl::kQueue)) {
     return *declared.over_queues;
+  }
+  if (declared.over_dynamic_arrays.has_value() &&
+      value.IsDeclaredBy(support::LibraryDecl::kDynamicArray)) {
+    return *declared.over_dynamic_arrays;
   }
   return entry;
 }

@@ -18,6 +18,7 @@
 #include "lyra/hir/type.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
+#include "lyra/lowering/hir_to_mir/expression/calls.hpp"
 #include "lyra/lowering/hir_to_mir/expression/references.hpp"
 #include "lyra/lowering/hir_to_mir/expression/selects.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
@@ -283,17 +284,9 @@ auto BuildLevelLoopStmt(
             require_int_index();
             // The bound is read once, on entry to the dimension, the way a
             // repeat-loop's count is (LRM 12.7.3).
-            const mir::ExprId count = block.Add(
-                mir::Expr{
-                    .data =
-                        mir::CallExpr{
-                            .callee =
-                                mir::Direct{
-                                    .target = counted.count_entry,
-                                    .receiver =
-                                        IteratedValue(nest, frame, depth)},
-                            .arguments = {}},
-                    .type = unit.builtins.int_type});
+            const mir::ExprId count = block.Add(BuildBuiltinMethodCall(
+                unit, block, counted.count_entry,
+                IteratedValue(nest, frame, depth), {}, unit.builtins.int_type));
             return BuildCountingLoopStmt(
                 unit, frame, block, count, IndexPath(nest, frame, level),
                 body_scope, break_label);

@@ -158,9 +158,9 @@ void RequireCallWellFormed(
   RequireBitsStoreWellFormed(unit, fn, bits->value, bits->parts, args.back());
 }
 
-// Whether a call of `target` answers storage of dynamic duration holding no
-// value yet: the heap's, or what an allocation function of the library hands
-// out.
+// Whether a call of `target` answers storage holding no value yet: the heap's,
+// what an allocation function of the library hands out, or where the reserved
+// placement form is told to place one.
 auto AllocatesStorage(const CallTarget& target) -> bool {
   if (const auto* storage = std::get_if<DynamicStorageTarget>(&target)) {
     switch (storage->op) {
@@ -172,7 +172,7 @@ auto AllocatesStorage(const CallTarget& target) -> bool {
     throw InternalError("lir verify: unknown dynamic-storage operation");
   }
   if (const auto* entry = std::get_if<BuiltinTarget>(&target)) {
-    return std::holds_alternative<support::AllocationFunction>(
+    return support::HandsOutStorage(
         support::RuntimeEntryOf(entry->fn).declaration);
   }
   return false;
@@ -386,8 +386,9 @@ void VerifyRvalue(
       throw InternalError(
           std::format(
               "lir verify: load result type does not match its place type "
-              "(result Type[{}], place Type[{}])",
-              result_type.value, place_type.value));
+              "(result Type[{}], a {}; place Type[{}], a {})",
+              result_type.value, unit.types.Get(result_type).KindName(),
+              place_type.value, unit.types.Get(place_type).KindName()));
     }
   };
   std::visit(
@@ -443,9 +444,18 @@ void VerifyRvalue(
                   "union");
             }
           },
+          // A callee that can be unwound out of is called as an invoke, so
+          // that whatever is owed between the call and the frame's edge gets
+          // its turn.
           [&](const CallInstr& call) {
             RequireCallWellFormed(
                 unit, fn, call.target, call.args, result_type);
+            if (CallCanUnwind(unit, call.target, result_type)) {
+              throw InternalError(
+                  "lir verify: a callee that can be unwound out of is called "
+                  "as an instruction rather than as an invoke -- please "
+                  "report this as a bug");
+            }
           },
           [](const ProductInstr&) {},
           [&](const ClosureInstr& built) {
@@ -523,7 +533,7 @@ void VerifyDefaults(const CompilationUnit& unit) {
   for (const auto& [operation, function] : unit.type_operations) {
     if (function.has_value() &&
         operation.answers ==
-            support::ValueOperation{support::BuiltinFn::kDeclaredDefault} &&
+            support::ValueOperation{support::DefaultItem::kDeclaredDefault} &&
         unit.functions.Get(*function).result_type != operation.type) {
       throw InternalError(
           "lir verify: a type's default answers a value of another type");
@@ -531,8 +541,10 @@ void VerifyDefaults(const CompilationUnit& unit) {
   }
 }
 
-void VerifyFunction(const CompilationUnit& unit, const Function& fn) {
+void VerifyFunction(
+    const CompilationUnit& unit, FunctionId id, const Function& fn) {
   const auto in_function = diag::FailureContext::InFunction(fn.name);
+  const bool cannot_unwind = !unit.functions.Attributes(id).can_unwind;
   const bool is_coroutine = unit.types.Get(fn.result_type).Is<CoroutineType>();
   const std::vector<bool> allocated = AllocatedStorage(fn);
   for (const BasicBlock& block : fn.blocks) {
@@ -562,6 +574,17 @@ void VerifyFunction(const CompilationUnit& unit, const Function& fn) {
           "lir verify: a suspension, or a completion with a departure, appears "
           "in a body whose result type is not a coroutine");
     }
+    // A function no call can be unwound out of calls nothing that can be,
+    // which would be an invoke, and starts no unwind of its own, so its
+    // `nounwind` is true.
+    const bool unwinds =
+        std::holds_alternative<InvokeTerm>(block.terminator.data) ||
+        std::holds_alternative<UnwindResumeTerm>(block.terminator.data);
+    if (unwinds && cannot_unwind) {
+      throw InternalError(
+          "lir verify: a function declared not to unwind has a block that can "
+          "-- please report this as a bug");
+    }
   }
   VerifyLandings(fn);
 }
@@ -579,7 +602,7 @@ void Verify(const CompilationUnit& unit) {
     }
   }
   for (const FunctionId id : unit.functions.Ids()) {
-    VerifyFunction(unit, unit.functions.Get(id));
+    VerifyFunction(unit, id, unit.functions.Get(id));
   }
   VerifyDefaults(unit);
 }

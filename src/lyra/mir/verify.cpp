@@ -18,10 +18,10 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/block_id.hpp"
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/callable_code.hpp"
-#include "lyra/mir/callable_ordinal.hpp"
 #include "lyra/mir/caller_location.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_id.hpp"
@@ -52,6 +52,7 @@
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/mir/type_id.hpp"
+#include "lyra/mir/type_interface.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/callable_bounds.hpp"
 #include "lyra/support/def_path.hpp"
@@ -138,6 +139,43 @@ void ForEachExpr(const StmtData& data, const auto& reach) {
               reach(*s.value);
             }
           }},
+      data);
+}
+
+// Calls `reach` with each block `data` runs, the other half of what it
+// evaluates.
+void ForEachBlockRun(const StmtData& data, const auto& reach) {
+  std::visit(
+      Overloaded{
+          [](const EmptyStmt&) {}, [](const LocalDeclStmt&) {},
+          [](const ExprStmt&) {}, [](const RaiseStmt&) {},
+          [](const BreakStmt&) {}, [](const ContinueStmt&) {},
+          [](const ReturnStmt&) {}, [&](const BlockStmt& s) { reach(s.scope); },
+          [&](const TryStmt& s) {
+            reach(s.body);
+            reach(s.handler);
+          },
+          [&](const FinallyStmt& s) {
+            reach(s.body);
+            reach(s.cleanup);
+          },
+          [&](const IfStmt& s) {
+            reach(s.then_scope);
+            if (s.else_scope.has_value()) {
+              reach(*s.else_scope);
+            }
+          },
+          [&](const SwitchStmt& s) {
+            for (const SwitchCase& selected : s.cases) {
+              reach(selected.body);
+            }
+            if (s.default_body.has_value()) {
+              reach(*s.default_body);
+            }
+          },
+          [&](const ForStmt& s) { reach(s.scope); },
+          [&](const WhileStmt& s) { reach(s.scope); },
+          [&](const DoWhileStmt& s) { reach(s.scope); }},
       data);
 }
 
@@ -560,7 +598,9 @@ auto RefersWithoutOwning(const TypePool& types, TypeId type) -> bool {
 // only by the operations that bind one. So no store names a reference of
 // either kind, and a binding names only a reference held as a member. A local
 // referring to storage it does not own is bound by its declaration alone, so
-// what it refers to is what its initializer reached.
+// what it refers to is what its initializer reached; the one exception is a
+// loop's cursor, which a `for`'s step advances, as an iterator is advanced
+// over what it walks.
 void VerifyReferenceBindings(
     const CompilationUnit& unit, const Block& block, const auto& describe) {
   const auto refuse = [&](ExprId id, std::string_view what) {
@@ -570,6 +610,12 @@ void VerifyReferenceBindings(
             "this as a bug",
             describe(), what, id.value));
   };
+  std::vector<ExprId> advances;
+  for (const Stmt& stmt : block.stmts) {
+    const auto* loop = std::get_if<ForStmt>(&stmt.data);
+    if (loop == nullptr) continue;
+    advances.insert(advances.end(), loop->step.begin(), loop->step.end());
+  }
   for (const ExprId id : block.exprs.Ids()) {
     const ExprData& data = block.exprs.Get(id).data;
     if (const auto* assign = std::get_if<AssignExpr>(&data)) {
@@ -578,7 +624,8 @@ void VerifyReferenceBindings(
         refuse(id, "stores into a reference, which only a binding names");
       }
       if (ReferencedLocal(block.exprs.Get(assign->target).data).has_value() &&
-          RefersWithoutOwning(unit.types, target)) {
+          RefersWithoutOwning(unit.types, target) &&
+          std::ranges::find(advances, id) == advances.end()) {
         refuse(
             id,
             "re-seats a local referring to storage it does not own, which "
@@ -838,8 +885,83 @@ void VerifyTypeArguments(
   }
 }
 
+// How a call reaches the operation it carries out: by naming it, handing it
+// the receiver its declaration takes; or as a run written on a designation,
+// which carries out the array type's slice write on the part the designation
+// answers.
+enum class CallOf : std::uint8_t { kTheOperation, kItsRunOnADesignation };
+
+// A call of an operation MIR declares hands it what the declaration takes:
+// the type arguments it is taken at, which the declaration itself checks; a
+// receiver exactly where it takes one; then each argument, of each parameter's
+// type in order, where it was called last where the declaration reports there
+// and the call already states it. A call handing another type's value to a
+// type's operation would run that type's body on it.
+void VerifyCallOfDeclaredOperation(
+    const CompilationUnit& unit, const Block& block, const CallExpr& call,
+    const TypeOperationTarget& target, CallOf call_of, const auto& describe) {
+  const std::optional<CallableCode> declared = OperationDeclarationOf(
+      unit, TypeOperationSource{
+                .type = target.type,
+                .answers = target.answers,
+                .arguments = target.arguments});
+  if (!declared.has_value()) {
+    return;
+  }
+  const auto refuse = [&](std::string_view what) {
+    throw InternalError(
+        std::format(
+            "mir verify: {} {} -- please report this as a bug", describe(),
+            what));
+  };
+  std::vector<TypeId> takes;
+  for (const LocalId param : declared->params) {
+    if (param != declared->caller_location) {
+      takes.push_back(declared->locals.Get(param).type);
+    }
+  }
+  std::vector<TypeId> handed;
+  const std::optional<ExprId> receiver = CalleeReceiver(call.callee);
+  switch (call_of) {
+    case CallOf::kTheOperation:
+      if (receiver.has_value() != declared->receiver.has_value()) {
+        refuse(
+            receiver.has_value()
+                ? "with a receiver, though its declaration takes none"
+                : "with no receiver, though its declaration takes one");
+      }
+      if (receiver.has_value()) {
+        handed.push_back(block.exprs.Get(*receiver).type);
+      }
+      break;
+    // The designation stands for the array the operation writes, so what the
+    // call hands is what the operation takes after it.
+    case CallOf::kItsRunOnADesignation:
+      if (takes.empty()) {
+        refuse("as a run's write, though its declaration takes no array");
+      }
+      takes.erase(takes.begin());
+      break;
+  }
+  for (const ExprId argument : call.arguments) {
+    handed.push_back(block.exprs.Get(argument).type);
+  }
+  if (declared->caller_location.has_value() &&
+      handed.size() == takes.size() + 1 &&
+      handed.back() == unit.builtins.source_location) {
+    handed.pop_back();
+  }
+  if (handed != takes) {
+    refuse("handing it operands of other types than its declaration takes");
+  }
+}
+
 // A call naming an operation stated per type names a type that can have it;
-// another leaves the call bound to nothing.
+// another leaves the call bound to nothing. An operation a run-time-sized
+// container's type states as its own is called as that type's, never as the
+// library's entry asked of the container: the library defines no such entry
+// over a container, so the call would reach nothing on a target that resolves
+// it where it is written.
 void VerifyTypeOperationCalls(
     const CompilationUnit& unit, const Block& block, const auto& describe) {
   for (const ExprId id : block.exprs.Ids()) {
@@ -851,10 +973,23 @@ void VerifyTypeOperationCalls(
     if (direct == nullptr) {
       continue;
     }
+    if (const auto* fn = std::get_if<support::BuiltinFn>(&direct->target);
+        fn != nullptr && direct->receiver.has_value()) {
+      const TypeId asked = block.exprs.Get(*direct->receiver).type;
+      if (IsLaidOutContainer(unit.types, asked) &&
+          OperationNamedByEntry(unit, asked, *fn).has_value()) {
+        throw InternalError(
+            std::format(
+                "mir verify: {} asks the library's \"{}\" of a value of type "
+                "{} (expression {} of its block), an operation that type "
+                "states as its own -- please report this as a bug",
+                describe(), support::ValueOperationName(*fn), asked.value,
+                id.value));
+      }
+    }
     const auto* target = std::get_if<TypeOperationTarget>(&direct->target);
     if (target != nullptr &&
-        !TypeOperationKindOf(unit.types, target->type, target->answers)
-             .has_value()) {
+        !TypeOperationKindOf(unit, target->type, target->answers).has_value()) {
       throw InternalError(
           std::format(
               "mir verify: {} calls the operation \"{}\" of type {} "
@@ -862,6 +997,25 @@ void VerifyTypeOperationCalls(
               "please report this as a bug",
               describe(), support::ValueOperationName(target->answers),
               target->type.value, id.value));
+    }
+    if (target != nullptr) {
+      VerifyCallOfDeclaredOperation(
+          unit, block, *call, *target, CallOf::kTheOperation, [&] {
+            return std::format(
+                "{} calls the operation \"{}\" of type {} (expression {} of "
+                "its block)",
+                describe(), support::ValueOperationName(target->answers),
+                target->type.value, id.value);
+          });
+    }
+    if (DirectBuiltinFn(*call) == support::BuiltinFn::kAssignDesignatedRun) {
+      VerifyCallOfDeclaredOperation(
+          unit, block, *call, DesignatedRunWrite(unit, block, *call),
+          CallOf::kItsRunOnADesignation, [&] {
+            return std::format(
+                "{} writes a run on a designation (expression {} of its block)",
+                describe(), id.value);
+          });
     }
   }
   for (const BlockId id : block.child_scopes.Ids()) {
@@ -1032,7 +1186,7 @@ auto FirstOperand(const CallExpr& call) -> std::optional<ExprId> {
 
 // Whether what `pointer` reaches may only be read: a read-only reference or
 // pointer -- an element's read form among them, which answers the element
-// default where its position names no element (LRM 7.4.6).
+// default where its position names no element (LRM 7.4.5).
 auto ReachesReadOnly(const Type& pointer) -> bool {
   const auto read_only = [](Mutability mutability) {
     switch (mutability) {
@@ -1057,12 +1211,12 @@ auto ReachesReadOnly(const Type& pointer) -> bool {
 // states over values of several kinds is named only where no other is stated
 // for its first operand, as the operation over integral values or over queues
 // is an entry of its own; an argument the entry reads as a machine value is no
-// integral value,
-// which would cross with nothing telling the entry how to read its bits; and an
-// entry reaching by a key is called on a container reached by keys, one
-// reaching by a position on something that numbers its parts; an entry
-// answering a reference is typed as that reference; and no call names an
-// allocation function, which only a new-expression reaches.
+// integral value, which would cross with nothing telling the entry how to read
+// its bits; and an entry reaching by a key is called on a container reached by
+// keys, one reaching by a position on something that numbers its parts; an
+// entry answering a reference is typed as that reference; and no call names an
+// allocation function or the reserved placement form, which only a
+// new-expression reaches, or a constructor, which only a construction reaches.
 void VerifyEntryDeclarations(
     const CompilationUnit& unit, const Block& block, const auto& describe) {
   const auto refuse = [&](ExprId id, std::string_view what) {
@@ -1085,14 +1239,31 @@ void VerifyEntryDeclarations(
       continue;
     }
     const support::RuntimeEntry declared = support::RuntimeEntryOf(*entry);
-    if (std::holds_alternative<support::AllocationFunction>(
-            declared.declaration)) {
-      refuse(
-          id,
-          "calls an allocation function, which only a new-expression reaches");
-    }
-    if (std::holds_alternative<support::Constructor>(declared.declaration)) {
-      refuse(id, "calls a constructor, which only a construction reaches");
+    const std::optional<std::string_view> refusal = std::visit(
+        Overloaded{
+            [](const support::FreeFunction&)
+                -> std::optional<std::string_view> { return std::nullopt; },
+            [](const support::Method&) -> std::optional<std::string_view> {
+              return std::nullopt;
+            },
+            [](const support::StaticFactory&)
+                -> std::optional<std::string_view> { return std::nullopt; },
+            [](const support::AllocationFunction&)
+                -> std::optional<std::string_view> {
+              return "calls an allocation function, which only a "
+                     "new-expression reaches";
+            },
+            [](const support::ReservedPlacementForm&)
+                -> std::optional<std::string_view> {
+              return "calls the reserved placement form, which only a "
+                     "new-expression reaches";
+            },
+            [](const support::Constructor&) -> std::optional<std::string_view> {
+              return "calls a constructor, which only a construction reaches";
+            }},
+        declared.declaration);
+    if (refusal.has_value()) {
+      refuse(id, *refusal);
     }
     const std::optional<ExprId> receiver = CalleeReceiver(call->callee);
     const std::optional<ExprId> first = FirstOperand(*call);
@@ -1186,7 +1357,7 @@ void VerifyEntryDeclarations(
 // target, the object an entry changing its receiver acts on, or the value a
 // reference to bits is taken on -- is not reached through a read-only
 // reference, which an element's read form answers and whose referent may be
-// the element default every read of its type shares (LRM 7.4.6).
+// the element default every read of its type shares (LRM 7.4.5).
 void VerifyWritesLandInWritableStorage(
     const CompilationUnit& unit, const Block& block, const auto& describe) {
   for (const ExprId id : block.exprs.Ids()) {
@@ -1626,6 +1797,43 @@ void VerifyExprsMeetTheirTypes(
               describe(), DumpType(unit, TypeOf(block, cast->operand)),
               DumpType(unit, expr.type)));
     }
+    // An address moved by a count stays an address of what it pointed at, and
+    // the count is a machine integer ([expr.add]).
+    if (const auto* moved = std::get_if<BinaryExpr>(&expr.data);
+        moved != nullptr &&
+        unit.types.Get(TypeOf(block, moved->lhs)).Is<PointerType>() &&
+        MovesAnAddress(moved->op)) {
+      if (!unit.types.Get(TypeOf(block, moved->rhs)).Is<MachineIntType>()) {
+        throw InternalError(
+            std::format(
+                "mir verify: {} moves an address by a value of type {}, which "
+                "is no machine integer -- please report this as a bug",
+                describe(), DumpType(unit, TypeOf(block, moved->rhs))));
+      }
+      if (expr.type != TypeOf(block, moved->lhs)) {
+        refuse("a moved address", TypeOf(block, moved->lhs), expr.type);
+      }
+    }
+    // A value taken out of storage is of the type the storage held.
+    if (call != nullptr &&
+        DirectBuiltinFn(*call) == support::BuiltinFn::kPtrRead) {
+      const auto* storage =
+          call->arguments.size() == 1
+              ? unit.types.Get(TypeOf(block, call->arguments.front()))
+                    .As<PointerType>()
+              : nullptr;
+      if (storage == nullptr ||
+          storage->ownership != PointerOwnership::kBorrowed) {
+        throw InternalError(
+            std::format(
+                "mir verify: {} takes a value out of other than one address "
+                "owning nothing -- please report this as a bug",
+                describe()));
+      }
+      if (storage->pointee != expr.type) {
+        refuse("a value taken out of storage", storage->pointee, expr.type);
+      }
+    }
     if (const auto* choice = std::get_if<ConditionalExpr>(&expr.data)) {
       for (const ExprId arm : {choice->then_value, choice->else_value}) {
         if (TypeOf(block, arm) != expr.type) {
@@ -1831,6 +2039,19 @@ void VerifyValuesMeetTheirTypes(
             unit, "what it answers", answered, TypeOf(block, *returned->value),
             describe);
       }
+    }
+  }
+  // A local is named at the type it is declared, as a C name is; viewing it
+  // otherwise is a conversion of what is read from it.
+  for (const ExprId id : block.exprs.Ids()) {
+    const Expr& expr = block.exprs.Get(id);
+    const auto* named = std::get_if<ReferenceExpr>(&expr.data);
+    const auto* local =
+        named == nullptr ? nullptr : std::get_if<LocalRef>(&named->target);
+    if (local != nullptr && code.locals.Get(local->var).type != expr.type) {
+      RefuseValueOfType(
+          unit, "a local it names", code.locals.Get(local->var).type, expr.type,
+          describe);
     }
   }
   VerifyExprsMeetTheirTypes(unit, phase, block, describe);
@@ -2069,7 +2290,7 @@ void VerifyConstantsAreFolded(
 // evaluated into that storage, or an object's construction, entered on the
 // object once it is created whole -- or, for an object, none, where the code
 // then enters its constructor by name. A placement new-expression's storage is
-// its allocation function's instead, found by its one argument.
+// its allocation function's instead, found by the types of its arguments.
 void VerifyAllocations(
     const CompilationUnit& unit, const Block& block, const auto& describe) {
   const auto refuse = [&](ExprId id, std::string_view what) {
@@ -2111,18 +2332,42 @@ void VerifyAllocations(
       // An allocation function is found by the types of the placement
       // arguments, as C++ finds `operator new` by them ([expr.new]), so the one
       // named is the one they find: the allocation of the keeper the one
-      // argument points to.
+      // argument points to, the storage for an element of the container the
+      // first argument refers to, which that container's type names, or the
+      // storage the one argument points at itself.
       const std::vector<ExprId>& arguments = allocation->placement->arguments;
-      const auto* keeper =
-          arguments.size() != 1
-              ? nullptr
-              : unit.types.Get(block.exprs.Get(arguments.front()).type)
-                    .As<PointerType>();
+      const auto argument_type = [&](std::size_t i) -> const Type& {
+        return unit.types.Get(block.exprs.Get(arguments[i]).type);
+      };
+      const auto* keeper = arguments.size() != 1
+                               ? nullptr
+                               : argument_type(0).template As<PointerType>();
       const std::optional<support::KeeperEntries> entries =
           keeper == nullptr ? std::nullopt
                             : KeeperEntriesOf(unit.types, keeper->pointee);
-      if (!entries.has_value() ||
-          entries->allocate != allocation->placement->allocate) {
+      const auto* container =
+          arguments.empty() ? nullptr
+                            : argument_type(0).template As<ReferenceType>();
+      const std::optional<ElementAllocation> element =
+          container == nullptr ? std::nullopt
+                               : ElementAllocationOf(unit, container->referent);
+      const bool builds_an_element =
+          element.has_value() &&
+          element->allocate == allocation->placement->allocate &&
+          element->arguments == arguments.size();
+      // The reserved placement form answers the storage its one argument
+      // points at, which is of the type placed there.
+      const bool places_where_it_points =
+          support::PlacesAtItsArgument(
+              support::RuntimeEntryOf(allocation->placement->allocate)
+                  .declaration) &&
+          keeper != nullptr && keeper->pointee == place->pointee;
+      if (places_where_it_points) {
+        continue;
+      }
+      if (!builds_an_element &&
+          (!entries.has_value() ||
+           entries->allocate != allocation->placement->allocate)) {
         refuse(
             id,
             "names an allocation function other than the one its argument "
@@ -2517,8 +2762,8 @@ auto StatedNotToLeave(const Expr& expr) -> bool {
             const std::optional<support::BuiltinFn> entry =
                 DirectBuiltinFn(call);
             return entry.has_value() &&
-                   support::RuntimeEntryOf(*entry).ending ==
-                       support::CallEnding::kReturns;
+                   support::RuntimeEntryOf(*entry).returns &&
+                   !support::RuntimeEntryOf(*entry).can_unwind;
           },
           [](const CastExpr&) { return true; },
           [](const ConditionalExpr&) { return true; },
@@ -2649,16 +2894,376 @@ void VerifyCleanupsLeaveOnlyAtTheirEnd(
   }
 }
 
-// How many nodes of `block`, and of every block inside it, name each local.
-void CountNamings(const Block& block, std::map<LocalId, int>& named) {
+// Whether a value of `type` can hold an address: a reference, a pointer, or a
+// tuple holding one, which is what a body keeps a found element's address in.
+auto HoldsAnAddress(const TypePool& types, TypeId type) -> bool {
+  const Type& held = types.Get(type);
+  if (held.Is<ReferenceType>() || held.Is<PointerType>()) {
+    return true;
+  }
+  if (const auto* tuple = held.As<TupleType>()) {
+    return std::ranges::any_of(tuple->elements, [&](TypeId element) {
+      return HoldsAnAddress(types, element);
+    });
+  }
+  return false;
+}
+
+// What one statement does with each local it reaches: how often it moves it,
+// how often it names it otherwise, and whether it stores, in something that
+// can hold an address and lives as long as the block being checked, an
+// address of the local's own storage, which could reach the local past the
+// statement. A local a nested block declares ends with that block, and a
+// borrow handed to a call lends for the call alone, so only what the call
+// answers carries an address on.
+struct LocalUses {
+  int moves = 0;
+  int names = 0;
+  // What forms the address and the value storing it, where one is stored.
+  std::optional<std::string> stored_as_an_address;
+};
+using UsesOfLocals = std::map<LocalId, LocalUses>;
+
+// What the nodes reached from `id` in `block` do with each local, an address
+// counted only where it is stored in one of `holders`, the locals living as
+// long as the block being checked, or in storage no local of the body holds.
+class UseCollector {
+ public:
+  UseCollector(
+      const TypePool& types, const CallableCode& code,
+      const std::set<LocalId>& holders)
+      : types_(&types), code_(&code), holders_(&holders) {
+  }
+
+  // What the statement `stmt` of `block` does, the blocks it runs included,
+  // each walked in the order it runs.
+  void Statement(const Block& block, const Stmt& stmt, UsesOfLocals& uses) {
+    std::vector<bool> seen(block.exprs.size());
+    const auto stored = [&](LocalId target, ExprId value) {
+      if (holders_->contains(target) &&
+          HoldsAnAddress(*types_, code_->locals.Get(target).type)) {
+        AddressesIn(block, value, value, uses);
+      }
+    };
+    if (const auto* decl = std::get_if<LocalDeclStmt>(&stmt.data)) {
+      stored(decl->target, decl->init);
+    }
+    if (const auto* loop = std::get_if<ForStmt>(&stmt.data)) {
+      for (const ForInit& init : loop->init) {
+        if (const auto* d = std::get_if<ForInitDecl>(&init)) {
+          stored(d->induction_var, d->init);
+        }
+      }
+    }
+    ForEachExpr(stmt.data, [&](ExprId id) { Node(block, id, seen, uses); });
+    ForEachBlockRun(stmt.data, [&](BlockId id) {
+      const Block& inner = block.child_scopes.Get(id);
+      for (const StmtId run : inner.root_stmts) {
+        Statement(inner, inner.stmts.Get(run), uses);
+      }
+    });
+  }
+
+  // What the value `value` of `block` does, the value a block expression
+  // yields after its statements.
+  void Value(const Block& block, ExprId value, UsesOfLocals& uses) {
+    std::vector<bool> seen(block.exprs.size());
+    Node(block, value, seen, uses);
+  }
+
+ private:
+  void Node(
+      const Block& block, ExprId id, std::vector<bool>& seen,
+      UsesOfLocals& uses) {
+    if (seen.at(id.value)) {
+      return;
+    }
+    seen.at(id.value) = true;
+    const ExprData& data = block.exprs.Get(id).data;
+    if (const auto* move = std::get_if<MoveExpr>(&data)) {
+      if (const std::optional<LocalId> local =
+              ReferencedLocal(block.exprs.Get(move->operand).data)) {
+        ++uses[*local].moves;
+        seen.at(move->operand.value) = true;
+        return;
+      }
+    }
+    if (const std::optional<LocalId> local = ReferencedLocal(data)) {
+      ++uses[*local].names;
+    }
+    if (const auto* write = std::get_if<AssignExpr>(&data);
+        write != nullptr &&
+        HoldsAnAddress(*types_, block.exprs.Get(write->target).type)) {
+      const std::optional<LocalId> holder =
+          LocalLyingUnder(block, write->target);
+      if (!holder.has_value() || holders_->contains(*holder)) {
+        AddressesIn(block, write->value, write->value, uses);
+      }
+    }
+    // A block expression runs its statements and then yields its value, a
+    // node of its own block.
+    if (const auto* steps = std::get_if<BlockExpr>(&data)) {
+      const Block& inner = block.child_scopes.Get(steps->scope);
+      for (const StmtId run : inner.root_stmts) {
+        Statement(inner, inner.stmts.Get(run), uses);
+      }
+      std::vector<bool> inner_seen(inner.exprs.size());
+      Node(inner, steps->value, inner_seen, uses);
+    }
+    ForEachOperand(data, [&](const ExprId& operand, OperandUse) {
+      Node(block, operand, seen, uses);
+    });
+  }
+
+  // The local whose own storage the place `place` lies in: one named outright
+  // or a field of one. A place a dereference reaches lies in storage the value
+  // owns elsewhere, which a move hands on with the value.
+  static auto LocalLyingUnder(const Block& block, ExprId place)
+      -> std::optional<LocalId> {
+    const ExprData& data = block.exprs.Get(place).data;
+    if (const auto* field = std::get_if<FieldAccessExpr>(&data)) {
+      return LocalLyingUnder(block, field->receiver);
+    }
+    return ReferencedLocal(data);
+  }
+
+  // The locals the value `id` holds an address of the own storage of: one
+  // taken of a place lying in a local, and one a call answers into what it is
+  // entered on where that is such an address of a value laying its parts in
+  // its own storage. A library container keeps its elements in storage of
+  // their own, which a move hands on with the value, and what any other call
+  // answers is its own, whatever it was handed.
+  // `stored` is the value holding it.
+  void AddressesIn(
+      const Block& block, ExprId stored, ExprId id, UsesOfLocals& uses) {
+    const ExprData& data = block.exprs.Get(id).data;
+    const auto taken = [&](ExprId place) {
+      if (const std::optional<LocalId> local = LocalLyingUnder(block, place)) {
+        uses[*local].stored_as_an_address = std::format(
+            "{} within {} (expression {} of its block)", Describe(data),
+            Describe(block.exprs.Get(stored).data), stored.value);
+      }
+    };
+    if (const auto* address = std::get_if<AddressOfExpr>(&data)) {
+      taken(address->operand);
+      return;
+    }
+    if (const auto* borrow = std::get_if<BorrowExpr>(&data)) {
+      taken(borrow->operand);
+      return;
+    }
+    if (const auto* call = std::get_if<CallExpr>(&data)) {
+      if (const std::optional<ExprId> receiver = CalleeReceiver(call->callee);
+          receiver.has_value() && AnswersReferenceIntoReceiver(*call) &&
+          !EnteredOnAContainer(block, *receiver)) {
+        AddressesIn(block, stored, *receiver, uses);
+      }
+      return;
+    }
+    if (const auto* steps = std::get_if<BlockExpr>(&data)) {
+      AddressesIn(
+          block.child_scopes.Get(steps->scope), steps->value, steps->value,
+          uses);
+      return;
+    }
+    // A read answers what the storage holds, and a dereference names the
+    // storage an address reaches, so neither carries on an address its
+    // operand computes.
+    if (std::holds_alternative<CopyExpr>(data) ||
+        std::holds_alternative<MoveExpr>(data) ||
+        std::holds_alternative<DerefExpr>(data)) {
+      return;
+    }
+    ForEachOperand(data, [&](const ExprId& operand, OperandUse) {
+      AddressesIn(block, stored, operand, uses);
+    });
+  }
+
+  // Whether the receiver `receiver` is, or reaches, a library container.
+  [[nodiscard]] auto EnteredOnAContainer(
+      const Block& block, ExprId receiver) const -> bool {
+    const Type& entered = types_->Get(block.exprs.Get(receiver).type);
+    TypeId held = block.exprs.Get(receiver).type;
+    if (const auto* reference = entered.As<ReferenceType>()) {
+      held = reference->referent;
+    }
+    if (const auto* pointer = entered.As<PointerType>()) {
+      held = pointer->pointee;
+    }
+    return types_->Get(held).IsLibraryContainer();
+  }
+
+  const TypePool* types_;
+  const CallableCode* code_;
+  const std::set<LocalId>* holders_;
+};
+
+// A move is the last use of a local, as in Rust: what names the local before
+// it in the order its block runs is fine, and nothing names it in the
+// statement that moves it or after -- the block declaring it, or the body for
+// a parameter. An address of its storage kept in a local still living at the
+// move could reach it after, so a local any statement keeps so is not moved at
+// all. `inherited` is the locals the block sees beside its own declarations:
+// a body's parameters, and an enclosing block's locals, which a move within
+// the block is checked against as well. `yields` is the value a block
+// expression's block yields after its statements, which is the last thing it
+// does.
+void VerifyNothingFollowsAMove(
+    const TypePool& types, const CallableCode& code, const Block& block,
+    std::span<const LocalId> inherited, std::optional<ExprId> yields,
+    const auto& describe) {
+  std::vector<LocalId> declared_here(inherited.begin(), inherited.end());
+  for (const StmtId id : block.root_stmts) {
+    if (const auto* decl =
+            std::get_if<LocalDeclStmt>(&block.stmts.Get(id).data)) {
+      declared_here.push_back(decl->target);
+    }
+  }
+  const std::set<LocalId> holders(declared_here.begin(), declared_here.end());
+  UseCollector collect(types, code, holders);
+  std::vector<UsesOfLocals> by_statement;
+  for (const StmtId id : block.root_stmts) {
+    collect.Statement(block, block.stmts.Get(id), by_statement.emplace_back());
+  }
+  if (yields.has_value()) {
+    collect.Value(block, *yields, by_statement.emplace_back());
+  }
+  for (const LocalId local : declared_here) {
+    const auto uses_at = [&](std::size_t at) -> LocalUses {
+      const auto found = by_statement[at].find(local);
+      return found == by_statement[at].end() ? LocalUses{} : found->second;
+    };
+    std::optional<std::size_t> moved_at;
+    std::optional<std::string> stored;
+    for (std::size_t at = 0; at < by_statement.size(); ++at) {
+      if (!stored.has_value()) {
+        stored = uses_at(at).stored_as_an_address;
+      }
+      if (!moved_at.has_value() && uses_at(at).moves > 0) {
+        moved_at = at;
+      }
+    }
+    if (!moved_at.has_value()) {
+      continue;
+    }
+    const auto refuse = [&](std::string_view what) {
+      throw InternalError(
+          std::format(
+              "mir verify: {} moves local {} and {}; a move is the last use of "
+              "a local",
+              describe(), local.value, what));
+    };
+    if (stored.has_value()) {
+      refuse(
+          std::format(
+              "stores an address of its storage in a value, {}", *stored));
+    }
+    const LocalUses moving = uses_at(*moved_at);
+    if (moving.names > 0 || moving.moves > 1) {
+      refuse("names it again in the statement that moves it");
+    }
+    for (std::size_t after = *moved_at + 1; after < by_statement.size();
+         ++after) {
+      if (uses_at(after).names > 0 || uses_at(after).moves > 0) {
+        refuse("names it again after the move");
+      }
+    }
+  }
+  std::map<BlockId, ExprId> yielded;
   for (const ExprId id : block.exprs.Ids()) {
-    if (const std::optional<LocalId> local =
-            ReferencedLocal(block.exprs.Get(id).data)) {
-      ++named[*local];
+    if (const auto* steps = std::get_if<BlockExpr>(&block.exprs.Get(id).data)) {
+      yielded.emplace(steps->scope, steps->value);
     }
   }
   for (const BlockId id : block.child_scopes.Ids()) {
-    CountNamings(block.child_scopes.Get(id), named);
+    const auto found = yielded.find(id);
+    VerifyNothingFollowsAMove(
+        types, code, block.child_scopes.Get(id), declared_here,
+        found == yielded.end() ? std::nullopt : std::optional{found->second},
+        describe);
+  }
+}
+
+// Whether a call `call` answering `type` can be unwound out of: as its
+// library entry, or the declaration of the type's operation it names or is,
+// says; any other callee can, as far as this can see.
+auto CallCanUnwind(
+    const CompilationUnit& unit, const CallExpr& call, TypeId type) -> bool {
+  if (const std::optional<support::BuiltinFn> fn = DirectBuiltinFn(call)) {
+    return support::RuntimeEntryOf(*fn).can_unwind;
+  }
+  if (const auto* direct = std::get_if<Direct>(&call.callee)) {
+    if (const auto* operation =
+            std::get_if<TypeOperationTarget>(&direct->target)) {
+      if (const std::optional<CallableCode> declared = OperationDeclarationOf(
+              unit, TypeOperationSource{
+                        .type = operation->type,
+                        .answers = operation->answers,
+                        .arguments = operation->arguments})) {
+        return declared->can_unwind;
+      }
+    }
+  }
+  if (const std::optional<TypeOperationTarget> operation =
+          ConstructedByTheTypesDefault(unit.types, call, type)) {
+    return OperationDeclarationOf(
+               unit,
+               TypeOperationSource{
+                   .type = operation->type, .answers = operation->answers})
+        .value()
+        .can_unwind;
+  }
+  return true;
+}
+
+// A body declared not to unwind lets no unwind leave it: it raises nothing,
+// waits on nothing, which a release of its stack would unwind, and calls, and
+// takes storage from, only what cannot unwind itself.
+void VerifyCannotUnwind(
+    const CompilationUnit& unit, const Block& block, const auto& describe) {
+  const auto refuse = [&](std::string_view what) {
+    throw InternalError(
+        std::format(
+            "mir verify: {} is declared not to unwind and {} -- please report "
+            "this as a bug",
+            describe(), what));
+  };
+  for (const Stmt& stmt : block.stmts) {
+    if (std::holds_alternative<RaiseStmt>(stmt.data)) {
+      refuse("raises");
+    }
+  }
+  for (const ExprId id : block.exprs.Ids()) {
+    const Expr& expr = block.exprs.Get(id);
+    if (std::holds_alternative<AwaitExpr>(expr.data) ||
+        std::holds_alternative<WaitExpr>(expr.data)) {
+      refuse("waits");
+    }
+    if (const auto* made = std::get_if<NewExpr>(&expr.data);
+        made != nullptr && made->placement.has_value() &&
+        support::RuntimeEntryOf(made->placement->allocate).can_unwind) {
+      refuse(
+          std::format(
+              "places a value in storage '{}' hands out, which may unwind",
+              support::RuntimeEntryOf(made->placement->allocate).name));
+    }
+    if (const auto* call = std::get_if<CallExpr>(&expr.data);
+        call != nullptr && CallCanUnwind(unit, *call, expr.type)) {
+      const auto* direct = std::get_if<Direct>(&call->callee);
+      const auto* operation =
+          direct == nullptr ? nullptr
+                            : std::get_if<TypeOperationTarget>(&direct->target);
+      refuse(
+          operation == nullptr
+              ? std::format("makes {}, which may unwind", Describe(expr.data))
+              : std::format(
+                    "calls the operation \"{}\" of type {}, which may unwind",
+                    support::ValueOperationName(operation->answers),
+                    operation->type.value));
+    }
+  }
+  for (const Block& inner : block.child_scopes) {
+    VerifyCannotUnwind(unit, inner, describe);
   }
 }
 
@@ -2674,19 +3279,18 @@ void MarkReached(const Block& block, ExprId id, std::vector<bool>& marked) {
       });
 }
 
-// A move hands a local's value on together with the local's end, so it is the
-// last use of the whole local, run exactly once on every way the body runs
-// that reaches that end: nothing else names the local, and nothing that runs on
-// only some ways or more than once stands between the move and the block
-// declaring the local, or the body for a parameter -- only blocks a run enters
-// once whenever the one around them runs, a block statement and a block
-// expression that neither an arm of a choice nor a loop's test or step holds.
-// A local used again after it, assigned again, or moved on some ways or many
-// times would be ended twice or not at all. `entered_with` is what a block
-// entered that way inherits.
-void VerifyMovesAreLastUses(
-    const Block& block, std::set<LocalId> entered_with,
-    const std::map<LocalId, int>& named, const auto& describe) {
+// A move hands a local's value on together with the local's end, so it moves
+// the whole local, run exactly once on every way the body runs that reaches
+// that end: nothing that runs on only some ways or more than once stands
+// between the move and the block declaring the local, or the body for a
+// parameter -- only blocks a run enters once whenever the one around them
+// runs, a block statement and a block expression that neither an arm of a
+// choice nor a loop's test or step holds. A local moved on some ways or many
+// times would be ended twice or not at all; that nothing names it after the
+// move is checked apart. `entered_with` is what a block entered that way
+// inherits.
+void VerifyMovesRunOnce(
+    const Block& block, std::set<LocalId> entered_with, const auto& describe) {
   std::vector<bool> not_once(block.exprs.size());
   for (const ExprId id : block.exprs.Ids()) {
     if (const auto* choice =
@@ -2744,9 +3348,6 @@ void VerifyMovesAreLastUses(
     if (!local.has_value()) {
       refuse("a move of part of a value", id);
     }
-    if (named.at(*local) != 1) {
-      refuse("a move of a local named elsewhere", id);
-    }
     if (not_once.at(id.value) || !movable.contains(*local)) {
       refuse("a move not run exactly once through its local's block", id);
     }
@@ -2764,10 +3365,9 @@ void VerifyMovesAreLastUses(
     }
   }
   for (const BlockId id : block.child_scopes.Ids()) {
-    VerifyMovesAreLastUses(
+    VerifyMovesRunOnce(
         block.child_scopes.Get(id),
-        entered_whole.contains(id) ? movable : std::set<LocalId>{}, named,
-        describe);
+        entered_whole.contains(id) ? movable : std::set<LocalId>{}, describe);
   }
 }
 
@@ -2865,11 +3465,14 @@ void VerifyCode(
   VerifyCleanupsLeaveOnlyAtTheirEnd(*code.body, describe);
   VerifyNoRunEvaluatesTwice(unit, *code.body, {}, describe);
   VerifyPlacesAreRead(unit, *code.body, {}, describe);
-  std::map<LocalId, int> named;
-  CountNamings(*code.body, named);
-  VerifyMovesAreLastUses(
+  VerifyMovesRunOnce(
       *code.body, std::set<LocalId>(code.params.begin(), code.params.end()),
-      named, describe);
+      describe);
+  VerifyNothingFollowsAMove(
+      unit.types, code, *code.body, code.params, std::nullopt, describe);
+  if (!code.can_unwind) {
+    VerifyCannotUnwind(unit, *code.body, describe);
+  }
   VerifyWritesLandInWritableStorage(unit, *code.body, describe);
   VerifyValuesMeetTheirTypes(unit, phase, code, *code.body, describe);
   VerifyStorageWithoutAnAddress(unit, *code.body, describe);

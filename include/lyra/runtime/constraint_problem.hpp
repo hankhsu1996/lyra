@@ -26,6 +26,60 @@ namespace lyra::runtime {
 
 class RuntimeEffects;
 
+// What a part of a random variable takes from the variable it lies in, as its
+// type's code walks it: the path its owner keeps its mode and its cycle under,
+// whether every array it lies in is chosen, the members of the enumeration it
+// is where it is one, and the innermost array around it whose size the
+// program chooses.
+struct DeclaredPart {
+  RandomVariablePath path;
+  bool enabled = false;
+  const value::Enumeration* members = nullptr;
+  std::optional<std::int64_t> within;
+
+  // The part at `position` of this one, where whether this one is chosen is
+  // `chosen` and `array` is the array around that part whose size the program
+  // chooses.
+  [[nodiscard]] auto Into(
+      std::size_t position, bool chosen,
+      std::optional<std::int64_t> array) const -> DeclaredPart {
+    return DeclaredPart{
+        .path = path.Into(position),
+        .enabled = chosen,
+        .members = members,
+        .within = array};
+  }
+};
+
+// What a walk of a random variable is for (LRM 18.4, 18.5.4, 18.11).
+struct DeclaringWalk {
+  support::RandomQualifier declared;
+};
+struct ListingWalk {};
+struct NestingWalk {};
+struct UniqueWalk {
+  std::int64_t set;
+};
+using WalkPurpose =
+    std::variant<DeclaringWalk, ListingWalk, NestingWalk, UniqueWalk>;
+
+// One part of a walk: what it takes from the parts around it, and, once it is
+// an array, whether its elements are chosen and the array around them whose
+// size the program chooses.
+struct WalkedPart {
+  DeclaredPart part;
+  bool elements_chosen = false;
+  std::optional<std::int64_t> elements_within;
+};
+
+// The walk in progress: what it is for, the whole variable it began on, whose
+// owner keeps the mode of every part, and the parts it is inside.
+struct RandomWalk {
+  WalkPurpose purpose;
+  ErasedReference whole;
+  std::vector<WalkedPart> parts;
+};
+
 // One question a `randomize()` asks (LRM 18.6.1, 18.12): which values the
 // variables it may choose take so that every constraint in force holds. Code
 // the compiler generated describes the question by calls -- each variable the
@@ -44,12 +98,11 @@ class RuntimeEffects;
 // An answer is drawn from a generator split from the one the problem is
 // handed -- the object's own for a class's `randomize()` (LRM 18.14.3), the
 // running thread's for `std::randomize()` (LRM 18.14.2) -- uniformly among the
-// assignments making
-// every hard constraint true (LRM 18.5.9), after keeping each soft constraint
-// that can still hold, the latest stated first (LRM 18.5.13.1), and choosing
-// the variables an ordering names earlier first, each among the values the
-// later ones can complete (LRM 18.5.9). Nothing is written until the answer is
-// landed, and where there is none nothing is (LRM 18.6.3).
+// assignments making every hard constraint true (LRM 18.5.9), after keeping
+// each soft constraint that can still hold, the latest stated first (LRM
+// 18.5.13.1), and choosing the variables an ordering names earlier first, each
+// among the values the later ones can complete (LRM 18.5.9). Nothing is written
+// until the answer is landed, and where there is none nothing is (LRM 18.6.3).
 class ConstraintProblem final : public GcObject {
  public:
   // A problem of a call made in `runtime` drawing from `generator`, for a call
@@ -239,6 +292,10 @@ class ConstraintProblem final : public GcObject {
   }
   // Adds `nested` unless it is already one of the call's objects.
   void AddNested(const value::ObjectRef& nested);
+  // The walk of a random variable its type's code is making.
+  [[nodiscard]] auto Walk() -> RandomWalk& {
+    return walk_;
+  }
   [[nodiscard]] auto Nested() const -> const std::vector<value::ObjectRef>& {
     return nested_;
   }
@@ -371,6 +428,7 @@ class ConstraintProblem final : public GcObject {
   std::vector<bool> answer_;
   // The value each `randc` variable took, which landing takes from its cycle.
   std::vector<std::pair<ConstraintCycle*, std::uint64_t>> cycled_;
+  RandomWalk walk_;
 };
 
 }  // namespace lyra::runtime

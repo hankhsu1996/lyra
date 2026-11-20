@@ -58,7 +58,7 @@ class Selection {
   // design converts an index into it (LRM 7.8.4).
   [[nodiscard]] auto KeyAt(std::int64_t depth, const value::ValueType& type)
       const -> value::AnyValue;
-  template <typename K>
+  template <value::LyraValue K>
   auto Key(std::int64_t depth) const -> K {
     const value::AnyValue key = KeyAt(depth, value::LibraryTypeOf<K>());
     return *static_cast<const K*>(key.Bytes());

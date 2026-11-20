@@ -122,11 +122,11 @@ A region it is submitted to, a timer, an observation, an assertion's action and 
 outlive the frame that built the closure, so it never lies there. A region holds an effect exactly
 until it runs it, so the effect is made in the storage the region's effects hand out, and they take
 it over; every other keeper takes a box MIR states, as Rust's thread spawn keeps the closure it is
-handed in a `Box`. A closure borrowed for a call -- the order a sort is handed -- lies where its
-value is. A closure started as a coroutine is made in a box MIR states and called through it, and
-the started body takes the box over. No backend places a closure on its own account: a box of a
-closure of a known type is an ordinary box, which both backends spell and end as they do any box,
-and each builds the closure, its library's part included, where its value lies.
+handed in a `Box`. A closure borrowed -- the write-back a reference seen as another type carries --
+lies where its value is. A closure started as a coroutine is made in a box MIR states and called
+through it, and the started body takes the box over. No backend places a closure on its own account:
+a box of a closure of a known type is an ordinary box, which both backends spell and end as they do
+any box, and each builds the closure, its library's part included, where its value lies.
 
 **D7. A frame keeps at most a fixed sum of a body's values, 16 KiB, and every value past it is held
 apart through a box.** A bound on each value bounds a frame only by how many values the source

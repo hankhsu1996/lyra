@@ -81,7 +81,7 @@ and `Tuple`, LLVM's identified and literal `StructType` (read in `llvm/IR/Derive
 ## Consequences
 
 - The tuple remains the structural product: what a lowering composes for itself, such as a call's
-  completion payload or an associative entry.
+  completion payload.
 - **Union is out of scope here.** A tagged union (LRM 7.3.2) is a sum type and an untagged unpacked
   union (LRM 7.3) is overlapping storage; neither shares the struct representation.
 

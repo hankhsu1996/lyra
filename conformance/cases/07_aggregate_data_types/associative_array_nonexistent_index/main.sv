@@ -1,10 +1,14 @@
+// @reports: warning count=5
+//
 // Reading an associative array at an index that has no entry yields the value
 // Table 7-1 gives for the array's element type -- all x for a 4-state integral
 // type, zero for a 2-state one, and the empty string for a string -- and
 // allocates nothing, so the number of entries is unchanged by the read. An
 // index expression holding x or z is invalid whatever it names: a write through
 // one is ignored and leaves the entry it might have reached alone, and a read
-// through one yields that same element default (LRM 7.8.6, 7.4.5, Table 7-1).
+// through one yields that same element default. Each of the three reads of a
+// missing entry, the write and the read through an invalid index issues a
+// warning (LRM 7.8.6, 7.4.5, Table 7-1).
 module Top;
   integer four_state [integer];
   int two_state [int];

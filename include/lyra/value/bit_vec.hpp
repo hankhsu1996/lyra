@@ -210,15 +210,11 @@ static_assert(LyraValue<BitVec>);
 // The run of bits `value` makes (LRM 6.24.3), as many as it holds, each part
 // writing its own. The value states its width and writes its bits by two
 // different means, so a write filling other than the whole run is a defect of
-// that value's type. `args` follow the value in the write: the operations of
-// its element for a container the library holds of a type it was compiled
-// without.
-template <typename V, typename... Args>
-[[nodiscard]] auto StreamOf(
-    const V& value, const Int& width, const Args&... args) -> BitVec {
+// that value's type.
+template <typename V>
+[[nodiscard]] auto StreamOf(const V& value, const Int& width) -> BitVec {
   BitVec run = BitVec::Zeros(static_cast<std::uint64_t>(width.ToInt64()));
-  const std::uint64_t filled =
-      value.WriteToStream(run.MutableView(), 0, args...);
+  const std::uint64_t filled = value.WriteToStream(run.MutableView(), 0);
   if (filled != run.View().width) {
     throw InternalError(
         "StreamOf: a value wrote a stream of another width than it states");
@@ -227,9 +223,9 @@ template <typename V, typename... Args>
 }
 
 // `value` replaced by what `run` holds, which it takes every bit of.
-template <typename V, typename... Args>
-void ReadWholeStream(V& value, const BitVec& run, const Args&... args) {
-  value.ReadFromStream(run.View(), 0, run.View().width, args...);
+template <typename V>
+void ReadWholeStream(V& value, const BitVec& run) {
+  value.ReadFromStream(run.View(), 0, run.View().width);
 }
 
 }  // namespace lyra::value

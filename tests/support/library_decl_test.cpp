@@ -56,7 +56,7 @@ TEST(LibraryDeclTest, EachDeclarationStatesAConsistentType) {
     // A data type is a value its holder keeps whole, which a copy duplicates
     // and a declared variable starts as something (LRM 6.2, Table 6-7).
     if (d.is_a_data_type) {
-      EXPECT_TRUE(IsDomainObject(decl));
+      EXPECT_TRUE(IsHeldValue(decl));
       EXPECT_EQ(d.movability, Movability::kCopyable);
       EXPECT_TRUE(d.default_value.has_value());
     }
@@ -156,15 +156,21 @@ TEST(LibraryDeclTest, EveryConstructorIsReachedThroughADeclaration) {
   EXPECT_FALSE(named.empty());
 }
 
-// A structure a unit states as a constant is data the run reads where it
-// lies, so a frame names one by its address, and no two structures are one
-// declaration.
-TEST(LibraryDeclTest, EachRecordIsADeclarationNamedByItsAddress) {
+// A structure of the library a unit reaches the members of is data the run
+// reads where it lies, which a frame names by its address, or the storage of a
+// value laid out by its type, which its declaration states as the structure's
+// own size and alignment; and no two structures are one declaration.
+TEST(LibraryDeclTest, EachRecordIsNamedByItsAddressOrIsAValuesStorage) {
   std::set<LibraryDecl> listed;
   abi::ForEachLibraryRecord([&]<typename Record>(LibraryDecl decl) {
     EXPECT_TRUE(listed.insert(decl).second);
-    EXPECT_TRUE(
-        std::holds_alternative<StorageElsewhere>(DeclarationOf(decl).holding));
+    const LibraryHolding& holding = DeclarationOf(decl).holding;
+    if (const auto* laid_out = std::get_if<LaidOutByType>(&holding)) {
+      EXPECT_EQ(laid_out->storage.layout.size, sizeof(Record));
+      EXPECT_EQ(laid_out->storage.layout.align, alignof(Record));
+      return;
+    }
+    EXPECT_TRUE(std::holds_alternative<StorageElsewhere>(holding));
   });
   EXPECT_FALSE(listed.empty());
 }

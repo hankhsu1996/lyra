@@ -19,11 +19,11 @@
 
 #include "lyra/base/source_location.hpp"
 #include "lyra/runtime/file.hpp"
+#include "lyra/runtime/mem_file.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/scan.hpp"
 #include "lyra/value/string.hpp"
 #include "lyra/value/tuple.hpp"
-#include "lyra/value/unpacked_array.hpp"
 #include "lyra/value/unpacked_range.hpp"
 
 namespace lyra::runtime {
@@ -235,17 +235,17 @@ class FileTable {
   auto Read(const T& dest, std::int64_t fd) -> BinaryRead<T>;
   auto ReadInto(const value::IntegralView& dest, std::int64_t fd) -> value::Int;
 
-  // LRM 21.3.4.4 $fread into a memory. Iterates `dest` from SV index
-  // `sv_start` toward the highest declared SV index, reading until EOF or
-  // `count` elements. `bounds` states the destination's declared range. The
-  // caller always supplies `sv_start` and `count`, materializing the lowest
-  // declared index and the whole remaining range where the SV call leaves them
-  // out, so one entry serves every form the source may write.
-  template <value::IntegralValue T, std::size_t N>
-  auto ReadMemory(
-      const value::UnpackedArray<T, N>& dest, std::int64_t fd,
-      std::span<const std::int64_t> bounds, std::int64_t sv_start,
-      std::int64_t count) -> BinaryRead<value::UnpackedArray<T, N>>;
+  // LRM 21.3.4.4 $fread into a memory: the words of `width` bits a memory of
+  // the declared range `bounds` takes from `fd`, from the index `sv_start`
+  // toward the highest, until end of file or `count` of them, which the
+  // memory's own code then loads. The caller always supplies `sv_start` and
+  // `count`, materializing the lowest declared index and the whole remaining
+  // range where the SV call leaves them out, so one entry serves every form
+  // the source may write.
+  [[nodiscard]] auto ReadWords(
+      std::int64_t fd, std::span<const std::int64_t> bounds,
+      std::int64_t sv_start, std::int64_t count, std::int64_t width)
+      -> MemoryWords;
 
   // LRM 21.3.5 $fseek. `operation` is 0/1/2 for SEEK_SET / SEEK_CUR /
   // SEEK_END. Returns 0 on success or -1 on error. Per LRM, any pending
@@ -436,27 +436,6 @@ auto FileTable::Read(const T& dest, std::int64_t fd) -> BinaryRead<T> {
   BinaryRead<T> answer(value::Int{}, dest);
   answer.template Component<0>() = ReadInto(
       answer.template Component<1>().AsMutableWords().MutableView(), fd);
-  return answer;
-}
-
-template <value::IntegralValue T, std::size_t N>
-auto FileTable::ReadMemory(
-    const value::UnpackedArray<T, N>& dest, std::int64_t fd,
-    std::span<const std::int64_t> bounds, std::int64_t sv_start,
-    std::int64_t count) -> BinaryRead<value::UnpackedArray<T, N>> {
-  // The memory is read into where the answer keeps it.
-  BinaryRead<value::UnpackedArray<T, N>> answer(value::Int{}, dest);
-  value::UnpackedArray<T, N>& memory = answer.template Component<1>();
-  const value::UnpackedRange declared = value::UnpackedRangesOf(bounds).front();
-  answer.template Component<0>() = value::Int::FromInt(ReadMemoryWords(
-      fd, T::kWidth, declared, sv_start, count,
-      [&memory, &declared](std::int64_t sv_index, std::span<const char> bytes) {
-        ReadBigEndian(
-            memory.RawAt(static_cast<std::size_t>(declared.ToOrdinal(sv_index)))
-                .AsMutableWords()
-                .MutableView(),
-            bytes);
-      }));
   return answer;
 }
 

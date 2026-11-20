@@ -1,7 +1,8 @@
 # What copying, moving, writing over and ending a value of a type does is stated in LIR
 
-Date: 2026-10-30. Status: accepted. Revises who builds the steps of a value's life in
-[a-tuple-is-laid-out-by-its-type](a-tuple-is-laid-out-by-its-type.md),
+Date: 2026-10-30. Status: accepted; the move step and the containers' steps revised by
+[a-move-relocates-its-value](a-move-relocates-its-value.md). Revises who builds the steps of a
+value's life in [a-tuple-is-laid-out-by-its-type](a-tuple-is-laid-out-by-its-type.md),
 [a-structures-operations-are-stated-in-mir](a-structures-operations-are-stated-in-mir.md),
 [a-fixed-array-is-laid-out-by-its-type](a-fixed-array-is-laid-out-by-its-type.md) D9,
 [a-fixed-arrays-operations-are-stated-per-unit](a-fixed-arrays-operations-are-stated-per-unit.md),
@@ -25,21 +26,28 @@ operations ([../architecture/backend_contract.md](../architecture/backend_contra
 ## Decision
 
 **D1. Each step of a value's life is stated once per type, in LIR, by the lowering from MIR.** The
-steps are the ones the runtime's table of a type asks: copy into storage holding nothing, move out
-of a value whose holder still ends it, write over a value already there, and end. One query of LIR
-answers how a step of a type is carried out: the value's bytes, the library's entry for what the
-value is held as, a function the unit states, the definition the value opens with, or, for an owning
-pointer's end, what it points at, ended where the pointer ends and its storage then given back; and
-whether ending a value of a type does anything is LIR's answer, which the code generator reads where
-it lays a value out and states nowhere itself. Whether ending storage of the library's -- a
-variable's cell, a net -- does anything is the library's statement of that storage.
+steps are the ones the runtime's table of a type asks: copy into storage holding nothing, relocate a
+value into such storage, which ends nothing of its source
+([a-move-relocates-its-value](a-move-relocates-its-value.md)), write over a value already there, and
+end. One query of LIR answers how a step of a type is carried out: the value's bytes, the library's
+entry for what the value is held as, a function the unit states, the definition the value opens
+with, or, for an owning pointer's end, what it points at, ended where the pointer ends and its
+storage then given back; and whether ending a value of a type does anything is LIR's answer, which
+the code generator reads where it lays a value out and states nowhere itself. Whether ending storage
+of the library's -- a variable's cell, a net -- does anything is the library's statement of that
+storage.
 
 **D2. Where the answer is a function, the lowering builds it from the type's parts**, as rustc
 builds drop glue and clone shims: a product's components in order, an array's elements in a loop
 counted by a machine integer, the member a tagged union's tag names, and a closure's captures. A
-copy and a move answer the value they build in the body's return place, built part by part there. A
-value laid out by its type has a function for every step it has, its bytes or not, because the
-library's table names one.
+copy and a relocation answer the value they build in the body's return place, built part by part
+there. A value laid out by its type has a function for every step it has, its bytes or not, because
+the library's table names one. A run-time-sized container's steps are not built from parts: its
+elements are no parts a type lays out, so its copy, its write over a value and its end are the
+bodies the lowering into MIR builds for the container type over the library's core, which the query
+names as functions of the unit, a copy answering in its return place. Its relocation is its core's
+bytes, since a relocation ends nothing of its source
+([a-containers-operations-are-built-for-its-type-over-a-core](a-containers-operations-are-built-for-its-type-over-a-core.md)).
 
 **D3. Each class this unit defines that a value is built of has its creations and ends stated the
 same way**: the parts it places begun -- what it extends, then its own members -- and ended, last
@@ -79,7 +87,10 @@ rustc's answer is taken.
 - **The bodies in MIR.** MIR states no copy or end, and the C++ backend gets each from the host
   language, so a MIR body would be a second statement of what the target already supplies, which a
   render either ignores or writes out
-  ([../architecture/backend_contract.md](../architecture/backend_contract.md) invariant 9).
+  ([../architecture/backend_contract.md](../architecture/backend_contract.md) invariant 9). A
+  run-time-sized container is where that reason does not reach: the host language supplies none of
+  its steps, since the library's storage for it states none of the language's operations, so its
+  bodies are MIR (D2).
 - **The bodies in the code generator**, which is what this replaces: a backend deciding what an
   operation does, and the one answer to whether an end does anything asked again at each site.
 - **Each call site naming the function it calls.** A product built, a union built, a value put into
@@ -106,11 +117,9 @@ rustc's answer is taken.
   unused one costs is its compile. LIR's verification admits a value built part by part in a body's
   return place -- the shape a construction takes, not a proof that each part is made once -- and LIR
   states a value ended and built anew where it lies as one statement.
-- A value laid out by its type that holds an owning pointer has no copy, no write over it and no
-  move, only an end: a move leaves what it took for its holder to end, which would give back what
-  the pointer moved into the new value owns. No lowering makes one -- a value too large for a frame
-  is boxed whole, never as a part -- so a step asked of one stops as a compiler error rather than
-  freeing twice. A tagged union's move copies its live member.
+- A value laid out by its type that holds an owning pointer has no copy and no write over it, since
+  the pointer has neither; it relocates as its bytes and has an end. A tagged union relocates its
+  live member.
 - A tuple's default is built as MIR where the unit needs it, as an array element type's is
   ([an-arrays-element-default-is-its-element-types](an-arrays-element-default-is-its-element-types.md)
   D2), so the code generator composes none.

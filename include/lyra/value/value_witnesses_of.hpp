@@ -4,13 +4,13 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <utility>
 
 #include "lyra/base/source_location.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/element_type.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_words.hpp"
+#include "lyra/value/ptr_read.hpp"
 #include "lyra/value/real.hpp"
 #include "lyra/value/unmanaged_ref.hpp"
 #include "lyra/value/value_type.hpp"
@@ -27,16 +27,6 @@ template <typename Host>
 inline constexpr bool kIsBitStreamType<RealValue<Host>> = false;
 template <>
 inline constexpr bool kIsBitStreamType<UnmanagedRef> = false;
-
-// A value of `T` holds parts ordered by position, each a value of a type the
-// value states and handed out where it lies.
-template <typename T>
-concept HoldsParts = requires(const T& c, T& m, std::size_t position) {
-  { c.Count() } -> std::same_as<std::size_t>;
-  { c.ElementType() } -> std::same_as<const ElementType&>;
-  { c.ElementAt(position) } -> std::same_as<const void*>;
-  { m.ElementAt(position) } -> std::same_as<void*>;
-};
 
 // A value of `T` written into a stream of bits, the stream being an integral
 // value (LRM 6.24.3).
@@ -59,23 +49,6 @@ concept ReadsBitStream =
 // and Lyra does not yet answer, which a legal program can ask.
 [[noreturn]] void StreamNotYetSupported();
 
-// The parts of a value of `T`, each answered with what `T` itself does.
-template <HoldsParts T>
-inline constexpr PartsWitnessTable kPartsWitnessTableOf{
-    .count = [](const ValueType&, const void* value) -> std::size_t {
-      return static_cast<const T*>(value)->Count();
-    },
-    .type = [](const ValueType&, const void* value) -> const ValueType& {
-      return static_cast<const T*>(value)->ElementType().Type();
-    },
-    .at = [](const ValueType&, const void* value,
-             std::size_t position) -> const void* {
-      return static_cast<const T*>(value)->ElementAt(position);
-    },
-    .ref_at = [](const ValueType&, void* value, std::size_t position) -> void* {
-      return static_cast<T*>(value)->ElementAt(position);
-    }};
-
 // What `T` answers each operation of its table with, which is what `T` itself
 // does: C++ states a type's operations as its own members, so the table is
 // made from them rather than written. Each reads the value as a `T`, and none
@@ -90,9 +63,9 @@ struct ValueWitnessesOf {
                                   void* out) {
     std::construct_at(static_cast<T*>(out), Of(value));
   };
-  static constexpr auto Move = [](const ValueType&, void* value,
-                                  void* out) noexcept {
-    std::construct_at(static_cast<T*>(out), std::move(*static_cast<T*>(value)));
+  static constexpr auto Relocate = [](const ValueType&, void* value,
+                                      void* out) noexcept {
+    lyra::value::Relocate<T>(value, out);
   };
   static constexpr auto Destroy = [](const ValueType&, void* value) noexcept {
     std::destroy_at(static_cast<T*>(value));
@@ -106,14 +79,6 @@ struct ValueWitnessesOf {
                                           const void* rhs) -> bool {
     return Of(lhs).IsBitIdentical(Of(rhs));
   };
-  static constexpr const PartsWitnessTable* kParts =
-      []() -> const PartsWitnessTable* {
-    if constexpr (HoldsParts<T>) {
-      return &kPartsWitnessTableOf<T>;
-    } else {
-      return nullptr;
-    }
-  }();
 };
 
 // The language's operations on a value of `T`, a kind of value no other type

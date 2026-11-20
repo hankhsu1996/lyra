@@ -18,7 +18,6 @@
 #include "lyra/lir/place_query.hpp"
 #include "lyra/lir/type.hpp"
 #include "lyra/lir/value_step.hpp"
-#include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/value_operation.hpp"
 
 namespace lyra::backend::llvm_backend {
@@ -76,7 +75,7 @@ void TypeOperationCollector::UseFilling(
     lir::TypeId type, const WitnessFilling& filling) {
   std::visit(
       Overloaded{
-          [](lir::ValueStep) {},
+          [](support::ValueStep) {},
           [&](const OwnOperationWitness& own) { Use(type, own.answers); },
           [&](const EitherStreamForm& either) {
             Use(type, either.fixed.answers);
@@ -108,6 +107,12 @@ void TypeOperationCollector::VisitValueTypeUse(lir::TypeId type) {
   } else {
     UseTable(type, ValueWitnesses());
   }
+  if (ImplementsTrait(*unit_, type, support::kIndexedWrite)) {
+    Use(type, support::ElementAccessItem::kElementPlace);
+  }
+  if (ImplementsTrait(*unit_, type, support::kResize)) {
+    Use(type, support::ResizeItem::kResized);
+  }
   const TypeConstantReferences references = ReferencesOf(*unit_, type);
   if (references.element_type.has_value()) {
     VisitElementTypeUse(*references.element_type);
@@ -124,7 +129,7 @@ void TypeOperationCollector::VisitElementTypeUse(lir::TypeId type) {
       !element_types_seen_.insert(type).second) {
     return;
   }
-  Use(type, support::BuiltinFn::kDeclaredDefault);
+  Use(type, support::DefaultItem::kDeclaredDefault);
   VisitValueTypeUse(type);
 }
 
@@ -156,7 +161,7 @@ void TypeOperationCollector::VisitNetWitnessesUse(lir::TypeId type) {
 
 void TypeOperationCollector::VisitTakePositionsUse(lir::TypeId type) {
   if (lir::RecordOf(unit_->types.Get(type)) == nullptr) {
-    Use(type, support::BuiltinFn::kTakePositions);
+    Use(type, support::PositionsItem::kTakePositions);
   }
 }
 
@@ -184,12 +189,7 @@ void TypeOperationCollector::VisitTypeArg(const TypeArg& told) {
           [&](const TypeConstantArg& of) { VisitValueTypeUse(of.type); },
           [](const TypeExtentArg&) {},
           [&](const ElementTypeArg& of) { VisitElementTypeUse(of.type); },
-          [&](const QueueTypeArg& of) {
-            VisitElementTypeUse(
-                *unit_->types.Get(of.type).ContainerElementType());
-          },
           [&](const TakePositionsArg& of) { VisitTakePositionsUse(of.type); },
-          [](const IndexOrderArg&) {},
           [&](const OperationsArg& of) { VisitOperationsUse(of.type); }},
       told);
 }
@@ -259,7 +259,13 @@ void TypeOperationCollector::VisitCall(
             VisitAbi(lowering.FnAbiOf(call, result_type));
           },
           [](const ForwardedOperand&) {}, [](const CellLoad&) {},
-          [](const CellStore&) {}},
+          [](const CellStore&) {}, [](const GenerationElementAddress&) {},
+          [](const NoElementAnswer&) {},
+          // The record a core is told is of its element type, which states
+          // what an element of that type is made with.
+          [&](const TypeRecordAddress& record) {
+            VisitElementTypeUse(record.type);
+          }},
       *form);
 }
 
@@ -288,7 +294,7 @@ void TypeOperationCollector::VisitRvalue(
             std::visit(
                 Overloaded{
                     [&](const EntryCall& entry) { VisitAbi(entry.abi); },
-                    [](const MachineOperator&) {},
+                    [](const MachineOperator&) {}, [](const AddressOffset&) {},
                     [](const IdentityOperator&) {}, [](const RealOperator&) {},
                     [](const IntegralOperator&) {}},
                 *form);

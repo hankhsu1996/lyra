@@ -7,6 +7,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -23,18 +24,22 @@
 #include "lyra/lowering/hir_to_mir/call_operands.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
+#include "lyra/lowering/hir_to_mir/expression/calls.hpp"
 #include "lyra/lowering/hir_to_mir/expression/selects.hpp"
 #include "lyra/lowering/hir_to_mir/expression/system/mem_file.hpp"
 #include "lyra/lowering/hir_to_mir/lvalue.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
+#include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type.hpp"
+#include "lyra/mir/type_interface.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/language_trait.hpp"
 #include "lyra/support/library_decl.hpp"
 #include "lyra/support/system_subroutine.hpp"
 
@@ -220,12 +225,139 @@ auto LowerFileGetsCall(
       *std::move(line_or), line_type);
 }
 
+// A memory `$fread` loads (LRM 21.3.4.4): its own element, which is one word,
+// and where its type declares one, the range its indices run over. A
+// fixed-size array is addressed by its indices; a dynamic array and a queue
+// from 0 across the elements they hold, as a memory task addresses them (LRM
+// 21.4).
+struct FileReadMemory {
+  hir::TypeId element;
+  std::optional<hir::UnpackedRange> declared;
+};
+
+// $fread into a memory -- LRM 21.3.4.4: the words the file holds next, from
+// the start the source named or the lowest index, as many as it named or the
+// whole memory, which the memory's own code then loads as a memory task's.
+// The memory is read and then written: a word the file does not reach keeps
+// what it held, and the memory takes the whole of what the load made through
+// its own write. A slice is addressed by the indices it holds of the array it
+// is taken from. The call answers how many bytes it read.
+auto LowerFileReadMemory(
+    ProcessLowerer& process, BlockBuilder& steps, const hir::CallExpr& call,
+    const hir::Expr& dest_hir, const FileReadMemory& memory,
+    mir::TypeId dest_type) -> diag::Result<mir::Expr> {
+  UnitLowerer& unit_lowerer = process.Owner();
+  mir::CompilationUnit& unit = unit_lowerer.Unit();
+  const WalkFrame& step_frame = steps.Frame();
+  mir::Builder body = steps.Body();
+  auto named = NameMemory(process, step_frame, dest_hir);
+  if (!named) return std::unexpected(std::move(named.error()));
+  auto changed = ReadThenWrite(
+      unit, step_frame,
+      MemoryWriteTarget(unit_lowerer, step_frame, named->path, dest_hir));
+  if (!changed) return std::unexpected(std::move(changed.error()));
+
+  const std::vector<hir::ExprId> head = RequiredLeadingOperands(call, 2);
+  auto fd = BuildMachineIntOperand(process, step_frame, head[1]);
+  if (!fd) return std::unexpected(std::move(fd.error()));
+  std::optional<mir::ExprId> start;
+  if (const std::optional<hir::ExprId> given = OptionalOperand(call, 2)) {
+    auto start_or = BuildMachineIntOperand(process, step_frame, *given);
+    if (!start_or) return std::unexpected(std::move(start_or.error()));
+    start = *start_or;
+  }
+  std::optional<mir::ExprId> count;
+  if (const std::optional<hir::ExprId> given = OptionalOperand(call, 3)) {
+    auto count_or = BuildMachineIntOperand(process, step_frame, *given);
+    if (!count_or) return std::unexpected(std::move(count_or.error()));
+    count = *count_or;
+  }
+  // The memory is read after every other operand, as the packed form reads
+  // its destination.
+  const mir::LocalId loaded = DeclareLocal(step_frame, changed->incoming);
+  // The start the source left out is the lowest index, and the count it left
+  // out is the whole memory -- which the read then clamps to what stands
+  // between the start and the end, so one request serves every form.
+  const auto [ranges, lowest, whole] =
+      [&]() -> std::tuple<mir::ExprId, mir::ExprId, mir::ExprId> {
+    if (memory.declared.has_value()) {
+      const MemoryIndices indices = MemoryIndicesOf(
+          unit, step_frame,
+          std::span<const hir::UnpackedRange>{&*memory.declared, 1},
+          named->slice);
+      return {
+          indices.ranges, indices.lowest,
+          mir::BuildMachineCount(unit, body, memory.declared->ElementCount())};
+    }
+    const MemoryIndices from_zero = MemoryIndicesFromZero(unit, body);
+    return {
+        from_zero.ranges, from_zero.lowest,
+        BuildToInt64Call(
+            unit, body,
+            body.Add(BuildBuiltinMethodCall(
+                unit, body, support::BuiltinFn::kSize,
+                body.LocalPlace(loaded, dest_type), {},
+                unit.builtins.int_type)))};
+  }();
+  const mir::TypeId word_type = unit_lowerer.TranslateType(memory.element);
+  const mir::TypeId words_type =
+      mir::LibraryTypeOf(unit.types, support::LibraryDecl::kMemoryWords);
+  const mir::LocalId words = DeclareLocal(
+      step_frame,
+      body.Add(BuildFileIoCall(
+          process, step_frame, support::BuiltinFn::kFileReadWords,
+          {*fd, ranges, start.value_or(lowest), count.value_or(whole),
+           mir::BuildMachineIntLiteral(
+               unit, body,
+               static_cast<std::int64_t>(
+                   unit.types.Get(word_type).Integral().bit_width))},
+          words_type)));
+
+  body.AppendStmt(
+      mir::ExprStmt{
+          .expr = body.Add(BuildBuiltinMethodCall(
+              unit, body, support::BuiltinFn::kLoadWords,
+              body.LocalPlace(loaded, dest_type),
+              {body.LocalPlace(words, words_type)}, unit.builtins.void_type))});
+  auto stored = AppendStores(
+      unit_lowerer, step_frame, changed->lvalue,
+      body.ReadLocal(loaded, dest_type));
+  if (!stored) return std::unexpected(std::move(stored.error()));
+  const mir::ExprId bytes = body.Add(BuildBuiltinMethodCall(
+      unit, body, support::BuiltinFn::kMemoryWordsBytesRead,
+      body.LocalPlace(words, words_type), {}, unit.builtins.machine_int64));
+  return steps.Build(body.Add(
+      mir::MakeBuiltinCall(
+          unit, body.Body(), support::BuiltinFn::kIntegralFromInt, std::nullopt,
+          {bytes}, unit.builtins.integer)));
+}
+
+// The memory a `$fread` destination of `type` is, which implements a memory's
+// side of the task; nothing where it is an associative array, whose keyed load
+// is not yet carried out from a file's bytes.
+auto FileReadMemoryOf(const hir::Type& type) -> std::optional<FileReadMemory> {
+  if (const auto* fixed = type.As<hir::UnpackedArrayType>()) {
+    return FileReadMemory{
+        .element = fixed->element_type, .declared = fixed->dim};
+  }
+  if (const auto* dynamic = type.As<hir::DynamicArrayType>()) {
+    return FileReadMemory{
+        .element = dynamic->element_type, .declared = std::nullopt};
+  }
+  if (const auto* queue = type.As<hir::QueueType>()) {
+    return FileReadMemory{
+        .element = queue->element_type, .declared = std::nullopt};
+  }
+  return std::nullopt;
+}
+
 // $fread -- LRM 21.3.4.4. Which destination the source named says which of the
-// two requests it is: a packed variable takes the bytes whole, a memory takes
-// them word by word from an address it is told, and the clause gives the two
-// different addressing. The destination crosses in as well as back, because
-// its own shape decides how many bytes a word takes and what the file does not
-// reach keeps what it held.
+// two requests it is: a packed variable takes the bytes whole, a memory --
+// whatever implements a memory's side of a memory task -- takes them word by
+// word from an address it is told, and the clause gives the two different
+// addressing. The destination crosses in as well as back, because its own
+// shape decides how many bytes a word takes and what the file does not reach
+// keeps what it held (LRM 13.5).
 auto LowerFileReadCall(
     ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call)
     -> diag::Result<mir::Expr> {
@@ -233,11 +365,12 @@ auto LowerFileReadCall(
   auto& unit = unit_lowerer.Unit();
   const auto& hir_proc = process.HirBody();
   const std::vector<hir::ExprId> head = RequiredLeadingOperands(call, 2);
-  const auto& dest_hir_ty =
-      unit_lowerer.Hir().types.Get(hir_proc.exprs.Get(head[0]).type);
-  const auto* memory = dest_hir_ty.As<hir::UnpackedArrayType>();
+  const hir::Expr& dest_hir = hir_proc.exprs.Get(head[0]);
+  const mir::TypeId dest_type = unit_lowerer.TranslateType(dest_hir.type);
+  const bool is_memory =
+      mir::ImplementsLanguageTrait(unit, dest_type, support::kMemoryWords);
 
-  if (memory == nullptr) {
+  if (!is_memory) {
     // LRM 21.3.4.4 says start and count "are ignored if $fread is loading an
     // integral variable"; refusing rather than dropping them surfaces the
     // mistake instead of running a call the source did not write.
@@ -249,77 +382,42 @@ auto LowerFileReadCall(
               "variable is not yet supported")
               .WithNote("leave them out, since the standard ignores them"));
     }
-  } else if (!unit_lowerer.Hir().types.Get(memory->element_type).IsIntegral()) {
-    // LRM 21.3.4.4.
-    return diag::Fail(
-        diag::DiagCode::kUnsupportedSubroutineArgument,
-        "'$fread' into a memory whose words are not integral is not yet "
-        "supported");
   }
 
   BlockBuilder steps(frame);
   const WalkFrame& step_frame = steps.Frame();
   mir::Builder body = steps.Body();
 
-  // The destination is an `inout`: its own shape decides how many bytes a word
-  // takes and what the file does not reach keeps what it held, so its value
-  // crosses in as well as riding the completion back (LRM 13.5, 21.3.4.4).
-  // A memory is addressed by its indices, and a slice by the indices it holds
-  // of the array it is taken from (LRM 21.3.4.4).
-  const hir::Expr& dest_hir = hir_proc.exprs.Get(head[0]);
-  const mir::TypeId dest_type = unit_lowerer.TranslateType(dest_hir.type);
-  std::optional<NamedMemory> named;
-  if (memory != nullptr) {
-    auto named_or = NameMemory(process, step_frame, dest_hir);
-    if (!named_or) return std::unexpected(std::move(named_or.error()));
-    named = *std::move(named_or);
+  if (is_memory) {
+    const std::optional<FileReadMemory> memory =
+        FileReadMemoryOf(unit_lowerer.Hir().types.Get(dest_hir.type));
+    if (!memory.has_value()) {
+      return diag::Fail(
+          diag::DiagCode::kUnsupportedSubroutineArgument,
+          "'$fread' into an associative array is not yet supported");
+    }
+    // LRM 21.3.4.4.
+    if (!unit_lowerer.Hir().types.Get(memory->element).IsIntegral()) {
+      return diag::Fail(
+          diag::DiagCode::kUnsupportedSubroutineArgument,
+          "'$fread' into a memory whose words are not integral is not yet "
+          "supported");
+    }
+    return LowerFileReadMemory(
+        process, steps, call, dest_hir, *memory, dest_type);
   }
-  auto dest_or = named.has_value()
-                     ? diag::Result<Lvalue>(MemoryWriteTarget(
-                           unit_lowerer, step_frame, named->path, dest_hir))
-                     : LowerLvalue(process, dest_hir, step_frame);
+
+  auto dest_or = LowerLvalue(process, dest_hir, step_frame);
   if (!dest_or) return std::unexpected(std::move(dest_or.error()));
   auto dest =
       ReadThenWrite(unit_lowerer.Unit(), step_frame, *std::move(dest_or));
   if (!dest) return std::unexpected(std::move(dest.error()));
+  auto fd_or = BuildMachineIntOperand(process, step_frame, head[1]);
+  if (!fd_or) return std::unexpected(std::move(fd_or.error()));
   const CompletionLayout layout = BuildCompletionLayout(
       {CalleeFormal{
           .direction = hir::ParamDirection::kInOut, .type = dest_type}},
       unit.builtins.int_type);
-  std::vector<mir::ExprId> operands{dest->incoming};
-
-  auto fd_or = BuildMachineIntOperand(process, step_frame, head[1]);
-  if (!fd_or) return std::unexpected(std::move(fd_or.error()));
-  operands.push_back(*fd_or);
-
-  if (named.has_value()) {
-    // The destination's indices, which are what say where a source address
-    // lands in it.
-    const MemoryIndices indices = MemoryIndicesOf(
-        unit, step_frame, std::span<const hir::UnpackedRange>{&memory->dim, 1},
-        named->slice);
-    operands.push_back(indices.ranges);
-    // The start the source left out is the lowest index, and the count it
-    // left out is the whole memory -- which the entry then clamps to what
-    // stands between the start and the end. Materializing both keeps one entry
-    // for every form the source may write.
-    if (const std::optional<hir::ExprId> start = OptionalOperand(call, 2)) {
-      auto start_or = BuildMachineIntOperand(process, step_frame, *start);
-      if (!start_or) return std::unexpected(std::move(start_or.error()));
-      operands.push_back(*start_or);
-    } else {
-      operands.push_back(indices.lowest);
-    }
-    if (const std::optional<hir::ExprId> count = OptionalOperand(call, 3)) {
-      auto count_or = BuildMachineIntOperand(process, step_frame, *count);
-      if (!count_or) return std::unexpected(std::move(count_or.error()));
-      operands.push_back(*count_or);
-    } else {
-      operands.push_back(
-          mir::BuildMachineCount(unit, body, memory->dim.ElementCount()));
-    }
-  }
-
   const mir::TypeId payload = CompletionPayloadType(unit, layout.components);
   const std::array writebacks{CompletionWriteback{
       .target = std::move(dest->lvalue),
@@ -328,10 +426,8 @@ auto LowerFileReadCall(
   auto completion = BindCompletion(
       unit_lowerer, step_frame,
       BuildFileIoCall(
-          process, step_frame,
-          memory != nullptr ? support::BuiltinFn::kFileReadMemory
-                            : support::BuiltinFn::kFileRead,
-          std::move(operands), payload),
+          process, step_frame, support::BuiltinFn::kFileRead,
+          {dest->incoming, *fd_or}, payload),
       payload, writebacks);
   if (!completion) return std::unexpected(std::move(completion.error()));
   return steps.Build(ReadCount(unit, body, *completion, layout));

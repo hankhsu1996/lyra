@@ -192,14 +192,20 @@ struct ExternalBringUpTarget {
   auto operator==(const ExternalBringUpTarget&) const -> bool = default;
 };
 
-// An operation of a type no declaration states it for, named by the type and
-// the operation: an operation of a fixed-size unpacked array (LRM 7.4.2) or a
-// tuple, an array's passage through the form of it with no queue bounded (LRM
-// 7.6), or a data type's default (LRM 7.4.5). MIR holds no body for it: each
-// unit using one has it built once something below MIR finds the use.
+// An operation of a type no declaration states it for, named by the type, the
+// operation and the types it is instantiated at: an operation of a fixed-size
+// unpacked array (LRM 7.4.2), a tuple or a run-time-sized container, an
+// array's passage through the form of it with no queue bounded (LRM 7.6), or a
+// data type's default (LRM 7.4.5). The arguments are what the body takes or
+// answers that the type does not fix -- the array a container is built out
+// of, the array a run of its elements is read as -- so each instantiation is a
+// body of its own, as rustc's `Instance` is a definition at its generic
+// arguments. MIR holds no body for it: each unit using one has it built once
+// something below MIR finds the use.
 struct TypeOperationTarget {
   TypeId type;
   support::ValueOperation answers;
+  std::vector<TypeId> arguments = {};
 
   auto operator==(const TypeOperationTarget&) const -> bool = default;
 };
@@ -341,8 +347,9 @@ struct CallExpr {
   std::vector<ExprId> arguments;
 };
 
-// Where a placement new-expression's storage comes from: the allocation
-// function, a library entry, and the arguments handed to it.
+// Where a placement new-expression's storage comes from: the library entry it
+// calls, an allocation function or the reserved placement form, and the
+// arguments handed to it.
 struct PlacementAllocation {
   support::BuiltinFn allocate;
   std::vector<ExprId> arguments;
@@ -361,11 +368,13 @@ struct PlacementAllocation {
 // `placement`, where present, is where the storage comes from instead of the
 // heap: a placement new-expression, `new (args) T(init)`, which names the
 // allocation function it calls and the arguments handed to it, as clang's
-// `CXXNewExpr` names its `operator new` and its placement arguments. The
-// function is asked for storage of the size and alignment of a value of the
-// pointee type, which the backend supplies, and owns that storage, so the
-// expression answers a pointer owning nothing, and an initializer that raises
-// gives nothing back (no deallocation function matches, as in C++).
+// `CXXNewExpr` names its `operator new` and its placement arguments. An
+// allocation function is asked for storage of the size and alignment of a
+// value of the pointee type, which the backend supplies; the reserved
+// placement form is asked for neither and answers where its one argument
+// points. The expression owns neither, so it answers a pointer owning nothing,
+// and an initializer that raises gives nothing back (no deallocation function
+// matches, as in C++).
 //
 // An object created with no `initializer` exists whole and of its class with
 // none of its constructors run, as a JVM `new` answers one before its
@@ -755,6 +764,26 @@ struct Expr {
 // write yields.
 [[nodiscard]] auto MakeAssignExpr(
     const BuiltinMirTypes& builtins, ExprId target, ExprId value) -> Expr;
+
+struct Block;
+struct CompilationUnit;
+
+// The operation a run of elements written within a write in progress, the
+// call `call` of `block` names, is carried out by: the run write of the array
+// type the write designates -- a queue's own, or any other array's at the type
+// of the value written. Either way the call's first operand is the position
+// the run starts at, by reference.
+[[nodiscard]] auto DesignatedRunWrite(
+    const CompilationUnit& unit, const Block& block, const CallExpr& call)
+    -> TypeOperationTarget;
+
+// How many elements the run write `run` writes, where the type of what it is
+// handed fixes them: a fixed-size run's count (LRM 7.4.6). A queue's slice
+// lies between two positions the running program computes (LRM 7.10.1), so
+// its type fixes none.
+[[nodiscard]] auto RunWriteElementCount(
+    const CompilationUnit& unit, const TypeOperationTarget& run)
+    -> std::optional<std::uint64_t>;
 
 // The object the call dispatches on, absent for a call that dispatches on
 // nothing. The one place the question is answered, so no consumer works out

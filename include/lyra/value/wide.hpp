@@ -174,7 +174,7 @@ class WideVector {
     std::memcpy(out, Bytes(), ByteSize());
     return out;
   }
-  auto MoveInto(void* out) && -> void* {
+  auto RelocateInto(void* out) && -> void* {
     return CopyInto(out);
   }
 

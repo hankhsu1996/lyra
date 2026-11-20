@@ -330,6 +330,11 @@ auto Type::IsQueue() const -> bool {
   return library != nullptr && library->FindBound().has_value();
 }
 
+auto Type::IsLaidOutContainer() const -> bool {
+  const auto* library = As<LibraryType>();
+  return library != nullptr && support::IsLaidOutByItsType(library->decl);
+}
+
 auto Type::IndexType() const -> std::optional<TypeId> {
   const auto* library = As<LibraryType>();
   if (library == nullptr) {
@@ -433,10 +438,14 @@ auto Type::HeldAs() const -> std::optional<Holding> {
             throw InternalError("lir: unknown pointer ownership");
           },
           // A type the library declares is held as its declaration says: as
-          // an object of the library's, or not at all where the run keeps it
-          // or another object holds it, which is reached where it lies and so
-          // is not this holder's to end.
+          // the bytes its type lays out, as an object of the library's, or
+          // not at all where the run keeps it or another object holds it,
+          // which is reached where it lies and so is not this holder's to
+          // end.
           [](const LibraryType& library) -> Held {
+            if (support::IsLaidOutByItsType(library.decl)) {
+              return LaidOutByType{};
+            }
             return support::ObjectOf(library.decl);
           },
 
@@ -504,6 +513,11 @@ auto Type::RuntimeClassOf() const -> std::optional<support::LibraryDecl> {
     return std::nullopt;
   }
   return library->decl;
+}
+
+auto Type::IsDeclaredBy(support::LibraryDecl decl) const -> bool {
+  const auto* library = As<LibraryType>();
+  return library != nullptr && library->decl == decl;
 }
 
 auto Type::MachineIntegerSignedness() const -> std::optional<Signedness> {

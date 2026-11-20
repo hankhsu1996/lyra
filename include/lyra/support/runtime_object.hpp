@@ -105,9 +105,6 @@ constexpr auto StatedStorageOf(ValueDomain domain)
     case ValueDomain::kAny:
     case ValueDomain::kString:
     case ValueDomain::kBitVec:
-    case ValueDomain::kDynArray:
-    case ValueDomain::kQueue:
-    case ValueDomain::kAssocArray:
       return DeclarationRealizedIn(domain).and_then(ObjectStorageOf);
     case ValueDomain::kReal:
     case ValueDomain::kShortReal:

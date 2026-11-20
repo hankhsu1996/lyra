@@ -162,8 +162,6 @@ extern template ClosureValue::ClosureValue(
     const ClosureDefinition<support::ConditionSignature>* definition);
 extern template ClosureValue::ClosureValue(
     const ClosureDefinition<support::WatchSignature>* definition);
-extern template ClosureValue::ClosureValue(
-    const ClosureDefinition<support::OrderSignature>* definition);
 extern template class OwnedClosure<support::EffectSignature>;
 extern template class OwnedClosure<support::ConditionSignature>;
 extern template class OwnedClosure<support::WatchSignature>;

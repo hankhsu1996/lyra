@@ -485,6 +485,7 @@ cc_library(
     deps = [
         ":diag",
         ":mir",
+        ":stable_hash",
         ":support",
         ":value",
     ],

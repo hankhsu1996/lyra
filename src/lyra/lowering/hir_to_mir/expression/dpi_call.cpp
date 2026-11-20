@@ -31,11 +31,13 @@
 #include "lyra/lowering/hir_to_mir/closure_builder.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
+#include "lyra/lowering/hir_to_mir/expression/calls.hpp"
 #include "lyra/lowering/hir_to_mir/expression/expr_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/lvalue.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
+#include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/subroutine_call.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
@@ -48,10 +50,12 @@
 #include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
+#include "lyra/mir/type_interface.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/callable_bounds.hpp"
 #include "lyra/support/dpi_abi.hpp"
 #include "lyra/support/float_width.hpp"
+#include "lyra/support/language_trait.hpp"
 #include "lyra/support/library_decl.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -348,24 +352,29 @@ auto BuildBufferDataCall(
 // from a value.
 //
 // Walking to it is also where an actual this boundary cannot image is caught.
-// Annex H.7.6 reports each unsized dimension with the actual's own range, and
-// the image is built before the call from ranges this lowering states, so a
-// layer whose extent the program only fixes while it runs -- a dynamic array
-// or a queue (LRM 7.5, 7.10) -- has no range to state. The clause admits such
-// an actual, so it is refused by name rather than being a program the standard
-// forbids. A layer that is neither is an actual the front end should have
-// rejected against the formal.
+// Annex H.7.6 reports each unsized dimension with the actual's own range. The
+// outermost layer may be one whose extent the program fixes while it runs --
+// a dynamic array or a queue (LRM 7.5, 7.10), admitted as for a native
+// subroutine (LRM 35.6.1.1, 7.7) -- whose range the call states from the
+// actual's size; a layer of one below the outermost would give each element a
+// range of its own, which no image holds, so it is refused by name. A layer
+// that is neither is an actual the front end should have rejected against the
+// formal.
 auto OpenArrayElementType(
     const mir::CompilationUnit& unit, const support::OpenArrayCarrier& open,
     mir::TypeId actual_type) -> diag::Result<mir::TypeId> {
   mir::TypeId cursor = actual_type;
   for (std::size_t d = 0; d < open.unpacked.size(); ++d) {
     const mir::Type& layer = unit.types.Get(cursor);
+    if (layer.IsLibrarySequence() && d == 0) {
+      cursor = layer.ContainerElementType().value();
+      continue;
+    }
     if (layer.IsLibrarySequence()) {
       return diag::Fail(
           diag::DiagCode::kUnsupportedDpi,
-          "a dynamic array or a queue passed to an open array formal of a "
-          "DPI-C import is not yet supported");
+          "a dynamic array or a queue below the outermost dimension of an "
+          "open array formal of a DPI-C import is not yet supported");
     }
     const auto* fixed = layer.As<mir::UnpackedArrayType>();
     if (fixed == nullptr) {
@@ -380,30 +389,55 @@ auto OpenArrayElementType(
 
 // The declared coordinate system each unpacked dimension of an open array
 // reports to the foreign side (LRM Annex H.7.6): the range the declaration
-// fixes, or the actual's own where the declaration left the dimension unsized.
-// The actual's ranges come from its static type, the only place an unsized
-// extent is fixed (LRM 35.6.1.1). It is stated at the call rather than taken
-// from the actual's type, because a declaration that sizes a dimension
-// overrides what the actual declares.
+// fixes, or the actual's own where the declaration left the dimension unsized
+// -- the range its static type declares, and for a dynamic array or a queue
+// `[0:size-1]` at the call (LRM 20.7), where the actual `actual` lies. It is
+// stated at the call rather than taken from the actual's type, because a
+// declaration that sizes a dimension overrides what the actual declares.
 auto BuildOpenArrayBounds(
     mir::CompilationUnit& unit, mir::Builder block,
     const support::OpenArrayCarrier& open, const hir::TypePool& hir_types,
-    hir::TypeId actual_type) -> mir::ExprId {
-  std::vector<support::DpiRange> ranges;
-  ranges.reserve(open.unpacked.size());
+    hir::TypeId actual_type, mir::ExprId actual) -> mir::ExprId {
+  std::vector<mir::ExprId> bounds;
   hir::TypeId cursor = actual_type;
+  const auto bound = [&](std::int64_t value) {
+    return mir::BuildMachineIntLiteral(unit, block, value);
+  };
   for (const std::optional<support::DpiRange>& declared : open.unpacked) {
-    const auto* layer = hir_types.Get(cursor).As<hir::UnpackedArrayType>();
-    if (layer == nullptr) {
+    const hir::Type& layer = hir_types.Get(cursor);
+    if (const auto* fixed = layer.As<hir::UnpackedArrayType>()) {
+      const support::DpiRange range = declared.value_or(
+          support::DpiRange{
+              .left = fixed->dim.left, .right = fixed->dim.right});
+      bounds.push_back(bound(range.left));
+      bounds.push_back(bound(range.right));
+      cursor = fixed->element_type;
+      continue;
+    }
+    const auto* dynamic = layer.As<hir::DynamicArrayType>();
+    const auto* queue = layer.As<hir::QueueType>();
+    if (dynamic == nullptr && queue == nullptr) {
       throw InternalError(
           "BuildOpenArrayBounds: the actual of an open-array formal has fewer "
           "unpacked dimensions than the declaration");
     }
-    ranges.push_back(declared.value_or(
-        support::DpiRange{.left = layer->dim.left, .right = layer->dim.right}));
-    cursor = layer->element_type;
+    const mir::ExprId size = BuildToInt64Call(
+        unit, block,
+        block.Add(BuildBuiltinMethodCall(
+            unit, block, support::BuiltinFn::kSize, actual, {},
+            unit.builtins.int_type)));
+    bounds.push_back(bound(0));
+    bounds.push_back(
+        mir::BuildMachineIntBinary(
+            unit, block, mir::BinaryOp::kSub, size, bound(1)));
+    cursor = dynamic != nullptr ? dynamic->element_type : queue->element_type;
   }
-  return mir::BuildDeclaredRanges(unit, block, ranges);
+  const mir::TypeId type = mir::MachineArrayOf(
+      unit.types, unit.builtins.machine_int64, bounds.size());
+  return block.Add(
+      mir::Expr{
+          .data = mir::CompositeExpr{.parts = std::move(bounds)},
+          .type = type});
 }
 
 // The initializer of one argument's boundary object, seeded from the actual's
@@ -413,13 +447,15 @@ auto BuildOpenArrayBounds(
 // each dimension and whether an element's canonical form is how an individual
 // value of its type crosses (LRM Annex H.12.4).
 auto BuildBoundaryInit(
-    UnitLowerer& unit_lowerer, mir::Builder block,
+    UnitLowerer& unit_lowerer, const WalkFrame& frame,
     const support::DpiCarrier& carrier, mir::ExprId seed_sv,
     mir::TypeId actual_type, hir::TypeId actual_hir_type,
     mir::TypeId carrier_type) -> diag::Result<mir::ExprId> {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
-  const auto construct = [&](std::vector<mir::ExprId> arguments) {
-    return block.Add(
+  mir::Builder block = frame.Builder();
+  const auto construct = [&](mir::Builder at,
+                             std::vector<mir::ExprId> arguments) {
+    return at.Add(
         mir::Expr{
             .data =
                 mir::CallExpr{
@@ -435,7 +471,7 @@ auto BuildBoundaryInit(
                 ForeignHold::kForTheCall);
           },
           [&](const support::VectorCarrier&) -> diag::Result<mir::ExprId> {
-            return construct({seed_sv});
+            return construct(block, {seed_sv});
           },
           [&](const support::OpenArrayCarrier& open)
               -> diag::Result<mir::ExprId> {
@@ -450,20 +486,53 @@ auto BuildBoundaryInit(
                   "report this as a bug");
             }
             // The image holds each element in its canonical form (LRM Annex
-            // H.7.7), which the element's own type fixes, and the actual's
-            // type states that type under its unpacked layers. What the
-            // formal's declaration adds to it is the operands beside the seed.
-            const mir::ExprId bounds = BuildOpenArrayBounds(
-                unit, block, open, unit_lowerer.Hir().types, actual_hir_type);
-            return construct(
-                {seed_sv, bounds,
-                 block.Add(
-                     mir::Expr{
-                         .data =
-                             mir::MachineBoolLiteral{
-                                 .value =
-                                     open.element_crosses_as_canonical_vector},
-                         .type = unit.builtins.machine_bool})});
+            // H.7.7), which the element's own type fixes: its width and its
+            // state domain. It is built clear and then filled: an array fills
+            // it by its own code, element by element in the image's order
+            // (Annex H.7.3), and a single packed value is its one element.
+            const mir::IntegralType& element =
+                unit.types.Get(*element_or).Integral();
+            const mir::LocalId actual = DeclareLocal(frame, seed_sv);
+            BlockBuilder steps(frame);
+            mir::Builder at = steps.Body();
+            const mir::ExprId actual_place = at.LocalPlace(actual, actual_type);
+            const mir::LocalId image = DeclareLocal(
+                steps.Frame(),
+                construct(
+                    at,
+                    {BuildOpenArrayBounds(
+                         unit, at, open, unit_lowerer.Hir().types,
+                         actual_hir_type, actual_place),
+                     mir::BuildMachineIntLiteral(
+                         unit, at,
+                         static_cast<std::int64_t>(element.bit_width)),
+                     BuildMachineBool(
+                         unit, at,
+                         element.state_kind ==
+                             mir::IntegralStateKind::kFourState),
+                     BuildMachineBool(
+                         unit, at, open.element_crosses_as_canonical_vector)}));
+            const mir::ExprId object = at.LocalPlace(image, carrier_type);
+            const mir::Expr filled =
+                mir::ImplementsLanguageTrait(
+                    unit, actual_type, support::kOpenArrayImage)
+                    ? BuildBuiltinMethodCall(
+                          unit, at, support::BuiltinFn::kToImage, actual_place,
+                          {object}, unit.builtins.void_type)
+                    : mir::Expr{
+                          .data =
+                              mir::CallExpr{
+                                  .callee =
+                                      mir::Direct{
+                                          .target = support::BuiltinFn::
+                                              kDpiOpenArrayPut,
+                                          .receiver = object},
+                                  .arguments =
+                                      {mir::BuildMachineIntLiteral(unit, at, 0),
+                                       at.ReadLocal(actual, actual_type)}},
+                          .type = unit.builtins.void_type};
+            at.AppendStmt(mir::ExprStmt{.expr = at.Add(filled)});
+            return block.Add(steps.Build(at.ReadLocal(image, carrier_type)));
           }},
       carrier);
 }
@@ -514,18 +583,19 @@ auto BuildBoundaryArgument(
 // whatever the carrier.
 //
 // What no carrier carries is the destination's declared representation, so
-// each read is told that type: a vector's destination is packed, and an open
-// array's is a nest of fixed-size arrays whose counts and leaves its type
-// states.
+// each read is told that type: a vector's destination is packed, a single
+// packed value read out of an open array's image is its one element, and an
+// array is read back by its own type's code.
 auto BuildBoundaryReadback(
     UnitLowerer& unit_lowerer, WalkFrame frame,
     const support::DpiCarrier& carrier, mir::ExprId object, mir::TypeId sv_type)
     -> mir::ExprId {
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   mir::Builder block = frame.Builder();
-  // A canonical chunk buffer is read by an entry over two operands, while an
-  // open array's image is read by an entry the image itself answers, so each
-  // arm states its own callee and the shared step is only the interning.
+  // A canonical chunk buffer is read by an entry over two operands, while a
+  // packed value is read out of an open array's image by an entry the image
+  // answers, so each arm states its own callee and the shared step is only the
+  // interning.
   const auto read = [&](mir::Direct callee,
                         std::vector<mir::ExprId> arguments) {
     return block.Add(
@@ -550,12 +620,28 @@ auto BuildBoundaryReadback(
                 {BuildBufferDataCall(unit, block, object, vector)});
           },
           [&](const support::OpenArrayCarrier&) {
+            // An array is read back by its own code into a value of its type;
+            // any other actual is a single packed value, the image's one
+            // element.
+            if (mir::ImplementsLanguageTrait(
+                    unit, sv_type, support::kOpenArrayImage)) {
+              const mir::LocalId read_back = DeclareLocal(
+                  frame,
+                  block.Add(BuildDefaultValueExpr(unit, block, sv_type)));
+              block.AppendStmt(
+                  mir::ExprStmt{
+                      .expr = block.Add(BuildBuiltinMethodCall(
+                          unit, block, support::BuiltinFn::kFromImage,
+                          block.LocalPlace(read_back, sv_type), {object},
+                          unit.builtins.void_type))});
+              return block.ReadLocal(read_back, sv_type);
+            }
             return read(
                 mir::Direct{
-                    .target = support::BuiltinFn::kDpiOpenArrayValue,
+                    .target = support::BuiltinFn::kDpiOpenArrayWord,
                     .receiver = object,
                     .type_arguments = {sv_type}},
-                {});
+                {mir::BuildMachineIntLiteral(unit, block, 0)});
           }},
       carrier);
 }
@@ -766,11 +852,14 @@ auto PopulateForeignImportBoundary(
     // initial carrier value is implementation-defined, so seeding from the
     // actual is a legal, uniform choice; an input that crosses this way seeds
     // the same way. The foreign side reads and writes the object, and the
-    // read-back below lands the result in the actual's cell.
+    // read-back below lands the result in the actual's cell. An actual whose
+    // size the program fixes while it runs is imaged at its size at the call
+    // (LRM 35.6.1.1, 7.7), which no foreign write changes (Annex H.12), and is
+    // read back at that size.
     const mir::TypeId carrier_type = CarrierTypeId(unit, carrier);
     const mir::LocalId temp = cframe.bindings->DeclareAnonymous(carrier_type);
     auto init_or = BuildBoundaryInit(
-        unit_lowerer, body, carrier, seed_sv, crossing_type,
+        unit_lowerer, cframe, carrier, seed_sv, crossing_type,
         hir_exprs.Get(actual).type, carrier_type);
     if (!init_or) return std::unexpected(std::move(init_or.error()));
     body.AppendStmt(mir::LocalDeclStmt{.target = temp, .init = *init_or});
@@ -1113,7 +1202,8 @@ auto MakeForeignSignature(
       .named_locals = {},
       .body = std::nullopt,
       .span = {},
-      .caller_location = std::nullopt};
+      .caller_location = std::nullopt,
+      .can_unwind = true};
   CallableBindings bindings(unit, code);
   code.params.reserve(params.size());
   for (const auto& param : params) {

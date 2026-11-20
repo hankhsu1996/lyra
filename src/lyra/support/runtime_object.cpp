@@ -16,6 +16,8 @@ auto ObjectOf(LibraryDecl decl) -> std::optional<RuntimeObject> {
   return std::visit(
       Overloaded{
           [](const DomainObject& held) -> Object { return held.domain; },
+          // A value laid out by its type is no object of an entry's.
+          [](const LaidOutByType&) -> Object { return std::nullopt; },
           [&](const OwnObject& own) -> Object {
             if (!own.by_value.has_value()) {
               return std::nullopt;
