@@ -204,10 +204,9 @@ auto IsTheDesignsOwn(
   if (names_a_unit) {
     return true;
   }
-  static constexpr std::array<std::string_view, 6> kDesignShaped = {
-      "lyra::value::Integral<",         "lyra::value::Tuple<lyra",
-      "lyra::value::UnpackedArray<",    "sv_type_",
-      "lyra::value::AssociativeArray<", "lyra::value::TaggedUnion<"};
+  static constexpr std::array<std::string_view, 5> kDesignShaped = {
+      "lyra::value::Integral<", "lyra::value::Tuple<lyra",
+      "lyra::value::UnpackedArray<", "sv_type_", "lyra::value::TaggedUnion<"};
   if (std::ranges::any_of(kDesignShaped, [&](std::string_view shape) {
         return demangled.contains(shape);
       })) {

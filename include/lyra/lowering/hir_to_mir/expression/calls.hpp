@@ -35,17 +35,17 @@ namespace lyra::lowering::hir_to_mir {
     support::BuiltinFn method, std::optional<mir::ExprId> receiver,
     std::vector<mir::ExprId> operands, mir::TypeId result_type) -> mir::Expr;
 
-// One step of an associative array's traversal (LRM 7.9.4 -- 7.9.7), as the
+// One step of an associative array's traversal (LRM 7.9.4 -- 7.9.8), as the
 // expression the steps under construction in `steps` yield. `array` is the
 // array's value and `index` the variable holding the index the method is asked
-// about, both named in the block of `steps`. The entry `method` answers with
-// the SV int 1 / 0 and the index it visited, so it completes with the two of
-// them: the index reaches the variable through that variable's own write --
-// which is what fires its LRM 4.3 update event -- and the answer is what the
-// steps yield, at `result_type`. Binding the completion and writing the index
-// back are statements while a traversal sits where an expression does (the
-// canonical `do ... while (m.next(idx))` idiom, the header of a loop over the
-// keys), which is why it is a sequence of steps.
+// about, both named in the block of `steps`. The array's method `method`
+// answers where the index it visited lies, or nothing: the index reaches the
+// variable through that variable's own write -- which is what fires its LRM
+// 4.3 update event -- and whether one was visited is what the steps yield, at
+// `result_type`. Holding the answer and writing the index back are statements
+// while a traversal sits where an expression does (the canonical `do ...
+// while (m.next(idx))` idiom, the header of a loop over the keys), which is
+// why it is a sequence of steps.
 [[nodiscard]] auto BuildAssociativeTraversal(
     const mir::CompilationUnit& unit, BlockBuilder& steps,
     support::BuiltinFn method, mir::ExprId array, AccessPath index,

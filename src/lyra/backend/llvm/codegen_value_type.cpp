@@ -39,6 +39,7 @@
 #include "lyra/support/value_domain.hpp"
 #include "lyra/support/value_operation.hpp"
 #include "lyra/value/array_type_bodies.hpp"
+#include "lyra/value/associative_array_type.hpp"
 #include "lyra/value/dynamic_array_type.hpp"
 #include "lyra/value/element_type.hpp"
 #include "lyra/value/fixed_array_type.hpp"
@@ -514,6 +515,9 @@ auto ValueTypeKindOf(const lir::Type& stated) -> value::ValueTypeKind {
     if (library->decl == support::LibraryDecl::kQueue) {
       return value::ValueTypeKind::kQueue;
     }
+    if (library->decl == support::LibraryDecl::kAssociativeArray) {
+      return value::ValueTypeKind::kAssociativeArray;
+    }
   }
   return value::ValueTypeKind::kOther;
 }
@@ -555,29 +559,11 @@ auto CodeGenValueTypes::GetAddrOfLaidOutType(lir::TypeId type)
   }
   constant->setLinkage(*linkage);
   // The table, each witness where the library's declaration of it lays it
-  // out, and for an array -- a fixed-size one, a dynamic one or a queue -- the
-  // library's answer for its elements by position, which reads them off the
-  // type it is handed.
+  // out.
   ConstantRecord witnesses(ctx, sizeof(value::ValueWitnessTable));
   for (const Witness& witness : ValueWitnesses()) {
     witnesses.Place(witness.offset, FillWitness(type, witness));
   }
-  const value::ValueTypeKind record = ValueTypeKindOf(stated);
-  const auto parts = [&]() -> llvm::Constant* {
-    switch (record) {
-      case value::ValueTypeKind::kFixedArray:
-        return owner_->LibraryData(kFixedArrayPartsWitnessTableSymbol);
-      case value::ValueTypeKind::kDynamicArray:
-        return owner_->LibraryData(kDynamicArrayPartsWitnessTableSymbol);
-      case value::ValueTypeKind::kQueue:
-        return owner_->LibraryData(kQueuePartsWitnessTableSymbol);
-      case value::ValueTypeKind::kIntegral:
-      case value::ValueTypeKind::kOther:
-        return llvm::ConstantPointerNull::get(ptr);
-    }
-    std::unreachable();
-  };
-  witnesses.Place(OffsetInTable(&value::ValueWitnessTable::parts), parts());
   llvm::Constant* const table_data = std::move(witnesses).Build();
   llvm::GlobalVariable* const table =
       global(std::format("lyra.type{}.witnesses", key), table_data->getType());
@@ -590,7 +576,7 @@ auto CodeGenValueTypes::GetAddrOfLaidOutType(lir::TypeId type)
   // value a count long, which the library's steps within a write and
   // randomization's resize call.
   const auto* library = stated.As<lir::LibraryType>();
-  switch (record) {
+  switch (ValueTypeKindOf(stated)) {
     case value::ValueTypeKind::kDynamicArray: {
       const TypeConstantReferences container = ReferencesOf(*unit_, type);
       auto element = GetAddrOfElementType(*container.element_type);
@@ -648,6 +634,33 @@ auto CodeGenValueTypes::GetAddrOfLaidOutType(lir::TypeId type)
               WitnessSignatureOf<value::ResizedFunction>::Get()));
       return Defined(
           key, constant, std::move(out).Build(), alignof(value::QueueType));
+    }
+    // An associative array's type states its index type in place of a bound,
+    // which what loads a memory file into one builds its indices at (LRM
+    // 21.4.1), and has no count to be made at.
+    case value::ValueTypeKind::kAssociativeArray: {
+      const TypeConstantReferences container = ReferencesOf(*unit_, type);
+      auto element = GetAddrOfElementType(*container.element_type);
+      auto index = GetAddrOfValueType(*stated.IndexType());
+      if (!element || !index) {
+        throw InternalError(
+            "llvm codegen: an associative array's element or index is no "
+            "value the runtime realizes");
+      }
+      ConstantRecord out(ctx, sizeof(value::AssociativeArrayType));
+      PlaceValueType(
+          out, table, *support::ObjectStorageOf(library->decl),
+          value::ValueTypeKind::kAssociativeArray);
+      out.Place(value::AssociativeArrayType::ElementStatedAt(), *element);
+      out.Place(value::AssociativeArrayType::IndexStatedAt(), *index);
+      out.Place(
+          value::AssociativeArrayType::ElementPlaceStatedAt(),
+          OwnBodyWitness(
+              type, support::ElementAccessItem::kElementPlace, "element_place",
+              WitnessSignatureOf<value::ElementPlaceFunction>::Get()));
+      return Defined(
+          key, constant, std::move(out).Build(),
+          alignof(value::AssociativeArrayType));
     }
     case value::ValueTypeKind::kFixedArray:
     case value::ValueTypeKind::kIntegral:
@@ -865,17 +878,6 @@ auto CodeGenValueTypes::GetAddrOfOperations(lir::TypeId type)
   auto domain = owner_->DomainOf(type);
   if (!domain) {
     return std::unexpected(std::move(domain.error()));
-  }
-  if (const std::optional<lir::TypeId> element =
-          stated.ContainerElementType()) {
-    auto of_element = GetAddrOfOperations(*element);
-    if (!of_element) {
-      return std::unexpected(std::move(of_element.error()));
-    }
-    return define(
-        owner_->LibraryData(OperationFunctionsSymbol(*domain)),
-        owner_->LibraryData(ValueTypeSymbol(*domain)), *of_element,
-        llvm::GlobalValue::LinkOnceODRLinkage);
   }
   llvm::Constant* const library =
       owner_->LibraryData(ValueOperationsSymbol(*domain));

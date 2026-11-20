@@ -7,7 +7,6 @@
 #include <type_traits>
 #include <variant>
 
-#include "lyra/base/overloaded.hpp"
 #include "lyra/runtime/any.hpp"
 #include "lyra/runtime/assertion_control.hpp"
 #include "lyra/runtime/cancellation.hpp"
@@ -16,6 +15,7 @@
 #include "lyra/runtime/file_table.hpp"
 #include "lyra/runtime/hierarchy_segment.hpp"
 #include "lyra/runtime/loop_blocks.hpp"
+#include "lyra/runtime/mem_file.hpp"
 #include "lyra/runtime/object_change.hpp"
 #include "lyra/runtime/observation.hpp"
 #include "lyra/runtime/open_write.hpp"
@@ -33,18 +33,14 @@
 #include "lyra/support/value_domain.hpp"
 #include "lyra/value/any.hpp"
 #include "lyra/value/any_value.hpp"
-#include "lyra/value/associative_array.hpp"
 #include "lyra/value/bit_vec.hpp"
 #include "lyra/value/container_class.hpp"
 #include "lyra/value/container_core.hpp"
 #include "lyra/value/dpi_canonical.hpp"
 #include "lyra/value/dpi_open_array.hpp"
 #include "lyra/value/format.hpp"
-#include "lyra/value/index_order.hpp"
 #include "lyra/value/object_ref.hpp"
-#include "lyra/value/runtime_associative_array.hpp"
 #include "lyra/value/string.hpp"
-#include "lyra/value/unmanaged_ref.hpp"
 
 namespace lyra::runtime {
 
@@ -115,11 +111,9 @@ constexpr void ForEachDeclaredObjectClass(const Visit& visit) {
   visit(
       LibraryDecl::kAssociativeArray,
       BuiltIn<
-          value::RuntimeAssociativeArray,
-          value::AssociativeArray<value::String, value::String>>{});
-  visit(
-      LibraryDecl::kWildcardIndex,
-      BuiltIn<value::AnyValue, value::WildcardKey>{});
+          value::AssociativeArrayCore,
+          value::Container<value::AssociativeArrayCore, NoImpl>>{});
+  visit(LibraryDecl::kWildcardIndex, BuiltIn<value::AnyValue>{});
   visit(LibraryDecl::kAny, BuiltIn<value::Any>{});
   visit(LibraryDecl::kBitVec, BuiltIn<value::BitVec>{});
   visit(LibraryDecl::kPrintItem, BuiltIn<value::PrintItem>{});
@@ -128,6 +122,7 @@ constexpr void ForEachDeclaredObjectClass(const Visit& visit) {
   visit(LibraryDecl::kDpiBitBuffer, BuiltIn<value::DpiBitBuffer>{});
   visit(LibraryDecl::kDpiLogicBuffer, BuiltIn<value::DpiLogicBuffer>{});
   visit(LibraryDecl::kDpiOpenArray, BuiltIn<value::DpiOpenArray>{});
+  visit(LibraryDecl::kMemoryWords, BuiltIn<MemoryWords>{});
   visit(LibraryDecl::kCancellationTarget, BuiltIn<CancellationTarget>{});
   visit(LibraryDecl::kTimer, BuiltIn<Timer>{});
   visit(LibraryDecl::kEvaluationAttempts, BuiltIn<EvaluationAttempts>{});

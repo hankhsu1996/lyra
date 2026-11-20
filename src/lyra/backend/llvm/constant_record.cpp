@@ -1,7 +1,6 @@
 #include "lyra/backend/llvm/constant_record.hpp"
 
 #include <bit>
-#include <cstddef>
 #include <cstdint>
 #include <format>
 #include <optional>
@@ -67,7 +66,7 @@ auto LayoutOf() -> LibraryRecordLayout {
   abi::ForEachField(record, [&]<typename Field>(const Field& field) {
     const std::uint64_t offset = std::bit_cast<std::uintptr_t>(&field) -
                                  std::bit_cast<std::uintptr_t>(&record);
-    if constexpr (std::is_integral_v<Field>) {
+    if constexpr (std::is_integral_v<Field> || std::is_enum_v<Field>) {
       layout.fields.push_back(
           {.offset = offset, .kind = IntegerField{.size = sizeof(Field)}});
     } else if constexpr (std::is_pointer_v<Field>) {

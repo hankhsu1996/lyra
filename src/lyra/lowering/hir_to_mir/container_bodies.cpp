@@ -29,12 +29,12 @@
 #include "lyra/lowering/hir_to_mir/select_position.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/value_operations.hpp"
+#include "lyra/mir/array_impls.hpp"
 #include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/builder.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
-#include "lyra/mir/inherent_methods.hpp"
 #include "lyra/mir/library_record_builder.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -45,6 +45,7 @@
 #include "lyra/mir/type_interface.hpp"
 #include "lyra/mir/value_parts.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/language_trait.hpp"
 #include "lyra/support/library_decl.hpp"
 #include "lyra/support/value_operation.hpp"
 #include "lyra/support/value_step.hpp"
@@ -286,9 +287,10 @@ class ArrayBodies : public OperationBodies {
             [](support::BoundFreeItem) -> mir::CallableCode {
               NoBoundFreeBody();
             },
-            // One of this kind's own methods, built as its row says.
+            // One of this kind's own methods or an item of a language trait it
+            // implements, built as its row says.
             [&](support::BuiltinFn fn) -> mir::CallableCode {
-              return MethodBodyOf(fn).build(*this, source);
+              return OperationBodyOf(fn).build(*this, source);
             }},
         answers);
   }
@@ -641,7 +643,7 @@ class ArrayBodies : public OperationBodies {
                         BuildToInt64Call(
                             Unit(), body,
                             body.ReadLocal(window.first, position_type)),
-                        IndexNow(body, index)));
+                        CountNow(body, index)));
                 return body.AsValue(
                     Unit().types, GetUnchecked(body, Read(body, p[0]), at));
               });
@@ -1033,6 +1035,579 @@ class ArrayBodies : public OperationBodies {
         });
   }
 
+  // LRM 7.12.2 `sort` / `rsort`: a dynamic array of this type, of positions,
+  // holding the position of each key of an array of `keys` once they are in
+  // ascending order, or descending where the flag says, equal keys and keys
+  // whose comparison is unknown keeping their order. It is a merge over the
+  // positions, runs of one key merged pairwise until one run is left: a merge
+  // reads only within the two runs it merges whatever the comparison answers,
+  // which over 4-state keys is no strict weak order, and it costs n log n
+  // comparisons of the key type's own `<` or `>` (LRM 11.4.4).
+  auto SortOrder(mir::TypeId keys) -> mir::CallableCode {
+    const mir::TypeId machine = Unit().builtins.machine_int64;
+    const mir::TypeId boolean = Unit().builtins.machine_bool;
+    const mir::TypeId key =
+        Unit().types.Get(keys).ContainerElementType().value();
+    return Defined(
+        Declaration(support::BuiltinFn::kSortOrder, keys),
+        [&](mir::CallableCode& code, mir::Builder block,
+            const std::vector<mir::LocalId>& p) {
+          const auto keys_of = [&](mir::Builder at) {
+            return Referent(at, p[0], keys);
+          };
+          const mir::LocalId count = DeclaredCount(
+              code, block, ElementCount(Unit(), block, keys, keys_of(block)));
+          const mir::LocalId shape =
+              Declared(code, block, WholeType(), Empty(block));
+          const auto each_position = [&]() {
+            return Declared(
+                code, block, WholeType(),
+                Built(
+                    code, block, LocalArray(shape), CountNow(block, count),
+                    [&](mir::Builder body, mir::LocalId index) {
+                      return CountAsIntegral(
+                          body, CountNow(body, index), ElementType());
+                    }));
+          };
+          const mir::LocalId order = each_position();
+          const mir::LocalId merged = each_position();
+          const auto in = [&](mir::Builder at, mir::LocalId array) {
+            return at.LocalPlace(array, WholeType());
+          };
+          // The key at the position `order` holds at the machine index the
+          // local `index` holds.
+          const auto key_at = [&](mir::Builder at, mir::LocalId index) {
+            const mir::ExprId position = at.Add(
+                mir::MakeIntegralConversion(
+                    Unit(), at.Body(),
+                    at.AsValue(
+                        Unit().types, GetUnchecked(at, in(at, order), index)),
+                    mir::PositionType(Unit().types)));
+            return at.AsValue(
+                Unit().types, at.Add(StepForRead(
+                                  Unit(), at,
+                                  DescentStep{
+                                      .to = StepToElement{.position = position},
+                                      .part_type = key},
+                                  keys_of(at))));
+          };
+          // Whether the key at `right` comes before the key at `left`, by
+          // `<` for `sort` and `>` for `rsort`; an unknown answer does not.
+          const auto comes_first = [&](mir::Builder at, mir::LocalId right,
+                                       mir::LocalId left) {
+            const std::array compared{key, key};
+            const mir::TypeId answer = mir::OneBitAnswerType(Unit(), compared);
+            const auto by = [&](mir::Builder b, hir::BinaryOp comparison) {
+              return ReduceToCondition(
+                  Unit(), b,
+                  b.Add(BuildMirBinaryExpr(
+                      Unit(), b, comparison, key_at(b, right), key_at(b, left),
+                      answer)));
+            };
+            return Chosen(
+                at, at.ReadLocal(p[1], boolean),
+                by(at, hir::BinaryOp::kGreaterThan),
+                by(at, hir::BinaryOp::kLessThan), boolean);
+          };
+          const auto plus = [&](mir::Builder at, mir::ExprId a, mir::ExprId b) {
+            return mir::BuildMachineIntBinary(
+                Unit(), at, mir::BinaryOp::kAdd, a, b);
+          };
+          const auto at_most = [&](mir::Builder at, mir::ExprId a,
+                                   mir::LocalId bound) {
+            const mir::LocalId held = DeclaredCount(code, at, a);
+            return Chosen(
+                at,
+                mir::BuildMachineIntComparison(
+                    Unit(), at, mir::BinaryOp::kLessThan, CountNow(at, held),
+                    CountNow(at, bound)),
+                CountNow(at, held), CountNow(at, bound), machine);
+          };
+          // A loop of `at` from `from` while `below(at)` holds, stepped by
+          // `next(at)`, whose body `each(body)` states.
+          const auto loop = [&](mir::Builder at, mir::LocalId counter,
+                                mir::ExprId from, auto below, auto next,
+                                auto each) {
+            mir::Block body;
+            mir::Builder body_builder = at.Into(body);
+            each(body_builder);
+            const mir::BlockId scope = at.AddScope(std::move(body));
+            std::vector<mir::ForInit> init;
+            init.emplace_back(
+                mir::ForInitDecl{.induction_var = counter, .init = from});
+            at.AppendStmt(
+                mir::ForStmt{
+                    .init = std::move(init),
+                    .condition = below(at),
+                    .step = {at.Add(
+                        mir::MakeAssignExpr(
+                            Unit().builtins, at.LocalPlace(counter, machine),
+                            next(at)))},
+                    .scope = scope});
+          };
+          const mir::LocalId width = code.AddLocal(machine);
+          loop(
+              block, width, mir::BuildMachineIntLiteral(Unit(), block, 1),
+              [&](mir::Builder at) {
+                return mir::BuildMachineIntComparison(
+                    Unit(), at, mir::BinaryOp::kLessThan, CountNow(at, width),
+                    CountNow(at, count));
+              },
+              [&](mir::Builder at) {
+                return plus(at, CountNow(at, width), CountNow(at, width));
+              },
+              [&](mir::Builder pass) {
+                const mir::LocalId low = code.AddLocal(machine);
+                loop(
+                    pass, low, mir::BuildMachineIntLiteral(Unit(), pass, 0),
+                    [&](mir::Builder at) {
+                      return mir::BuildMachineIntComparison(
+                          Unit(), at, mir::BinaryOp::kLessThan,
+                          CountNow(at, low), CountNow(at, count));
+                    },
+                    [&](mir::Builder at) {
+                      return plus(
+                          at, CountNow(at, low),
+                          plus(at, CountNow(at, width), CountNow(at, width)));
+                    },
+                    [&](mir::Builder runs) {
+                      const mir::LocalId middle = DeclaredCount(
+                          code, runs,
+                          at_most(
+                              runs,
+                              plus(
+                                  runs, CountNow(runs, low),
+                                  CountNow(runs, width)),
+                              count));
+                      const mir::LocalId high = DeclaredCount(
+                          code, runs,
+                          at_most(
+                              runs,
+                              plus(
+                                  runs, CountNow(runs, middle),
+                                  CountNow(runs, width)),
+                              count));
+                      const mir::LocalId left =
+                          DeclaredCount(code, runs, CountNow(runs, low));
+                      const mir::LocalId right =
+                          DeclaredCount(code, runs, CountNow(runs, middle));
+                      ForEachIndexBetween(
+                          code, runs, CountNow(runs, low), CountNow(runs, high),
+                          [&](mir::Builder body, mir::LocalId placed) {
+                            MergeOne(
+                                code, body, order, merged, placed, left, right,
+                                middle, high, comes_first);
+                          });
+                    });
+                // The pass's runs, merged, are the order the next pass reads.
+                ForEachIndex(
+                    code, pass, CountNow(pass, count),
+                    [&](mir::Builder body, mir::LocalId index) {
+                      StoredUnchecked(
+                          body, in(body, order), index,
+                          body.AsValue(
+                              Unit().types,
+                              GetUnchecked(body, in(body, merged), index)));
+                    });
+              });
+          block.AppendStmt(
+              mir::ReturnStmt{.value = TakenOutOf(block, order, WholeType())});
+        });
+  }
+
+  // One step of a merge: the position at `placed` of `merged` taken from the
+  // right run where its next key comes before the left run's next, and from
+  // the left run otherwise, so equal keys keep their order; the run it is
+  // taken from moves on by one. The left run is `left` up to `middle` and the
+  // right one `right` up to `high`, each a local holding a machine index.
+  template <typename ComesFirst>
+  void MergeOne(
+      mir::CallableCode& code, mir::Builder body, mir::LocalId order,
+      mir::LocalId merged, mir::LocalId placed, mir::LocalId left,
+      mir::LocalId right, mir::LocalId middle, mir::LocalId high,
+      ComesFirst comes_first) {
+    const mir::TypeId boolean = Unit().builtins.machine_bool;
+    const auto below = [&](mir::Builder at, mir::LocalId a, mir::LocalId b) {
+      return mir::BuildMachineIntComparison(
+          Unit(), at, mir::BinaryOp::kLessThan, CountNow(at, a),
+          CountNow(at, b));
+    };
+    // The right run gives the next position where it has one and the left
+    // has none, or where both have one and its key comes first; each test
+    // reads a run only where it has a position left.
+    const mir::LocalId from_right =
+        Declared(code, body, boolean, BuildMachineBool(Unit(), body, false));
+    mir::Block right_has;
+    mir::Builder right_has_builder = body.Into(right_has);
+    right_has_builder.AppendStmt(
+        mir::ExprStmt{
+            .expr = right_has_builder.Add(
+                mir::MakeAssignExpr(
+                    Unit().builtins,
+                    right_has_builder.LocalPlace(from_right, boolean),
+                    BuildConditionNot(
+                        Unit(), right_has_builder,
+                        below(right_has_builder, left, middle))))});
+    mir::Block both_have;
+    mir::Builder both_have_builder = right_has_builder.Into(both_have);
+    both_have_builder.AppendStmt(
+        mir::ExprStmt{
+            .expr = both_have_builder.Add(
+                mir::MakeAssignExpr(
+                    Unit().builtins,
+                    both_have_builder.LocalPlace(from_right, boolean),
+                    comes_first(both_have_builder, right, left)))});
+    right_has_builder.AppendIfThen(
+        below(right_has_builder, left, middle), std::move(both_have));
+    body.AppendIfThen(below(body, right, high), std::move(right_has));
+    const auto taken_from = [&](mir::Builder at, mir::LocalId run) {
+      StoredUnchecked(
+          at, at.LocalPlace(merged, WholeType()), placed,
+          at.AsValue(
+              Unit().types,
+              GetUnchecked(at, at.LocalPlace(order, WholeType()), run)));
+      SetCount(
+          at, run,
+          mir::BuildMachineIntBinary(
+              Unit(), at, mir::BinaryOp::kAdd, CountNow(at, run),
+              mir::BuildMachineIntLiteral(Unit(), at, 1)));
+    };
+    mir::Block right_taken;
+    mir::Builder right_taken_builder = body.Into(right_taken);
+    taken_from(right_taken_builder, right);
+    mir::Block left_taken;
+    mir::Builder left_taken_builder = body.Into(left_taken);
+    taken_from(left_taken_builder, left);
+    const mir::BlockId then_scope = body.AddScope(std::move(right_taken));
+    const mir::BlockId else_scope = body.AddScope(std::move(left_taken));
+    body.AppendStmt(
+        mir::IfStmt{
+            .condition = body.ReadLocal(from_right, boolean),
+            .then_scope = then_scope,
+            .else_scope = else_scope});
+  }
+
+  // The ordinal a word names in a dimension of the array, as the memory task's
+  // words the parameter `words` refers to answer it, and as the DPI-C open
+  // array image the parameter `image` refers to at `mutability` answers it.
+  auto WordOrdinal(mir::LocalId words) {
+    return
+        [this, words](mir::Builder at, mir::ExprId k, mir::ExprId dimension) {
+          return AskWords(
+              at, words, support::BuiltinFn::kMemoryWordsOrdinal,
+              {k, dimension}, Unit().builtins.machine_int64);
+        };
+  }
+  auto ImageOrdinal(mir::LocalId image, mir::Mutability mutability) {
+    return [this, image, mutability](
+               mir::Builder at, mir::ExprId k, mir::ExprId dimension) {
+      return AskImage(
+          at, image, mutability, support::BuiltinFn::kDpiOpenArrayOrdinal,
+          {k, dimension}, Unit().builtins.machine_int64);
+    };
+  }
+
+  // LRM 21.4: an array of this type loaded from the words a memory task read,
+  // each landing on the element its address names, and an element the file
+  // gives no word keeping what it held. A fixed-size array is addressed by its
+  // declared ranges, a level of it per dimension down to its words, and a
+  // dynamic array or a queue from 0 across the elements it holds.
+  auto LoadWords() -> mir::CallableCode {
+    return Defined(
+        Declaration(support::BuiltinFn::kLoadWords),
+        [&](mir::CallableCode& code, mir::Builder block,
+            const std::vector<mir::LocalId>& p) {
+          AddressWordsOf(
+              block, Written(block, p[0]), p[1],
+              support::BuiltinFn::kMemoryWordsReadGrid,
+              support::BuiltinFn::kMemoryWordsReadDense);
+          ForEachIndex(
+              code, block,
+              AskWords(
+                  block, p[1], support::BuiltinFn::kMemoryWordsCount, {},
+                  Unit().builtins.machine_int64),
+              [&](mir::Builder body, mir::LocalId k) {
+                const auto [leaf, leaf_type] = WordAt(
+                    body, Written(body, p[0]), k, mir::Mutability::kMutable,
+                    WordOrdinal(p[1]));
+                Statement(
+                    body,
+                    body.Add(BuildStoreExpr(
+                        Unit(), body, AccessPath{.owner = leaf, .descent = {}},
+                        ElementAt(
+                            body, support::BuiltinFn::kMemoryWordsWord,
+                            Words(body, p[1]), CountNow(body, k), leaf_type))));
+              });
+          block.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
+        });
+  }
+
+  // LRM 21.5: the words of an array of this type handed to a memory task's
+  // dump, in the order it writes them, and the dump then written.
+  auto StoreWords() -> mir::CallableCode {
+    return Defined(
+        Declaration(support::BuiltinFn::kStoreWords),
+        [&](mir::CallableCode& code, mir::Builder block,
+            const std::vector<mir::LocalId>& p) {
+          AddressWordsOf(
+              block, Read(block, p[0]), p[1],
+              support::BuiltinFn::kMemoryWordsPlanGrid,
+              support::BuiltinFn::kMemoryWordsPlanDense);
+          ForEachIndex(
+              code, block,
+              AskWords(
+                  block, p[1], support::BuiltinFn::kMemoryWordsCount, {},
+                  Unit().builtins.machine_int64),
+              [&](mir::Builder body, mir::LocalId k) {
+                const auto [leaf, leaf_type] = WordAt(
+                    body, Read(body, p[0]), k, mir::Mutability::kReadOnly,
+                    WordOrdinal(p[1]));
+                TellWords(
+                    body, p[1], support::BuiltinFn::kMemoryWordsPut,
+                    {CountNow(body, k), body.AsValue(Unit().types, leaf)});
+              });
+          TellWords(block, p[1], support::BuiltinFn::kMemoryWordsCommit, {});
+          block.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
+        });
+  }
+
+  // The words a task moves, addressed as the array `array` lies in is: by its
+  // declared ranges where its type fixes its size, and from 0 across the
+  // elements it holds where the run does.
+  void AddressWordsOf(
+      mir::Builder block, mir::ExprId array, mir::LocalId words,
+      support::BuiltinFn by_ranges, support::BuiltinFn by_count) {
+    const auto by_its_count = [&] {
+      TellWords(
+          block, words, by_count,
+          {ElementCount(Unit(), block, WholeType(), array)});
+    };
+    std::visit(
+        Overloaded{
+            [&](const FixedSizeKind&) {
+              TellWords(block, words, by_ranges, {});
+            },
+            [&](const DynamicArrayKind&) { by_its_count(); },
+            [&](const QueueKind&) { by_its_count(); }},
+        kind_);
+  }
+
+  // A word reached in an array, and the type of words it is.
+  struct ReachedWord {
+    mir::ExprId place;
+    mir::TypeId type;
+  };
+  // The word the machine index the local `k` holds names in the array `array`
+  // lies in, reached at `mutability` one level per dimension at the ordinal
+  // `position(block, k, dimension)` answers for it there, down to the type of
+  // its words: how a memory task's words and a DPI-C open array's image each
+  // name an element of a memory of any depth.
+  template <typename Position>
+  auto WordAt(
+      mir::Builder block, mir::ExprId array, mir::LocalId k,
+      mir::Mutability mutability, Position position) -> ReachedWord {
+    mir::ExprId place = array;
+    mir::TypeId type = WholeType();
+    for (std::int64_t dimension = 0; !Unit().types.Get(type).IsIntegral();
+         ++dimension) {
+      const mir::TypeId element =
+          Unit().types.Get(type).ContainerElementType().value();
+      place = UncheckedElement(
+          Unit(), block, place,
+          position(
+              block, CountNow(block, k),
+              mir::BuildMachineIntLiteral(Unit(), block, dimension)),
+          element, mutability);
+      type = element;
+    }
+    return {.place = place, .type = type};
+  }
+
+  // LRM 35.5.6.1, Annex H.7.3: a DPI-C open array's image filled from an
+  // array of this type, each element in the image's own order, and the array
+  // read back out of the image after the foreign call.
+  auto ToImage() -> mir::CallableCode {
+    return Defined(
+        Declaration(support::BuiltinFn::kToImage),
+        [&](mir::CallableCode& code, mir::Builder block,
+            const std::vector<mir::LocalId>& p) {
+          const mir::Mutability filled = mir::Mutability::kMutable;
+          ForEachIndex(
+              code, block,
+              AskImage(
+                  block, p[1], filled,
+                  support::BuiltinFn::kDpiOpenArrayElementCount, {},
+                  Unit().builtins.machine_int64),
+              [&](mir::Builder body, mir::LocalId k) {
+                const auto [element, element_type] = WordAt(
+                    body, Read(body, p[0]), k, mir::Mutability::kReadOnly,
+                    ImageOrdinal(p[1], filled));
+                Statement(
+                    body, AskImage(
+                              body, p[1], filled,
+                              support::BuiltinFn::kDpiOpenArrayPut,
+                              {CountNow(body, k),
+                               body.AsValue(Unit().types, element)},
+                              Unit().builtins.void_type));
+              });
+          block.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
+        });
+  }
+  auto FromImage() -> mir::CallableCode {
+    return Defined(
+        Declaration(support::BuiltinFn::kFromImage),
+        [&](mir::CallableCode& code, mir::Builder block,
+            const std::vector<mir::LocalId>& p) {
+          const mir::Mutability read = mir::Mutability::kReadOnly;
+          const mir::LocalId words = DeclaredCount(
+              code, block,
+              AskImage(
+                  block, p[1], read,
+                  support::BuiltinFn::kDpiOpenArrayElementCount, {},
+                  Unit().builtins.machine_int64));
+          // An array whose size the program fixes while it runs is first made
+          // as long as the image's outermost dimension, which the actual's
+          // size fixed at the call (Annex H.7.6), each element its default:
+          // the image's words over those each element spans.
+          const auto sized = [&] {
+            Regenerate(
+                code, block, ParameterArray(p[0], mir::Mutability::kMutable),
+                mir::BuildMachineIntBinary(
+                    Unit(), block, mir::BinaryOp::kDiv, CountNow(block, words),
+                    CountLiteral(block, WordsPerElement())),
+                [&](mir::Builder body, mir::LocalId) {
+                  return body.Add(
+                      BuildDefaultValueExpr(Unit(), body, ElementType()));
+                });
+          };
+          std::visit(
+              Overloaded{
+                  [](const FixedSizeKind&) {},
+                  [&](const DynamicArrayKind&) { sized(); },
+                  [&](const QueueKind&) { sized(); }},
+              kind_);
+          ForEachIndex(
+              code, block, CountNow(block, words),
+              [&](mir::Builder body, mir::LocalId k) {
+                const auto [element, element_type] = WordAt(
+                    body, Written(body, p[0]), k, mir::Mutability::kMutable,
+                    ImageOrdinal(p[1], read));
+                Statement(
+                    body, body.Add(BuildStoreExpr(
+                              Unit(), body,
+                              AccessPath{.owner = element, .descent = {}},
+                              ElementAt(
+                                  body, support::BuiltinFn::kDpiOpenArrayWord,
+                                  Image(body, p[1], read), CountNow(body, k),
+                                  element_type))));
+              });
+          block.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
+        });
+  }
+  // How many words of a memory or an image each element spans: one for an
+  // integral element, and every word of the fixed-size arrays below it, which
+  // are all an image or a memory admits below its outermost dimension.
+  [[nodiscard]] auto WordsPerElement() const -> std::uint64_t {
+    std::uint64_t words = 1;
+    mir::TypeId type = ElementType();
+    while (const auto* fixed =
+               Unit().types.Get(type).As<mir::UnpackedArrayType>()) {
+      words *= fixed->count;
+      type = fixed->element_type;
+    }
+    return words;
+  }
+
+  // A call of the entry `fn` on the image the parameter `image` refers to.
+  auto AskImage(
+      mir::Builder block, mir::LocalId image, mir::Mutability mutability,
+      support::BuiltinFn fn, std::vector<mir::ExprId> arguments,
+      mir::TypeId result) -> mir::ExprId {
+    return Core(
+        block, fn, Image(block, image, mutability), std::move(arguments),
+        result);
+  }
+  // The image the parameter `image` refers to at `mutability`: written while
+  // it is filled, and only read after.
+  auto Image(mir::Builder block, mir::LocalId image, mir::Mutability mutability)
+      -> mir::ExprId {
+    return Referent(
+        block, image,
+        mir::LibraryTypeOf(Unit().types, support::LibraryDecl::kDpiOpenArray),
+        mutability);
+  }
+
+  // LRM 18.4: an array of this type, named by the reference the first
+  // parameter holds, walked for a call of `randomize()` whose problem the
+  // second holds: the array named to the problem, so one whose size the
+  // program chooses is declared before its elements, then each element entered
+  // at its position, named by a reference formed from the array's as a write
+  // through it would form one, walked as its own type is, and left. The array
+  // is only read here; what the call chooses is written later through the
+  // references the problem keeps.
+  auto WalkRandom() -> mir::CallableCode {
+    return Defined(
+        Declaration(support::BuiltinFn::kWalkRandom),
+        [&](mir::CallableCode& code, mir::Builder block,
+            const std::vector<mir::LocalId>& p) {
+          const mir::TypeId problem_type = Unit().builtins.constraint_problem;
+          const mir::TypeId reference_type = Unit().types.Intern(
+              mir::Type{mir::VariableRefType{
+                  .pointee = WholeType(),
+                  .mutability = mir::Mutability::kMutable}});
+          const auto problem = [&](mir::Builder at) {
+            return at.ReadLocal(p[1], problem_type);
+          };
+          const auto reference = [&](mir::Builder at) {
+            return at.ReadLocal(p[0], reference_type);
+          };
+          const auto tell = [&](mir::Builder at, support::BuiltinFn fn,
+                                std::vector<mir::ExprId> operands) {
+            operands.insert(operands.begin(), problem(at));
+            Statement(
+                at, at.Add(
+                        mir::MakeBuiltinCall(
+                            Unit(), at.Body(), fn, std::nullopt,
+                            std::move(operands), Unit().builtins.void_type)));
+          };
+          const auto resizable = [&] {
+            tell(
+                block, support::BuiltinFn::kRandomWalkResizableArray,
+                {reference(block), TypeRecordOf(Unit(), block, WholeType())});
+          };
+          std::visit(
+              Overloaded{
+                  [&](const FixedSizeKind&) {
+                    tell(block, support::BuiltinFn::kRandomWalkFixedArray, {});
+                  },
+                  [&](const DynamicArrayKind&) { resizable(); },
+                  [&](const QueueKind&) { resizable(); }},
+              kind_);
+          const mir::ExprId held = block.Add(block.WrapperContents(
+              Unit().types, reference(block), WholeType()));
+          ForEachIndex(
+              code, block, ElementCount(Unit(), block, WholeType(), held),
+              [&](mir::Builder body, mir::LocalId index) {
+                tell(
+                    body, support::BuiltinFn::kRandomWalkEnter,
+                    {CountNow(body, index)});
+                const mir::ExprId element = LentStep(
+                    Unit(), body,
+                    DescentStep{
+                        .to =
+                            StepToElement{.position = PositionOf(body, index)},
+                        .part_type = ElementType()},
+                    reference(body));
+                Statement(
+                    body,
+                    body.Add(RandomWalkStep(
+                        Unit(), body, element, problem(body), ElementType())));
+                tell(body, support::BuiltinFn::kRandomWalkLeave, {});
+              });
+          block.AppendStmt(mir::ReturnStmt{.value = std::nullopt});
+        });
+  }
+
   // LRM 7.12.2 `reverse`: the elements of an array of this type in the
   // opposite order, each pair from the two ends exchanged where it lies; a
   // queue's core reverses where its elements lie, so none moves.
@@ -1070,7 +1645,7 @@ class ArrayBodies : public OperationBodies {
                       code, body, machine,
                       mir::BuildMachineIntBinary(
                           Unit(), body, mir::BinaryOp::kSub,
-                          body.ReadLocal(last, machine), IndexNow(body, low)));
+                          body.ReadLocal(last, machine), CountNow(body, low)));
                   const auto array = [&] { return Written(body, p[0]); };
                   const mir::LocalId held = Declared(
                       code, body, ElementType(),
@@ -1144,7 +1719,7 @@ class ArrayBodies : public OperationBodies {
   auto ElementStart(mir::Builder block, mir::LocalId index) -> mir::ExprId {
     const auto width = static_cast<std::int64_t>(ElementStream().width);
     const mir::ExprId offset = mir::BuildMachineIntBinary(
-        Unit(), block, mir::BinaryOp::kMul, IndexNow(block, index),
+        Unit(), block, mir::BinaryOp::kMul, CountNow(block, index),
         mir::BuildMachineIntLiteral(Unit(), block, width));
     return CountAsIntegral(
         block,
@@ -1280,7 +1855,7 @@ class ArrayBodies : public OperationBodies {
     return CountAsIntegral(
         block,
         mir::BuildMachineIntBinary(
-            Unit(), block, mir::BinaryOp::kMul, IndexNow(block, index),
+            Unit(), block, mir::BinaryOp::kMul, CountNow(block, index),
             CountLiteral(block, mir::PositionCountOf(Unit(), ElementType()))),
         mir::PositionType(Unit().types));
   }
@@ -1391,7 +1966,7 @@ class ArrayBodies : public OperationBodies {
                             .part_type = ElementType()}}},
                     mir::BuildMachineIntBinary(
                         Unit(), body, mir::BinaryOp::kMul,
-                        IndexNow(body, index), CountLiteral(body, per_element)),
+                        CountNow(body, index), CountLiteral(body, per_element)),
                     write);
               });
           return block.ReadLocal(write.changed, Unit().builtins.machine_bool);
@@ -1420,7 +1995,7 @@ class ArrayBodies : public OperationBodies {
                     GetUnchecked(body, Read(body, p[1]), index);
                 const mir::ExprId stride = CountLiteral(body, per_element);
                 const mir::ExprId start = mir::BuildMachineIntBinary(
-                    Unit(), body, mir::BinaryOp::kMul, IndexNow(body, index),
+                    Unit(), body, mir::BinaryOp::kMul, CountNow(body, index),
                     stride);
                 return PartTaken(
                     code, body, ElementType(), into, from, start, run);
@@ -1453,66 +2028,20 @@ class ArrayBodies : public OperationBodies {
     return std::holds_alternative<FixedSizeKind>(kind_);
   }
 
-  // One of a kind's own methods and how its body is built, as a row of the
-  // kind's inherent impl: each kind's table names exactly the methods MIR
-  // declares for the kind, which a check at compile time holds it to.
-  struct MethodBody {
+  // One of a kind's own methods or an item of a language trait it implements,
+  // and how its body is built: each kind's table names exactly the operations
+  // MIR declares the kind is called by, which a check at compile time holds it
+  // to.
+  struct OperationBody {
     support::BuiltinFn name;
     mir::CallableCode (*build)(
         ArrayBodies& bodies, const mir::TypeOperationSource& source);
   };
 
-  // The row of this kind's table building the method `name`, which this
+  // The row of this kind's table building the operation `name`, which this
   // kind's interface declares.
-  [[nodiscard]] auto MethodBodyOf(support::BuiltinFn name) const
-      -> const MethodBody&;
-
-  // What the parameter `local` refers to, an array of this type, as the place
-  // it is.
-  auto Array(mir::Builder block, mir::LocalId local, mir::Mutability mutability)
-      -> mir::ExprId {
-    const mir::TypeId reference = Unit().types.Intern(
-        mir::Type{mir::ReferenceType{
-            .referent = WholeType(), .mutability = mutability}});
-    return block.Deref(
-        Unit().types, block.LocalPlace(local, reference), WholeType());
-  }
-  auto Read(mir::Builder block, mir::LocalId local) -> mir::ExprId {
-    return Array(block, local, mir::Mutability::kReadOnly);
-  }
-  auto Written(mir::Builder block, mir::LocalId local) -> mir::ExprId {
-    return Array(block, local, mir::Mutability::kMutable);
-  }
-
-  // A call of the core's member `fn` on the array `array` lies in.
-  static auto Core(
-      mir::Builder block, support::BuiltinFn fn, mir::ExprId array,
-      std::vector<mir::ExprId> arguments, mir::TypeId result) -> mir::ExprId {
-    return block.Add(
-        mir::Expr{
-            .data =
-                mir::CallExpr{
-                    .callee = mir::Direct{.target = fn, .receiver = array},
-                    .arguments = std::move(arguments)},
-            .type = result});
-  }
-  static void Statement(mir::Builder block, mir::ExprId expr) {
-    block.AppendStmt(mir::ExprStmt{.expr = expr});
-  }
-
-  // Whether the array's stream is one this lowering builds. An element holding
-  // a class handle streams the object the handle refers to (LRM 6.24.3), which
-  // is not yet supported, so each question about such an array's stream is a
-  // body telling the design so where it is asked, answering `answer`.
-  [[nodiscard]] auto StreamsItsElements() const -> bool {
-    return !mir::HoldsClassHandle(Unit(), ElementType());
-  }
-  void RefuseTheStream(mir::Builder block, mir::ExprId answer) {
-    mir::AppendRunTimeCheck(
-        Unit(), block, BuildMachineBool(Unit(), block, false),
-        "streaming the object a class handle refers to is not yet supported");
-    block.AppendStmt(mir::ReturnStmt{.value = answer});
-  }
+  [[nodiscard]] auto OperationBodyOf(support::BuiltinFn name) const
+      -> const OperationBody&;
 
   // An array of no elements of this type.
   auto Empty(mir::Builder block) -> mir::ExprId {
@@ -1594,7 +2123,7 @@ class ArrayBodies : public OperationBodies {
               body, Core(
                         body, support::BuiltinFn::kQueueCommit,
                         body.LocalPlace(queue, type),
-                        {IndexNow(body, index),
+                        {CountNow(body, index),
                          MadeInQueueStorage(
                              Unit(), body, body.LocalPlace(queue, type),
                              value(body, index), ElementPointer())},
@@ -1704,27 +2233,8 @@ class ArrayBodies : public OperationBodies {
     return mir::BorrowedPointerTo(
         Unit().types, ElementStorageType(), mir::Mutability::kMutable);
   }
-  static auto CastTo(mir::Builder block, mir::ExprId value, mir::TypeId type)
-      -> mir::ExprId {
-    return block.Add(
-        mir::Expr{.data = mir::CastExpr{.operand = value}, .type = type});
-  }
   auto AsMachine(mir::Builder block, mir::ExprId value) -> mir::ExprId {
     return CastTo(block, value, Unit().builtins.machine_int64);
-  }
-  // Whether the address `address` is no address.
-  auto IsNull(mir::Builder block, mir::ExprId address) -> mir::ExprId {
-    return block.Add(
-        mir::Expr{
-            .data =
-                mir::BinaryExpr{
-                    .op = mir::BinaryOp::kEquality,
-                    .lhs = address,
-                    .rhs = block.Add(
-                        mir::Expr{
-                            .data = mir::NullLiteral{},
-                            .type = block.Get(address).type})},
-            .type = Unit().builtins.machine_bool});
   }
 
   // The element and the lease count of the storage `storage` points at, as
@@ -1890,26 +2400,6 @@ class ArrayBodies : public OperationBodies {
     SetLease(block, storage, &value::LeaseCount::detached, 1);
   }
 
-  // A loop over the machine indexes below the machine count `count`, read
-  // once ahead of the loop, after what `block` holds, whose body
-  // `each(body, index)` states, `index` the local holding each in turn. It
-  // counts a machine integer, as Rust's `for idx in 0..len` over a slice
-  // counts a `usize`, so no step of the loop is a four-state one.
-  template <typename Each>
-  void ForEachIndex(
-      mir::CallableCode& code, mir::Builder block, mir::ExprId count,
-      Each each) {
-    ForEachIndexBetween(code, block, CountLiteral(block, 0), count, each);
-  }
-  // The same over the machine indexes from `from` up to `below`.
-  template <typename Each>
-  void ForEachIndexBetween(
-      mir::CallableCode& code, mir::Builder block, mir::ExprId from,
-      mir::ExprId below, Each each) {
-    StepThrough(
-        code, block, from, below, 1,
-        [&](mir::Builder body, mir::LocalId at) { each(body, at); });
-  }
   // A loop over the runs of `kPairsPerRun` machine indexes below the count
   // the local `count` holds, `each(body, from, to)` stating the body of one,
   // `from` and `to` the locals holding where it starts and where it ends,
@@ -1937,38 +2427,6 @@ class ArrayBodies : public OperationBodies {
           each(body, from, to);
         });
   }
-  // A loop counting a machine integer from `from` up to `below`, read once
-  // ahead of the loop, by `stride`, after what `block` holds, whose body
-  // `each(body, at)` states, `at` the local holding each value in turn.
-  template <typename Each>
-  void StepThrough(
-      mir::CallableCode& code, mir::Builder block, mir::ExprId from,
-      mir::ExprId below, std::int64_t stride, Each each) {
-    const mir::TypeId machine = Unit().builtins.machine_int64;
-    const mir::LocalId limit = DeclaredCount(code, block, below);
-    const mir::LocalId at = code.AddLocal(machine);
-    mir::Block body;
-    mir::Builder body_builder = block.Into(body);
-    each(body_builder, at);
-    const mir::BlockId scope = block.AddScope(std::move(body));
-    const mir::ExprId within = mir::BuildMachineIntComparison(
-        Unit(), block, mir::BinaryOp::kLessThan, block.ReadLocal(at, machine),
-        block.ReadLocal(limit, machine));
-    const mir::ExprId next = mir::BuildMachineIntBinary(
-        Unit(), block, mir::BinaryOp::kAdd, block.ReadLocal(at, machine),
-        mir::BuildMachineIntLiteral(Unit(), block, stride));
-    std::vector<mir::ForInit> init;
-    init.emplace_back(mir::ForInitDecl{.induction_var = at, .init = from});
-    block.AppendStmt(
-        mir::ForStmt{
-            .init = std::move(init),
-            .condition = within,
-            .step = {block.Add(
-                mir::MakeAssignExpr(
-                    Unit().builtins, block.LocalPlace(at, machine), next))},
-            .scope = scope});
-  }
-
   // The storage `storage` let go of by the queue `queue` names:
   // its element ended and the storage given back, unless a call leases it,
   // which then keeps it until the last lease lets go (LRM 13.5.2).
@@ -2009,7 +2467,7 @@ class ArrayBodies : public OperationBodies {
               CastTo(
                   body,
                   GetUncheckedPointer(
-                      body, queue, IndexNow(body, index),
+                      body, queue, CountNow(body, index),
                       mir::Mutability::kMutable),
                   ElementStoragePointer()));
           Release(body, queue, storage);
@@ -2065,7 +2523,7 @@ class ArrayBodies : public OperationBodies {
                       body, queue,
                       mir::BuildMachineIntBinary(
                           Unit(), body, mir::BinaryOp::kAdd,
-                          body.ReadLocal(kept, machine), IndexNow(body, index)),
+                          body.ReadLocal(kept, machine), CountNow(body, index)),
                       mir::Mutability::kMutable),
                   ElementStoragePointer()));
           Release(body, queue, storage);
@@ -2159,17 +2617,12 @@ class ArrayBodies : public OperationBodies {
     return mir::BorrowedPointerTo(Unit().types, ElementType(), mutability);
   }
 
-  // The machine index the local `index` holds at this point of the body.
-  auto IndexNow(mir::Builder block, mir::LocalId index) -> mir::ExprId {
-    return block.ReadLocal(index, Unit().builtins.machine_int64);
-  }
-
   // The position the machine index the local `index` holds stands for, where
   // a body hands it to the program or adds it to a position the program
   // computed.
   auto PositionOf(mir::Builder block, mir::LocalId index) -> mir::ExprId {
     return CountAsIntegral(
-        block, IndexNow(block, index), mir::PositionType(Unit().types));
+        block, CountNow(block, index), mir::PositionType(Unit().types));
   }
 
   // The element at `position` of the array `array` lies in, where it lies,
@@ -2190,14 +2643,14 @@ class ArrayBodies : public OperationBodies {
   auto GetUnchecked(mir::Builder block, mir::ExprId array, mir::LocalId index)
       -> mir::ExprId {
     return UncheckedElement(
-        Unit(), block, array, IndexNow(block, index), ElementType(),
+        Unit(), block, array, CountNow(block, index), ElementType(),
         mir::Mutability::kReadOnly);
   }
   auto GetUncheckedMut(
       mir::Builder block, mir::ExprId array, mir::LocalId index)
       -> mir::ExprId {
     return UncheckedElement(
-        Unit(), block, array, IndexNow(block, index), ElementType(),
+        Unit(), block, array, CountNow(block, index), ElementType(),
         mir::Mutability::kMutable);
   }
   // A write of `value` to the element at the machine index `index` of the
@@ -2241,7 +2694,7 @@ class ArrayBodies : public OperationBodies {
         code, block, CountNow(block, held_count),
         [&](mir::Builder body, mir::LocalId at) {
           const mir::ExprId built = value(body, at);
-          const mir::ExprId index = IndexNow(body, at);
+          const mir::ExprId index = CountNow(body, at);
           const mir::ExprId storage = body.ReadLocal(data, pointer);
           Statement(
               body, body.Add(
@@ -2287,7 +2740,7 @@ class ArrayBodies : public OperationBodies {
                         mir::MakeCallExpr(
                             mir::Direct{.target = support::BuiltinFn::kPtrRead},
                             {GetUncheckedPointer(
-                                body, array, IndexNow(body, index),
+                                body, array, CountNow(body, index),
                                 mir::Mutability::kMutable)},
                             ElementType())));
         });
@@ -2465,15 +2918,7 @@ class ArrayBodies : public OperationBodies {
   // element type, which is the value its core is, nothing else of it being
   // its own.
   auto EmptyFromCore(mir::Builder block) -> mir::ExprId {
-    const mir::ExprId record = block.Add(
-        mir::MakeBuiltinCall(
-            Unit(), block.Body(), support::BuiltinFn::kTypeRecordOf,
-            std::nullopt, std::nullopt, {ElementType()}, {},
-            mir::BorrowedPointerTo(
-                Unit().types,
-                mir::LibraryTypeOf(
-                    Unit().types, support::LibraryDecl::kValueType),
-                mir::Mutability::kReadOnly)));
+    const mir::ExprId record = TypeRecordOf(Unit(), block, ElementType());
     return block.Add(
         mir::MakeBuiltinCall(
             Unit(), block.Body(), CoreConstructOf(kind_), std::nullopt,
@@ -2523,7 +2968,7 @@ class ArrayBodies : public OperationBodies {
         code, block, ParameterArray(from, mir::Mutability::kReadOnly), count,
         [&](mir::Builder body, mir::LocalId index) {
           const mir::ExprId kept = mir::BuildMachineIntComparison(
-              Unit(), body, mir::BinaryOp::kLessThan, IndexNow(body, index),
+              Unit(), body, mir::BinaryOp::kLessThan, CountNow(body, index),
               ElementCount(Unit(), body, WholeType(), Read(body, from)));
           return body.Add(
               mir::Expr{
@@ -2695,7 +3140,7 @@ class ArrayBodies : public OperationBodies {
         Declaration(support::StreamItem::kBitstreamWidth),
         [&](mir::CallableCode& code, mir::Builder block,
             const std::vector<mir::LocalId>& p) {
-          if (!StreamsItsElements()) {
+          if (!StreamsItsElements(ElementType())) {
             RefuseTheStream(block, mir::BuildIntLiteral(Unit(), block, 0));
             return;
           }
@@ -2724,7 +3169,7 @@ class ArrayBodies : public OperationBodies {
         Declaration(support::StreamItem::kCountBits),
         [&](mir::CallableCode& code, mir::Builder block,
             const std::vector<mir::LocalId>& p) {
-          if (!StreamsItsElements()) {
+          if (!StreamsItsElements(ElementType())) {
             RefuseTheStream(block, mir::BuildIntLiteral(Unit(), block, 0));
             return;
           }
@@ -2756,7 +3201,7 @@ class ArrayBodies : public OperationBodies {
         Declaration(support::StreamItem::kToBitVec),
         [&](mir::CallableCode& code, mir::Builder block,
             const std::vector<mir::LocalId>& p) {
-          if (!StreamsItsElements()) {
+          if (!StreamsItsElements(ElementType())) {
             RefuseTheStream(
                 block, BuildRunOfZeros(
                            Unit(), block,
@@ -2821,7 +3266,7 @@ class ArrayBodies : public OperationBodies {
         Declaration(support::StreamItem::kFromBitVec),
         [&](mir::CallableCode& code, mir::Builder block,
             const std::vector<mir::LocalId>& p) {
-          if (!StreamsItsElements()) {
+          if (!StreamsItsElements(ElementType())) {
             RefuseTheStream(block, Empty(block));
             return;
           }
@@ -2872,7 +3317,7 @@ class ArrayBodies : public OperationBodies {
                       ElementType());
                 }
                 const mir::ExprId start = mir::BuildMachineIntBinary(
-                    Unit(), body, mir::BinaryOp::kMul, IndexNow(body, index),
+                    Unit(), body, mir::BinaryOp::kMul, CountNow(body, index),
                     CountLiteral(body, each->width));
                 return BuildFromBitstream(
                     Unit(), body,
@@ -3827,63 +4272,86 @@ class ArrayBodies : public OperationBodies {
 
   ArrayKind kind_;
 
-  friend struct ArrayMethodBodies;
+  friend struct ArrayOperationBodies;
 };
 
-// Each kind's inherent impl: the body of every method MIR declares for it.
-struct ArrayMethodBodies {
-  using MethodBody = ArrayBodies::MethodBody;
+// Each kind's impls: the body of every operation MIR declares the kind is
+// called by, its own methods first and then the items of its language traits.
+struct ArrayOperationBodies {
+  using OperationBody = ArrayBodies::OperationBody;
 
   // The methods on a run of elements every kind whose elements a position
   // names has, and those of an array whose elements lie one after another.
-  static constexpr MethodBody kWindowToBitVecBody{
+  static constexpr OperationBody kWindowToBitVecBody{
       .name = support::BuiltinFn::kWindowToBitVec,
       .build = [](ArrayBodies& b, const mir::TypeOperationSource&) {
         return b.WindowToBitVec();
       }};
-  static constexpr MethodBody kWithWindowBody{
+  static constexpr OperationBody kWithWindowBody{
       .name = support::BuiltinFn::kWithWindow,
       .build = [](ArrayBodies& b, const mir::TypeOperationSource&) {
         return b.WithWindow();
       }};
-  static constexpr MethodBody kReverseBody{
+  static constexpr OperationBody kReverseBody{
       .name = support::BuiltinFn::kReverse,
       .build = [](ArrayBodies& b, const mir::TypeOperationSource&) {
         return b.Reverse();
       }};
-  static constexpr MethodBody kApplyOrderBody{
+  static constexpr OperationBody kApplyOrderBody{
       .name = support::BuiltinFn::kApplyOrder,
       .build = [](ArrayBodies& b, const mir::TypeOperationSource&) {
         return b.ApplyOrder();
       }};
-  static constexpr MethodBody kElementSliceBody{
+  static constexpr OperationBody kElementSliceBody{
       .name = support::BuiltinFn::kElementSlice,
       .build = [](ArrayBodies& b, const mir::TypeOperationSource& s) {
         return b.ElementSlice(s.arguments.at(0));
       }};
-  static constexpr MethodBody kAssignElementSliceBody{
+  static constexpr OperationBody kAssignElementSliceBody{
       .name = support::BuiltinFn::kAssignElementSlice,
       .build = [](ArrayBodies& b, const mir::TypeOperationSource& s) {
         return b.AssignElementSlice(s.arguments.at(0));
       }};
-  static constexpr MethodBody kSizeBody{
+  static constexpr OperationBody kSizeBody{
       .name = support::BuiltinFn::kSize,
       .build = [](ArrayBodies& b, const mir::TypeOperationSource&) {
         return b.Size();
       }};
-  static constexpr MethodBody kElementBody{
+  static constexpr OperationBody kElementBody{
       .name = support::BuiltinFn::kElement,
       .build = [](ArrayBodies& b, const mir::TypeOperationSource&) {
         return b.ElementRead();
       }};
-  static constexpr MethodBody kDeleteBody{
+  static constexpr OperationBody kDeleteBody{
       .name = support::BuiltinFn::kDelete,
       .build = [](ArrayBodies& b, const mir::TypeOperationSource&) {
         return b.Delete();
       }};
 
+  // The items of the language traits every kind whose elements a position
+  // names implements -- a memory's, an open array actual's and a
+  // random variable's -- in the order the kind's traits list them.
+  static constexpr auto kPositionedArrayTraitBodies = std::to_array<
+      OperationBody>({
+      {.name = support::BuiltinFn::kLoadWords,
+       .build = [](ArrayBodies& b,
+                   const mir::TypeOperationSource&) { return b.LoadWords(); }},
+      {.name = support::BuiltinFn::kStoreWords,
+       .build = [](ArrayBodies& b,
+                   const mir::TypeOperationSource&) { return b.StoreWords(); }},
+      {.name = support::BuiltinFn::kToImage,
+       .build = [](ArrayBodies& b,
+                   const mir::TypeOperationSource&) { return b.ToImage(); }},
+      {.name = support::BuiltinFn::kFromImage,
+       .build = [](ArrayBodies& b,
+                   const mir::TypeOperationSource&) { return b.FromImage(); }},
+      {.name = support::BuiltinFn::kWalkRandom,
+       .build = [](ArrayBodies& b,
+                   const mir::TypeOperationSource&) { return b.WalkRandom(); }},
+  });
+
   // A fixed-size array's own methods (LRM 7.4).
-  static constexpr auto kFixedArrayBodies = std::to_array<MethodBody>({
+  static constexpr auto kFixedArrayMethodBodies = std::to_array<OperationBody>({
       kElementSliceBody,
       kAssignElementSliceBody,
       kWindowToBitVecBody,
@@ -3898,36 +4366,44 @@ struct ArrayMethodBodies {
   });
 
   // A dynamic array's own methods (LRM 7.5).
-  static constexpr auto kDynamicArrayBodies = std::to_array<MethodBody>({
-      {.name = support::BuiltinFn::kDynamicArrayNew,
-       .build = [](ArrayBodies& b,
-                   const mir::TypeOperationSource&) { return b.New(); }},
-      {.name = support::BuiltinFn::kDynamicArrayNewCopy,
-       .build = [](ArrayBodies& b,
-                   const mir::TypeOperationSource&) { return b.NewCopy(); }},
-      kElementBody,
-      {.name = support::BuiltinFn::kElementMut,
-       .build =
-           [](ArrayBodies& b, const mir::TypeOperationSource& s) {
-             return b.ElementWrite(s.answers);
-           }},
-      kDeleteBody,
-      kSizeBody,
-      {.name = support::BuiltinFn::kDynamicArrayFromArray,
-       .build =
-           [](ArrayBodies& b, const mir::TypeOperationSource& s) {
-             return b.FromArray(s.answers, s.arguments.at(0));
-           }},
-      kElementSliceBody,
-      kAssignElementSliceBody,
-      kWindowToBitVecBody,
-      kWithWindowBody,
-      kReverseBody,
-      kApplyOrderBody,
-  });
+  static constexpr auto kDynamicArrayMethodBodies =
+      std::to_array<OperationBody>({
+          {.name = support::BuiltinFn::kDynamicArrayNew,
+           .build = [](ArrayBodies& b,
+                       const mir::TypeOperationSource&) { return b.New(); }},
+          {.name = support::BuiltinFn::kDynamicArrayNewCopy,
+           .build =
+               [](ArrayBodies& b, const mir::TypeOperationSource&) {
+                 return b.NewCopy();
+               }},
+          kElementBody,
+          {.name = support::BuiltinFn::kElementMut,
+           .build =
+               [](ArrayBodies& b, const mir::TypeOperationSource& s) {
+                 return b.ElementWrite(s.answers);
+               }},
+          kDeleteBody,
+          kSizeBody,
+          {.name = support::BuiltinFn::kDynamicArrayFromArray,
+           .build =
+               [](ArrayBodies& b, const mir::TypeOperationSource& s) {
+                 return b.FromArray(s.answers, s.arguments.at(0));
+               }},
+          kElementSliceBody,
+          kAssignElementSliceBody,
+          kWindowToBitVecBody,
+          kWithWindowBody,
+          kReverseBody,
+          kApplyOrderBody,
+          {.name = support::BuiltinFn::kSortOrder,
+           .build =
+               [](ArrayBodies& b, const mir::TypeOperationSource& s) {
+                 return b.SortOrder(s.arguments.at(0));
+               }},
+      });
 
   // A queue's own methods (LRM 7.10).
-  static constexpr auto kQueueBodies = std::to_array<MethodBody>({
+  static constexpr auto kQueueMethodBodies = std::to_array<OperationBody>({
       kSizeBody,
       kElementBody,
       {.name = support::BuiltinFn::kQueueElementMut,
@@ -3992,33 +4468,42 @@ struct ArrayMethodBodies {
       kReverseBody,
       kApplyOrderBody,
   });
+
+  static constexpr auto kFixedArrayBodies =
+      Concatenated(kFixedArrayMethodBodies, kPositionedArrayTraitBodies);
+  static constexpr auto kDynamicArrayBodies =
+      Concatenated(kDynamicArrayMethodBodies, kPositionedArrayTraitBodies);
+  static constexpr auto kQueueBodies =
+      Concatenated(kQueueMethodBodies, kPositionedArrayTraitBodies);
 };
 
-// Each kind's table builds exactly the methods MIR declares for the kind.
-static_assert(mir::NamesTheSameMethods(
-    mir::kFixedArrayMethods, ArrayMethodBodies::kFixedArrayBodies));
-static_assert(mir::NamesTheSameMethods(
-    mir::kDynamicArrayMethods, ArrayMethodBodies::kDynamicArrayBodies));
-static_assert(mir::NamesTheSameMethods(
-    mir::kQueueMethods, ArrayMethodBodies::kQueueBodies));
+// Each kind's table builds exactly the operations MIR declares the kind is
+// called by.
+static_assert(mir::NamesTheSameOperations(
+    mir::kFixedArrayOperations, ArrayOperationBodies::kFixedArrayBodies));
+static_assert(mir::NamesTheSameOperations(
+    mir::kDynamicArrayOperations, ArrayOperationBodies::kDynamicArrayBodies));
+static_assert(mir::NamesTheSameOperations(
+    mir::kQueueOperations, ArrayOperationBodies::kQueueBodies));
 
-auto ArrayBodies::MethodBodyOf(support::BuiltinFn name) const
-    -> const MethodBody& {
-  const std::span<const MethodBody> rows = std::visit(
+auto ArrayBodies::OperationBodyOf(support::BuiltinFn name) const
+    -> const OperationBody& {
+  const std::span<const OperationBody> rows = std::visit(
       Overloaded{
           [](const FixedSizeKind&) {
-            return std::span<const MethodBody>(
-                ArrayMethodBodies::kFixedArrayBodies);
+            return std::span<const OperationBody>(
+                ArrayOperationBodies::kFixedArrayBodies);
           },
           [](const DynamicArrayKind&) {
-            return std::span<const MethodBody>(
-                ArrayMethodBodies::kDynamicArrayBodies);
+            return std::span<const OperationBody>(
+                ArrayOperationBodies::kDynamicArrayBodies);
           },
           [](const QueueKind&) {
-            return std::span<const MethodBody>(ArrayMethodBodies::kQueueBodies);
+            return std::span<const OperationBody>(
+                ArrayOperationBodies::kQueueBodies);
           }},
       kind_);
-  for (const MethodBody& row : rows) {
+  for (const OperationBody& row : rows) {
     if (row.name == name) {
       return row;
     }
@@ -4286,6 +4771,42 @@ auto BuildArrayOperationBody(
         "array -- please report this as a bug");
   }
   return ArrayBodies(unit, type, *element).Build(source);
+}
+
+auto RandomWalkStep(
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId part,
+    mir::ExprId problem, mir::TypeId type) -> mir::Expr {
+  if (mir::ImplementsLanguageTrait(unit, type, support::kRandomWalk)) {
+    return mir::Expr{
+        .data =
+            mir::CallExpr{
+                .callee =
+                    mir::Direct{
+                        .target =
+                            mir::TypeOperationTarget{
+                                .type = type,
+                                .answers = support::BuiltinFn::kWalkRandom},
+                        .receiver = part},
+                .arguments = {problem}},
+        .type = unit.builtins.void_type};
+  }
+  return mir::MakeBuiltinCall(
+      unit, block.Body(), support::BuiltinFn::kRandomWalkLeaf, std::nullopt,
+      {problem, part, TypeRecordOf(unit, block, type)},
+      unit.builtins.void_type);
+}
+
+auto TypeRecordOf(
+    const mir::CompilationUnit& unit, mir::Builder block, mir::TypeId type)
+    -> mir::ExprId {
+  return block.Add(
+      mir::MakeBuiltinCall(
+          unit, block.Body(), support::BuiltinFn::kTypeRecordOf, std::nullopt,
+          std::nullopt, {type}, {},
+          mir::BorrowedPointerTo(
+              unit.types,
+              mir::LibraryTypeOf(unit.types, support::LibraryDecl::kValueType),
+              mir::Mutability::kReadOnly)));
 }
 
 }  // namespace lyra::lowering::hir_to_mir

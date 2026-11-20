@@ -16,7 +16,6 @@
 #include "lyra/value/position.hpp"
 #include "lyra/value/string.hpp"
 #include "lyra/value/value_type.hpp"
-#include "lyra/value/witnessed_elem.hpp"
 
 namespace lyra::value {
 
@@ -25,31 +24,6 @@ namespace {
 auto LayoutOf(const ValueType& element, std::size_t count) -> SequenceLayout {
   return SequenceLayoutOf(element.Layout(), count);
 }
-
-// The elements of one array as the sequence algorithms read them, and write
-// them where the array may be written.
-template <typename Bytes>
-class Elements {
- public:
-  Elements(const FixedArrayType& type, Bytes* array)
-      : type_(&type), array_(array), element_(type.ElementType()) {
-  }
-
-  [[nodiscard]] auto Element() const -> const WitnessedElem& {
-    return element_;
-  }
-  [[nodiscard]] auto Count() const -> std::size_t {
-    return type_->Count();
-  }
-  [[nodiscard]] auto At(std::size_t i) const -> Bytes* {
-    return type_->GetUnchecked(array_, i);
-  }
-
- private:
-  const FixedArrayType* type_;
-  Bytes* array_;
-  WitnessedElem element_;
-};
 
 }  // namespace
 
@@ -126,28 +100,6 @@ void FixedArrayType::Building::Advance() {
 
 void FixedArrayType::Building::Finish() {
   finished_ = true;
-}
-
-namespace {
-
-auto ArrayOf(const ValueType& type) -> const FixedArrayType& {
-  return *type.AsFixedArray();
-}
-
-}  // namespace
-
-extern "C" {
-constinit const PartsWitnessTable lyra_rt_fixed_array_parts_witness_table{
-    .count = [](const ValueType& type, const void*) -> std::size_t {
-      return ArrayOf(type).Count();
-    },
-    .type = [](const ValueType& type, const void*) -> const ValueType& {
-      return ArrayOf(type).ElementType().Type();
-    },
-    .at = [](const ValueType& type, const void* value, std::size_t position)
-        -> const void* { return ArrayOf(type).GetUnchecked(value, position); },
-    .ref_at = [](const ValueType& type, void* value, std::size_t position)
-        -> void* { return ArrayOf(type).GetUnchecked(value, position); }};
 }
 
 auto ByteStringOf(const FixedArrayView& array) -> String {

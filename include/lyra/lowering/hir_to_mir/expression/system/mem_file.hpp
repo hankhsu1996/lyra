@@ -46,6 +46,12 @@ struct MemoryIndices {
     std::span<const hir::UnpackedRange> dims,
     const std::optional<SliceIndices>& slice) -> MemoryIndices;
 
+// The same of a memory whose type declares no range -- a dynamic array, a
+// queue, an associative array -- which is addressed from 0 across what it
+// holds: no dimensions, and 0 the lowest index.
+[[nodiscard]] auto MemoryIndicesFromZero(
+    mir::CompilationUnit& unit, mir::Builder block) -> MemoryIndices;
+
 // LRM 21.4 / 21.5 memory file transfer. A void task appearing only in statement
 // position, over an unpacked-array memory whose element lowers to a packed
 // vector. `direction` selects the two shapes: a load (`$readmem{h,b}`) writes

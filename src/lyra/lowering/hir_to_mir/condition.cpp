@@ -5,12 +5,12 @@
 #include <span>
 #include <vector>
 
+#include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/expr_id.hpp"
-#include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/mir/unary_op.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -46,6 +46,22 @@ auto BuildConditionNot(
       mir::MakeUnary(
           unit, block.Body(), mir::UnaryOp::kLogicalNot, condition,
           unit.builtins.machine_bool));
+}
+
+auto BuildIsNull(
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId address)
+    -> mir::ExprId {
+  return block.Add(
+      mir::Expr{
+          .data =
+              mir::BinaryExpr{
+                  .op = mir::BinaryOp::kEquality,
+                  .lhs = address,
+                  .rhs = block.Add(
+                      mir::Expr{
+                          .data = mir::NullLiteral{},
+                          .type = block.Get(address).type})},
+          .type = unit.builtins.machine_bool});
 }
 
 auto ConditionAsBit(

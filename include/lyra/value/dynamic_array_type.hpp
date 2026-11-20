@@ -76,11 +76,4 @@ class DynamicArrayType {
 
 static_assert(std::is_standard_layout_v<DynamicArrayType>);
 
-// Any dynamic array's elements answered by position, for what walks a value
-// down to its leaves, each answer read off the array type it is handed and
-// the core it lies in. The table of every such type names this one.
-extern "C" {
-extern const PartsWitnessTable lyra_rt_dynamic_array_parts_witness_table;
-}
-
 }  // namespace lyra::value

@@ -579,6 +579,13 @@ void ReadBigEndian(
           static_cast<std::int64_t>(dest.width));
 }
 
+auto FileTable::ReadWords(
+    std::int64_t fd, std::span<const std::int64_t> bounds,
+    std::int64_t sv_start, std::int64_t count, std::int64_t width)
+    -> MemoryWords {
+  return {*this, fd, bounds, sv_start, count, width};
+}
+
 auto FileTable::ReadMemoryWords(
     std::int64_t fd, std::uint64_t element_width,
     const value::UnpackedRange& declared, std::int64_t start_sv,

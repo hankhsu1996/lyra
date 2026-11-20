@@ -38,8 +38,8 @@ constexpr std::string_view kAbiHeader = "include/lyra/runtime/runtime_abi.hpp";
 // things an entry is told of a type -- how wide an integral type is, whether
 // it is signed, whether it is four-state, the constant of a type the entry
 // keeps and acts on, what a net asks of it, the function taking some of
-// a value's positions, the order an index type imposes, or the operations a
-// value of it is compared and streamed by.
+// a value's positions, or the operations a value of it is read out of a stream
+// by.
 enum class Hands : std::uint8_t {
   kValue,
   kWidth,
@@ -48,7 +48,6 @@ enum class Hands : std::uint8_t {
   kTypeConstant,
   kNetWitnesses,
   kTakePositions,
-  kIndexOrder,
   kOperations,
 };
 
@@ -144,8 +143,6 @@ auto ParametersOf(std::span<const Spelled> spelled) -> std::vector<Parameter> {
       hands = Hands::kNetWitnesses;
     } else if (pointer && p.name.ends_with("_take_positions")) {
       hands = Hands::kTakePositions;
-    } else if (pointer && p.name.ends_with("_index_order")) {
-      hands = Hands::kIndexOrder;
     } else if (pointer && p.name.ends_with("_operations")) {
       hands = Hands::kOperations;
     }
@@ -238,17 +235,6 @@ auto Disagreement(
     return "is declared told the type of the values it holds ahead of its "
            "operands and does not open with a type";
   }
-  // A container the library holds is told what building the empty one of its
-  // type is told: an associative array its index order and its element type,
-  // a sequence the one type. A declaration names no domain, so which of the
-  // two a prototype opens with is not held here.
-  if (std::holds_alternative<ToldContainerTypeAhead>(declared.told)) {
-    take(Hands::kIndexOrder);
-    if (!take(Hands::kTypeConstant)) {
-      return "is declared told the type of the container it holds ahead of "
-             "its operands and does not open with it";
-    }
-  }
   if (std::holds_alternative<ToldTypeAndNetWitnessesAhead>(declared.told) &&
       !(take(Hands::kTypeConstant) && take(Hands::kNetWitnesses))) {
     return "is declared told the type of the values it holds and how a net "
@@ -272,20 +258,12 @@ auto Disagreement(
             [&](const ToldNothing&) { return read; },
             [&](const ToldWidthMetadataAhead&) { return read; },
             [&](const ToldTypeMetadataAhead&) { return read; },
-            [&](const ToldContainerTypeAhead&) { return read; },
             [&](const ToldTypeAndNetWitnessesAhead&) { return read; },
             [&](const ToldWidthMetadata& t) {
               return told_at(t.after, PassWithWidth{.type = lir::TypeId{}});
             },
             [&](const ToldLaidOutType&) { return read; },
-            [&](const ToldKeyType& t) {
-              return told_at(t.after, PassWithType{.type = lir::TypeId{}});
-            },
-            [&](const ToldEntryType& t) {
-              return told_at(t.after, PassWithType{.type = lir::TypeId{}});
-            },
-            [&](const ToldTakePositions&) { return read; },
-            [&](const ToldOperations&) { return read; }},
+            [&](const ToldTakePositions&) { return read; }},
         declared.told);
   };
   const std::size_t stated = std::max(
@@ -295,16 +273,12 @@ auto Disagreement(
               [](const ToldNothing&) -> std::size_t { return 0; },
               [](const ToldWidthMetadataAhead&) -> std::size_t { return 0; },
               [](const ToldTypeMetadataAhead&) -> std::size_t { return 0; },
-              [](const ToldContainerTypeAhead&) -> std::size_t { return 0; },
               [](const ToldTypeAndNetWitnessesAhead&) -> std::size_t {
                 return 0;
               },
               [](const ToldWidthMetadata& t) { return t.after + 1; },
               [](const ToldLaidOutType&) -> std::size_t { return 0; },
-              [](const ToldKeyType& t) { return t.after + 1; },
-              [](const ToldEntryType& t) { return t.after + 1; },
-              [](const ToldTakePositions&) -> std::size_t { return 0; },
-              [](const ToldOperations&) -> std::size_t { return 0; }},
+              [](const ToldTakePositions&) -> std::size_t { return 0; }},
           declared.told));
   for (std::size_t i = 0; i < stated; ++i) {
     const std::size_t began = at;
@@ -349,7 +323,6 @@ auto Disagreement(
       case Hands::kTypeConstant:
       case Hands::kNetWitnesses:
       case Hands::kTakePositions:
-      case Hands::kIndexOrder:
       case Hands::kOperations:
         told.push_back(parameters[at]);
         told_at.push_back(at);
@@ -371,16 +344,6 @@ auto Disagreement(
         });
     if (an_operand_follows) {
       return "takes the type it is realized for ahead of an operand";
-    }
-    told.erase(told.begin());
-    told_at.erase(told_at.begin());
-  }
-  // A realization comparing or streaming a container is told the operations of
-  // its type first of what follows its operands.
-  if (std::holds_alternative<ToldOperations>(declared.told)) {
-    if (told.empty() || told.front().hands != Hands::kOperations) {
-      return "is declared told the operations of its type and takes none "
-             "after its operands";
     }
     told.erase(told.begin());
     told_at.erase(told_at.begin());
@@ -431,15 +394,7 @@ auto Disagreement(
           told_names());
     // Which of the two the array it builds is told as is the type the call
     // answers at to say, which no declaration holds.
-    // An associative array is told the order its index type imposes ahead of
-    // its element type.
     case support::AnswerTold::kBuiltArray:
-      if (told.size() == 2 && hands(0, Hands::kIndexOrder) &&
-          told[1].name == "answer_element_type" &&
-          told_at[1] + 2 == parameters.size() &&
-          parameters.back().name == "out") {
-        return std::nullopt;
-      }
       if (!is_told_of_its_answer_as("answer_type") &&
           !is_told_of_its_answer_as("answer_element_type")) {
         return std::format(
@@ -582,7 +537,7 @@ auto DeclaredRealizations() -> Realizations {
             [&](const NamedByWrapper& named) {
               for (const ThroughWrapper& one : named.realized) {
                 for (const support::ValueDomain domain : domains) {
-                  if (one.domains.Holds(domain)) {
+                  if (one.realized.domains.Holds(domain)) {
                     builtin(
                         RuntimeSymbol(domain, one.wrapper, fn), fn,
                         ToldOf(domain, one.wrapper, fn));
@@ -886,20 +841,11 @@ TEST(EntryPrototypeTest, WhatStorageIsToldAheadOpensItsPrototype) {
       disagrees(ToldTypeAndNetWitnessesAhead{}, kTypeAndNetWitnessesFirst));
   EXPECT_TRUE(disagrees(ToldTypeAndNetWitnessesAhead{}, kTypeFirst));
   EXPECT_TRUE(disagrees(ToldTypeMetadataAhead{}, kTypeAndNetWitnessesFirst));
-  constexpr std::string_view kOrderAndTypeFirst =
-      "void lyra_rt_probe(const void* key_index_order, "
-      "const void* element_type, void* storage);";
-  EXPECT_FALSE(disagrees(ToldContainerTypeAhead{}, kTypeFirst));
-  EXPECT_FALSE(disagrees(ToldContainerTypeAhead{}, kOrderAndTypeFirst));
-  EXPECT_TRUE(disagrees(ToldContainerTypeAhead{}, kStorageFirst));
-  EXPECT_TRUE(disagrees(ToldContainerTypeAhead{}, kWidthFirst));
-  EXPECT_TRUE(disagrees(ToldNothing{}, kOrderAndTypeFirst));
 }
 
-// What a realization is told after its operands -- the operations of its
-// type, or how the type takes some of a value's positions -- and what an entry
-// is told of a value it reads out of a stream or of an associative array it
-// builds, each at its own place and nowhere else.
+// What a realization is told after its operands -- how the type takes some of
+// a value's positions -- and what an entry is told of a value it reads out of
+// a stream, each at its own place and nowhere else.
 TEST(EntryPrototypeTest, WhatFollowsTheOperandsIsHeldToItsPlace) {
   const auto disagrees = [](Told told, support::AnswerTold answer_told,
                             std::string_view prototype) {
@@ -910,26 +856,8 @@ TEST(EntryPrototypeTest, WhatFollowsTheOperandsIsHeldToItsPlace) {
         .has_value();
   };
   constexpr auto kNothing = support::AnswerTold::kNothing;
-  constexpr auto kBuiltArray = support::AnswerTold::kBuiltArray;
   constexpr auto kAnswerAndOperations =
       support::AnswerTold::kAnswerTypeAndOperations;
-  constexpr std::string_view kCompared =
-      "auto lyra_rt_probe(const void* lhs, const void* rhs, "
-      "const void* value_operations, void* out) -> void*;";
-  EXPECT_FALSE(disagrees(ToldOperations{}, kNothing, kCompared));
-  EXPECT_TRUE(disagrees(ToldNothing{}, kNothing, kCompared));
-  EXPECT_TRUE(disagrees(
-      ToldOperations{}, kNothing,
-      "auto lyra_rt_probe(const void* lhs, const void* rhs, void* out) "
-      "-> void*;"));
-  EXPECT_FALSE(disagrees(
-      ToldOperations{}, kBuiltArray,
-      "auto lyra_rt_probe(const void* run, const void* value_operations, "
-      "const void* answer_element_type, void* out) -> void*;"));
-  EXPECT_TRUE(disagrees(
-      ToldOperations{}, kBuiltArray,
-      "auto lyra_rt_probe(const void* run, const void* answer_element_type, "
-      "const void* value_operations, void* out) -> void*;"));
   constexpr std::string_view kBegun =
       "auto lyra_rt_probe(void* cell, std::int64_t level, "
       "const void* value_take_positions) -> std::int64_t;";
@@ -950,15 +878,6 @@ TEST(EntryPrototypeTest, WhatFollowsTheOperandsIsHeldToItsPlace) {
   EXPECT_TRUE(disagrees(
       ToldNothing{}, kAnswerAndOperations,
       "auto lyra_rt_probe(const void* bits, const void* answer_type, "
-      "void* out) -> void*;"));
-  EXPECT_FALSE(disagrees(
-      ToldNothing{}, kBuiltArray,
-      "auto lyra_rt_probe(const void* entries, const void* key_index_order, "
-      "const void* answer_element_type, void* out) -> void*;"));
-  EXPECT_TRUE(disagrees(
-      ToldNothing{}, kBuiltArray,
-      "auto lyra_rt_probe(const void* entries, "
-      "const void* answer_element_type, const void* key_index_order, "
       "void* out) -> void*;"));
 }
 

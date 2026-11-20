@@ -83,8 +83,8 @@
 #include "lyra/runtime/value_families.hpp"          // IWYU pragma: keep
 #include "lyra/runtime/var.hpp"                     // IWYU pragma: keep
 #include "lyra/runtime/weak_reference.hpp"          // IWYU pragma: keep
+#include "lyra/value/array_report.hpp"              // IWYU pragma: keep
 #include "lyra/value/assert.hpp"                    // IWYU pragma: keep
-#include "lyra/value/associative_array.hpp"         // IWYU pragma: keep
 #include "lyra/value/container_class.hpp"           // IWYU pragma: keep
 #include "lyra/value/dpi_canonical.hpp"             // IWYU pragma: keep
 #include "lyra/value/dpi_open_array.hpp"            // IWYU pragma: keep
@@ -93,7 +93,6 @@
 #include "lyra/value/integral.hpp"                  // IWYU pragma: keep
 #include "lyra/value/integral_format.hpp"           // IWYU pragma: keep
 #include "lyra/value/ptr_read.hpp"                  // IWYU pragma: keep
-#include "lyra/value/queue_report.hpp"              // IWYU pragma: keep
 #include "lyra/value/real.hpp"                      // IWYU pragma: keep
 #include "lyra/value/scan.hpp"                      // IWYU pragma: keep
 #include "lyra/value/string.hpp"                    // IWYU pragma: keep
@@ -101,3 +100,4 @@
 #include "lyra/value/tuple.hpp"                     // IWYU pragma: keep
 #include "lyra/value/unmanaged_ref.hpp"             // IWYU pragma: keep
 #include "lyra/value/unpacked_array.hpp"            // IWYU pragma: keep
+#include "lyra/value/wildcard_index.hpp"            // IWYU pragma: keep

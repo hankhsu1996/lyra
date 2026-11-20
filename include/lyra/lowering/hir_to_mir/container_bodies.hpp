@@ -18,7 +18,8 @@ namespace lyra::lowering::hir_to_mir {
 // The body answering `source` at an array (LRM 7.4, 7.5, 7.10), built from
 // the declaration MIR states for it: an item of a library trait the array's
 // type implements, one program over the elements whatever kind of array, or
-// one of the kind's own methods, each built as that kind's table says.
+// one of the kind's own methods or an item of a language trait it implements,
+// each built as that kind's table says.
 //
 // A dynamic array's core decides where its elements lie and when each ends; a
 // queue's own bodies decide both, over storage its recycler hands out. A body
@@ -58,5 +59,19 @@ namespace lyra::lowering::hir_to_mir {
     const mir::CompilationUnit& unit, mir::Builder block, mir::TypeId type,
     mir::ExprId count, std::optional<mir::ExprId> source = std::nullopt)
     -> mir::Expr;
+
+// One part of a random variable walked for a call of `randomize()` (LRM
+// 18.4), the part of `type` the reference `part` names, for the problem
+// `problem`: walked by its own type's code where the type implements the walk,
+// and otherwise named to the problem with its type's record.
+[[nodiscard]] auto RandomWalkStep(
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId part,
+    mir::ExprId problem, mir::TypeId type) -> mir::Expr;
+
+// The record of `type` the library is handed where it is told what a value
+// is.
+[[nodiscard]] auto TypeRecordOf(
+    const mir::CompilationUnit& unit, mir::Builder block, mir::TypeId type)
+    -> mir::ExprId;
 
 }  // namespace lyra::lowering::hir_to_mir

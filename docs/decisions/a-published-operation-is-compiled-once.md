@@ -90,9 +90,9 @@ explicit instantiation, which GCC does not have; libstdc++ 13 states the whole c
 of it carries a requires-clause. A function template stated once takes no concept in its head, for
 the same reason. A unit of the design's own family is free of this, since it compiles those members
 itself. The variables of the three run-time-sized containers were the case this was written for, on
-2026-11-03; since 2026-11-05 a dynamic array, and since 2026-11-07 a queue, is a value laid out by
-its type, held by the laid-out families, and no family is stated over either, which an associative
-array is not yet
+2026-11-03; since 2026-11-05 a dynamic array, since 2026-11-07 a queue and since 2026-11-18 an
+associative array is a value laid out by its type, held by the laid-out families, and no family is
+stated over any of them
 ([a-containers-operations-are-built-for-its-type-over-a-core](a-containers-operations-are-built-for-its-type-over-a-core.md)).
 
 **What only the library reaches stays in the header.** The engine asks an event control whether a

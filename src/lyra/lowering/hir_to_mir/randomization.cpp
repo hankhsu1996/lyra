@@ -34,6 +34,7 @@
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
+#include "lyra/lowering/hir_to_mir/container_bodies.hpp"
 #include "lyra/lowering/hir_to_mir/endpoint.hpp"
 #include "lyra/lowering/hir_to_mir/expression/calls.hpp"
 #include "lyra/lowering/hir_to_mir/expression/selects.hpp"
@@ -572,44 +573,57 @@ auto PositionTerm(const ConstraintWriter& w, hir::ExprId id)
       {*term, w.Machine(64), w.Bool(IsSigned(w, id))});
 }
 
-// A reference to the storage `id` names, and the value it holds now.
-struct NamedVariable {
-  mir::ExprId reference;
-  mir::ExprId value;
-};
+// The value the storage a named variable names holds now, and, where it is an
+// array whose size the program chooses, how many elements it holds now (LRM
+// 7.5.2, 7.10.2.1), as a machine count.
+auto ValueOf(const ConstraintWriter& w, const NamedReference& named)
+    -> mir::ExprId {
+  return w.Block().Read(named.Storage(w.Unit(), w.Block()));
+}
+auto CountOf(const ConstraintWriter& w, const NamedReference& named)
+    -> mir::ExprId {
+  mir::Builder block = w.Block();
+  return BuildToInt64Call(
+      w.Unit(), block,
+      block.Add(BuildBuiltinMethodCall(
+          w.Unit(), block, BuiltinFn::kSize, named.Storage(w.Unit(), block), {},
+          w.Unit().builtins.int_type)));
+}
 
-auto NameVariable(const ConstraintWriter& w, hir::ExprId id)
-    -> diag::Result<NamedVariable> {
-  const hir::Expr& expr = HirExpr(w, id);
-  auto path = w.Lowerer().LowerLhsExpr(expr, w.Frame());
-  if (!path) return std::unexpected(std::move(path.error()));
-  const mir::TypeId value_type = MirTypeOf(w, id);
+// A reference to the storage `id` names.
+// The storage `at` names, of `value_type`, bound to a reference as a `ref`
+// formal of that type takes one (LRM 13.5.2).
+auto ReferenceBound(
+    const ConstraintWriter& w, const AccessPath& at, mir::TypeId value_type)
+    -> NamedReference {
   const mir::TypeId reference_type =
       *ParamTypeOf(w.Unit(), value_type, hir::ParamDirection::kRef);
   const mir::LocalId reference = w.Bind(
       reference_type,
       AtType(
-          w.Unit(), w.Block(), PathReference(w.Unit(), w.Block(), *path),
+          w.Unit(), w.Block(), PathReference(w.Unit(), w.Block(), at),
           reference_type));
-  const mir::ExprId value =
-      w.Block().Read(w.Block().Add(w.Block().WrapperContents(
-          w.Unit().types, w.Block().ReadLocal(reference, reference_type),
-          value_type)));
-  return NamedVariable{
-      .reference = w.Block().ReadLocal(reference, reference_type),
-      .value = value};
+  return NamedReference{
+      .local = reference, .reference_type = reference_type, .type = value_type};
+}
+
+auto NameVariable(const ConstraintWriter& w, hir::ExprId id)
+    -> diag::Result<NamedReference> {
+  const hir::Expr& expr = HirExpr(w, id);
+  auto path = w.Lowerer().LowerLhsExpr(expr, w.Frame());
+  if (!path) return std::unexpected(std::move(path.error()));
+  return ReferenceBound(w, *path, MirTypeOf(w, id));
 }
 
 // What `rand_mode()` names (LRM 18.8): the random variable the class declares
 // -- a property, or a member of a structure one is, reached by the steps that
-// name storage of the property's own -- as a reference and the value it holds
-// now, and a reference to the part the call names, the whole or an element of
-// it at any depth. A mode is kept for the variable and the positions of the
-// part, which an element keeps when an array holding it moves.
+// name storage of the property's own -- as a reference, and the positions of
+// the part the call names within it, none for the whole and an element's at
+// any depth, as machine numbers. A mode is kept for the variable and those
+// positions, which an element keeps when an array holding it moves.
 struct NamedModeVariable {
   mir::ExprId declared;
-  mir::ExprId value;
-  mir::ExprId part;
+  mir::ExprId positions;
 };
 
 // Each random variable `id` names: the one it is, or of a structure each
@@ -625,15 +639,8 @@ auto NameModeVariables(const ConstraintWriter& w, hir::ExprId id)
   const SettledPath settled =
       SettledForRead(unit_lowerer.Unit(), w.Frame(), *std::move(path));
   const auto bind = [&](const AccessPath& at) {
-    const mir::TypeId value_type = PathValueType(unit, block.Body(), at);
-    const mir::TypeId reference_type =
-        *ParamTypeOf(unit, value_type, hir::ParamDirection::kRef);
-    return block.ReadLocal(
-        w.Bind(
-            reference_type,
-            AtType(
-                unit, block, PathReference(unit, block, at), reference_type)),
-        reference_type);
+    return ReferenceBound(w, at, PathValueType(unit, block.Body(), at))
+        .Reference(block);
   };
   // The variable the class declares that a part lies in is reached by the
   // steps that name storage of the property's own.
@@ -647,6 +654,31 @@ auto NameModeVariables(const ConstraintWriter& w, hir::ExprId id)
         at.descent.end());
     return at;
   };
+  // The position of each element the steps past the variable's own name, at
+  // any depth, which is all a mode is kept by; nothing where a step past an
+  // element names a member of it, a part a mode is not yet kept for.
+  const auto positions_of =
+      [&](const AccessPath& at) -> std::optional<mir::ExprId> {
+    const std::span<const DescentStep> past =
+        std::span(at.descent).subspan(declared_of(at).descent.size());
+    if (!std::ranges::all_of(past, [](const DescentStep& step) {
+          return std::holds_alternative<StepToElement>(step.to);
+        })) {
+      return std::nullopt;
+    }
+    std::vector<mir::ExprId> positions;
+    for (const DescentStep& step : past) {
+      positions.push_back(BuildToInt64Call(
+          unit, block, std::get<StepToElement>(step.to).position));
+    }
+    const mir::TypeId type = mir::MachineArrayOf(
+        unit.types, unit.builtins.machine_int64, positions.size());
+    return block.Add(
+        mir::Expr{
+            .data = mir::CompositeExpr{.parts = std::move(positions)},
+            .type = type});
+  };
+  bool names_a_member_of_an_element = false;
   std::vector<NamedModeVariable> out;
   const auto each = [&](const auto& self, const std::vector<DescentStep>& more,
                         hir::TypeId type) -> void {
@@ -669,13 +701,22 @@ auto NameModeVariables(const ConstraintWriter& w, hir::ExprId id)
       }
       return;
     }
+    const std::optional<mir::ExprId> positions = positions_of(at());
+    if (!positions.has_value()) {
+      names_a_member_of_an_element = true;
+      return;
+    }
     out.push_back(
         NamedModeVariable{
-            .declared = bind(declared_of(at())),
-            .value = PathValue(unit, block, declared_of(at())),
-            .part = bind(at())});
+            .declared = bind(declared_of(at())), .positions = *positions});
   };
   each(each, {}, HirExpr(w, id).type);
+  if (names_a_member_of_an_element) {
+    return diag::Fail(
+        HirExpr(w, id).span, diag::DiagCode::kUnsupportedExpressionForm,
+        "the mode of a member of an element of an array of structures is not "
+        "yet supported");
+  }
   return out;
 }
 
@@ -690,7 +731,8 @@ auto VariableTerm(const ConstraintWriter& w, hir::ExprId id)
   auto named = NameVariable(w, id);
   if (!named) return std::unexpected(std::move(named.error()));
   return w.Term(
-      BuiltinFn::kConstraintVariable, {named->reference, named->value});
+      BuiltinFn::kConstraintVariable,
+      {named->Reference(w.Block()), ValueOf(w, *named)});
 }
 
 // Each variable of the problem the operands of `id` name, wanted ahead of the
@@ -718,7 +760,8 @@ auto OrderedTerm(const ConstraintWriter& w, hir::ExprId id)
     auto named = NameVariable(w, *array);
     if (!named) return std::unexpected(std::move(named.error()));
     return w.Term(
-        BuiltinFn::kConstraintArraySize, {named->reference, named->value});
+        BuiltinFn::kConstraintArraySize,
+        {named->Reference(w.Block()), CountOf(w, *named)});
   }
   return VariableTerm(w, id);
 }
@@ -987,8 +1030,8 @@ auto AtWidth(const ConstraintWriter& w, hir::ExprId id, std::int64_t width)
 // far and the element, as a term, and its index in the coordinates the array
 // was declared with.
 struct FoldedElement {
-  const ConstraintWriter* writer;
-  const WalkFrame* frame;
+  const ConstraintWriter* writer = nullptr;
+  const WalkFrame* frame = nullptr;
   mir::ExprId so_far;
   mir::LocalId element;
   mir::LocalId index;
@@ -1100,7 +1143,8 @@ auto Term(const ConstraintWriter& w, hir::ExprId id)
     auto named = NameVariable(w, *array);
     if (!named) return std::unexpected(std::move(named.error()));
     return w.Term(
-        BuiltinFn::kConstraintArraySize, {named->reference, named->value});
+        BuiltinFn::kConstraintArraySize,
+        {named->Reference(w.Block()), CountOf(w, *named)});
   }
   if (!MentionsVariable(w, id)) {
     return ConstantTerm(w, id);
@@ -1679,9 +1723,9 @@ auto LowerConstraintInto(
               }
               auto named = NameVariable(w, item);
               if (!named) return std::unexpected(std::move(named.error()));
-              w.Effect(
-                  BuiltinFn::kConstraintUniqueArray,
-                  {w.ReadTerm(set), named->reference, named->value});
+              AppendRandomWalk(
+                  w.Unit(), w.Block(), [&] { return w.Problem(); },
+                  BuiltinFn::kConstraintUniqueArray, {w.ReadTerm(set)}, *named);
             }
             w.Effect(
                 BuiltinFn::kConstraintUniqueRequire,
@@ -1748,9 +1792,13 @@ auto ListVariables(
     if (!named) return std::unexpected(std::move(named.error()));
     if (const std::optional<mir::ExprId> members = ChosenMembers(
             w.Lowerer().Owner(), w.Block(), HirExpr(w, variable).type)) {
-      w.Effect(BuiltinFn::kConstraintMembers, {named->reference, *members});
+      w.Effect(
+          BuiltinFn::kConstraintMembers,
+          {named->Reference(w.Block()), *members});
     }
-    w.Effect(BuiltinFn::kRandomizeList, {named->reference, named->value});
+    AppendRandomWalk(
+        w.Unit(), w.Block(), [&] { return w.Problem(); },
+        BuiltinFn::kRandomizeList, {}, *named);
   }
   return {};
 }
@@ -1908,7 +1956,7 @@ auto LowerRandModeSetExpr(
               }
               set = w.Call(
                   BuiltinFn::kRandModeSet,
-                  {variable.declared, variable.value, variable.part,
+                  {variable.declared, variable.positions,
                    w.Block().ReadLocal(held, on_type)},
                   w.Unit().builtins.void_type);
             }
@@ -1939,8 +1987,8 @@ auto LowerRandModeGetExpr(
   // The value form names one variable (LRM 18.8), which the front end checks.
   const NamedModeVariable& variable = named->front();
   return steps.Build(w.Call(
-      BuiltinFn::kRandModeGet,
-      {variable.declared, variable.value, variable.part}, result_type));
+      BuiltinFn::kRandModeGet, {variable.declared, variable.positions},
+      result_type));
 }
 
 auto ChosenValueType(const hir::TypePool& types, hir::TypeId type)
@@ -1956,6 +2004,31 @@ auto ChosenValueType(const hir::TypePool& types, hir::TypeId type)
     return ChosenValueType(types, queue->element_type);
   }
   return type;
+}
+
+void AppendRandomWalk(
+    const mir::CompilationUnit& unit, mir::Builder block,
+    const std::function<mir::ExprId()>& problem, support::BuiltinFn begin,
+    std::vector<mir::ExprId> begin_operands, const NamedReference& variable) {
+  begin_operands.insert(begin_operands.begin(), problem());
+  begin_operands.push_back(variable.Reference(block));
+  block.AppendStmt(
+      mir::ExprStmt{
+          .expr = block.Add(
+              mir::MakeCallExpr(
+                  mir::Direct{.target = begin}, std::move(begin_operands),
+                  unit.builtins.void_type))});
+  block.AppendStmt(
+      mir::ExprStmt{
+          .expr = block.Add(RandomWalkStep(
+              unit, block, variable.Reference(block), problem(),
+              variable.type))});
+  block.AppendStmt(
+      mir::ExprStmt{
+          .expr = block.Add(
+              mir::MakeBuiltinCall(
+                  unit, block.Body(), support::BuiltinFn::kRandomWalkEnd,
+                  std::nullopt, {problem()}, unit.builtins.void_type))});
 }
 
 auto ChosenMembers(

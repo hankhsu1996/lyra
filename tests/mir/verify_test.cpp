@@ -711,6 +711,61 @@ TEST(MirVerifyTest, OnlyABindingOfAMemberMakesAReferenceNameOtherStorage) {
       "binds something other than a reference held as a member");
 }
 
+// A local referring to storage it does not own refers to what its declaration
+// bound it to, so a store re-seating one is refused, except where it is a
+// loop's cursor that the loop's step advances, as an iterator is.
+TEST(MirVerifyTest, ALocalBorrowingStorageIsReseatedOnlyAsALoopsCursor) {
+  const auto reseated = [](bool by_the_step) {
+    return UnitWithCode([=](CompilationUnit& u, CallableCode& code) {
+      const TypeId borrowed = u.types.Intern(
+          Type{PointerType{
+              .pointee = u.builtins.int_type,
+              .ownership = PointerOwnership::kBorrowed}});
+      const LocalId cursor = code.AddLocal(borrowed);
+      Builder body(code.Body(), diag::SourceSpan{});
+      body.AppendStmt(
+          LocalDeclStmt{
+              .target = cursor,
+              .init = body.Add(Expr{.data = NullLiteral{}, .type = borrowed})});
+      const ExprId advance = body.Add(MakeAssignExpr(
+          u.builtins, body.LocalPlace(cursor, borrowed),
+          body.Add(Expr{.data = NullLiteral{}, .type = borrowed})));
+      if (by_the_step) {
+        body.AppendStmt(
+            ForStmt{
+                .init = {},
+                .condition = std::nullopt,
+                .step = {advance},
+                .scope = body.AddScope(Block{})});
+        return;
+      }
+      body.AppendStmt(ExprStmt{.expr = advance});
+    });
+  };
+
+  EXPECT_NO_THROW(Verify(reseated(true)));
+  ExpectRefused(
+      reseated(false), "re-seats a local referring to storage it does not own");
+}
+
+// Whether a call of an entry reporting where it was written is handed that.
+enum class WrittenAt : std::uint8_t { kHanded, kWithheld };
+
+// The arguments a call of `entry` is handed: `argument`, and where the call
+// is written where the entry reports there and `written_at` hands it.
+auto ArgumentsOf(
+    const CompilationUnit& u, Builder body, support::BuiltinFn entry,
+    ExprId argument, WrittenAt written_at = WrittenAt::kHanded)
+    -> std::vector<ExprId> {
+  std::vector<ExprId> arguments{argument};
+  if (support::RuntimeEntryOf(entry).takes_the_location &&
+      written_at == WrittenAt::kHanded) {
+    arguments.push_back(body.Add(
+        Expr{.data = NullLiteral{}, .type = u.builtins.source_location}));
+  }
+  return arguments;
+}
+
 // An element of a numbered container is named by a position, so an index left
 // in the type the source wrote it in is refused; the entry reaching an
 // associative array takes a value of its index type, which is no ordinal (LRM
@@ -722,8 +777,9 @@ TEST(MirVerifyTest, AnOrdinalIsStatedAsAPosition) {
       const TypeId container =
           keyed ? AssociativeArrayOf(u.types, u.builtins.int_type, element)
                 : FourOf(u.types, element);
-      const support::BuiltinFn entry = keyed ? support::BuiltinFn::kAssocElement
-                                             : support::BuiltinFn::kElement;
+      const support::BuiltinFn entry =
+          keyed ? support::BuiltinFn::kAssocReferElement
+                : support::BuiltinFn::kElement;
       const TypeId index_type =
           as_position ? PositionType(u.types) : u.builtins.int_type;
       const ExprId array =
@@ -738,7 +794,7 @@ TEST(MirVerifyTest, AnOrdinalIsStatedAsAPosition) {
                           CallExpr{
                               .callee =
                                   Direct{.target = entry, .receiver = array},
-                              .arguments = {at}},
+                              .arguments = ArgumentsOf(u, body, entry, at)},
                       .type = u.types.Intern(
                           Type{ReferenceType{
                               .referent = element,
@@ -954,7 +1010,8 @@ TEST(MirVerifyTest, AReferenceBindsStorageNeverARead) {
 // argument is of type `argument`, answering a value of type `answer`.
 auto UnitCalling(
     support::BuiltinFn entry, const auto& container_of, const auto& argument_of,
-    const auto& answer_of) -> CompilationUnit {
+    const auto& answer_of, WrittenAt written_at = WrittenAt::kHanded)
+    -> CompilationUnit {
   return UnitWithBody([&](CompilationUnit& u, Builder body) {
     const ExprId receiver =
         body.Add(Expr{.data = NullLiteral{}, .type = container_of(u)});
@@ -968,7 +1025,8 @@ auto UnitCalling(
                         CallExpr{
                             .callee =
                                 Direct{.target = entry, .receiver = receiver},
-                            .arguments = {argument}},
+                            .arguments = ArgumentsOf(
+                                u, body, entry, argument, written_at)},
                     .type = answer_of(u)})});
   });
 }
@@ -996,13 +1054,14 @@ TEST(MirVerifyTest, AnEntryIsCalledOnTheKindOfContainerItReaches) {
 
   EXPECT_NO_THROW(Verify(
       UnitCalling(support::BuiltinFn::kElement, numbered, position, read)));
-  EXPECT_NO_THROW(Verify(
-      UnitCalling(support::BuiltinFn::kAssocElement, keyed, element, read)));
+  EXPECT_NO_THROW(Verify(UnitCalling(
+      support::BuiltinFn::kAssocReferElement, keyed, element, read)));
   ExpectRefused(
       UnitCalling(support::BuiltinFn::kElement, keyed, position, read),
       "reaches by a position into an associative array");
   ExpectRefused(
-      UnitCalling(support::BuiltinFn::kAssocElement, numbered, element, read),
+      UnitCalling(
+          support::BuiltinFn::kAssocReferElement, numbered, element, read),
       "reaches by a key into something that is no associative array");
 }
 
@@ -1074,15 +1133,16 @@ TEST(MirVerifyTest, ABodyDeclaredNotToUnwindCallsOnlyWhatCannotUnwind) {
                           CallExpr{
                               .callee =
                                   Direct{.target = entry, .receiver = receiver},
-                              .arguments = {argument}},
+                              .arguments =
+                                  ArgumentsOf(u, body, entry, argument)},
                       .type = read})});
     });
   };
   using support::BuiltinFn;
   EXPECT_NO_THROW(Verify(calling(BuiltinFn::kElement, false, false)));
-  EXPECT_NO_THROW(Verify(calling(BuiltinFn::kAssocElement, true, true)));
+  EXPECT_NO_THROW(Verify(calling(BuiltinFn::kAssocReferElement, true, true)));
   ExpectRefused(
-      calling(BuiltinFn::kAssocElement, true, false),
+      calling(BuiltinFn::kAssocReferElement, true, false),
       "is declared not to unwind and makes");
 
   const auto placing = [](support::BuiltinFn allocate) {
@@ -1108,7 +1168,7 @@ TEST(MirVerifyTest, ABodyDeclaredNotToUnwindCallsOnlyWhatCannotUnwind) {
   EXPECT_NO_THROW(Verify(placing(BuiltinFn::kDefaultPlacementNew)));
   ExpectRefused(
       placing(BuiltinFn::kAssocElement),
-      "places a value in storage 'assocarray_element' hands out, which may "
+      "places a value in storage 'assoc_element' hands out, which may "
       "unwind");
 }
 
@@ -1123,6 +1183,10 @@ TEST(MirVerifyTest, ACallIsHeldToItsEntrysOneDeclaration) {
   const auto bit = [](CompilationUnit& u) { return u.builtins.bit1; };
   const auto queue = [](CompilationUnit& u) {
     return QueueOf(u.types, u.builtins.int_type, support::UnboundedQueue{});
+  };
+  const auto keyed = [](CompilationUnit& u) {
+    return AssociativeArrayOf(
+        u.types, u.builtins.int_type, u.builtins.int_type);
   };
   const auto position = [](CompilationUnit& u) {
     return PositionType(u.types);
@@ -1146,7 +1210,9 @@ TEST(MirVerifyTest, ACallIsHeldToItsEntrysOneDeclaration) {
       UnitCalling(support::BuiltinFn::kElementMut, queue, position, write),
       "where another is stated for its first operand");
   ExpectRefused(
-      UnitCalling(support::BuiltinFn::kQueueElementMut, queue, position, write),
+      UnitCalling(
+          support::BuiltinFn::kAssocReferElement, keyed, integral, write,
+          WrittenAt::kWithheld),
       "is not handed where that is");
 
   EXPECT_NO_THROW(

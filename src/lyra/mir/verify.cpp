@@ -22,7 +22,6 @@
 #include "lyra/mir/block_id.hpp"
 #include "lyra/mir/callable.hpp"
 #include "lyra/mir/callable_code.hpp"
-#include "lyra/mir/callable_ordinal.hpp"
 #include "lyra/mir/caller_location.hpp"
 #include "lyra/mir/class.hpp"
 #include "lyra/mir/class_id.hpp"
@@ -599,7 +598,9 @@ auto RefersWithoutOwning(const TypePool& types, TypeId type) -> bool {
 // only by the operations that bind one. So no store names a reference of
 // either kind, and a binding names only a reference held as a member. A local
 // referring to storage it does not own is bound by its declaration alone, so
-// what it refers to is what its initializer reached.
+// what it refers to is what its initializer reached; the one exception is a
+// loop's cursor, which a `for`'s step advances, as an iterator is advanced
+// over what it walks.
 void VerifyReferenceBindings(
     const CompilationUnit& unit, const Block& block, const auto& describe) {
   const auto refuse = [&](ExprId id, std::string_view what) {
@@ -609,6 +610,12 @@ void VerifyReferenceBindings(
             "this as a bug",
             describe(), what, id.value));
   };
+  std::vector<ExprId> advances;
+  for (const Stmt& stmt : block.stmts) {
+    const auto* loop = std::get_if<ForStmt>(&stmt.data);
+    if (loop == nullptr) continue;
+    advances.insert(advances.end(), loop->step.begin(), loop->step.end());
+  }
   for (const ExprId id : block.exprs.Ids()) {
     const ExprData& data = block.exprs.Get(id).data;
     if (const auto* assign = std::get_if<AssignExpr>(&data)) {
@@ -617,7 +624,8 @@ void VerifyReferenceBindings(
         refuse(id, "stores into a reference, which only a binding names");
       }
       if (ReferencedLocal(block.exprs.Get(assign->target).data).has_value() &&
-          RefersWithoutOwning(unit.types, target)) {
+          RefersWithoutOwning(unit.types, target) &&
+          std::ranges::find(advances, id) == advances.end()) {
         refuse(
             id,
             "re-seats a local referring to storage it does not own, which "

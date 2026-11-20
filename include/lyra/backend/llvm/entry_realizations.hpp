@@ -51,10 +51,7 @@ class DomainSet {
 // the words of a wider value, and a designation of an integral value, are told
 // how wide the values held there are, after operand `after`, and an entry
 // making such storage, or a net of any integral value, is told it ahead of
-// whatever it takes. A memory reached by a key is told the type its keys are
-// built at (LRM 21.4.1), and an associative array built from a literal the
-// type of the pairs its entries cross as (LRM 7.9.11), each after the operand
-// it concerns.
+// whatever it takes.
 struct ToldNothing {};
 struct ToldWidthMetadata {
   std::size_t after;
@@ -65,11 +62,6 @@ struct ToldWidthMetadataAhead {};
 // made, and an entry acting on such storage once it is made is told nothing of
 // the values it is handed, which the storage keeps the type of.
 struct ToldTypeMetadataAhead {};
-// Storage holding a container the library holds for every element type alike
-// is told the type of the container, ahead of whatever it takes where it is
-// made, as an entry building the empty container of that type is told it, so
-// it holds one from then on (LRM 7.5, 7.8, 7.10).
-struct ToldContainerTypeAhead {};
 // A net of a value laid out by its type is told that type and how its
 // positions are read and written, ahead of whatever it takes where it is made,
 // since the net is the one holder that resolves a value's positions (LRM
@@ -83,26 +75,14 @@ struct ToldTypeAndNetWitnessesAhead {};
 // in something else. A value of another type it is handed is read with its
 // own.
 struct ToldLaidOutType {};
-struct ToldKeyType {
-  std::size_t after;
-};
-struct ToldEntryType {
-  std::size_t after;
-};
 // A takeover begun on a value laid out by its type is told, after its
 // operands, the type's own function taking some of its positions from another
 // value of it (LRM 10.6.2), which the takeover keeps while it shows anything.
 struct ToldTakePositions {};
-// A realization comparing or streaming a whole value of a container the library
-// holds, or of a fixed-size unpacked array, is told, after its operands, the
-// operations of the type it is realized for, which name its element's (LRM
-// 11.4.5, 20.6.2, 20.9, 6.24.3): no container keeps them.
-struct ToldOperations {};
 using Told = std::variant<
     ToldNothing, ToldWidthMetadata, ToldWidthMetadataAhead,
-    ToldTypeMetadataAhead, ToldContainerTypeAhead, ToldTypeAndNetWitnessesAhead,
-    ToldLaidOutType, ToldKeyType, ToldEntryType, ToldTakePositions,
-    ToldOperations>;
+    ToldTypeMetadataAhead, ToldTypeAndNetWitnessesAhead, ToldLaidOutType,
+    ToldTakePositions>;
 
 // The domains the library realizes an entry for that are told the same thing.
 // An entry states one of these per thing its realizations are told, and a
@@ -144,9 +124,8 @@ struct NamedByResult {
 // where it was declared; and what a time slot moved away from is retained
 // only where a variable holds it (LRM 16.5.1).
 struct ThroughWrapper {
-  WrapperKind wrapper;
-  DomainSet domains;
-  std::optional<Told> told = std::nullopt;
+  WrapperKind wrapper{};
+  RealizedFor realized;
 };
 
 // The operation acts on the capability wrapper an argument reaches rather than
@@ -234,26 +213,16 @@ auto ToldOfAnOperator(support::ValueDomain domain) -> Told;
 // laying the words of a value wider than a word out after itself is built at
 // their width, storage laying a value out after itself by the value's type
 // with that type, so the value has its place from the moment the storage
-// exists, and storage of a container the library holds with the container's
-// type, so it holds the empty container of that type from then on; and a net
+// exists; and a net
 // of any integral type is built at its width, which is how many positions it
 // has and which a layout of a narrower type does not say.
 auto ToldBuilding(support::DeclaredMemberStorage storage) -> Told;
 
 // Whether the library states the type of a value held in `domain`, which a
-// container holding one reads; the operations of the language on such a value
-// a container type's operations name with its element's; and the operations of
-// a kind no other type parameterizes, stated whole.
+// container holding one reads, and the operations of a kind no other type
+// parameterizes, stated whole.
 auto StatesValueType(support::ValueDomain domain) -> bool;
-auto StatesOperationFunctions(support::ValueDomain domain) -> bool;
 auto StatesValueOperations(support::ValueDomain domain) -> bool;
-
-// The order the library keeps the entries of an associative array indexed by
-// values held in `domain` in (LRM 7.8): one for every integral value, or one
-// of the domain's own for each other kind the language admits as an index (LRM
-// 7.8.1 -- 7.8.4), and nothing for a kind it admits as none.
-enum class IndexOrder : std::uint8_t { kIntegral, kOwn };
-auto IndexOrderOf(support::ValueDomain domain) -> std::optional<IndexOrder>;
 
 // Whether the library realizes the conversion `fn` names building a value of
 // `destination` out of one of `source`.

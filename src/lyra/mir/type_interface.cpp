@@ -12,10 +12,10 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/mir/array_impls.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/code_source.hpp"
 #include "lyra/mir/compilation_unit.hpp"
-#include "lyra/mir/inherent_methods.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/mir/type_id.hpp"
@@ -196,6 +196,11 @@ enum class SignatureType : std::uint8_t {
   // The type a family is taken at.
   kAt,
   kPosition,
+  // What names an element: a position for an array whose elements a position
+  // names, and an associative array's index (LRM 7.8); and where an
+  // associative array's index lies, to read it.
+  kIndex,
+  kIndexPointer,
   kMachine,
   kCount,
   kBool,
@@ -227,6 +232,15 @@ enum class SignatureType : std::uint8_t {
   kDynamicArray,
   kChangedRange,
   kSortOrder,
+  // The words a memory task moves (LRM 21.4, 21.5), and a DPI-C open array's
+  // image (LRM 35.5.6.1).
+  kMemoryWords,
+  kDpiOpenArray,
+  // The problem of a call of `randomize()` (LRM 18.6), and a variable of this
+  // type named by a reference (LRM 13.5.2), through which a part of it is
+  // named in turn and later written.
+  kConstraintProblem,
+  kVariableReferenceToSelf,
 };
 
 // Whether `type` is the type a family is taken at.
@@ -237,6 +251,8 @@ constexpr auto NamesTheTypeArgument(SignatureType type) -> bool {
     case SignatureType::kSelf:
     case SignatureType::kElement:
     case SignatureType::kPosition:
+    case SignatureType::kIndex:
+    case SignatureType::kIndexPointer:
     case SignatureType::kMachine:
     case SignatureType::kCount:
     case SignatureType::kBool:
@@ -258,6 +274,10 @@ constexpr auto NamesTheTypeArgument(SignatureType type) -> bool {
     case SignatureType::kDynamicArray:
     case SignatureType::kChangedRange:
     case SignatureType::kSortOrder:
+    case SignatureType::kMemoryWords:
+    case SignatureType::kDpiOpenArray:
+    case SignatureType::kConstraintProblem:
+    case SignatureType::kVariableReferenceToSelf:
       return false;
   }
   throw InternalError("mir: unknown signature type");
@@ -322,99 +342,156 @@ constexpr auto Takes(
       .param_count = sizeof...(params)};
 }
 
-// One of an array's own methods, by its name, and its signature.
-struct MethodDeclaration {
+// An operation an array is called by -- one of its own methods or an item of a
+// language trait it implements -- by its name, and its signature.
+struct OperationDeclaration {
   support::BuiltinFn name;
   Signature signature;
 };
 
-// Every array's own method's signature.
-constexpr auto kMethodDeclarations = [] {
+// The signature of every operation an array is called by, each once whatever
+// kinds have it.
+constexpr auto kOperationDeclarations = [] {
   using support::BuiltinFn;
   using enum SignatureType;
-  const auto method = [](BuiltinFn name, Signature signature) {
-    return MethodDeclaration{.name = name, .signature = signature};
+  const auto operation = [](BuiltinFn name, Signature signature) {
+    return OperationDeclaration{.name = name, .signature = signature};
   };
-  return std::to_array<MethodDeclaration>({
+  return std::to_array<OperationDeclaration>({
       // LRM 7.5.1 `new[N]` and `new[N](src)`.
-      method(BuiltinFn::kDynamicArrayNew, Takes(kSelf, In(kMachine))),
-      method(
+      operation(BuiltinFn::kDynamicArrayNew, Takes(kSelf, In(kMachine))),
+      operation(
           BuiltinFn::kDynamicArrayNewCopy,
           Takes(kSelf, In(kMachine), In(kSelf))),
-      method(BuiltinFn::kDelete, Takes(kNothing, InOut(kSelf))),
-      method(BuiltinFn::kReverse, Takes(kNothing, InOut(kSelf))),
-      method(BuiltinFn::kSize, Takes(kCount, In(kSelf))),
+      operation(BuiltinFn::kDelete, Takes(kNothing, InOut(kSelf))),
+      operation(BuiltinFn::kReverse, Takes(kNothing, InOut(kSelf))),
+      operation(BuiltinFn::kSize, Takes(kCount, In(kSelf))),
+      // LRM 7.9.3: 1 where an entry the index names exists, and 0 otherwise.
+      operation(BuiltinFn::kExists, Takes(kCount, In(kSelf), In(kIndex))),
+      // LRM 7.9.4 -- 7.9.7: where the least, the greatest, the next greater
+      // and the next lesser index the array holds lies, or none.
+      operation(BuiltinFn::kAssocFirst, Takes(kIndexPointer, In(kSelf))),
+      operation(BuiltinFn::kAssocLast, Takes(kIndexPointer, In(kSelf))),
+      operation(
+          BuiltinFn::kAssocNext, Takes(kIndexPointer, In(kSelf), In(kIndex))),
+      operation(
+          BuiltinFn::kAssocPrev, Takes(kIndexPointer, In(kSelf), In(kIndex))),
+      // LRM 7.9.11: where the value a `default:` clause gave the array lies,
+      // none where no clause gave one, and that value set.
+      operation(
+          BuiltinFn::kAssocStatedDefault, Takes(kElementPointer, In(kSelf))),
+      operation(
+          BuiltinFn::kAssocSetStatedDefault,
+          Takes(kNothing, InOut(kSelf), In(kElement))),
       // LRM 7.6: an array taking the elements of another array.
-      method(BuiltinFn::kDynamicArrayFromArray, Takes(kSelf, In(kAt))),
-      method(BuiltinFn::kQueueFromArray, Takes(kSelf, In(kAt))),
-      method(BuiltinFn::kUnpackedArrayFromArray, Takes(kSelf, In(kAt))),
+      operation(BuiltinFn::kDynamicArrayFromArray, Takes(kSelf, In(kAt))),
+      operation(BuiltinFn::kQueueFromArray, Takes(kSelf, In(kAt))),
+      operation(BuiltinFn::kUnpackedArrayFromArray, Takes(kSelf, In(kAt))),
       // LRM 7.10.2.
-      method(
+      operation(
           BuiltinFn::kDeleteIndex,
           Takes(kNothing, InOut(kSelf), In(kPosition))),
-      method(
+      operation(
+          BuiltinFn::kAssocDeleteIndex,
+          Takes(kNothing, InOut(kSelf), In(kIndex))),
+      operation(
           BuiltinFn::kInsert,
           Takes(kNothing, InOut(kSelf), In(kPosition), In(kElement))),
-      method(BuiltinFn::kPushBack, Takes(kNothing, InOut(kSelf), In(kElement))),
-      method(
+      operation(
+          BuiltinFn::kPushBack, Takes(kNothing, InOut(kSelf), In(kElement))),
+      operation(
           BuiltinFn::kPushFront, Takes(kNothing, InOut(kSelf), In(kElement))),
-      method(BuiltinFn::kPopBack, Takes(kElement, InOut(kSelf))),
-      method(BuiltinFn::kPopFront, Takes(kElement, InOut(kSelf))),
+      operation(BuiltinFn::kPopBack, Takes(kElement, InOut(kSelf))),
+      operation(BuiltinFn::kPopFront, Takes(kElement, InOut(kSelf))),
       // LRM 7.10.5: the queue held to its bound.
-      method(BuiltinFn::kQueueHoldToBound, Takes(kNothing, InOut(kSelf))),
+      operation(BuiltinFn::kQueueHoldToBound, Takes(kNothing, InOut(kSelf))),
       // LRM 7.4.5, 7.10.1: where the element a position names lies, to read
-      // it or to write it, and where the position names none.
-      method(
+      // it or to write it, and where the position names none; and the same of
+      // an associative array's index (LRM 7.8.6, 7.8.7).
+      operation(
           BuiltinFn::kElement,
           Takes(kElementPointer, In(kSelf), In(kPosition))),
-      method(
+      operation(
           BuiltinFn::kElementMut,
           Takes(kElementPointerMut, InOut(kSelf), In(kPosition))),
-      method(
+      operation(
+          BuiltinFn::kAssocElement,
+          Takes(kElementPointer, In(kSelf), In(kIndex))),
+      operation(
+          BuiltinFn::kAssocElementMut,
+          Takes(kElementPointerMut, InOut(kSelf), In(kIndex))),
+      operation(
           BuiltinFn::kQueueElementMut,
           Takes(kElementPointerMut, InOut(kSelf), In(kPosition))),
       // Storage for one element of a queue, holding no value.
-      method(
+      operation(
           BuiltinFn::kQueueAllocate, Takes(kElementPointerMut, InOut(kSelf))),
       // LRM 7.10.1: a queue's slice is a queue declaring no bound, and its
       // write answers the positions it changed, as an array's run write does.
-      method(
+      operation(
           BuiltinFn::kQueueSlice,
           Takes(kUnboundedQueue, In(kSelf), In(kPosition), In(kPosition))),
-      method(
+      operation(
           BuiltinFn::kAssignQueueSlice,
           Takes(
               kChangedRange, InOut(kSelf), In(kPosition), In(kPosition),
               In(kUnboundedQueue))),
       // LRM 7.4.6: a run of elements read and written as a fixed-size array.
-      method(BuiltinFn::kElementSlice, Takes(kAt, In(kSelf), In(kPosition))),
-      method(
+      operation(BuiltinFn::kElementSlice, Takes(kAt, In(kSelf), In(kPosition))),
+      operation(
           BuiltinFn::kAssignElementSlice,
           Takes(kChangedRange, InOut(kSelf), In(kPosition), In(kAt))),
       // LRM 11.4.14.4: a window of the elements as a run of bits, and the
       // array with the window's elements replaced.
-      method(
+      operation(
           BuiltinFn::kWindowToBitVec,
           Takes(kRun, In(kSelf), In(kPosition), In(kMachine))),
-      method(
+      operation(
           BuiltinFn::kWithWindow, Takes(
                                       kSelf, In(kSelf), In(kPosition),
                                       In(kMachine), In(kDynamicArray))),
       // LRM 7.12: the elements put in the order a sort answered.
-      method(
+      operation(
           BuiltinFn::kApplyOrder,
           Takes(kNothing, InOut(kSelf), In(kSortOrder))),
+      // LRM 7.12.2: the positions of an array's keys in the order a sort
+      // puts them, ascending or descending as the flag says, a dynamic array
+      // of positions being the type it is a method of.
+      operation(BuiltinFn::kSortOrder, Takes(kSelf, In(kAt), ByValue(kBool))),
+      // LRM 21.4, 21.5: a memory loaded from the words a task read, and its
+      // words handed to a dump.
+      operation(
+          BuiltinFn::kLoadWords,
+          Takes(kNothing, InOut(kSelf), InOut(kMemoryWords))),
+      operation(
+          BuiltinFn::kStoreWords,
+          Takes(kNothing, In(kSelf), InOut(kMemoryWords))),
+      // LRM 35.5.6.1: a DPI-C open array's image filled from the array, and
+      // the array read back out of it.
+      operation(
+          BuiltinFn::kToImage,
+          Takes(kNothing, In(kSelf), InOut(kDpiOpenArray))),
+      operation(
+          BuiltinFn::kFromImage,
+          Takes(kNothing, InOut(kSelf), In(kDpiOpenArray))),
+      // LRM 18.4: the array a reference names, walked for a call of
+      // `randomize()` whose problem it is handed.
+      operation(
+          BuiltinFn::kWalkRandom,
+          Takes(
+              kNothing, ByValue(kVariableReferenceToSelf),
+              ByValue(kConstraintProblem))),
   });
 }();
 
-// Whether every method of `methods` has a signature here, which each kind's
-// table is held to at compile time.
-consteval auto EveryMethodIsDeclared(
-    std::span<const support::BuiltinFn> methods) -> bool {
-  for (const support::BuiltinFn method : methods) {
+// Whether every one of `operations` has a signature here, which each kind's
+// operations are held to at compile time.
+consteval auto EveryOperationIsDeclared(
+    std::span<const support::BuiltinFn> operations) -> bool {
+  for (const support::BuiltinFn operation : operations) {
     bool declared = false;
-    for (const MethodDeclaration& declaration : kMethodDeclarations) {
-      declared = declared || declaration.name == method;
+    for (const OperationDeclaration& declaration : kOperationDeclarations) {
+      declared = declared || declaration.name == operation;
     }
     if (!declared) {
       return false;
@@ -422,16 +499,17 @@ consteval auto EveryMethodIsDeclared(
   }
   return true;
 }
-static_assert(EveryMethodIsDeclared(kFixedArrayMethods));
-static_assert(EveryMethodIsDeclared(kDynamicArrayMethods));
-static_assert(EveryMethodIsDeclared(kQueueMethods));
+static_assert(EveryOperationIsDeclared(kFixedArrayOperations));
+static_assert(EveryOperationIsDeclared(kDynamicArrayOperations));
+static_assert(EveryOperationIsDeclared(kQueueOperations));
+static_assert(EveryOperationIsDeclared(kAssociativeArrayOperations));
 
-// The signature of the array method named `name`; a name no array has is its
+// The signature of the array operation named `name`; a name no array has is its
 // asker's defect.
-auto MethodSignatureOf(support::BuiltinFn name) -> const Signature& {
-  for (const MethodDeclaration& method : kMethodDeclarations) {
-    if (method.name == name) {
-      return method.signature;
+auto OperationSignatureOf(support::BuiltinFn name) -> const Signature& {
+  for (const OperationDeclaration& declaration : kOperationDeclarations) {
+    if (declaration.name == name) {
+      return declaration.signature;
     }
   }
   throw InternalError(
@@ -568,8 +646,7 @@ auto SignatureOf(
                           return Takes(
                               kElementReferenceMut, InOut(kSelf), In(kMachine));
                         case support::ElementAccessItem::kElementPlace:
-                          return Takes(
-                              kFoundElement, InOut(kSelf), In(kPosition));
+                          return Takes(kFoundElement, InOut(kSelf), In(kIndex));
                       }
                       throw InternalError("mir: unknown element-access item");
                     },
@@ -597,8 +674,8 @@ auto SignatureOf(
                 "mir: a bound-free conversion's declaration is asked of a "
                 "type's interface -- please report this as a bug");
           },
-          [](support::BuiltinFn method) -> Signature {
-            return MethodSignatureOf(method);
+          [](support::BuiltinFn operation) -> Signature {
+            return OperationSignatureOf(operation);
           }},
       answers);
 }
@@ -630,6 +707,11 @@ auto TypeNamed(
       return *at;
     case SignatureType::kPosition:
       return PositionType(types);
+    case SignatureType::kIndex:
+      return types.Get(self).IndexType().value_or(PositionType(types));
+    case SignatureType::kIndexPointer:
+      return BorrowedPointerTo(
+          types, types.Get(self).IndexType().value(), Mutability::kReadOnly);
     case SignatureType::kMachine:
       return unit.builtins.machine_int64;
     case SignatureType::kCount:
@@ -674,6 +756,16 @@ auto TypeNamed(
       return ChangedRangeType(types);
     case SignatureType::kSortOrder:
       return SortOrderType(types);
+    case SignatureType::kMemoryWords:
+      return LibraryTypeOf(types, support::LibraryDecl::kMemoryWords);
+    case SignatureType::kDpiOpenArray:
+      return LibraryTypeOf(types, support::LibraryDecl::kDpiOpenArray);
+    case SignatureType::kConstraintProblem:
+      return unit.builtins.constraint_problem;
+    case SignatureType::kVariableReferenceToSelf:
+      return types.Intern(
+          Type{VariableRefType{
+              .pointee = self, .mutability = Mutability::kMutable}});
   }
   throw InternalError("mir: unknown signature type");
 }
@@ -763,31 +855,33 @@ auto ValueOperationDeclaration(
   return declaration;
 }
 
-// The interface of `type`: the items of each trait it implements, in
-// `operations`, and each of its own `methods`, among its operations or its
-// families as the method is one function or a family.
+// The interface of `type`: the items of each library trait it implements, in
+// `operations`, and each operation it is `called` by -- its methods and the
+// items of the language traits it implements -- among its operations or its
+// families as the operation is one function or a family.
 auto InterfaceOf(
     TypeId type, std::vector<support::ValueOperation> operations,
-    std::span<const support::BuiltinFn> methods = {}) -> TypeInterface {
+    std::span<const support::BuiltinFn> called = {}) -> TypeInterface {
   TypeInterface interface{
       .type = type, .operations = std::move(operations), .families = {}};
-  for (const support::BuiltinFn method : methods) {
-    (MethodSignatureOf(method).TakenAtAType() ? interface.families
-                                              : interface.operations)
-        .emplace_back(method);
+  for (const support::BuiltinFn operation : called) {
+    (OperationSignatureOf(operation).TakenAtAType() ? interface.families
+                                                    : interface.operations)
+        .emplace_back(operation);
   }
   return interface;
 }
 
 // A fixed-size array's (LRM 7.4): each operation on its whole value its
 // elements decide, the two arms of a conditional with an ambiguous condition
-// combined element by element (LRM 11.4.11), and its own methods.
+// combined element by element (LRM 11.4.11), its own methods and the items of
+// its language traits.
 auto FixedArrayInterface(const CompilationUnit& unit, TypeId array)
     -> TypeInterface {
   std::vector<support::ValueOperation> operations = WholeValueOperations();
   operations.emplace_back(support::UnknownItem::kMergeConditional);
   AddOptionalOperations(operations, OptionalOperationsOfArray(unit, array));
-  return InterfaceOf(array, std::move(operations), kFixedArrayMethods);
+  return InterfaceOf(array, std::move(operations), kFixedArrayOperations);
 }
 
 // The library's traits a fixed-size array may implement: each asked of a
@@ -796,7 +890,8 @@ constexpr auto kFixedSizeArrayTraits =
     std::to_array<const support::LibraryTrait*>(
         {&support::kValueLife, &support::kChangeTest,
          &support::kWholeValueQuestions, &support::kTakeover,
-         &support::kNetPositions, &support::kFixedStream, &support::kStream});
+         &support::kNetPositions, &support::kFixedStream, &support::kStream,
+         &support::kStreamRead});
 
 // The implementation of the library's traits for a fixed-size array, which no
 // declaration lists. Its steps are its elements', so it states no value's
@@ -833,14 +928,14 @@ auto FixedArrayImpl(const CompilationUnit& unit, TypeId array) -> Impl {
 // A run-time-sized container's (LRM 7.5, 7.10): each item of the library's
 // traits it implements, its default among them, the two arms of a
 // conditional with an ambiguous condition combined element by element (LRM
-// 11.4.11), and its own methods.
+// 11.4.11), its own methods and the items of its language traits.
 auto ContainerInterface(
     const CompilationUnit& unit, TypeId container,
-    std::span<const support::BuiltinFn> methods) -> TypeInterface {
+    std::span<const support::BuiltinFn> called) -> TypeInterface {
   std::vector<support::ValueOperation> operations;
   AddImplItems(unit, container, operations);
   operations.emplace_back(support::UnknownItem::kMergeConditional);
-  return InterfaceOf(container, std::move(operations), methods);
+  return InterfaceOf(container, std::move(operations), called);
 }
 
 // A product's -- a structure's (LRM 7.2) or a tuple's -- or a union's (LRM
@@ -919,10 +1014,20 @@ auto TypeInterfaceOf(const CompilationUnit& unit, TypeId type)
     -> std::optional<TypeInterface> {
   const Type& stated = unit.types.Get(type);
   if (stated.IsDeclaredBy(support::LibraryDecl::kDynamicArray)) {
-    return ContainerInterface(unit, type, kDynamicArrayMethods);
+    return ContainerInterface(unit, type, kDynamicArrayOperations);
   }
   if (stated.IsDeclaredBy(support::LibraryDecl::kQueue)) {
-    return ContainerInterface(unit, type, kQueueMethods);
+    return ContainerInterface(unit, type, kQueueOperations);
+  }
+  // An associative array's own methods and its language traits' items beside
+  // its library traits' items. The two arms of a conditional whose condition
+  // is ambiguous are not combined entry by entry: where they differ, the
+  // answer is the type's default (LRM 11.4.11).
+  if (stated.IsDeclaredBy(support::LibraryDecl::kAssociativeArray)) {
+    std::vector<support::ValueOperation> operations;
+    AddImplItems(unit, type, operations);
+    return InterfaceOf(
+        type, std::move(operations), kAssociativeArrayOperations);
   }
   if (stated.Is<UnpackedArrayType>()) {
     return FixedArrayInterface(unit, type);
@@ -997,6 +1102,17 @@ auto OperationNamedByEntry(
     }
   }
   return std::nullopt;
+}
+
+auto ImplementsLanguageTrait(
+    const CompilationUnit& unit, TypeId type,
+    const support::LanguageTrait& trait) -> bool {
+  const std::optional<TypeInterface> interface = TypeInterfaceOf(unit, type);
+  return interface.has_value() &&
+         std::ranges::all_of(
+             trait.requirements, [&](support::BuiltinFn requirement) {
+               return Declares(*interface, requirement);
+             });
 }
 
 auto TypeOperationKindOf(

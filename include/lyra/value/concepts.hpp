@@ -3,7 +3,6 @@
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
-#include <optional>
 #include <type_traits>
 #include <utility>
 
@@ -204,27 +203,6 @@ template <typename T>
 concept Indexable = requires(T& t, const Position& pos, Formation& formed) {
   { t.Element(pos) };
   { t.ElementMut(pos, formed) };
-};
-
-// AssocIndexable: the same two by key. A read of a key holding no entry
-// answers the array's default and creates nothing; `ElementMut` creates the
-// entry (LRM 7.8.6, 7.8.7).
-template <typename T, typename K>
-concept AssocIndexable = requires(T& t, const K& key, Formation& formed) {
-  { t.Element(key) };
-  { t.ElementMut(key, formed) };
-};
-
-// IndexTraversal: associative-array ordered-index navigation (LRM 7.9.4 --
-// 7.9.7). Each call returns the next / previous index relative to the probe
-// (or the smallest / largest with no probe), or nullopt on an empty receiver
-// or end-of-traversal.
-template <typename T, typename Index>
-concept IndexTraversal = requires(const T& t, const Index& probe) {
-  { t.FirstIndex() } -> std::same_as<std::optional<Index>>;
-  { t.LastIndex() } -> std::same_as<std::optional<Index>>;
-  { t.NextIndex(probe) } -> std::same_as<std::optional<Index>>;
-  { t.PrevIndex(probe) } -> std::same_as<std::optional<Index>>;
 };
 
 // OrdinalElements: the unpacked family's own elements, read by storage ordinal.

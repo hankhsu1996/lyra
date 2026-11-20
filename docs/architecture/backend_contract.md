@@ -336,9 +336,9 @@ struct declaring each item, and the type is the library's class at that struct -
 a run-time-sized container, over its elements in place for a fixed-size array -- whose members ask
 each item and state no algorithm of their own (invariant 10); each item is defined once in the
 type's own code file, and every other operation of a type -- a container's or a fixed-size array's
-own methods, a tuple's -- is a function the code file calling it defines, each a definition every
-unit states alike. Neither backend asks for a type's whole interface, which would be choosing among
-its operations.
+own methods and language traits' items, a tuple's -- is a function the code file calling it defines,
+each a definition every unit states alike. Neither backend asks for a type's whole interface, which
+would be choosing among its operations.
 
 The canonical write rule for any value-emission entry: write it as if the target were LLVM IR. If
 you cannot write a mechanical translation rule for it -- if your draft contains an `if` whose arms

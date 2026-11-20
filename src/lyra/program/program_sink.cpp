@@ -60,7 +60,7 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_file_scan", &lyra_rt_file_scan);
   add("lyra_rt_file_error", &lyra_rt_file_error);
   add("lyra_rt_file_read", &lyra_rt_file_read);
-  add("lyra_rt_file_read_memory", &lyra_rt_file_read_memory);
+  add("lyra_rt_file_read_words", &lyra_rt_file_read_words);
   add("lyra_rt_file_ungetc", &lyra_rt_file_ungetc);
   add("lyra_rt_file_seek", &lyra_rt_file_seek);
   add("lyra_rt_file_rewind", &lyra_rt_file_rewind);
@@ -137,8 +137,6 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_managedref_shared_cell_make",
       &lyra_rt_managedref_shared_cell_make);
   add("lyra_rt_laidout_shared_cell_make", &lyra_rt_laidout_shared_cell_make);
-  add("lyra_rt_assocarray_shared_cell_make",
-      &lyra_rt_assocarray_shared_cell_make);
   add("lyra_rt_shared_pointer_deref", &lyra_rt_shared_pointer_deref);
   add("lyra_rt_object_of", &lyra_rt_object_of);
   add("lyra_rt_self_handle", &lyra_rt_self_handle);
@@ -344,8 +342,6 @@ void BindWriteEntries(const auto& add) {
       &lyra_rt_managedref_cell_open_for_write);
   add("lyra_rt_laidout_cell_open_for_write",
       &lyra_rt_laidout_cell_open_for_write);
-  add("lyra_rt_assocarray_cell_open_for_write",
-      &lyra_rt_assocarray_cell_open_for_write);
   add("lyra_rt_string_ref_open_for_write", &lyra_rt_string_ref_open_for_write);
   add("lyra_rt_real_ref_open_for_write", &lyra_rt_real_ref_open_for_write);
   add("lyra_rt_shortreal_ref_open_for_write",
@@ -356,8 +352,6 @@ void BindWriteEntries(const auto& add) {
       &lyra_rt_managedref_ref_open_for_write);
   add("lyra_rt_laidout_ref_open_for_write",
       &lyra_rt_laidout_ref_open_for_write);
-  add("lyra_rt_assocarray_ref_open_for_write",
-      &lyra_rt_assocarray_ref_open_for_write);
   add("lyra_rt_laidout_driver_open_for_write",
       &lyra_rt_laidout_driver_open_for_write);
   add("lyra_rt_string_driver_open_for_write",
@@ -453,8 +447,6 @@ void BindWriteEntries(const auto& add) {
   add("lyra_rt_managedref_cell_reports_to",
       &lyra_rt_managedref_cell_reports_to);
   add("lyra_rt_laidout_cell_reports_to", &lyra_rt_laidout_cell_reports_to);
-  add("lyra_rt_assocarray_cell_reports_to",
-      &lyra_rt_assocarray_cell_reports_to);
   add("lyra_rt_any_cell_reports_to", &lyra_rt_any_cell_reports_to);
   add("lyra_rt_bit8_ref_reports_to", &lyra_rt_bit8_ref_reports_to);
   add("lyra_rt_bit16_ref_reports_to", &lyra_rt_bit16_ref_reports_to);
@@ -473,7 +465,6 @@ void BindWriteEntries(const auto& add) {
       &lyra_rt_unmanagedref_ref_reports_to);
   add("lyra_rt_managedref_ref_reports_to", &lyra_rt_managedref_ref_reports_to);
   add("lyra_rt_laidout_ref_reports_to", &lyra_rt_laidout_ref_reports_to);
-  add("lyra_rt_assocarray_ref_reports_to", &lyra_rt_assocarray_ref_reports_to);
   add("lyra_rt_any_ref_reports_to", &lyra_rt_any_ref_reports_to);
   add("lyra_rt_bit8_resolved_net_reports_to",
       &lyra_rt_bit8_resolved_net_reports_to);
@@ -513,8 +504,8 @@ void BindWriteEntries(const auto& add) {
       &lyra_rt_laidout_dynamic_array_designate_element);
   add("lyra_rt_laidout_queue_designate_element",
       &lyra_rt_laidout_queue_designate_element);
-  add("lyra_rt_assocarray_designate_element",
-      &lyra_rt_assocarray_designate_element);
+  add("lyra_rt_laidout_assoc_designate_element",
+      &lyra_rt_laidout_assoc_designate_element);
   add("lyra_rt_laidout_designate_component",
       &lyra_rt_laidout_designate_component);
   add("lyra_rt_laidout_designate_member", &lyra_rt_laidout_designate_member);
@@ -525,9 +516,7 @@ void BindWriteEntries(const auto& add) {
   add("lyra_rt_unmanagedref_land", &lyra_rt_unmanagedref_land);
   add("lyra_rt_laidout_land", &lyra_rt_laidout_land);
   add("lyra_rt_laidout_designated", &lyra_rt_laidout_designated);
-  add("lyra_rt_sort_order", &lyra_rt_sort_order);
   add("lyra_rt_laidout_moved", &lyra_rt_laidout_moved);
-  add("lyra_rt_assocarray_land", &lyra_rt_assocarray_land);
   add("lyra_rt_managedref_land", &lyra_rt_managedref_land);
 }
 
@@ -550,19 +539,19 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_unmanagedref_cell_refer", &lyra_rt_unmanagedref_cell_refer);
   add("lyra_rt_managedref_cell_refer", &lyra_rt_managedref_cell_refer);
   add("lyra_rt_laidout_cell_refer", &lyra_rt_laidout_cell_refer);
-  add("lyra_rt_assocarray_cell_refer", &lyra_rt_assocarray_cell_refer);
   add("lyra_rt_laidout_refer_element", &lyra_rt_laidout_refer_element);
   add("lyra_rt_laidout_dynamic_array_refer_element",
       &lyra_rt_laidout_dynamic_array_refer_element);
   add("lyra_rt_laidout_queue_refer_element",
       &lyra_rt_laidout_queue_refer_element);
-  add("lyra_rt_assocarray_refer_element", &lyra_rt_assocarray_refer_element);
+  add("lyra_rt_laidout_assoc_refer_element",
+      &lyra_rt_laidout_assoc_refer_element);
   add("lyra_rt_laidout_dynamic_array_refer_element_leased",
       &lyra_rt_laidout_dynamic_array_refer_element_leased);
   add("lyra_rt_laidout_queue_refer_element_leased",
       &lyra_rt_laidout_queue_refer_element_leased);
-  add("lyra_rt_assocarray_refer_element_leased",
-      &lyra_rt_assocarray_refer_element_leased);
+  add("lyra_rt_laidout_assoc_refer_element_leased",
+      &lyra_rt_laidout_assoc_refer_element_leased);
   add("lyra_rt_laidout_refer_component", &lyra_rt_laidout_refer_component);
   add("lyra_rt_string_ref_get", &lyra_rt_string_ref_get);
   add("lyra_rt_string_ref_set", &lyra_rt_string_ref_set);
@@ -598,12 +587,6 @@ void BindValueEntries(const auto& add) {
       &lyra_rt_laidout_ref_drive_takeover);
   add("lyra_rt_laidout_ref_end_takeover", &lyra_rt_laidout_ref_end_takeover);
   add("lyra_rt_laidout_ref_sampled_get", &lyra_rt_laidout_ref_sampled_get);
-  add("lyra_rt_assocarray_ref_get", &lyra_rt_assocarray_ref_get);
-  add("lyra_rt_assocarray_ref_set", &lyra_rt_assocarray_ref_set);
-  add("lyra_rt_assocarray_ref_arm_sampling",
-      &lyra_rt_assocarray_ref_arm_sampling);
-  add("lyra_rt_assocarray_ref_sampled_get",
-      &lyra_rt_assocarray_ref_sampled_get);
   add("lyra_rt_string_cell_get", &lyra_rt_string_cell_get);
   add("lyra_rt_string_cell_initialize", &lyra_rt_string_cell_initialize);
   add("lyra_rt_string_cell_set", &lyra_rt_string_cell_set);
@@ -671,12 +654,6 @@ void BindValueEntries(const auto& add) {
       &lyra_rt_laidout_sampled_history_push);
   add("lyra_rt_laidout_sampled_history_at",
       &lyra_rt_laidout_sampled_history_at);
-  add("lyra_rt_assocarray_sampled_history_install",
-      &lyra_rt_assocarray_sampled_history_install);
-  add("lyra_rt_assocarray_sampled_history_push",
-      &lyra_rt_assocarray_sampled_history_push);
-  add("lyra_rt_assocarray_sampled_history_at",
-      &lyra_rt_assocarray_sampled_history_at);
   add("lyra_rt_managedref_sampled_history_install",
       &lyra_rt_managedref_sampled_history_install);
   add("lyra_rt_managedref_sampled_history_push",
@@ -784,10 +761,13 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_to_sv_logic", &lyra_rt_to_sv_logic);
   add("lyra_rt_dpi_open_array_make", &lyra_rt_dpi_open_array_make);
   add("lyra_rt_dpi_open_array_handle", &lyra_rt_dpi_open_array_handle);
-  add("lyra_rt_dpi_open_array_value", &lyra_rt_dpi_open_array_value);
+  add("lyra_rt_dpi_open_array_element_count",
+      &lyra_rt_dpi_open_array_element_count);
+  add("lyra_rt_dpi_open_array_ordinal", &lyra_rt_dpi_open_array_ordinal);
+  add("lyra_rt_dpi_open_array_put", &lyra_rt_dpi_open_array_put);
+  add("lyra_rt_dpi_open_array_word", &lyra_rt_dpi_open_array_word);
   add("lyra_rt_string_destroy", &lyra_rt_string_destroy);
   add("lyra_rt_bitvec_destroy", &lyra_rt_bitvec_destroy);
-  add("lyra_rt_assocarray_destroy", &lyra_rt_assocarray_destroy);
   add("lyra_rt_managedref_destroy", &lyra_rt_managedref_destroy);
   add("lyra_rt_hierarchy_segment_destroy", &lyra_rt_hierarchy_segment_destroy);
   add("lyra_rt_trigger_destroy", &lyra_rt_trigger_destroy);
@@ -797,6 +777,7 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_dpi_bit_buffer_destroy", &lyra_rt_dpi_bit_buffer_destroy);
   add("lyra_rt_dpi_logic_buffer_destroy", &lyra_rt_dpi_logic_buffer_destroy);
   add("lyra_rt_dpi_open_array_destroy", &lyra_rt_dpi_open_array_destroy);
+  add("lyra_rt_memory_words_destroy", &lyra_rt_memory_words_destroy);
   add("lyra_rt_channel_cancellation_destroy",
       &lyra_rt_channel_cancellation_destroy);
   add("lyra_rt_shared_pointer_destroy", &lyra_rt_shared_pointer_destroy);
@@ -806,7 +787,6 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_leased_reference_destroy", &lyra_rt_leased_reference_destroy);
   add("lyra_rt_string_assign", &lyra_rt_string_assign);
   add("lyra_rt_bitvec_assign", &lyra_rt_bitvec_assign);
-  add("lyra_rt_assocarray_assign", &lyra_rt_assocarray_assign);
   add("lyra_rt_managedref_assign", &lyra_rt_managedref_assign);
   add("lyra_rt_reference_assign", &lyra_rt_reference_assign);
   add("lyra_rt_any_reference_assign", &lyra_rt_any_reference_assign);
@@ -816,7 +796,6 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_discarded_write", &lyra_rt_discarded_write);
   add("lyra_rt_string_copy", &lyra_rt_string_copy);
   add("lyra_rt_bitvec_copy", &lyra_rt_bitvec_copy);
-  add("lyra_rt_assocarray_copy", &lyra_rt_assocarray_copy);
   add("lyra_rt_managedref_copy", &lyra_rt_managedref_copy);
   add("lyra_rt_shared_pointer_copy", &lyra_rt_shared_pointer_copy);
   add("lyra_rt_leased_reference_copy", &lyra_rt_leased_reference_copy);
@@ -836,7 +815,6 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_weak_reference_copy", &lyra_rt_weak_reference_copy);
   add("lyra_rt_string_relocate", &lyra_rt_string_relocate);
   add("lyra_rt_bitvec_relocate", &lyra_rt_bitvec_relocate);
-  add("lyra_rt_assocarray_relocate", &lyra_rt_assocarray_relocate);
   add("lyra_rt_managedref_relocate", &lyra_rt_managedref_relocate);
   add("lyra_rt_shared_pointer_relocate", &lyra_rt_shared_pointer_relocate);
   add("lyra_rt_print_item_relocate", &lyra_rt_print_item_relocate);
@@ -980,6 +958,13 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_constraint_members", &lyra_rt_constraint_members);
   add("lyra_rt_constraint_rand", &lyra_rt_constraint_rand);
   add("lyra_rt_constraint_randc", &lyra_rt_constraint_randc);
+  add("lyra_rt_random_walk_fixed_array", &lyra_rt_random_walk_fixed_array);
+  add("lyra_rt_random_walk_resizable_array",
+      &lyra_rt_random_walk_resizable_array);
+  add("lyra_rt_random_walk_enter", &lyra_rt_random_walk_enter);
+  add("lyra_rt_random_walk_leave", &lyra_rt_random_walk_leave);
+  add("lyra_rt_random_walk_leaf", &lyra_rt_random_walk_leaf);
+  add("lyra_rt_random_walk_end", &lyra_rt_random_walk_end);
   add("lyra_rt_constraint_variable", &lyra_rt_constraint_variable);
   add("lyra_rt_constraint_constant", &lyra_rt_constraint_constant);
   add("lyra_rt_randomize_nested", &lyra_rt_randomize_nested);
@@ -1063,84 +1048,58 @@ void BindValueEntries(const auto& add) {
   add("lyra_rt_queue_grew_past_its_bound", &lyra_rt_queue_grew_past_its_bound);
   add("lyra_rt_queue_written_at_an_invalid_index",
       &lyra_rt_queue_written_at_an_invalid_index);
+  add("lyra_rt_assoc_read_at_an_invalid_index",
+      &lyra_rt_assoc_read_at_an_invalid_index);
+  add("lyra_rt_assoc_read_at_a_missing_entry",
+      &lyra_rt_assoc_read_at_a_missing_entry);
+  add("lyra_rt_assoc_written_at_an_invalid_index",
+      &lyra_rt_assoc_written_at_an_invalid_index);
   add("lyra_rt_queue_unlink", &lyra_rt_queue_unlink);
   add("lyra_rt_queue_apply_order", &lyra_rt_queue_apply_order);
   add("lyra_rt_laidout_from_elements", &lyra_rt_laidout_from_elements);
   add("lyra_rt_byte_array_from_string", &lyra_rt_byte_array_from_string);
-  add("lyra_rt_assocarray_from_entries", &lyra_rt_assocarray_from_entries);
-  add("lyra_rt_assocarray_default", &lyra_rt_assocarray_default);
-  add("lyra_rt_assocarray_assoc_with_default",
-      &lyra_rt_assocarray_assoc_with_default);
-  add("lyra_rt_assocarray_assoc_has_stated_default",
-      &lyra_rt_assocarray_assoc_has_stated_default);
-  add("lyra_rt_assocarray_assoc_absent_value",
-      &lyra_rt_assocarray_assoc_absent_value);
-  add("lyra_rt_assocarray_element", &lyra_rt_assocarray_element);
-  add("lyra_rt_assocarray_element_mut", &lyra_rt_assocarray_element_mut);
-  add("lyra_rt_assocarray_exists", &lyra_rt_assocarray_exists);
-  add("lyra_rt_assocarray_size", &lyra_rt_assocarray_size);
-  add("lyra_rt_assocarray_delete", &lyra_rt_assocarray_delete);
-  add("lyra_rt_assocarray_delete_index", &lyra_rt_assocarray_delete_index);
-  add("lyra_rt_assocarray_eq", &lyra_rt_assocarray_eq);
-  add("lyra_rt_assocarray_ne", &lyra_rt_assocarray_ne);
-  add("lyra_rt_assocarray_case_equal", &lyra_rt_assocarray_case_equal);
-  add("lyra_rt_assocarray_bitstream_width",
-      &lyra_rt_assocarray_bitstream_width);
-  add("lyra_rt_assocarray_assoc_min_index",
-      &lyra_rt_assocarray_assoc_min_index);
-  add("lyra_rt_assocarray_assoc_max_index",
-      &lyra_rt_assocarray_assoc_max_index);
-  add("lyra_rt_assocarray_assoc_first", &lyra_rt_assocarray_assoc_first);
-  add("lyra_rt_assocarray_assoc_last", &lyra_rt_assocarray_assoc_last);
-  add("lyra_rt_assocarray_assoc_next", &lyra_rt_assocarray_assoc_next);
-  add("lyra_rt_assocarray_assoc_prev", &lyra_rt_assocarray_assoc_prev);
+  add("lyra_rt_assoc_construct", &lyra_rt_assoc_construct);
+  add("lyra_rt_assoc_find", &lyra_rt_assoc_find);
+  add("lyra_rt_assoc_prepare", &lyra_rt_assoc_prepare);
+  add("lyra_rt_assoc_index_of", &lyra_rt_assoc_index_of);
+  add("lyra_rt_assoc_commit", &lyra_rt_assoc_commit);
+  add("lyra_rt_assoc_remove", &lyra_rt_assoc_remove);
+  add("lyra_rt_assoc_clear", &lyra_rt_assoc_clear);
+  add("lyra_rt_assoc_core_first", &lyra_rt_assoc_core_first);
+  add("lyra_rt_assoc_core_last", &lyra_rt_assoc_core_last);
+  add("lyra_rt_assoc_core_next", &lyra_rt_assoc_core_next);
+  add("lyra_rt_assoc_core_previous", &lyra_rt_assoc_core_previous);
+  add("lyra_rt_assoc_after", &lyra_rt_assoc_after);
+  add("lyra_rt_assoc_before", &lyra_rt_assoc_before);
+  add("lyra_rt_assoc_prepare_default", &lyra_rt_assoc_prepare_default);
+  add("lyra_rt_assoc_set_default", &lyra_rt_assoc_set_default);
+  add("lyra_rt_assoc_core_stated_default", &lyra_rt_assoc_core_stated_default);
+  add("lyra_rt_assoc_end", &lyra_rt_assoc_end);
+  add("lyra_rt_assoc_adopt", &lyra_rt_assoc_adopt);
+  add("lyra_rt_wildcard_index_has_unknown",
+      &lyra_rt_wildcard_index_has_unknown);
   add("lyra_rt_string_bitstream_width", &lyra_rt_string_bitstream_width);
   add("lyra_rt_from_bitstream", &lyra_rt_from_bitstream);
-  add("lyra_rt_assocarray_count_bits", &lyra_rt_assocarray_count_bits);
-  add("lyra_rt_assocarray_cell_get", &lyra_rt_assocarray_cell_get);
-  add("lyra_rt_assocarray_cell_initialize",
-      &lyra_rt_assocarray_cell_initialize);
-  add("lyra_rt_assocarray_cell_set", &lyra_rt_assocarray_cell_set);
-  add("lyra_rt_assocarray_cell_arm_sampling",
-      &lyra_rt_assocarray_cell_arm_sampling);
-  add("lyra_rt_assocarray_cell_sampled_get",
-      &lyra_rt_assocarray_cell_sampled_get);
-  add("lyra_rt_assocarray_cell_begin_takeover",
-      &lyra_rt_assocarray_cell_begin_takeover);
-  add("lyra_rt_assocarray_cell_drive_takeover",
-      &lyra_rt_assocarray_cell_drive_takeover);
-  add("lyra_rt_assocarray_cell_end_takeover",
-      &lyra_rt_assocarray_cell_end_takeover);
-  add("lyra_rt_assocarray_ref_begin_takeover",
-      &lyra_rt_assocarray_ref_begin_takeover);
-  add("lyra_rt_assocarray_ref_drive_takeover",
-      &lyra_rt_assocarray_ref_drive_takeover);
-  add("lyra_rt_assocarray_ref_end_takeover",
-      &lyra_rt_assocarray_ref_end_takeover);
-  add("lyra_rt_assocarray_value_cell_alloc",
-      &lyra_rt_assocarray_value_cell_alloc);
-  add("lyra_rt_assocarray_value_cell_store",
-      &lyra_rt_assocarray_value_cell_store);
-  add("lyra_rt_assocarray_value_cell_load",
-      &lyra_rt_assocarray_value_cell_load);
-  add("lyra_rt_assocarray_read_mem", &lyra_rt_assocarray_read_mem);
-  add("lyra_rt_assocarray_read_mem_within",
-      &lyra_rt_assocarray_read_mem_within);
-  add("lyra_rt_assocarray_read_enumerated_mem",
-      &lyra_rt_assocarray_read_enumerated_mem);
-  add("lyra_rt_assocarray_read_enumerated_mem_within",
-      &lyra_rt_assocarray_read_enumerated_mem_within);
-  add("lyra_rt_assocarray_write_mem", &lyra_rt_assocarray_write_mem);
-  add("lyra_rt_assocarray_write_mem_within",
-      &lyra_rt_assocarray_write_mem_within);
-  add("lyra_rt_laidout_read_mem", &lyra_rt_laidout_read_mem);
-  add("lyra_rt_laidout_read_mem_within", &lyra_rt_laidout_read_mem_within);
-  add("lyra_rt_laidout_read_enumerated_mem",
-      &lyra_rt_laidout_read_enumerated_mem);
-  add("lyra_rt_laidout_read_enumerated_mem_within",
-      &lyra_rt_laidout_read_enumerated_mem_within);
-  add("lyra_rt_laidout_write_mem", &lyra_rt_laidout_write_mem);
-  add("lyra_rt_laidout_write_mem_within", &lyra_rt_laidout_write_mem_within);
+  add("lyra_rt_read_mem", &lyra_rt_read_mem);
+  add("lyra_rt_read_mem_within", &lyra_rt_read_mem_within);
+  add("lyra_rt_read_enumerated_mem", &lyra_rt_read_enumerated_mem);
+  add("lyra_rt_read_enumerated_mem_within",
+      &lyra_rt_read_enumerated_mem_within);
+  add("lyra_rt_write_mem", &lyra_rt_write_mem);
+  add("lyra_rt_write_mem_within", &lyra_rt_write_mem_within);
+  add("lyra_rt_memory_words_read_grid", &lyra_rt_memory_words_read_grid);
+  add("lyra_rt_memory_words_read_dense", &lyra_rt_memory_words_read_dense);
+  add("lyra_rt_memory_words_read_keyed", &lyra_rt_memory_words_read_keyed);
+  add("lyra_rt_memory_words_plan_grid", &lyra_rt_memory_words_plan_grid);
+  add("lyra_rt_memory_words_plan_dense", &lyra_rt_memory_words_plan_dense);
+  add("lyra_rt_memory_words_count", &lyra_rt_memory_words_count);
+  add("lyra_rt_memory_words_ordinal", &lyra_rt_memory_words_ordinal);
+  add("lyra_rt_memory_words_key", &lyra_rt_memory_words_key);
+  add("lyra_rt_memory_words_bytes_read", &lyra_rt_memory_words_bytes_read);
+  add("lyra_rt_memory_words_word", &lyra_rt_memory_words_word);
+  add("lyra_rt_memory_words_put", &lyra_rt_memory_words_put);
+  add("lyra_rt_memory_words_put_keyed", &lyra_rt_memory_words_put_keyed);
+  add("lyra_rt_memory_words_commit", &lyra_rt_memory_words_commit);
   add("lyra_rt_laidout_size", &lyra_rt_laidout_size);
   add("lyra_rt_laidout_net_initialize_tri_state",
       &lyra_rt_laidout_net_initialize_tri_state);
@@ -1297,19 +1256,16 @@ void BindMemberOperationEntries(const auto& add) {
   add("lyra_rt_shortreal_bit_identical", &lyra_rt_shortreal_bit_identical);
   add("lyra_rt_unmanagedref_bit_identical",
       &lyra_rt_unmanagedref_bit_identical);
-  add("lyra_rt_assocarray_bit_identical", &lyra_rt_assocarray_bit_identical);
   add("lyra_rt_managedref_bit_identical", &lyra_rt_managedref_bit_identical);
   add("lyra_rt_string_has_unknown", &lyra_rt_string_has_unknown);
   add("lyra_rt_real_has_unknown", &lyra_rt_real_has_unknown);
   add("lyra_rt_shortreal_has_unknown", &lyra_rt_shortreal_has_unknown);
   add("lyra_rt_unmanagedref_has_unknown", &lyra_rt_unmanagedref_has_unknown);
-  add("lyra_rt_assocarray_has_unknown", &lyra_rt_assocarray_has_unknown);
   add("lyra_rt_managedref_has_unknown", &lyra_rt_managedref_has_unknown);
   add("lyra_rt_managedref_bitstream_width",
       &lyra_rt_managedref_bitstream_width);
   add("lyra_rt_managedref_count_bits", &lyra_rt_managedref_count_bits);
   add("lyra_rt_string_to_bitvec", &lyra_rt_string_to_bitvec);
-  add("lyra_rt_assocarray_to_bitvec", &lyra_rt_assocarray_to_bitvec);
   add("lyra_rt_string_from_bitvec", &lyra_rt_string_from_bitvec);
   add("lyra_rt_bitvec_default", &lyra_rt_bitvec_default);
   add("lyra_rt_bitvec_of", &lyra_rt_bitvec_of);
@@ -1338,7 +1294,6 @@ void BindStorageEntries(const auto& add) {
   add("lyra_rt_unmanagedref_cell_construct",
       &lyra_rt_unmanagedref_cell_construct);
   add("lyra_rt_laidout_cell_construct", &lyra_rt_laidout_cell_construct);
-  add("lyra_rt_assocarray_cell_construct", &lyra_rt_assocarray_cell_construct);
   add("lyra_rt_managedref_cell_construct", &lyra_rt_managedref_cell_construct);
   add("lyra_rt_string_value_cell_construct",
       &lyra_rt_string_value_cell_construct);
@@ -1351,8 +1306,6 @@ void BindStorageEntries(const auto& add) {
       &lyra_rt_unmanagedref_value_cell_construct);
   add("lyra_rt_laidout_value_cell_construct",
       &lyra_rt_laidout_value_cell_construct);
-  add("lyra_rt_assocarray_value_cell_construct",
-      &lyra_rt_assocarray_value_cell_construct);
   add("lyra_rt_managedref_value_cell_construct",
       &lyra_rt_managedref_value_cell_construct);
   add("lyra_rt_laidout_resolved_net_construct",
@@ -1375,8 +1328,6 @@ void BindStorageEntries(const auto& add) {
       &lyra_rt_shortreal_sampled_history_construct);
   add("lyra_rt_laidout_sampled_history_construct",
       &lyra_rt_laidout_sampled_history_construct);
-  add("lyra_rt_assocarray_sampled_history_construct",
-      &lyra_rt_assocarray_sampled_history_construct);
   add("lyra_rt_managedref_sampled_history_construct",
       &lyra_rt_managedref_sampled_history_construct);
   add("lyra_rt_cancellation_target_construct",
@@ -1398,14 +1349,11 @@ void BindStorageEntries(const auto& add) {
   add("lyra_rt_shortreal_cell_destroy", &lyra_rt_shortreal_cell_destroy);
   add("lyra_rt_unmanagedref_cell_destroy", &lyra_rt_unmanagedref_cell_destroy);
   add("lyra_rt_laidout_cell_destroy", &lyra_rt_laidout_cell_destroy);
-  add("lyra_rt_assocarray_cell_destroy", &lyra_rt_assocarray_cell_destroy);
   add("lyra_rt_managedref_cell_destroy", &lyra_rt_managedref_cell_destroy);
   add("lyra_rt_string_value_cell_destroy", &lyra_rt_string_value_cell_destroy);
   add("lyra_rt_bitvec_value_cell_destroy", &lyra_rt_bitvec_value_cell_destroy);
   add("lyra_rt_laidout_value_cell_destroy",
       &lyra_rt_laidout_value_cell_destroy);
-  add("lyra_rt_assocarray_value_cell_destroy",
-      &lyra_rt_assocarray_value_cell_destroy);
   add("lyra_rt_managedref_value_cell_destroy",
       &lyra_rt_managedref_value_cell_destroy);
   add("lyra_rt_laidout_resolved_net_destroy",
@@ -1428,8 +1376,6 @@ void BindStorageEntries(const auto& add) {
       &lyra_rt_shortreal_sampled_history_destroy);
   add("lyra_rt_laidout_sampled_history_destroy",
       &lyra_rt_laidout_sampled_history_destroy);
-  add("lyra_rt_assocarray_sampled_history_destroy",
-      &lyra_rt_assocarray_sampled_history_destroy);
   add("lyra_rt_managedref_sampled_history_destroy",
       &lyra_rt_managedref_sampled_history_destroy);
   add("lyra_rt_cancellation_target_destroy",

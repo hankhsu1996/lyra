@@ -4,7 +4,9 @@ Date: 2026-06-22 Status: accepted. Revised 2026-10-17: the walk over the entries
 the call is rather than run by the library over a body it is handed, and a sort hands the library an
 order rather than a key. Revised 2026-11-07: a sort hands the library its keys, compared by their
 kind, and the array's type applies the order the library answers, which no array kind sorts by a
-comparison it is handed any more (D2). The record is written as it now holds.
+comparison it is handed any more (D2). Revised 2026-11-19: the order of the keys is a body the
+compiler states for the key type rather than the library's comparison by kind (D2). The record is
+written as it now holds.
 
 ## Context
 
@@ -58,18 +60,18 @@ holds no template the program's types instantiate, so the loop is written by the
 call rather than instantiated from the library -- the same code, produced by the one party that
 knows the types.
 
-### D2. A sort hands the library its keys and applies the order it answers
+### D2. A sort orders its keys by a body of the key type and applies that order
 
 A sort with a clause gathers each entry's key in a loop as D1 does; one without a clause takes the
-elements themselves as the keys. The library answers the positions the keys come from once they are
-in order, ascending for `sort` and descending for `rsort`, comparing the keys as the kind of value
-they are: an integral value, a real or a string, the only types a relational operator orders (LRM
-7.12.2, 11.4.4, 6.16), so the comparison is compiled once per kind and nothing is called back. The
-array's type then puts its elements in that order by a body of its own: a fixed-size array through a
-copy of itself, a dynamic array as a new generation of its elements, and a queue by its core
-reordering where its elements lie, so no element of a queue moves. This is Rust's
-`slice::sort_by_cached_key` (`library/alloc/src/slice.rs`), which computes each key once at the
-caller and sorts positions by them.
+elements themselves as the keys. A body the compiler states once for the array of keys answers the
+positions the keys come from once they are in order, ascending for `sort` and descending for
+`rsort`, comparing them by the key type's own relational operator: an integral value, a real or a
+string, the only types one orders (LRM 7.12.2, 11.4.4, 6.16). The array's type then puts its
+elements in that order by a body of its own: a fixed-size array through a copy of itself, a dynamic
+array as a new generation of its elements, and a queue by its core reordering where its elements
+lie, so no element of a queue moves. This is Rust's `slice::sort_by_cached_key`
+(`library/alloc/src/slice.rs`), which computes each key once at the caller and sorts positions by
+them, the sort being generic code compiled at the key's type.
 
 The order is a merge over positions. The SV comparison over 4-state keys is not a strict weak
 ordering -- a key carrying an `x` / `z` compares as not less either way while a definite `a < c`
@@ -97,8 +99,11 @@ replaces that default and each later one is folded into it, so the default never
 - **A parallel algorithm family per container.** The differences between containers are what an
   entry's index is and which container a result shapes into; the loop takes both from the receiver's
   type, so one lowering covers all four.
-- **A library entry per sort direction.** The direction is an operand of the one entry that orders
-  the keys, which compares every kind both ways; a second entry would restate that comparison.
+- **A body per sort direction.** The direction is an operand of the one body that orders the keys,
+  which compares them both ways; a second body would restate that comparison.
+- **The library ordering the keys by their kind**, as this record first had it. It compares a value
+  of a type the program chose by asking what kind of value it is, at run time, where the key type's
+  own operator is compiled with the body that orders them.
 
 ## Forbidden shapes
 

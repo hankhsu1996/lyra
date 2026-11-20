@@ -107,7 +107,7 @@ void TypeOperationCollector::VisitValueTypeUse(lir::TypeId type) {
   } else {
     UseTable(type, ValueWitnesses());
   }
-  if (ImplementsTrait(*unit_, type, support::kElementAccess)) {
+  if (ImplementsTrait(*unit_, type, support::kIndexedWrite)) {
     Use(type, support::ElementAccessItem::kElementPlace);
   }
   if (ImplementsTrait(*unit_, type, support::kResize)) {
@@ -190,7 +190,6 @@ void TypeOperationCollector::VisitTypeArg(const TypeArg& told) {
           [](const TypeExtentArg&) {},
           [&](const ElementTypeArg& of) { VisitElementTypeUse(of.type); },
           [&](const TakePositionsArg& of) { VisitTakePositionsUse(of.type); },
-          [](const IndexOrderArg&) {},
           [&](const OperationsArg& of) { VisitOperationsUse(of.type); }},
       told);
 }

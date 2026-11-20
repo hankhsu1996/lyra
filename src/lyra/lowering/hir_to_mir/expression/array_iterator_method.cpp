@@ -24,17 +24,14 @@
 #include "lyra/lowering/hir_to_mir/entry_walk.hpp"
 #include "lyra/lowering/hir_to_mir/expression/calls.hpp"
 #include "lyra/lowering/hir_to_mir/expression/operators.hpp"
-#include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/queue_building.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/statement/loops.hpp"
-#include "lyra/lowering/hir_to_mir/structural_scope_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/unit_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/value_operations.hpp"
 #include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/storage_part.hpp"
 #include "lyra/mir/type.hpp"
@@ -42,7 +39,6 @@
 #include "lyra/mir/type_interface.hpp"
 #include "lyra/mir/value_parts.hpp"
 #include "lyra/support/builtin_fn.hpp"
-#include "lyra/support/callable_bounds.hpp"
 #include "lyra/support/library_decl.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -503,8 +499,8 @@ auto LowerMap(
 }
 
 // LRM 7.12.2 `sort` / `rsort`: the positions of the keys in the order
-// `comparison` -- `<` for `sort` and `>` for `rsort` -- puts them, which the
-// library answers by comparing the keys as the kind of value they are, then
+// `comparison` -- `<` for `sort` and `>` for `rsort` -- puts them, which a
+// dynamic array of positions answers by its own body for the keys' type, then
 // the array's elements put in that order by its type's own body. The keys are
 // the ones the loop gathered in order where the call writes a clause, and the
 // elements themselves where it writes none. The array is changed where the
@@ -566,33 +562,25 @@ auto LowerSort(
   if (!compared) return std::unexpected(std::move(compared.error()));
 
   const mir::ExprId sorted = [&] {
-    const mir::ExprId held_keys = PathValue(unit, body, *compared);
-    const mir::TypeId keys_type = mir::DynamicArrayOf(unit.types, key_type);
-    const mir::ExprId keys =
-        EvaluatedOnce(
-            steps.Frame(),
-            body.Add(
-                mir::Expr{
-                    .data =
-                        mir::CallExpr{
-                            .callee =
-                                mir::Direct{
-                                    .target =
-                                        mir::TypeOperationTarget{
-                                            .type = keys_type,
-                                            .answers = support::BuiltinFn::
-                                                kDynamicArrayFromArray,
-                                            .arguments =
-                                                {body.Get(held_keys).type}}},
-                            .arguments = {mir::Borrow(unit, body, held_keys)}},
-                    .type = keys_type}));
+    const mir::ExprId keys = PathPlace(unit, body, *compared);
+    const mir::TypeId order_type = mir::SortOrderType(unit.types);
     const mir::ExprId positions = body.Add(
-        mir::MakeBuiltinCall(
-            unit, body.Body(), support::BuiltinFn::kSortOrder, std::nullopt,
-            {mir::Borrow(unit, body, keys),
-             BuildMachineBool(
-                 unit, body, comparison == hir::BinaryOp::kGreaterThan)},
-            mir::SortOrderType(unit.types)));
+        mir::Expr{
+            .data =
+                mir::CallExpr{
+                    .callee =
+                        mir::Direct{
+                            .target =
+                                mir::TypeOperationTarget{
+                                    .type = order_type,
+                                    .answers = support::BuiltinFn::kSortOrder,
+                                    .arguments = {body.Get(keys).type}}},
+                    .arguments =
+                        {mir::Borrow(unit, body, keys),
+                         BuildMachineBool(
+                             unit, body,
+                             comparison == hir::BinaryOp::kGreaterThan)}},
+            .type = order_type});
     return body.Add(BuildBuiltinMethodCall(
         unit_lowerer.Unit(), body, support::BuiltinFn::kApplyOrder,
         PathPlace(unit, body, NamedIn(unit, array.path, body)), {positions},

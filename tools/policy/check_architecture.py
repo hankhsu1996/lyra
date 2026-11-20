@@ -314,6 +314,20 @@ Rules:
         Scope: src/lyra/backend/, include/lyra/backend/,
         src/lyra/lowering/mir_to_lir/, include/lyra/lowering/mir_to_lir/.
 
+  A032  The library is parametric in the types a design composes: code it
+        has for every type never chooses what to do by a type's kind. A case
+        on a value type's kind, a comparison with one, a question its kind
+        answers -- called, or named as a concept -- the kind a facility
+        declares for such a question, and an ask of a kind's own description
+        each belong in a body MIR states for the type, or in an item of a
+        trait it implements. A place that still chooses is in
+        LIBRARY_TYPE_READS, listed with what it does, which only shrinks. The
+        values the library defines itself, the integral among them, are no
+        composed type, and a facility reaching one element of the kind it is
+        for chooses nothing.
+        Scope: src/lyra/runtime/, include/lyra/runtime/, src/lyra/value/,
+        include/lyra/value/.
+
 When a rule fires, the printed message includes a fixed reminder that the
 fix is to change the ownership boundary, NOT to rename the function.
 
@@ -1642,6 +1656,95 @@ def check_a031(repo_root: Path) -> list[str]:
     return errors
 
 
+# Rule A032
+A032_ROOTS = (
+    "src/lyra/runtime", "include/lyra/runtime", "src/lyra/value",
+    "include/lyra/value")
+# A choice made by a value type's kind: a case on it or a comparison with it.
+A032_CHOICE_PATTERN = re.compile(
+    r"\bcase\s+(?:value::)?ValueTypeKind::|[=!]=\s*(?:value::)?"
+    r"ValueTypeKind::|\bValueTypeKind::\w+\s*[=!]=")
+# An ask: of a composed kind's own description, of a question a type's kind
+# answers -- called, or named as a concept that calls it -- and of the kind a
+# facility declares for those questions to answer. The declarations of the
+# accessors and the questions are none of these.
+A032_ASK_PATTERN = re.compile(
+    r"(?:\.|->)\s*(AsFixedArray|AsDynamicArray|AsQueue|AsAssociativeArray)"
+    r"\s*\("
+    r"|(?<!auto )\b(ChangesSizeAtRunTime|NamedByIndex|AppendsPastItsLast)"
+    r"\s*\("
+    r"|\b(ResizableArray|ChangesSizeByKind|AppendsPastItsLastByKind|"
+    r"NamedByIndexByKind)\s*<"
+    r"|\b(kKind)\b")
+RESIZED_BY_KIND = (
+    "chooses which record holds a random array's resize by its kind, where "
+    "the resize trait's item answers it for the type")
+WRITTEN_BY_KIND = (
+    "chooses by an array's kind what a write through an index reports and "
+    "keeps -- the step's path, whether it is exact, whether it may reshape, "
+    "whether the whole is kept first, the run kept before a run write -- "
+    "which no item of a trait the type implements answers yet")
+KEPT_BY_KIND = (
+    "keeps the run of a fixed-size array's elements a write changes by the "
+    "array's kind, where a body MIR states for the type keeps them")
+KIND_QUESTIONS = (
+    "defines or declares what the kind questions are asked of -- whether an "
+    "array's size changes, whether an index names an entry, whether a write "
+    "past the last appends -- which the holders' writes and the run keep ask "
+    "and which go with them")
+LIBRARY_TYPE_READS = {
+    ("include/lyra/value/value_type_kind.hpp", "ValueTypeKind"):
+        KIND_QUESTIONS,
+    ("include/lyra/value/container_core.hpp", "kKind"): KIND_QUESTIONS,
+    ("include/lyra/value/unpacked_array.hpp", "kKind"): KIND_QUESTIONS,
+    ("include/lyra/runtime/var.hpp", "kKind"): WRITTEN_BY_KIND,
+    ("include/lyra/runtime/var.hpp", "AppendsPastItsLast"): WRITTEN_BY_KIND,
+    ("include/lyra/runtime/var.hpp", "AppendsPastItsLastByKind"):
+        WRITTEN_BY_KIND,
+    ("include/lyra/runtime/var.hpp", "ChangesSizeAtRunTime"): WRITTEN_BY_KIND,
+    ("include/lyra/runtime/var.hpp", "ChangesSizeByKind"): WRITTEN_BY_KIND,
+    ("include/lyra/runtime/var.hpp", "NamedByIndex"): WRITTEN_BY_KIND,
+    ("include/lyra/runtime/var.hpp", "NamedByIndexByKind"): WRITTEN_BY_KIND,
+    ("include/lyra/runtime/var.hpp", "ResizableArray"): WRITTEN_BY_KIND,
+    ("src/lyra/runtime/randomize.cpp", "AsDynamicArray"): RESIZED_BY_KIND,
+    ("src/lyra/runtime/randomize.cpp", "AsQueue"): RESIZED_BY_KIND,
+    ("src/lyra/runtime/randomize.cpp", "ValueTypeKind"): RESIZED_BY_KIND,
+    ("src/lyra/runtime/runtime_abi.cpp", "AsFixedArray"): KEPT_BY_KIND,
+    ("src/lyra/runtime/runtime_abi.cpp", "ChangesSizeAtRunTime"):
+        KEPT_BY_KIND,
+}
+
+
+def a032_reads(line: str) -> list[str]:
+    """What a line reads of a composed type: `ValueTypeKind` for a choice by
+    its kind, or the accessor, question or description it asks."""
+    reads = ["ValueTypeKind" for _ in A032_CHOICE_PATTERN.finditer(line)]
+    for m in A032_ASK_PATTERN.finditer(line):
+        reads.append(next(group for group in m.groups() if group))
+    return reads
+
+
+def check_a032(repo_root: Path) -> list[str]:
+    errors = []
+    seen = set()
+    for path, rel in iter_files(repo_root, *A032_ROOTS):
+        for lineno, line in enumerate(path.read_text().splitlines(), 1):
+            for read in a032_reads(strip_comment(line)):
+                key = (str(rel), read)
+                seen.add(key)
+                if key not in LIBRARY_TYPE_READS:
+                    errors.append(
+                        f"  {rel}:{lineno}: A032 {read} -- the library chooses "
+                        f"by a composed type's kind or reads what it is "
+                        f"composed of; state the work as a body MIR builds for "
+                        f"the type, or call an item of a trait it implements")
+    for key in sorted(set(LIBRARY_TYPE_READS) - seen):
+        errors.append(
+            f"  {key[0]}: A032 {key[1]} is listed and no longer read there; "
+            f"drop it from LIBRARY_TYPE_READS")
+    return errors
+
+
 # Self-tests
 def run_self_tests() -> bool:
     def expect(cond, msg):
@@ -2258,6 +2361,44 @@ def run_self_tests() -> bool:
     ok &= expect(
         not A031_DECLARATION_PATTERN.search("mir::ImplOf(unit, type)"),
         "A031 reading a type's implementation is no declaration asked")
+    # A032
+    ok &= expect(
+        a032_reads("    case value::ValueTypeKind::kQueue:")
+        == ["ValueTypeKind"], "A032 a case on a value type's kind is reported")
+    ok &= expect(
+        a032_reads("if (type.Kind() == ValueTypeKind::kFixedArray) {")
+        == ["ValueTypeKind"],
+        "A032 a comparison with a value type's kind is reported")
+    ok &= expect(
+        a032_reads("const auto* q = type.AsQueue();") == ["AsQueue"],
+        "A032 asking a composed kind's description is reported")
+    ok &= expect(
+        a032_reads("static constexpr ValueTypeKind kKind = "
+                   "ValueTypeKind::kQueue;") == ["kKind"],
+        "A032 a facility declaring the kind a question is asked of is "
+        "reported, and the kind it names is no choice")
+    ok &= expect(
+        a032_reads("const auto* i = type.AsIntegral();") == [],
+        "A032 asking for the library's own integral is not reported")
+    ok &= expect(
+        a032_reads("if (value::NamedByIndex(Container::kKind)) {")
+        == ["NamedByIndex", "kKind"],
+        "A032 a question answered by kind, and the kind it is asked of, are "
+        "reported")
+    ok &= expect(
+        a032_reads("[[nodiscard]] auto AsQueue() const -> const Q* {") == [],
+        "A032 declaring an accessor is not reported")
+    ok &= expect(
+        a032_reads("constexpr auto NamedByIndex(ValueTypeKind kind) -> bool {")
+        == [], "A032 declaring a question is not reported")
+    ok &= expect(
+        a032_reads("if constexpr (runtime::ResizableArray<T>) {")
+        == ["ResizableArray"],
+        "A032 a question asked through its concept is reported")
+    ok &= expect(
+        a032_reads("const auto& array = ArrayTypeAt(type);") == [],
+        "A032 reaching a fixed-size array through its own description is "
+        "no choice by kind")
     return ok
 
 
@@ -2295,6 +2436,7 @@ CHECKS = [
     ("A029 HIR text field not classed", check_a029),
     ("A030 declaration found by name below AST-to-HIR", check_a030),
     ("A031 backend chooses a type's operations", check_a031),
+    ("A032 library reads a composed type", check_a032),
 ]
 
 

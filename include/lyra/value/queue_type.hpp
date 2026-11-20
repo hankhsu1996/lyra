@@ -87,11 +87,4 @@ class QueueType {
 
 static_assert(std::is_standard_layout_v<QueueType>);
 
-// Any queue's elements answered by position, for what walks a value down to
-// its leaves, each answer read off the queue type it is handed and the core it
-// lies in. The table of every queue type names this one.
-extern "C" {
-extern const PartsWitnessTable lyra_rt_queue_parts_witness_table;
-}
-
 }  // namespace lyra::value

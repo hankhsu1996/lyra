@@ -42,14 +42,6 @@
 #include "lyra/value/value_type.hpp"
 #include "lyra/value/wide.hpp"
 
-namespace lyra::value {
-
-template <typename K, typename V>
-class AssociativeArray;
-class RuntimeAssociativeArray;
-
-}  // namespace lyra::value
-
 namespace lyra::runtime {
 
 namespace detail {
@@ -63,13 +55,9 @@ concept ChangesSizeByKind = requires { Container::kKind; } &&
 template <typename Container>
 concept AppendsPastItsLastByKind = requires { Container::kKind; } &&
                                    value::AppendsPastItsLast(Container::kKind);
-
 template <typename Container>
-inline constexpr bool kIsAssociative = false;
-template <typename K, typename V>
-inline constexpr bool kIsAssociative<value::AssociativeArray<K, V>> = true;
-template <>
-inline constexpr bool kIsAssociative<value::RuntimeAssociativeArray> = true;
+concept NamedByIndexByKind =
+    requires { Container::kKind; } && value::NamedByIndex(Container::kKind);
 
 }  // namespace detail
 
@@ -77,8 +65,7 @@ inline constexpr bool kIsAssociative<value::RuntimeAssociativeArray> = true;
 // array, a queue (LRM 7.5, 7.8, 7.10) -- and so moves and ends its elements
 // while it lies where it is itself.
 template <class T>
-concept ResizableArray =
-    detail::ChangesSizeByKind<T> || detail::kIsAssociative<T>;
+concept ResizableArray = detail::ChangesSizeByKind<T>;
 
 // A value a wait reads by bit position (LRM 9.4.2): an integral value, of a
 // type known where it is compiled or one held as its words at a width it was
@@ -205,7 +192,7 @@ concept OverridableSink =
 // associative array, the stop there (LRM 7.8), whatever type its index has.
 template <typename Container, typename Key>
 [[nodiscard]] auto StepTo(const Key& key) -> PartPath {
-  if constexpr (detail::kIsAssociative<Container>) {
+  if constexpr (detail::NamedByIndexByKind<Container>) {
     return PartPath::Written(support::PartStep::kAssocElement, std::nullopt);
   } else {
     return PartPath::Written(support::PartStep::kElement, OrdinalOf(key));
@@ -247,7 +234,7 @@ template <typename Container, typename Key>
     return StepTo<Container>(key) ==
            PartPath::Element(static_cast<std::int64_t>(container.Count()));
   } else {
-    return detail::kIsAssociative<Container>;
+    return detail::NamedByIndexByKind<Container>;
   }
 }
 
@@ -1014,9 +1001,9 @@ struct ErasedReference {
   PartPath part{};
 
   // Whether the reference says which part of what holds it it names: the
-  // whole, or a part by the path it was formed by. One the solver forms, by a
-  // walk over storage whose type it does not hold, says neither, so a write
-  // through it keeps nothing.
+  // whole, or a part by the path it was formed by. One formed by no path,
+  // naming storage an object holds or storage nothing is told about, says
+  // neither, so a write through it keeps nothing.
   [[nodiscard]] auto NamesItsPart() const -> bool {
     return whole || !part.IsWhole();
   }

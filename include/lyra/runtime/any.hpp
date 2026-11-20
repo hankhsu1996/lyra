@@ -1,14 +1,12 @@
 #pragma once
 
-#include <string_view>
-
 #include "lyra/base/function_ref.hpp"
 #include "lyra/runtime/var.hpp"
 #include "lyra/support/callable_bounds.hpp"
 #include "lyra/value/any.hpp"
 #include "lyra/value/concepts.hpp"
+#include "lyra/value/library_value_types.hpp"
 #include "lyra/value/value_type.hpp"
-#include "lyra/value/value_witnesses_of.hpp"
 
 namespace lyra::runtime {
 
@@ -53,7 +51,7 @@ class AnyReference {
 // identity it is tested by (LRM 15.4.9).
 template <value::LyraValue T>
 [[nodiscard]] auto MakeAny(const T& value, const char* identity) -> value::Any {
-  return value::Any::CopyOf(value::kValueTypeOf<T>, &value, identity);
+  return value::Any::CopyOf(value::LibraryTypeOf<T>(), &value, identity);
 }
 
 // A reference to a value of any type, of the identity `identity` names, which
@@ -62,7 +60,8 @@ template <value::LyraValue T>
 [[nodiscard]] auto SeeAsAny(
     VariableRef<T> incoming, const char* identity,
     base::FunctionRef<support::EffectSignature> carry) -> AnyReference {
-  return {incoming.Erased().storage, value::kValueTypeOf<T>, identity, carry};
+  return {
+      incoming.Erased().storage, value::LibraryTypeOf<T>(), identity, carry};
 }
 
 // Writes `value` where `into` stands, where the two are of one identity, and

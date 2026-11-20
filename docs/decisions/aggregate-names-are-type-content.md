@@ -128,10 +128,10 @@ value-domain projection is the representation it shares with a type that names n
    [mir-type-interning](mir-type-interning.md) rules out, and would be a second statement of a
    placement the LRM already fixes.
 
-2. **`TupleType` is the anonymous product a lowering composes for itself** -- an associative entry's
-   `(key, value)` pair, a task's output pack, a scan target list -- and is never what a declared
-   aggregate lowers to. It remains the one _structural_ heterogeneous product, which is what
-   `mir.md` was saying; what stops being true is that it is the only heterogeneous aggregate.
+2. **`TupleType` is the anonymous product a lowering composes for itself** -- a task's output pack,
+   a scan target list -- and is never what a declared aggregate lowers to. It remains the one
+   _structural_ heterogeneous product, which is what `mir.md` was saying; what stops being true is
+   that it is the only heterogeneous aggregate.
 
 3. **The projection is what every value operation reads.** An unpacked aggregate projects to the
    product: one realization, monomorphized for the C++ backend or held as its bytes and its type by

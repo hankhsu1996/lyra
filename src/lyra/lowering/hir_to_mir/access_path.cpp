@@ -398,11 +398,10 @@ auto ReferenceStepAnswer(
            .has_value()) {
     return ReferenceStepCall(unit, block, std::move(step), receiver, type);
   }
+  // An element is named by a position, or by an associative array's index,
+  // which the step states as a value of the index type.
   return *ContainerOperationCall(
-      unit, block, answers, receiver,
-      {ConvertToType(
-          unit, block, step.call.arguments.front(),
-          mir::PositionType(unit.types))},
+      unit, block, answers, receiver, {step.call.arguments.front()},
       mir::BorrowedPointerTo(unit.types, type, step.mutability));
 }
 
@@ -1092,18 +1091,6 @@ auto OwnerReference(
       owner);
 }
 
-// `step` taken on `reference` for a reference to the part.
-auto LentStep(
-    const mir::CompilationUnit& unit, mir::Builder block,
-    const DescentStep& step, mir::ExprId reference) -> mir::ExprId {
-  return TakeStep(
-      unit, block, step, StepUse::kLend, reference,
-      unit.types.Intern(
-          mir::Type{mir::VariableRefType{
-              .pointee = step.part_type,
-              .mutability = mir::Mutability::kMutable}}));
-}
-
 // The leasing step a call's binding takes where `step` reaches an element of a
 // container sized while the program runs, named by how the step names the
 // element; none for any other step. Such a container can let go of its
@@ -1171,6 +1158,17 @@ auto CarriedReference(
 }
 
 }  // namespace
+
+auto LentStep(
+    const mir::CompilationUnit& unit, mir::Builder block,
+    const DescentStep& step, mir::ExprId reference) -> mir::ExprId {
+  return TakeStep(
+      unit, block, step, StepUse::kLend, reference,
+      unit.types.Intern(
+          mir::Type{mir::VariableRefType{
+              .pointee = step.part_type,
+              .mutability = mir::Mutability::kMutable}}));
+}
 
 auto PathReference(
     const mir::CompilationUnit& unit, mir::Builder block,

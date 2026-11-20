@@ -29,48 +29,62 @@
 #include "lyra/runtime/runtime.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/third_party_licenses.hpp"
-#include "lyra/value/queue_report.hpp"
+#include "lyra/value/array_report.hpp"
 
 namespace lyra::runtime {
 
 namespace {
 
-// For as long as the run lasts, what a queue says of a write -- that a bounded
-// queue dropped what the design wrote past its bound (LRM 7.10.5), or that a
-// write through an invalid index was ignored (LRM 7.10.1) -- is said as one of
-// the run's own reports, placed and timed like any other.
-class QueueReports {
+// For as long as the run lasts, what an array says of a read or a write --
+// that a bounded queue dropped what the design wrote past its bound (LRM
+// 7.10.5), that a write through an invalid index was ignored (LRM 7.8.6,
+// 7.10.1), or that a read through an invalid index or one naming no entry read
+// the element default (LRM 7.8.6) -- is said as one of the run's own reports,
+// placed and timed like any other.
+class ArrayReports {
  public:
-  QueueReports() : replaced_(value::ListenForQueueReports(&Say)) {
+  ArrayReports() : replaced_(value::ListenForArrayReports(&Say)) {
   }
-  ~QueueReports() {
-    value::ListenForQueueReports(replaced_);
+  ~ArrayReports() {
+    value::ListenForArrayReports(replaced_);
   }
-  QueueReports(const QueueReports&) = delete;
-  auto operator=(const QueueReports&) -> QueueReports& = delete;
-  QueueReports(QueueReports&&) = delete;
-  auto operator=(QueueReports&&) -> QueueReports& = delete;
+  ArrayReports(const ArrayReports&) = delete;
+  auto operator=(const ArrayReports&) -> ArrayReports& = delete;
+  ArrayReports(ArrayReports&&) = delete;
+  auto operator=(ArrayReports&&) -> ArrayReports& = delete;
 
  private:
-  static void Say(value::QueueReport report) {
+  static void Say(value::ArrayReport report) {
     AmbientRunContext::Current().Effects().Diagnostic().Report(
         Severity::kWarning, MessageOf(report));
   }
-  static auto MessageOf(value::QueueReport report) -> base::DiagMessage {
+  static auto MessageOf(value::ArrayReport report) -> base::DiagMessage {
     switch (report) {
-      case value::QueueReport::kGrewPastItsBound:
+      case value::ArrayReport::kQueueGrewPastItsBound:
         return base::DiagMessage(
             "a bounded queue grew past its declared bound, and the elements "
             "past it were dropped");
-      case value::QueueReport::kWrittenAtAnInvalidIndex:
+      case value::ArrayReport::kQueueWrittenAtAnInvalidIndex:
         return base::DiagMessage(
             "a queue was written at an invalid index, and the write was "
             "ignored");
+      case value::ArrayReport::kAssociativeArrayReadAtAnInvalidIndex:
+        return base::DiagMessage(
+            "an associative array was read at an index holding x or z, and "
+            "the element default was read");
+      case value::ArrayReport::kAssociativeArrayReadAtAMissingEntry:
+        return base::DiagMessage(
+            "an associative array was read at an index naming no entry, and "
+            "the element default was read");
+      case value::ArrayReport::kAssociativeArrayWrittenAtAnInvalidIndex:
+        return base::DiagMessage(
+            "an associative array was written at an index holding x or z, "
+            "and the write was ignored");
     }
-    throw InternalError("runtime: unknown queue report");
+    throw InternalError("runtime: unknown array report");
   }
 
-  value::QueueReportListener replaced_;
+  value::ArrayReportListener replaced_;
 };
 
 // Drives a bound Runtime to completion. The run accounts for a design's own
@@ -86,7 +100,7 @@ auto RunSimulation(Runtime& runtime) -> int {
     // 10.5, 35.5.3).
     const AmbientRunContext run_context{runtime.DesignRoot(), runtime};
     const InterruptReport interrupt_report{runtime};
-    const QueueReports queue_reports;
+    const ArrayReports array_reports;
     return runtime.Run();
   } catch (const std::exception&) {
     ReportRaisedError(runtime, std::current_exception());

@@ -133,12 +133,10 @@ struct DynamicArrayCore {
   }
 };
 
-extern "C" {
-
 // The kinds of index whose order the language fixes, which the core compares
-// itself (LRM 7.8.1 -- 7.8.4), and the index of any other type, which it keeps
-// in the order its entries were made and finds by the type's equality (LRM
-// 7.8.5).
+// itself (LRM 7.8.1 -- 7.8.4), and the index of any other type, whose entries
+// it keeps in the order they were made (LRM 7.8.5) and which only the array
+// type's own code compares.
 enum class IndexKind : std::uint32_t {
   kIntegral,
   kString,
@@ -148,26 +146,43 @@ enum class IndexKind : std::uint32_t {
   kOther,
 };
 
-// Whether two indices of a type the core does not compare are equal, as the
-// language's `==` on that type answers for indices that hold no x or z.
-using IndexEqual = bool (*)(const void* lhs, const void* rhs);
-
 // An associative array (LRM 7.8): each entry its element and its index in
-// storage of its own that never moves while the entry is in the array. What a
-// read of an absent index answers is the value a `default:` clause gave the
-// array (LRM 7.9.11), where one did, and the element type's default
-// otherwise.
+// storage of its own that never moves while the entry is in the array, and
+// how many there are. What a read of an absent index answers is the value a
+// `default:` clause gave the array (LRM 7.9.11), where one did, and the
+// element type's default otherwise.
 struct AssociativeArrayCore {
   void* entries;
   std::uint64_t count;
   const ValueType* element;
   const ValueType* index;
-  IndexEqual equal;
   void* stated_default;
   IndexKind kind;
-};
 
-}  // extern "C"
+  // The kind of value an associative array is, and how many entries it
+  // holds, which a library template holding a value of any type asks of it.
+  static constexpr ValueTypeKind kKind = ValueTypeKind::kAssociativeArray;
+  [[nodiscard]] auto Count() const noexcept -> std::size_t {
+    return count;
+  }
+
+  // Each member, in the order it is declared, and the one at position `N`,
+  // which generated code reaches a member by.
+  template <typename Self>
+  static auto Tie(Self& self) noexcept {
+    return std::tie(
+        self.entries, self.count, self.element, self.index, self.stated_default,
+        self.kind);
+  }
+  template <std::size_t N>
+  auto Component() noexcept -> auto& {
+    return std::get<N>(Tie(*this));
+  }
+  template <std::size_t N>
+  [[nodiscard]] auto Component() const noexcept -> const auto& {
+    return std::get<N>(Tie(*this));
+  }
+};
 
 static_assert(std::is_standard_layout_v<QueueCore>);
 static_assert(std::is_trivially_copyable_v<QueueCore>);
@@ -253,37 +268,45 @@ void DynamicArrayAdopt(
     const DynamicArrayCore& array, void* element) -> ContainerLease;
 
 // An associative array of no entries, of elements of `element` indexed by
-// `index` of `kind`; `equal` compares two indices of kind `kOther`.
-void AssociativeArrayConstruct(
-    AssociativeArrayCore& out, IndexKind kind, const ValueType& index,
-    const ValueType& element, IndexEqual equal);
-void AssociativeArrayMove(
-    AssociativeArrayCore& from, AssociativeArrayCore& out) noexcept;
+// `index`, whose order is that of the index kind numbered `kind`, which the
+// array type's own code hands over as the machine integer it can write.
+[[nodiscard]] auto AssociativeArrayConstruct(
+    std::int64_t kind, const ValueType* index, const ValueType* element)
+    -> AssociativeArrayCore;
+// The same for an associative array.
+void TakeCore(AssociativeArrayCore& from, AssociativeArrayCore& out) noexcept;
+// Ends every entry and the value a `default:` clause gave, leaving the array
+// holding nothing.
 void AssociativeArrayEnd(AssociativeArrayCore& array) noexcept;
-// The element of the entry `index` names, an index of type `index_type`
-// holding no x or z, or none.
+// Makes what `from` holds the entries of `array`, which ends the ones it held,
+// `from` left empty.
+void AssociativeArrayAdopt(
+    AssociativeArrayCore& array, AssociativeArrayCore& from) noexcept;
+// The element of the entry `index` names, an index of the array's index type
+// holding no x or z, or none; the index type is of a kind whose order the core
+// knows.
 [[nodiscard]] auto AssociativeArrayFind(
-    const AssociativeArrayCore& array, const void* index,
-    const ValueType& index_type) -> void*;
-// Storage for one entry with an index of type `index_type`, answering where
-// its element lies; where its index lies is asked of the element.
-// Both hold no value.
-[[nodiscard]] auto AssociativeArrayPrepare(
-    const AssociativeArrayCore& array, const ValueType& index_type) -> void*;
+    const AssociativeArrayCore& array, const void* index) -> void*;
+// Storage for one entry, answering where its element lies; where its index
+// lies is asked of the element. Both hold no value.
+[[nodiscard]] auto AssociativeArrayPrepare(const AssociativeArrayCore& array)
+    -> void*;
 // The index of the entry whose element lies at `element`.
 [[nodiscard]] auto AssociativeArrayIndexOf(
     const AssociativeArrayCore& array, void* element) -> void*;
 // Makes the entry built at `element` one of the array's; no entry holds an
 // equal index.
 void AssociativeArrayCommit(AssociativeArrayCore& array, void* element);
-// Removes the entry `index` names, if any, or every entry.
-void AssociativeArrayErase(
-    AssociativeArrayCore& array, const void* index,
-    const ValueType& index_type) noexcept;
+// Takes the entry whose element lies at `element` out of the array and ends
+// it, or leaves it to a lease a call holds on it (LRM 13.5.2); and every
+// entry.
+void AssociativeArrayRemove(
+    AssociativeArrayCore& array, void* element) noexcept;
 void AssociativeArrayClear(AssociativeArrayCore& array) noexcept;
 // The element of the entry with the least index, and of the entry after the
 // one whose element is at `element`, each none where there is no such entry:
-// the array's entries in its index order (LRM 7.8).
+// the array's entries in its index order (LRM 7.8), or for an index of any
+// other kind in the order they were made (LRM 7.8.5).
 [[nodiscard]] auto AssociativeArrayFirst(const AssociativeArrayCore& array)
     -> void*;
 [[nodiscard]] auto AssociativeArrayLast(const AssociativeArrayCore& array)
@@ -293,14 +316,12 @@ void AssociativeArrayClear(AssociativeArrayCore& array) noexcept;
 [[nodiscard]] auto AssociativeArrayPrevious(
     const AssociativeArrayCore& array, const void* element) -> void*;
 // The element of the entry with the least index after `index`, or with the
-// greatest before it, an index of type `index_type` the array need not hold
-// (LRM 7.9.6, 7.9.7).
+// greatest before it, an index of the array's index type the array need not
+// hold (LRM 7.9.6, 7.9.7), of a kind whose order the core knows.
 [[nodiscard]] auto AssociativeArrayAfter(
-    const AssociativeArrayCore& array, const void* index,
-    const ValueType& index_type) -> void*;
+    const AssociativeArrayCore& array, const void* index) -> void*;
 [[nodiscard]] auto AssociativeArrayBefore(
-    const AssociativeArrayCore& array, const void* index,
-    const ValueType& index_type) -> void*;
+    const AssociativeArrayCore& array, const void* index) -> void*;
 // Storage for the value a `default:` clause gives the array, holding no value,
 // and that value, once built there, made the array's own, ending the one it
 // had (LRM 7.9.11); and that value, none where no clause gave one.

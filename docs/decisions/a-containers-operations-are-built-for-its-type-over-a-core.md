@@ -3,8 +3,11 @@
 Date: 2026-11-05 Status: accepted; the lifecycle (D6, D8) revised by
 [a-move-relocates-its-value](a-move-relocates-its-value.md), and which operations the C++ struct
 holds (D8) by [a-type-implements-the-librarys-traits](a-type-implements-the-librarys-traits.md).
-Supersedes the container half of [jit-aggregate-realization](jit-aggregate-realization.md), revises
-D6 of [a-value-is-its-machine-data](a-value-is-its-machine-data.md), and carries out for the
+Revised 2026-11-18: the associative array is carried out as the other two are, and an index of a
+type whose order the language leaves open is compared by the array type's own bodies, not by a
+record the core is handed (D7). Supersedes the container half of
+[jit-aggregate-realization](jit-aggregate-realization.md), revises D6 of
+[a-value-is-its-machine-data](a-value-is-its-machine-data.md), and carries out for the
 run-time-sized containers what
 [an-operation-over-many-types-is-built-by-the-lowering](an-operation-over-many-types-is-built-by-the-lowering.md)
 and
@@ -88,27 +91,33 @@ library's algorithms.
 ## Decision
 
 **D1. A container's storage management is a core compiled once in the library, one per container
-kind, and what runs on every call of a dynamic array or a queue is built for its type.** A dynamic
-array's core is where its block starts, how many elements it holds and the element type's record; it
-allocates a generation, adopts it and gives it back, takes the lease a call takes on an element, and
-says, when the array lets its elements go, whether the array's own code ends them or a lease keeps
-them (LRM 13.5.2). An associative array's core keeps its tree, which finds, places and removes
-entries, told, where it is built, the element type's record
+kind, and what runs on every call of it is built for its type.** A dynamic array's core is where its
+block starts, how many elements it holds and the element type's record; it allocates a generation,
+adopts it and gives it back, takes the lease a call takes on an element, and says, when the array
+lets its elements go, whether the array's own code ends them or a lease keeps them (LRM 13.5.2). An
+associative array's core keeps each entry, its element and its index, in storage of its own, and
+their order: the index's for every kind of index whose order the language fixes, and the order they
+were made for any other (D7). It is told, where it is built, which kind its index is and the records
+of its index type and its element type
 ([a-type-is-told-to-the-library-as-a-record-both-sides-read](a-type-is-told-to-the-library-as-a-record-both-sides-read.md)),
-of which it reads the size, the alignment and how to end one. A queue's core is a ring of the
-addresses of its elements' storage -- the ring, its mask, its head and its count -- and the run's
-recycler that storage comes from, one recycler for each size and alignment of storage, as LLVM's
-`RecyclingAllocator` is; it holds nothing that depends on the element type. What runs on every call
-of a dynamic array or a queue -- reaching an element to read or to write it (D5), putting an element
-at either end and taking one from either end, emptying and ending the container, holding a queue to
-its bound, taking storage for an element, and letting an element go by ending it or leaving it to a
-lease -- is a body built for the type (D3). The queue's core keeps what is the same for every
-element type and runs rarely -- fresh storage where a recycler was given none back, growing the
-ring, opening and closing a position in it, reordering and reversing it, giving it back, the lease a
-call takes, and building an empty queue, told its type. No core implements anything of an element's
-value. Where a dynamic array's or a queue's core ends an element, it is for the last lease on one
-the container let go of, and it asks the element type's record, whose function the compiler built.
-Every element committed to a container is ended exactly once, after the last lease on it
+of which it reads the size, the alignment and how to end one; it finds the entry an index of an
+ordered kind names, places and removes entries, and steps from one to the next. A queue's core is a
+ring of the addresses of its elements' storage -- the ring, its mask, its head and its count -- and
+the run's recycler that storage comes from, one recycler for each size and alignment of storage, as
+LLVM's `RecyclingAllocator` is; it holds nothing that depends on the element type. What runs on
+every call of a dynamic array or a queue -- reaching an element to read or to write it (D5), putting
+an element at either end and taking one from either end, emptying and ending the container, holding
+a queue to its bound, taking storage for an element, and letting an element go by ending it or
+leaving it to a lease -- is a body built for the type (D3). So is what runs on every call of an
+associative array -- reading an element and writing one, making the entry an index names, removing
+one, and stepping through its entries -- each a body over the core's entries. The queue's core keeps
+what is the same for every element type and runs rarely -- fresh storage where a recycler was given
+none back, growing the ring, opening and closing a position in it, reordering and reversing it,
+giving it back, the lease a call takes, and building an empty queue, told its type. No core
+implements anything of an element's value. Where a dynamic array's or a queue's core ends an
+element, it is for the last lease on one the container let go of, and it asks the element type's
+record, whose function the compiler built. Every element committed to a container is ended exactly
+once, after the last lease on it
 ([a-bound-reference-leases-what-it-reaches-through](a-bound-reference-leases-what-it-reaches-through.md)).
 Every entry of a core is an ordinary function of the library, no template, which the execution
 backend reaches through the library's C interface and the C++ backend's class for the type calls
@@ -117,41 +126,46 @@ directly.
 **D2. A core states its fields as a C layout, and both backends read them.** A dynamic array's are
 where its block starts, how many elements it holds and the element type's record. A queue's are its
 ring, the ring's mask, its head, its count and its recycler, and a recycler's are its free list, the
-size and alignment of its storage and the rest of the page it cuts fresh storage from. They are
-stated once, as a C struct in a library header, which the execution backend's code generator reads
-by `offsetof` and the C++ backend's class for a container type derives from, as a type's record
-already is. A dynamic array's core, a queue's core and the queue's recycler are structures of the
-library whose members a unit reaches, so a body names each member by its position and every layer
-reads the member's type and place off the one declaration. They are a contract between the compiler
-and the library of one release, as Go's slice header is; a user's program reads none of them, and a
-library shipped with a different compiler is no case this answers. What an associative array's core
-does with its storage -- the tree, its leases -- stays behind its entries, and so does what D1
-leaves a dynamic array's and a queue's core. The code that reads the fields depends on how elements
-are located, so a different data structure changes the header, the bodies the lowering builds and
-the library's table of parts together, and neither backend's own code.
+size and alignment of its storage and the rest of the page it cuts fresh storage from. An
+associative array's are where its entries are kept, how many there are, the records of its element
+type and its index type, the value a `default:` clause gave it (LRM 7.9.11) and which kind its index
+is. They are stated once, as a C struct in a library header, which the execution backend's code
+generator reads by `offsetof` and the C++ backend's class for a container type derives from, as a
+type's record already is. A dynamic array's core, a queue's core, the queue's recycler and an
+associative array's core are structures of the library whose members a unit reaches, so a body names
+each member by its position and every layer reads the member's type and place off the one
+declaration. They are a contract between the compiler and the library of one release, as Go's slice
+header is; a user's program reads none of them, and a library shipped with a different compiler is
+no case this answers. How an associative array's core keeps and orders its entries, and their
+leases, stays behind its entries, and so does what D1 leaves a dynamic array's and a queue's core.
+The code that reads the fields depends on how elements are located, so a different data structure
+changes the header, the bodies the lowering builds and the library's table of parts together, and
+neither backend's own code.
 
 **D3. Every operation of a container type is a body the lowering builds for that type, on demand,
 from the unit's types.** It is named by the container type and the operation, as a fixed-size
 array's operations are. It is made of what MIR already has: a placement new-expression, calls of a
 core's entries, element steps, reads, moves, conditions and loops, and, for a dynamic array and a
 queue, the core's members and the storage their addresses point at, read and written where they lie.
-The user's `q.push_back(x)` is a call of that body. An associative array's body never states a tree
-walk; one that would need it is a core entry missing. What a body does with an element -- building
-it from a value, comparing it, streaming it, taking it out of its storage -- is the element type's
-own operation, compiled with the body. A value is taken out of storage a pointer points at by a call
-answering it and leaving the storage holding none, as rustc's `ptr::read` is a call in THIR. A
-dynamic array's body reads where its block starts and how many elements it holds off the core's
-members, and steps to an element by the element type's size, as `Vec<T>` indexes its buffer in code
-compiled with `T`. Its end, and its taking a new generation, let go of the elements it held: the
-core says whether the array's own code ends them, which it does not where a call leases one, the
-generation then kept to the last lease (LRM 13.5.2); the body takes each element out of its storage
-and ends it, and the core gives the storage back. A queue's `push_back` grows the ring through the
-core where it is full, takes storage from its recycler's free list or, where that is empty, from the
-core, builds the element there by a placement new-expression, puts its address at the ring's end and
-holds the queue to its bound. Its `pop_front` reads the address at the head and moves the head on,
-then takes the element out and gives its storage back, or, where a call leases it, answers a copy
-and leaves the element to the lease (LRM 13.5.2). Its `delete` lets go of every element that way and
-keeps the ring.
+The user's `q.push_back(x)` is a call of that body. An associative array's body reaches its entries
+only through the core's entries -- the entry an index of an ordered kind names, the first, the next,
+preparing, committing and removing one -- and never states how the core keeps them; where it walks
+them, in its own search for an index of any other type (D7) or a whole-value operation, it steps
+from one to the next. What a body does with an element -- building it from a value, comparing it,
+streaming it, taking it out of its storage -- is the element type's own operation, compiled with the
+body. A value is taken out of storage a pointer points at by a call answering it and leaving the
+storage holding none, as rustc's `ptr::read` is a call in THIR. A dynamic array's body reads where
+its block starts and how many elements it holds off the core's members, and steps to an element by
+the element type's size, as `Vec<T>` indexes its buffer in code compiled with `T`. Its end, and its
+taking a new generation, let go of the elements it held: the core says whether the array's own code
+ends them, which it does not where a call leases one, the generation then kept to the last lease
+(LRM 13.5.2); the body takes each element out of its storage and ends it, and the core gives the
+storage back. A queue's `push_back` grows the ring through the core where it is full, takes storage
+from its recycler's free list or, where that is empty, from the core, builds the element there by a
+placement new-expression, puts its address at the ring's end and holds the queue to its bound. Its
+`pop_front` reads the address at the head and moves the head on, then takes the element out and
+gives its storage back, or, where a call leases it, answers a copy and leaves the element to the
+lease (LRM 13.5.2). Its `delete` lets go of every element that way and keeps the ring.
 
 **D4. Storage for an element is its taker's from the moment it is taken, and the container's,
 holding the element, from the moment it is committed.** A body builds the element in storage it took
@@ -168,26 +182,31 @@ container is a value of its own before any storage is taken, and no element move
 queue's free storage holds the link to the next free piece in its first word, over whatever it holds
 in use, its lease count included, so the count is started where the storage is taken.
 
-**D5. An element of a dynamic array or a queue is reached by the type's own body, and every write
-through a position is built on one body every path reaches.** MIR states an element of any array as
+**D5. An element of a run-time-sized container is reached by the type's own body, and every write
+through an index is built on one body every path reaches.** MIR states an element of any array as
 one call answering a reference. For a fixed-size array the callee is the language's element step,
-which the lowering to LIR makes a step within the array's layout. For a dynamic array or a queue it
-is the type's own body, which reads the core's members and answers where the element lies, or, where
-the position names none, the type's default to a read and storage no read reaches to a write (LRM
-7.4.5, 7.10.1), as rustc's `Index::index` on a `Vec` is a call of the container's method compiled
-with its element. Every write through a position -- the element write, a step within a write in
-progress, a step through a reference, the C++ class's element write -- is built on one body of the
-type that answers where the write lands, or no address, and whether the write made the element
-there, which is what a write in progress must learn (LRM 4.3). A queue's is where a write one past
-its last appends the element default and holds the queue to its bound (LRM 7.10.5), and where a
-write through any other invalid index gives the run-time warning LRM 7.10.1 requires; it takes the
-location the write was written at, which the dynamic array's, reporting nothing, does not. The
-library's own steps are handed the array's type, whose record holds that body's address (D6), so
-they call the code compiled for the type rather than a second statement of its rule. An associative
-step finds or allocates through one function of the library over the core and the element type's
-record, reached alike by every path. A value an operation takes out of a container is moved out by
-the body taking it where no call holds it and copied where one does (LRM 13.5.2). A reference a call
-binds to an element is formed by the step that takes the core's lease, never by the element read.
+which the lowering to LIR makes a step within the array's layout. For a dynamic array, a queue or an
+associative array it is the type's own body, which answers where the element lies, or, where the
+index names none, the type's default to a read and storage no read reaches to a write (LRM 7.4.5,
+7.10.1), as rustc's `Index::index` on a `Vec` is a call of the container's method compiled with its
+element. A dynamic array's and a queue's read the core's members; an associative array's finds the
+entry through the core where the language fixes its index's order and otherwise by its own search
+(D7), and a read through an index naming none answers the value an absent index reads without the
+array gaining an entry, with the warning LRM 7.8.6 requires where the array was given no `default:`.
+Every write through an index -- the element write, a step within a write in progress, a step through
+a reference, the C++ class's element write -- is built on one body of the type that answers where
+the write lands, or no address, and whether the write made the element there, which is what a write
+in progress must learn (LRM 4.3). A queue's is where a write one past its last appends the element
+default and holds the queue to its bound (LRM 7.10.5), and where a write through any other invalid
+index gives the run-time warning LRM 7.10.1 requires; an associative array's makes the entry an
+index names where it names none, holding the value an absent index reads (LRM 7.8.7), and lands
+nowhere where the index holds x or z, with the warning LRM 7.8.6 requires. Each takes the location
+the write was written at, which the dynamic array's, reporting nothing, does not. The library's own
+steps are handed the array's type, whose record holds that body's address (D6), so they call the
+code compiled for the type rather than a second statement of its rule. A value an operation takes
+out of a container is moved out by the body taking it where no call holds it and copied where one
+does (LRM 13.5.2). A reference a call binds to an element is formed by the step that takes the
+core's lease, never by the element read.
 
 **D6. A container type is a value laid out by its type**
 ([a-holder-lays-out-the-value-it-keeps](a-holder-lays-out-the-value-it-keeps.md) D8). Its bytes are
@@ -195,20 +214,29 @@ its core. Its record's table holds its own copy, end, assignment and change test
 and its relocation, which is its core's bytes, and a table of its parts read off D2's fields, which
 the library states once per container kind; a dynamic array's and a queue's record also holds the
 address of its body finding where a write through a position lands and of its body making it a count
-long (D5, D9). Its default is the body building an empty container at its type. Whatever holds a
-value of it -- a variable, a net, a reference, a sampled history, a takeover, a task's answer --
-holds it as it holds a structure, and asks the record's table for a whole copy or comparison. The
-program's element operations never go through the record; the library's own steps within a write,
-and randomization's resize, reach the type's bodies through it. What the library walks by parts --
-printing, a foreign call's open array, memory files of a dynamic array or a queue -- reads the parts
-table.
+long (D5, D9), and an associative array's holds its element and index types and the address of its
+body finding where a write through an index lands (D5). Its default is the body building an empty
+container at its type. Whatever holds a value of it -- a variable, a net, a reference, a sampled
+history, a takeover, a task's answer -- holds it as it holds a structure, and asks the record's
+table for a whole copy or comparison. The program's element operations never go through the record;
+the library's own steps within a write, and randomization's resize, reach the type's bodies through
+it. No container's parts are walked by the library down to its leaves: a memory task's words, a
+foreign call's open array, a sort's order and a randomization's variables are each a body of the
+container's type that walks its elements and hands the library one at a time. Where a write keeps
+what the run of a fixed-size array's elements it writes held, the library walks the run, chosen by
+the array's kind. That breaks
+[the-library-is-parametric-in-the-types-a-design-composes](the-library-is-parametric-in-the-types-a-design-composes.md),
+and A032 lists it among the places that do.
 
 **D7. An associative array's core compares keys itself for every index type the language fixes the
 order of** -- integral, string, class handle, `chandle`, wildcard -- each in its own walk. For an
-index of any other type with equality (LRM 7.8.5), the core is handed the type's equality as a
-record and keeps entries in the order they were added, which the clause allows: arbitrary, and
-stable while no entry is added or removed. A key holding x or z names no entry (LRM 7.8.5, 7.8.6),
-which the body asks of the key type before it reaches the core.
+index of any other type with equality (LRM 7.8.5), the core keeps entries in the order they were
+made, which the clause allows: arbitrary, and stable while no entry is added or removed. It compares
+no such index: the array type's own body finds the entry an index names by walking the entries and
+comparing each one's index by the index type's equality, compiled with the body. A key holding x or
+z names no entry (LRM 7.8.5, 7.8.6), which the body asks of the key type before it reaches the core.
+A wildcard index is a value held with the integral type the program wrote it in (LRM 7.8.1), on both
+backends.
 
 **D8. The C++ type of a container type is the library's one class template for a container whose
 value's life is its own, at the core its kind lays it out as and at the struct the backend writes
@@ -221,10 +249,10 @@ function whose body is the MIR body, and spells the type, in its type mapping, a
 template at the core and that struct; the element type is what the struct's operations take and
 answer. The template is the class. It derives from the core's C struct, and its special members are
 C++'s realization of the four operations and of a relocation, written once for every container type
-of either kind: its default and copy constructors build the object from what Default and Copy
-answer, its copy assignment and its destructor call Assign and End, its move constructor takes over
-the source's core and leaves that core inert, and its move assignment ends the value it holds and
-then takes over the source's. A class declaring its own destructor or copy assignment gets no move
+of any kind: its default and copy constructors build the object from what Default and Copy answer,
+its copy assignment and its destructor call Assign and End, its move constructor takes over the
+source's core and leaves that core inert, and its move assignment ends the value it holds and then
+takes over the source's. A class declaring its own destructor or copy assignment gets no move
 constructor ([class.copy.ctor]), and End has to run in the destructor of the complete object, whose
 body runs while the object is still in use ([class.dtor]), so the six are the one class's. A default
 or copy constructor delegates to the move constructor, handing it the value Default or Copy answers,
@@ -238,15 +266,16 @@ Default's answer is the value its core is, a value made of its parts.
 
 What a library template holding values of any type asks of an array is asked in the shapes MIR's
 declarations already have: the element at a machine index by reference, from whose type the template
-takes the element type, and where a write through a position lands, an element's address or none and
+takes the element type, and where a write through an index lands, an element's address or none and
 whether the write made it, which the library turns into what a write in progress is told. The class
 template answers each such question by calling the struct's item for it, and the struct declares
-exactly the implementation's items: the value's life, the change test, an element by machine index
-and where a write through a position lands, the value made a count long, the questions asked of a
-whole value, and its stream only where its elements stream. A lease on an element is only the
-library's, so the library takes it on the core, as the execution backend's runtime does: a queue's
-element keeps the count of its leases and a dynamic array's generation keeps them. Every other
-operation is a free function named by the type's struct, the operation and the types it is
+exactly the implementation's items: the value's life, the change test, where a write through an
+index lands, the questions asked of a whole value, its stream only where its elements stream, and,
+for a dynamic array and a queue, an element by machine index, the value made a count long and the
+value read back out of a stream. A lease on an element is only the library's, so the library takes
+it on the core, as the execution backend's runtime does: a queue's element and an associative
+array's entry keep the count of their leases and a dynamic array's generation keeps them. Every
+other operation is a free function named by the type's struct, the operation and the types it is
 instantiated at, declared and defined in each code file that calls it.
 
 The struct is one header per type outside every namespace, named by the type's canonical name, so
@@ -281,8 +310,8 @@ holding the type's implementation of the library's traits; the walk then writes 
 - **The whole algorithm a template instantiated per element type**, the C++ backend's shape this
   replaces. Each element type compiled the ring, the bound and the window arithmetic again in a text
   only the C++ backend read, and the execution backend could not share it, so the two backends ran
-  one source compiled two ways. A dynamic array's and a queue's per-call work is compiled per type
-  again (D1), but as bodies both backends compile from one MIR.
+  one source compiled two ways. A container's per-call work is compiled per type again (D1), but as
+  bodies both backends compile from one MIR.
 - **The core handed a full table of the element's operations**, the library's shape this replaces.
   Every element copy, comparison and end is then an indirect call, and what touches an element is
   not compiled with the element's type.
@@ -352,14 +381,12 @@ holding the type's implementation of the library's traits; the walk then writes 
 
 ## Consequences
 
-- The dynamic array and the queue are carried out this way; the associative array is not yet.
-- A dynamic array's and a queue's per-call work is a body per type, compiled by both backends from
-  one MIR, over the library's one core for what is the same for every element type. Neither backend
-  instantiates an associative array's storage management per element type, and both call the
-  library's one core for it.
-- Neither backend works out where an element of a dynamic array or a queue lies, or when a write
-  makes one: the type's bodies do, so how elements are located changes the bodies and the core's
-  header, and neither the code generator nor the C++ class.
+- A container's per-call work is a body per type, compiled by both backends from one MIR, over the
+  library's one core for what is the same for every element type; neither backend instantiates a
+  container's storage management per element type.
+- Neither backend works out where an element of a container lies, or when a write makes one: the
+  type's bodies do, so how elements are located changes the bodies and the core's header, and
+  neither the code generator nor the C++ class.
 - Built at `-O2 --lto` and counted by callgrind, a loop of 200,000 `push_back` and `pop_front` on a
   queue of `int` took 187.8 million instructions with every operation through the core, and 21.5
   million with the per-call paths as bodies, of which 2.2 million is the run's start-up a

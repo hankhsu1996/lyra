@@ -349,14 +349,6 @@ auto CodeGenModule::AppendTypeArg(
             args.push_back(value_types_.GetAddrOfTakePositions(of.type));
             return {};
           },
-          [&](const IndexOrderArg& of) -> diag::Result<void> {
-            auto domain = DomainOf(of.key);
-            if (!domain) {
-              return std::unexpected(std::move(domain.error()));
-            }
-            args.push_back(LibraryData(IndexOrderSymbol(*domain)));
-            return {};
-          },
           [&](const OperationsArg& of) -> diag::Result<void> {
             auto operations = value_types_.GetAddrOfOperations(of.type);
             if (!operations) {

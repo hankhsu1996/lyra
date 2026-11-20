@@ -12,7 +12,6 @@
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/support/library_decl.hpp"
 #include "lyra/value/constant_span.hpp"
-#include "lyra/value/container_core.hpp"
 #include "lyra/value/object_ref.hpp"
 #include "lyra/value/value_type.hpp"
 
@@ -72,6 +71,9 @@ auto MirTypeOf(const TypePool& types) -> TypeId {
     return types.Intern(Type{VoidType{}});
   } else if constexpr (std::is_same_v<Field, bool>) {
     return types.Intern(Type{MachineBoolType{}});
+  } else if constexpr (std::is_enum_v<Field>) {
+    // A kind the library names by a number is that number.
+    return MirTypeOf<std::underlying_type_t<Field>>(types);
   } else if constexpr (std::integral<Field>) {
     return types.Intern(
         Type{MachineIntType{

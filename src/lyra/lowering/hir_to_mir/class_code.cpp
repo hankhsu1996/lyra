@@ -201,14 +201,22 @@ auto ClassHookPrototype(
   mir::CompilationUnit& unit = unit_lowerer.Unit();
   const mir::TypeId object =
       unit_lowerer.SelfPointerTo(unit_lowerer.ClassIdentity(cls));
+  const mir::TypeId problem = *ConstraintProblemParamTypeOf(
+      unit, hir::SubroutineKind::kConstraintBlock);
   switch (callback) {
-    case support::LibraryCallback::kClassRandVariables:
     case support::LibraryCallback::kClassConstrain:
+      return ClassOperation(
+          std::array{object, problem}, unit.builtins.void_type, true);
+    // No statement of the design makes these calls, so what fails in one is
+    // reported where the call of `randomize()` was written, which they are
+    // handed last.
+    case support::LibraryCallback::kClassRandVariables:
     case support::LibraryCallback::kClassRandObjects: {
-      const std::array params{
-          object, *ConstraintProblemParamTypeOf(
-                      unit, hir::SubroutineKind::kConstraintBlock)};
-      return ClassOperation(params, unit.builtins.void_type, true);
+      mir::CallableCode prototype = ClassOperation(
+          std::array{object, problem, unit.builtins.source_location},
+          unit.builtins.void_type, true);
+      prototype.caller_location = prototype.params.back();
+      return prototype;
     }
     case support::LibraryCallback::kClassPreRandomize:
     case support::LibraryCallback::kClassPostRandomize:

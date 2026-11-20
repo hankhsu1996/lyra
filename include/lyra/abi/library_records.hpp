@@ -44,6 +44,8 @@ constexpr void ForEachLibraryRecord(const Visit& visit) {
   visit.template operator()<value::Enumeration>(Decl::kEnumeration);
   visit.template operator()<value::DynamicArrayCore>(Decl::kDynamicArray);
   visit.template operator()<value::QueueCore>(Decl::kQueue);
+  visit.template operator()<value::AssociativeArrayCore>(
+      Decl::kAssociativeArray);
   visit.template operator()<value::Recycler>(Decl::kRecycler);
   visit.template operator()<value::LeaseCount>(Decl::kLeaseCount);
 }

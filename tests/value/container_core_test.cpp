@@ -7,7 +7,6 @@
 #include <memory>
 #include <optional>
 #include <span>
-#include <utility>
 #include <vector>
 
 #include "lyra/value/container_lease.hpp"
@@ -25,7 +24,6 @@ using lyra::value::AssociativeArrayCommit;
 using lyra::value::AssociativeArrayConstruct;
 using lyra::value::AssociativeArrayCore;
 using lyra::value::AssociativeArrayEnd;
-using lyra::value::AssociativeArrayErase;
 using lyra::value::AssociativeArrayFind;
 using lyra::value::AssociativeArrayFirst;
 using lyra::value::AssociativeArrayIndexOf;
@@ -33,6 +31,7 @@ using lyra::value::AssociativeArrayLease;
 using lyra::value::AssociativeArrayNext;
 using lyra::value::AssociativeArrayPrepare;
 using lyra::value::AssociativeArrayPrepareDefault;
+using lyra::value::AssociativeArrayRemove;
 using lyra::value::AssociativeArraySetDefault;
 using lyra::value::AssociativeArrayStatedDefault;
 using lyra::value::ContainerLease;
@@ -95,8 +94,7 @@ constexpr ValueWitnessTable kCountedWitnesses{
         [](const ValueType&, const void* lhs, const void* rhs) {
           return static_cast<const Counted*>(lhs)->value ==
                  static_cast<const Counted*>(rhs)->value;
-        },
-    .parts = nullptr};
+        }};
 
 auto ValueAt(const void* slot) -> int {
   return static_cast<const Counted*>(slot)->value;
@@ -225,14 +223,9 @@ TEST_F(ContainerCoreTest, DynamicArrayGenerationOutlivesItsLease) {
   DynamicArrayCore array = DynamicArrayConstruct(&counted_type);
   DynamicArrayAdopt(array, Generation(array, {1, 2, 3}), 3);
   EXPECT_EQ(array.count, 3U);
-  EXPECT_EQ(
-      ValueAt(
-          lyra::value::Offset(
-              static_cast<void*>(array.data), 2 * sizeof(Counted))),
-      3);
+  EXPECT_EQ(ValueAt(lyra::value::Offset(array.data, 2 * sizeof(Counted))), 3);
 
-  void* second =
-      lyra::value::Offset(static_cast<void*>(array.data), sizeof(Counted));
+  void* second = lyra::value::Offset(array.data, sizeof(Counted));
   std::optional<ContainerLease> lease(DynamicArrayLease(array, second));
   LetGoOf(array);
   EXPECT_EQ(array.count, 0U);
@@ -250,11 +243,14 @@ TEST_F(ContainerCoreTest, DynamicArrayGenerationOutlivesItsLease) {
   EXPECT_EQ(ended, 4);
 }
 
-void Insert(
-    AssociativeArrayCore& array, const void* index, const ValueType& index_type,
-    int value) {
-  void* element = AssociativeArrayPrepare(array, index_type);
-  index_type.Copy(index, AssociativeArrayIndexOf(array, element));
+// The number an array's own code hands the core for the index kind `kind`.
+constexpr auto KindNumber(IndexKind kind) -> std::int64_t {
+  return static_cast<std::int64_t>(kind);
+}
+
+void Insert(AssociativeArrayCore& array, const void* index, int value) {
+  void* element = AssociativeArrayPrepare(array);
+  array.index->Copy(index, AssociativeArrayIndexOf(array, element));
   std::construct_at(static_cast<Counted*>(element), Counted{.value = value});
   AssociativeArrayCommit(array, element);
 }
@@ -273,56 +269,54 @@ auto InOrder(const AssociativeArrayCore& array) -> std::vector<int> {
 TEST_F(ContainerCoreTest, AssociativeArrayOrdersSignedIndices) {
   using lyra::value::Int;
   const ValueType& int_type = IntegralValueType::Of<Int>().Type();
-  AssociativeArrayCore array{};
-  AssociativeArrayConstruct(
-      array, IndexKind::kIntegral, int_type, counted_type, nullptr);
+  AssociativeArrayCore array = AssociativeArrayConstruct(
+      KindNumber(IndexKind::kIntegral), &int_type, &counted_type);
   for (const int key : {5, -3, 0, -100, 7}) {
     const Int index = Int::FromInt(key);
-    Insert(array, &index, int_type, key);
+    Insert(array, &index, key);
   }
   EXPECT_EQ(InOrder(array), (std::vector<int>{-100, -3, 0, 5, 7}));
   const Int probe = Int::FromInt(-3);
-  ASSERT_NE(AssociativeArrayFind(array, &probe, int_type), nullptr);
-  EXPECT_EQ(ValueAt(AssociativeArrayFind(array, &probe, int_type)), -3);
-  AssociativeArrayErase(array, &probe, int_type);
+  void* found = AssociativeArrayFind(array, &probe);
+  ASSERT_NE(found, nullptr);
+  EXPECT_EQ(ValueAt(found), -3);
+  AssociativeArrayRemove(array, found);
   EXPECT_EQ(array.count, 4U);
-  EXPECT_EQ(AssociativeArrayFind(array, &probe, int_type), nullptr);
+  EXPECT_EQ(AssociativeArrayFind(array, &probe), nullptr);
   EXPECT_EQ(ended, 1);
   AssociativeArrayEnd(array);
   EXPECT_EQ(ended, 5);
 }
 
 // Strings order lexicographically (LRM 7.8.2), and an index of any other type
-// keeps the order its entries were made in and is found by its equality (LRM
-// 7.8.5).
+// keeps the order its entries were made in (LRM 7.8.5), each walked to and
+// removed by where its element lies.
 TEST_F(ContainerCoreTest, AssociativeArrayOrdersStringsAndKeepsOtherIndices) {
   using lyra::value::String;
   const ValueType& string_type = lyra::value::kValueTypeOf<String>;
-  AssociativeArrayCore strings{};
-  AssociativeArrayConstruct(
-      strings, IndexKind::kString, string_type, counted_type, nullptr);
+  AssociativeArrayCore strings = AssociativeArrayConstruct(
+      KindNumber(IndexKind::kString), &string_type, &counted_type);
   const String b("banana, long enough to own its storage");
   const String a("apple, long enough to own its storage");
-  Insert(strings, &b, string_type, 2);
-  Insert(strings, &a, string_type, 1);
+  Insert(strings, &b, 2);
+  Insert(strings, &a, 1);
   EXPECT_EQ(InOrder(strings), (std::vector<int>{1, 2}));
   AssociativeArrayEnd(strings);
   EXPECT_EQ(ended, 2);
 
   ended = 0;
-  AssociativeArrayCore other{};
-  AssociativeArrayConstruct(
-      other, IndexKind::kOther, counted_type, counted_type,
-      [](const void* lhs, const void* rhs) {
-        return ValueAt(lhs) == ValueAt(rhs);
-      });
+  AssociativeArrayCore other = AssociativeArrayConstruct(
+      KindNumber(IndexKind::kOther), &counted_type, &counted_type);
   for (const int key : {30, 10, 20}) {
     const Counted index{.value = key};
-    Insert(other, &index, counted_type, key + 1);
+    Insert(other, &index, key + 1);
   }
   EXPECT_EQ(InOrder(other), (std::vector<int>{31, 11, 21}));
-  const Counted probe{.value = 10};
-  EXPECT_EQ(ValueAt(AssociativeArrayFind(other, &probe, counted_type)), 11);
+  void* middle = AssociativeArrayNext(other, AssociativeArrayFirst(other));
+  EXPECT_EQ(ValueAt(AssociativeArrayIndexOf(other, middle)), 10);
+  AssociativeArrayRemove(other, middle);
+  EXPECT_EQ(InOrder(other), (std::vector<int>{31, 21}));
+  EXPECT_EQ(ended, 2);
   AssociativeArrayClear(other);
   EXPECT_EQ(other.count, 0U);
   EXPECT_EQ(ended, 6);
@@ -335,14 +329,13 @@ TEST_F(ContainerCoreTest, AssociativeArrayOrdersStringsAndKeepsOtherIndices) {
 TEST_F(ContainerCoreTest, AssociativeArrayLeaseAndStatedDefault) {
   using lyra::value::Int;
   const ValueType& int_type = IntegralValueType::Of<Int>().Type();
-  AssociativeArrayCore array{};
-  AssociativeArrayConstruct(
-      array, IndexKind::kIntegral, int_type, counted_type, nullptr);
+  AssociativeArrayCore array = AssociativeArrayConstruct(
+      KindNumber(IndexKind::kIntegral), &int_type, &counted_type);
   const Int index = Int::FromInt(4);
-  Insert(array, &index, int_type, 40);
-  void* entry = AssociativeArrayFind(array, &index, int_type);
+  Insert(array, &index, 40);
+  void* entry = AssociativeArrayFind(array, &index);
   std::optional<ContainerLease> lease(AssociativeArrayLease(array, entry));
-  AssociativeArrayErase(array, &index, int_type);
+  AssociativeArrayRemove(array, entry);
   EXPECT_EQ(ended, 0);
   EXPECT_EQ(ValueAt(entry), 40);
   lease.reset();

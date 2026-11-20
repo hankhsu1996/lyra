@@ -61,7 +61,7 @@ associative array each need element identity that survives position changes and 
 and an element that outlives its own removal for as long as a reference to it is live (LRM 13.5.2).
 That their elements need stable identity follows from D1 and D3; which representation provides it
 does not. [container-element-storage](container-element-storage.md) answers it for the queue and the
-associative array; the dynamic array is still open.
+associative array, and [array-element-storage](array-element-storage.md) for the dynamic array.
 
 ## Invariants
 

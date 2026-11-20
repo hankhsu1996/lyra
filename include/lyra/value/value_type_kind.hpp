@@ -8,29 +8,48 @@ namespace lyra::value {
 // Which of the records the library reads a type through this one opens, where
 // it opens one: an integral type's (LRM 6.11), whose values a facility
 // compiled for every type reads the bits of, a fixed-size unpacked array
-// type's (LRM 7.4.2), and a dynamic array type's and a queue type's (LRM 7.5,
-// 7.10), whose element a write through a holder reaches. Every other type is
-// its table and its numbers alone.
+// type's (LRM 7.4.2), and a dynamic array type's, a queue type's and an
+// associative array type's (LRM 7.5, 7.10, 7.8), whose element a write through
+// a holder reaches. Every other type is its table and its numbers alone.
 enum class ValueTypeKind : std::uint32_t {
   kIntegral,
   kFixedArray,
   kDynamicArray,
   kQueue,
+  kAssociativeArray,
   kOther,
 };
 
 // Whether a value of `kind` is an array whose size changes at run time (LRM
-// 7.5, 7.10), and so moves and ends its elements while it lies where it is
-// itself: a reference to an element goes on naming it while the array grows,
-// shrinks or is replaced around it, so the position it was taken at says
+// 7.5, 7.10, 7.8), and so moves and ends its elements while it lies where it
+// is itself: a reference to an element goes on naming it while the array
+// grows, shrinks or is replaced around it, so the index it was taken at says
 // nothing of where the element is later (LRM 13.5.2, 7.10.3).
 [[nodiscard]] constexpr auto ChangesSizeAtRunTime(ValueTypeKind kind) -> bool {
   switch (kind) {
     case ValueTypeKind::kDynamicArray:
     case ValueTypeKind::kQueue:
+    case ValueTypeKind::kAssociativeArray:
       return true;
     case ValueTypeKind::kIntegral:
     case ValueTypeKind::kFixedArray:
+    case ValueTypeKind::kOther:
+      return false;
+  }
+  std::unreachable();
+}
+
+// Whether an element of a value of `kind` is named by an index the program
+// writes rather than by a position (LRM 7.8), so that a write naming none
+// makes the entry (LRM 7.8.7) and no ordinal says where it stands.
+[[nodiscard]] constexpr auto NamedByIndex(ValueTypeKind kind) -> bool {
+  switch (kind) {
+    case ValueTypeKind::kAssociativeArray:
+      return true;
+    case ValueTypeKind::kIntegral:
+    case ValueTypeKind::kFixedArray:
+    case ValueTypeKind::kDynamicArray:
+    case ValueTypeKind::kQueue:
     case ValueTypeKind::kOther:
       return false;
   }
@@ -47,6 +66,7 @@ enum class ValueTypeKind : std::uint32_t {
     case ValueTypeKind::kIntegral:
     case ValueTypeKind::kFixedArray:
     case ValueTypeKind::kDynamicArray:
+    case ValueTypeKind::kAssociativeArray:
     case ValueTypeKind::kOther:
       return false;
   }

@@ -4,26 +4,21 @@
 #include <cstddef>
 #include <cstdint>
 #include <utility>
-#include <vector>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/source_location.hpp"
-#include "lyra/value/array_ordering.hpp"
-#include "lyra/value/concepts.hpp"
 #include "lyra/value/container_core.hpp"
 #include "lyra/value/container_lease.hpp"
 #include "lyra/value/element_policy.hpp"
 #include "lyra/value/formation.hpp"
-#include "lyra/value/integral_fwd.hpp"
-#include "lyra/value/value_witnesses_of.hpp"
+#include "lyra/value/library_value_types.hpp"
 
-// What the C++ realization of every dynamic array and queue type shares: one
-// class over its core, every operation of the language on it a body the
-// compiler builds for the type, and what is the same for every element type --
-// what a library template holding a value of any type asks of any array,
-// answered from the type's own bodies for these two, the order a sort answers,
-// and the allocation function placing an element of a dynamic array's new
-// storage.
+// What the C++ realization of every dynamic array, queue and associative array
+// type shares: one class over its core, every operation of the language on it
+// a body the compiler builds for the type, and what is the same for every
+// element type -- what a library template holding a value of any type asks of
+// any array, answered from the type's own bodies, and the allocation function
+// placing an element of a dynamic array's new storage.
 
 // The allocation function a placement new-expression building the element at
 // `index` of a dynamic array's new storage names ([expr.new]), for a value of
@@ -54,10 +49,9 @@ concept RunTimeSizedArray =
 // The element a write through `key` lands on in `array`, with what reaching it
 // did, which a write in progress is told: storage no read reaches where the
 // key names none (LRM 7.4.5, 7.10.1). The library's own arrays answer it
-// themselves; a dynamic array's or a queue's is where the type's own body
-// says the write lands, which is handed no location, since the write in
-// progress asking is where the write was written and the one bound there
-// stands.
+// themselves; a container type's is where the type's own body says the write
+// lands, which is handed no location, since the write in progress asking is
+// where the write was written and the one bound there stands.
 template <typename Array, typename Key>
   requires requires(Array& array, const Key& key, Formation& formed) {
     array.ElementMut(key, formed);
@@ -66,34 +60,35 @@ template <typename Array, typename Key>
     -> auto& {
   return array.ElementMut(key, formed);
 }
-template <RunTimeSizedArray Array>
-[[nodiscard]] auto ElementMut(
-    Array& array, const Position& position, Formation& formed)
-    -> ElementOf<Array>& {
-  const auto found = array.ElementPlace(position, base::SourceLocation{});
-  ElementOf<Array>* const element = found.template Component<0>();
+// An associative array's body makes the entry an index names where it names
+// none (LRM 7.8.7), and lands the write nowhere where the index holds x or z
+// (LRM 7.8.6).
+template <typename Array, typename Key>
+  requires RunTimeSizedArray<Array> ||
+           std::derived_from<Array, AssociativeArrayCore>
+[[nodiscard]] auto ElementMut(Array& array, const Key& key, Formation& formed)
+    -> auto& {
+  const auto found = array.ElementPlace(key, base::SourceLocation{});
+  auto* const element = found.template Component<0>();
   formed = FormationOf(element != nullptr, found.template Component<1>());
-  return element == nullptr ? detail::DiscardedWriteOf<ElementOf<Array>>()
-                            : *element;
+  using Element = std::remove_pointer_t<decltype(element)>;
+  return element == nullptr ? detail::DiscardedWriteOf<Element>() : *element;
 }
 
 // The lease a call takes on `element`, one `array` holds, which the call then
-// goes on reaching however the array changes (LRM 13.5.2). The library's own
-// arrays take it themselves; a dynamic array's generation keeps the count of
-// its leases, and a queue's element keeps it in its own storage, so a queue
-// holding the element holds at least one.
-template <typename Array, typename Element>
-  requires requires(const Array& array, Element& element) {
-    array.Lease(&element);
-  }
-[[nodiscard]] auto ElementLease(const Array& array, Element& element)
-    -> ContainerLease {
-  return array.Lease(&element);
-}
+// goes on reaching however the array changes (LRM 13.5.2). A dynamic array's
+// generation keeps the count of its leases, and a queue's element and an
+// associative array's entry keep it in their own storage, so a queue holding
+// the element holds at least one.
 template <typename Element>
 [[nodiscard]] auto ElementLease(const DynamicArrayCore& array, Element& element)
     -> ContainerLease {
   return DynamicArrayLease(array, &element);
+}
+template <typename Element>
+[[nodiscard]] auto ElementLease(
+    const AssociativeArrayCore& array, Element& element) -> ContainerLease {
+  return AssociativeArrayLease(array, &element);
 }
 template <typename Element>
 [[nodiscard]] auto ElementLease(const QueueCore& queue, Element& element)
@@ -103,10 +98,11 @@ template <typename Element>
         "a call leases an element of an empty queue -- please report this as "
         "a bug");
   }
-  return QueueLease(kValueTypeOf<Element>, &element);
+  return QueueLease(LibraryTypeOf<Element>(), &element);
 }
 
-// The C++ class of a dynamic array type or a queue type whose core is `Core`:
+// The C++ class of a dynamic array, queue or associative array type whose core
+// is `Core`:
 // its core and nothing of its own. `Impl` is the struct the C++ backend writes
 // for the type's implementation of the library's traits, each item a static
 // function whose body is the type's own; this class is C++'s realization of
@@ -220,7 +216,8 @@ class Container final : public Core {
 };
 
 // The empty array of the type `T`, a container class, told the record of its
-// element type: the core the library builds, made the object of that class.
+// element type, and an associative array its index kind and index type too:
+// the core the library builds, made the object of that class.
 template <typename T>
 [[nodiscard]] auto QueueConstruct(const ValueType* element) -> T {
   return T(QueueConstruct(element));
@@ -229,31 +226,10 @@ template <typename T>
 [[nodiscard]] auto DynamicArrayConstruct(const ValueType* element) -> T {
   return T(DynamicArrayConstruct(element));
 }
-
-// LRM 7.12.2 `sort` and `rsort`: the positions each of the dynamic array
-// `keys` comes from once they are put in ascending order, or descending where
-// `descending` says, each pair compared by the keys' own `<`, equal keys and
-// keys whose comparison is unknown keeping their order, as a dynamic array
-// `Order` of longint positions.
-template <typename Order, typename Keys>
-  requires std::derived_from<Keys, DynamicArrayCore>
-[[nodiscard]] auto SortOrder(const Keys& keys, bool descending) -> Order {
-  using Key = ElementOf<Keys>;
-  const std::vector<std::size_t> order = detail::SortedPositions(
-      keys.Count(), [&](std::int64_t first, std::int64_t second) {
-        const Key& a = keys.GetUnchecked(static_cast<std::size_t>(first));
-        const Key& b = keys.GetUnchecked(static_cast<std::size_t>(second));
-        return descending ? Holds(b < a) : Holds(a < b);
-      });
-  using Position = ElementOf<Order>;
-  Order made;
-  void* data = DynamicArrayGeneration(made, order.size());
-  for (std::size_t k = 0; k < order.size(); ++k) {
-    ::new (made, data, k)
-        Position(Position::FromInt(static_cast<std::int64_t>(order[k])));
-  }
-  DynamicArrayAdopt(made, data, order.size());
-  return made;
+template <typename T>
+[[nodiscard]] auto AssociativeArrayConstruct(
+    std::int64_t kind, const ValueType* index, const ValueType* element) -> T {
+  return T(AssociativeArrayConstruct(kind, index, element));
 }
 
 }  // namespace lyra::value

@@ -106,6 +106,9 @@ enum class LibraryDecl : std::uint8_t {
   kDpiBitBuffer,
   kDpiLogicBuffer,
   kDpiOpenArray,
+  // LRM 21.4, 21.5 the words a memory task moves between a file and a memory,
+  // which the memory type's own code reads or writes.
+  kMemoryWords,
 
   // The members an enumeration declares, each its whole value at the base
   // type and its name, in declared order, a table the unit states once.
@@ -606,14 +609,31 @@ constexpr auto FindDeclaration(LibraryDecl decl) -> const LibraryDeclData* {
 
   // What the library asks of a run-time-sized array laid out by its type,
   // wherever its own code holds one: its value's life, its change test, its
-  // elements, being made a count long, being taken over whole, the questions
-  // asked of a whole value, and, where its elements stream, its stream.
+  // elements by position, where a write through an index lands, being made a
+  // count long, being taken over whole, the questions asked of a whole value,
+  // and, where its elements stream, its stream and its value read back out of
+  // one.
   static constexpr auto kRunTimeSizedArrayTraits =
       std::to_array<TraitImplementation>({
           {.trait = &kValueLife, .where = ImplementedWhere::kAlways},
           {.trait = &kChangeTest, .where = ImplementedWhere::kAlways},
           {.trait = &kElementAccess, .where = ImplementedWhere::kAlways},
+          {.trait = &kIndexedWrite, .where = ImplementedWhere::kAlways},
           {.trait = &kResize, .where = ImplementedWhere::kAlways},
+          {.trait = &kTakeover, .where = ImplementedWhere::kAlways},
+          {.trait = &kWholeValueQuestions, .where = ImplementedWhere::kAlways},
+          {.trait = &kStream, .where = ImplementedWhere::kItStreams},
+          {.trait = &kStreamRead, .where = ImplementedWhere::kItStreams},
+      });
+
+  // The same of an associative array, whose elements no position names and
+  // whose size and indices nothing chooses for it (LRM 7.8, 18.4), and which
+  // is never a stream's destination (LRM 11.4.14.3).
+  static constexpr auto kAssociativeArrayTraits =
+      std::to_array<TraitImplementation>({
+          {.trait = &kValueLife, .where = ImplementedWhere::kAlways},
+          {.trait = &kChangeTest, .where = ImplementedWhere::kAlways},
+          {.trait = &kIndexedWrite, .where = ImplementedWhere::kAlways},
           {.trait = &kTakeover, .where = ImplementedWhere::kAlways},
           {.trait = &kWholeValueQuestions, .where = ImplementedWhere::kAlways},
           {.trait = &kStream, .where = ImplementedWhere::kItStreams},
@@ -622,13 +642,14 @@ constexpr auto FindDeclaration(LibraryDecl decl) -> const LibraryDeclData* {
   // A value of the design laid out by its type, as the record of the core
   // keeping its elements: what a variable may be declared to hold, copied
   // whole by the body its type has for that, a member holding it as the value
-  // it is, and starting as its type's own default; it implements every trait
-  // above. `cpp` is the core's record, one class whatever the arguments, which
-  // the library's class for every such type derives from. A construction of
-  // the type is its type's default, so it names no entry.
+  // it is, and starting as its type's own default; it implements `traits`.
+  // `cpp` is the core's record, one class whatever the arguments, which the
+  // library's class for every such type derives from. A construction of the
+  // type is its type's default, so it names no entry.
   static constexpr auto kLaidOutValue =
       [](std::string_view name, std::span<const LibraryParam> params,
-         ObjectLayout storage, std::string_view cpp) -> LibraryDeclData {
+         ObjectLayout storage, std::string_view cpp,
+         std::span<const TraitImplementation> traits) -> LibraryDeclData {
     return LibraryDeclData{
         .name = name,
         .params = params,
@@ -636,9 +657,7 @@ constexpr auto FindDeclaration(LibraryDecl decl) -> const LibraryDeclData* {
         .movability = Movability::kCopyable,
         .default_value = BuiltinFn::kDeclaredDefault,
         .constructor = std::nullopt,
-        .holding =
-            LaidOutByType{
-                .storage = storage, .implements = kRunTimeSizedArrayTraits},
+        .holding = LaidOutByType{.storage = storage, .implements = traits},
         .member = ValueMember{},
         .cpp_spelling = cpp,
         .cpp_spelling_takes_args = false,
@@ -709,22 +728,19 @@ constexpr auto FindDeclaration(LibraryDecl decl) -> const LibraryDeclData* {
     case LibraryDecl::kDynamicArray: {
       static constexpr LibraryDeclData kDynamicArray = kLaidOutValue(
           "dynamic array", kElements, kWordsNeedingEnd(24),
-          "lyra::value::DynamicArrayCore");
+          "lyra::value::DynamicArrayCore", kRunTimeSizedArrayTraits);
       return &kDynamicArray;
     }
     case LibraryDecl::kQueue: {
       static constexpr LibraryDeclData kQueue = kLaidOutValue(
           "queue", kElementsUpToABound, kWordsNeedingEnd(40),
-          "lyra::value::QueueCore");
+          "lyra::value::QueueCore", kRunTimeSizedArrayTraits);
       return &kQueue;
     }
     case LibraryDecl::kAssociativeArray: {
-      static constexpr LibraryDeclData kAssociativeArray = kBuiltBy(
-          kDesignValue(
-              "associative array", kElementsByIndex, ValueDomain::kAssocArray,
-              kWordsNeedingEnd(72), "lyra::value::AssociativeArray",
-              BuiltinFn::kContainerDefault),
-          LibraryConstructor{.entry = BuiltinFn::kAssociativeArrayFromEntries});
+      static constexpr LibraryDeclData kAssociativeArray = kLaidOutValue(
+          "associative array", kElementsByIndex, kWordsNeedingEnd(48),
+          "lyra::value::AssociativeArrayCore", kAssociativeArrayTraits);
       return &kAssociativeArray;
     }
     // A value of any type is what a mailbox's own messages are where it
@@ -752,23 +768,23 @@ constexpr auto FindDeclaration(LibraryDecl decl) -> const LibraryDeclData* {
       }();
       return &kBitVec;
     }
-    // An index is never moved into a temporary: it is built where the access
-    // reading it is made, out of the integral value it is.
+    // An index is built where the access reading it is made, out of the
+    // integral value it is, and copied into the entry an array makes for it.
     case LibraryDecl::kWildcardIndex: {
       static constexpr LibraryDeclData kWildcardIndex{
           .name = "wildcard index",
           .params = {},
           .is_a_data_type = false,
-          .movability = Movability::kImmovable,
+          .movability = Movability::kCopyable,
           .default_value = std::nullopt,
           .constructor =
               LibraryConstructor{.entry = BuiltinFn::kWildcardIndexMake},
           .holding =
               DomainObject{
                   .domain = ValueDomain::kWildcardIndex,
-                  .storage = kWordsNeedingEnd(80)},
+                  .storage = kWordsNeedingEnd(16)},
           .member = NoMember{},
-          .cpp_spelling = "lyra::value::WildcardKey",
+          .cpp_spelling = "lyra::value::AnyValue",
           .cpp_spelling_takes_args = false,
           .c_spelling = std::nullopt,
           .runtime_class = std::nullopt,
@@ -911,6 +927,12 @@ constexpr auto FindDeclaration(LibraryDecl decl) -> const LibraryDeclData* {
               "lyra::value::DpiOpenArray"),
           LibraryConstructor{.entry = BuiltinFn::kDpiOpenArrayMake});
       return &kDpiOpenArray;
+    }
+    case LibraryDecl::kMemoryWords: {
+      static constexpr LibraryDeclData kMemoryWords = kPayload(
+          "memory task words", "memory_words", kWordsNeedingEnd(8),
+          "lyra::runtime::MemoryWords");
+      return &kMemoryWords;
     }
     // A table a unit states as a constant, which outlives every reader, so a
     // member naming one points at it rather than owning a copy.

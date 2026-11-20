@@ -108,6 +108,18 @@ constexpr CallableBounds kStartedWhileItsAnswerIsHeld{
 constexpr CallableBounds kStartedPastTheCaller{
     .trait = StartedBody{}, .kept = CallableHold::kPastTheCaller};
 
+// An entry of the core keeping an associative array's entries, a function of
+// the library named `identifier`, which runs no code of the design's.
+constexpr auto AssociativeArrayCoreEntry(
+    std::string_view name, std::string_view identifier) -> RuntimeEntry {
+  return {
+      .name = name,
+      .declaration =
+          FreeFunction{.scope = "lyra::value", .identifier = identifier},
+      .takes_the_location = false,
+      .can_unwind = false};
+}
+
 }  // namespace
 
 auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
@@ -140,17 +152,15 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .operands = {kMachine, kPosition}};
     case BuiltinFn::kAssocElement:
       return {
-          .name = "assocarray_element",
+          .name = "assoc_element",
           .declaration = Method{"Element"},
-          .takes_the_location = false,
           .answer = EntryAnswer::kReadOnlyReferenceIntoTheReceiver,
           .selects = PartSelection::kElement,
           .operands = {kMachine, kKey}};
     case BuiltinFn::kAssocElementMut:
       return {
-          .name = "assocarray_element_mut",
+          .name = "assoc_element_mut",
           .declaration = Method{"ElementMut"},
-          .takes_the_location = false,
           .answer = EntryAnswer::kMutableReferenceIntoTheReceiver,
           .selects = PartSelection::kElement,
           .operands = {kMachine, kKey}};
@@ -337,7 +347,7 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .operands = {kMachine, kPosition}};
     case BuiltinFn::kAssocDeleteIndex:
       return {
-          .name = "assocarray_delete_index",
+          .name = "assoc_delete_index",
           .declaration = Method{"DeleteIndex"},
           .takes_the_location = false,
           .mutates_receiver = true,
@@ -351,11 +361,8 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
     case BuiltinFn::kSortOrder:
       return {
           .name = "sort_order",
-          .declaration =
-              FreeFunction{.scope = "lyra::value", .identifier = "SortOrder"},
-          .takes_a_type_argument = true,
+          .declaration = StaticFactory{"SortOrder"},
           .takes_the_location = false,
-          .operands = {kMachine, kMachine},
           .answer_told = AnswerTold::kBuiltArray};
     case BuiltinFn::kApplyOrder:
       return {
@@ -399,68 +406,57 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .declaration = Method{"Exists"},
           .takes_the_location = false,
           .operands = {kMachine, kKey}};
+    // The traversal is answered by where the index visited lies, which the
+    // use writes back (LRM 7.9.4 -- 7.9.8).
     case BuiltinFn::kAssocFirst:
       return {
           .name = "assoc_first",
           .declaration = Method{"First"},
           .takes_the_location = false,
-          .writes_the_index_back = true,
-          .operands = {kMachine, kKey},
-          .answer_told = AnswerTold::kAnswerType};
+          .writes_the_index_back = true};
     case BuiltinFn::kAssocLast:
       return {
           .name = "assoc_last",
           .declaration = Method{"Last"},
           .takes_the_location = false,
-          .writes_the_index_back = true,
-          .operands = {kMachine, kKey},
-          .answer_told = AnswerTold::kAnswerType};
+          .writes_the_index_back = true};
     case BuiltinFn::kAssocNext:
       return {
           .name = "assoc_next",
           .declaration = Method{"Next"},
           .takes_the_location = false,
           .writes_the_index_back = true,
-          .operands = {kMachine, kKey},
-          .answer_told = AnswerTold::kAnswerType};
+          .operands = {kMachine, kKey}};
     case BuiltinFn::kAssocPrev:
       return {
           .name = "assoc_prev",
           .declaration = Method{"Prev"},
           .takes_the_location = false,
           .writes_the_index_back = true,
-          .operands = {kMachine, kKey},
-          .answer_told = AnswerTold::kAnswerType};
+          .operands = {kMachine, kKey}};
+    // Read off the array's first or last index where the query is written.
     case BuiltinFn::kAssocMinIndex:
       return {
           .name = "assoc_min_index",
           .declaration = Method{"MinIndex"},
-          .takes_a_type_argument = true,
-          .takes_the_location = false,
-          .answer_told = AnswerTold::kAnswerType};
+          .takes_the_location = false};
     case BuiltinFn::kAssocMaxIndex:
       return {
           .name = "assoc_max_index",
           .declaration = Method{"MaxIndex"},
-          .takes_a_type_argument = true,
-          .takes_the_location = false,
-          .answer_told = AnswerTold::kAnswerType};
-    case BuiltinFn::kAssocWithDefault:
+          .takes_the_location = false};
+    case BuiltinFn::kAssocStatedDefault:
       return {
-          .name = "assoc_with_default",
-          .declaration = Method{"WithDefault"},
+          .name = "assoc_stated_default",
+          .declaration = Method{"StatedDefault"},
+          .takes_the_location = false};
+    case BuiltinFn::kAssocSetStatedDefault:
+      return {
+          .name = "assoc_set_stated_default",
+          .declaration = Method{"SetStatedDefault"},
           .takes_the_location = false,
+          .mutates_receiver = true,
           .operands = {kMachine, kHeld}};
-    case BuiltinFn::kAssocHasStatedDefault:
-      return {
-          .name = "assoc_has_stated_default",
-          .declaration = Method{"HasStatedDefault"},
-          .takes_the_location = false};
-    case BuiltinFn::kAssocAbsentValue:
-      return {
-          .name = "assoc_absent_value",
-          .declaration = Method{"AbsentValue"},
-          .takes_the_location = false};
     case BuiltinFn::kGetc:
       return {
           .name = "getc",
@@ -1012,9 +1008,8 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .operands = {kMachine, kPosition}};
     case BuiltinFn::kAssocDesignateElement:
       return {
-          .name = "assocarray_designate_element",
+          .name = "assoc_designate_element",
           .declaration = Method{"DesignateElement"},
-          .takes_the_location = false,
           .selects = PartSelection::kElement,
           .operands = {kMachine, kKey}};
     case BuiltinFn::kDesignateComponent:
@@ -1051,7 +1046,7 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .operands = {kMachine, kPosition}};
     case BuiltinFn::kAssocReferElement:
       return {
-          .name = "assocarray_refer_element",
+          .name = "assoc_refer_element",
           .declaration = Method{"ReferElement"},
           .selects = PartSelection::kElement,
           .operands = {kMachine, kKey}};
@@ -1087,7 +1082,7 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .operands = {kMachine, kPosition}};
     case BuiltinFn::kAssocReferElementLeased:
       return {
-          .name = "assocarray_refer_element_leased",
+          .name = "assoc_refer_element_leased",
           .declaration = Method{"ReferElementLeased"},
           .selects = PartSelection::kElement,
           .operands = {kMachine, kKey}};
@@ -1499,13 +1494,11 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .takes_the_location = false,
           .operands = {kMachine, kNumber},
           .answer_told = AnswerTold::kAnswerType};
-    case BuiltinFn::kFileReadMemory:
+    case BuiltinFn::kFileReadWords:
       return {
-          .name = "file_read_memory",
-          .declaration = Method{"ReadMemory"},
-          .takes_the_location = false,
-          .operands = {kMachine, kTyped},
-          .answer_told = AnswerTold::kAnswerType};
+          .name = "file_read_words",
+          .declaration = Method{"ReadWords"},
+          .takes_the_location = false};
     case BuiltinFn::kFileSeek:
       return {
           .name = "file_seek",
@@ -1758,28 +1751,135 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "read_mem",
           .declaration = RuntimeFunction("ReadMem"),
-          .answer_told = AnswerTold::kAnswerType};
+          .takes_the_runtime_handle = true,
+          .takes_the_location = false};
     case BuiltinFn::kReadMemWithin:
       return {
           .name = "read_mem_within",
           .declaration = RuntimeFunction("ReadMemWithin"),
-          .answer_told = AnswerTold::kAnswerType};
+          .takes_the_runtime_handle = true,
+          .takes_the_location = false};
     case BuiltinFn::kReadEnumeratedMem:
       return {
           .name = "read_enumerated_mem",
           .declaration = RuntimeFunction("ReadMem"),
-          .answer_told = AnswerTold::kAnswerType};
+          .takes_the_runtime_handle = true,
+          .takes_the_location = false};
     case BuiltinFn::kReadEnumeratedMemWithin:
       return {
           .name = "read_enumerated_mem_within",
           .declaration = RuntimeFunction("ReadMemWithin"),
-          .answer_told = AnswerTold::kAnswerType};
+          .takes_the_runtime_handle = true,
+          .takes_the_location = false};
     case BuiltinFn::kWriteMem:
-      return {.name = "write_mem", .declaration = RuntimeFunction("WriteMem")};
+      return {
+          .name = "write_mem",
+          .declaration = RuntimeFunction("WriteMem"),
+          .takes_the_runtime_handle = true,
+          .takes_the_location = false};
     case BuiltinFn::kWriteMemWithin:
       return {
           .name = "write_mem_within",
-          .declaration = RuntimeFunction("WriteMemWithin")};
+          .declaration = RuntimeFunction("WriteMemWithin"),
+          .takes_the_runtime_handle = true,
+          .takes_the_location = false};
+    case BuiltinFn::kMemoryWordsReadGrid:
+      return {
+          .name = "memory_words_read_grid",
+          .declaration = Method{"ReadGrid"},
+          .mutates_receiver = true};
+    case BuiltinFn::kMemoryWordsReadDense:
+      return {
+          .name = "memory_words_read_dense",
+          .declaration = Method{"ReadDense"},
+          .mutates_receiver = true};
+    case BuiltinFn::kMemoryWordsReadKeyed:
+      return {
+          .name = "memory_words_read_keyed",
+          .declaration = Method{"ReadKeyed"},
+          .mutates_receiver = true};
+    case BuiltinFn::kMemoryWordsPlanGrid:
+      return {
+          .name = "memory_words_plan_grid",
+          .declaration = Method{"PlanGrid"},
+          .takes_the_location = false,
+          .mutates_receiver = true};
+    case BuiltinFn::kMemoryWordsPlanDense:
+      return {
+          .name = "memory_words_plan_dense",
+          .declaration = Method{"PlanDense"},
+          .takes_the_location = false,
+          .mutates_receiver = true};
+    case BuiltinFn::kMemoryWordsCount:
+      return {
+          .name = "memory_words_count",
+          .declaration = Method{"Count"},
+          .takes_the_location = false,
+          .can_unwind = false};
+    case BuiltinFn::kMemoryWordsOrdinal:
+      return {
+          .name = "memory_words_ordinal",
+          .declaration = Method{"Ordinal"},
+          .takes_the_location = false,
+          .can_unwind = false};
+    case BuiltinFn::kMemoryWordsKey:
+      return {
+          .name = "memory_words_key",
+          .declaration = Method{"Key"},
+          .takes_the_location = false,
+          .can_unwind = false};
+    case BuiltinFn::kMemoryWordsBytesRead:
+      return {
+          .name = "memory_words_bytes_read",
+          .declaration = Method{"BytesRead"},
+          .takes_the_location = false,
+          .can_unwind = false};
+    case BuiltinFn::kMemoryWordsWord:
+      return {
+          .name = "memory_words_word",
+          .declaration = Method{"Word"},
+          .takes_a_type_argument = true,
+          .takes_the_location = false,
+          .answer_told = AnswerTold::kAnswerType};
+    case BuiltinFn::kMemoryWordsPut:
+      return {
+          .name = "memory_words_put",
+          .declaration = Method{"Put"},
+          .takes_the_location = false,
+          .mutates_receiver = true,
+          .operands = {kMachine, kMachine, kTyped}};
+    case BuiltinFn::kMemoryWordsPutKeyed:
+      return {
+          .name = "memory_words_put_keyed",
+          .declaration = Method{"PutKeyed"},
+          .takes_the_location = false,
+          .mutates_receiver = true,
+          .operands = {kMachine, kMachine, kTyped}};
+    case BuiltinFn::kMemoryWordsCommit:
+      return {
+          .name = "memory_words_commit",
+          .declaration = Method{"Commit"},
+          .mutates_receiver = true};
+    case BuiltinFn::kLoadWords:
+      return {
+          .name = "load_words",
+          .declaration = Method{"LoadWords"},
+          .mutates_receiver = true};
+    case BuiltinFn::kStoreWords:
+      return {.name = "store_words", .declaration = Method{"StoreWords"}};
+    case BuiltinFn::kToImage:
+      return {
+          .name = "to_image",
+          .declaration = Method{"ToImage"},
+          .takes_the_location = false};
+    case BuiltinFn::kFromImage:
+      return {
+          .name = "from_image",
+          .declaration = Method{"FromImage"},
+          .takes_the_location = false,
+          .mutates_receiver = true};
+    case BuiltinFn::kWalkRandom:
+      return {.name = "walk_random", .declaration = Method{"WalkRandom"}};
     case BuiltinFn::kDelay:
       return {
           .name = "delay",
@@ -2431,8 +2531,7 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "randomize_list",
           .declaration = RuntimeFunction("RandomizeList"),
-          .takes_the_location = false,
-          .operands = {kMachine, kMachine, kTyped}};
+          .takes_the_location = false};
     case BuiltinFn::kConstraintMembers:
       return {
           .name = "constraint_members",
@@ -2442,14 +2541,42 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "constraint_rand",
           .declaration = RuntimeFunction("ConstraintRand"),
-          .takes_the_location = false,
-          .operands = {kMachine, kMachine, kTyped}};
+          .takes_the_location = false};
     case BuiltinFn::kConstraintRandc:
       return {
           .name = "constraint_randc",
           .declaration = RuntimeFunction("ConstraintRandc"),
-          .takes_the_location = false,
-          .operands = {kMachine, kMachine, kTyped}};
+          .takes_the_location = false};
+    case BuiltinFn::kRandomWalkFixedArray:
+      return {
+          .name = "random_walk_fixed_array",
+          .declaration = RuntimeFunction("RandomWalkFixedArray"),
+          .takes_the_location = false};
+    case BuiltinFn::kRandomWalkResizableArray:
+      return {
+          .name = "random_walk_resizable_array",
+          .declaration = RuntimeFunction("RandomWalkResizableArray"),
+          .takes_the_location = false};
+    case BuiltinFn::kRandomWalkEnter:
+      return {
+          .name = "random_walk_enter",
+          .declaration = RuntimeFunction("RandomWalkEnter"),
+          .takes_the_location = false};
+    case BuiltinFn::kRandomWalkLeave:
+      return {
+          .name = "random_walk_leave",
+          .declaration = RuntimeFunction("RandomWalkLeave"),
+          .takes_the_location = false};
+    case BuiltinFn::kRandomWalkLeaf:
+      return {
+          .name = "random_walk_leaf",
+          .declaration = RuntimeFunction("RandomWalkLeaf"),
+          .takes_the_location = false};
+    case BuiltinFn::kRandomWalkEnd:
+      return {
+          .name = "random_walk_end",
+          .declaration = RuntimeFunction("RandomWalkEnd"),
+          .takes_the_location = false};
     case BuiltinFn::kConstraintVariable:
       return {
           .name = "constraint_variable",
@@ -2631,8 +2758,7 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "constraint_unique_array",
           .declaration = RuntimeFunction("ConstraintUniqueArray"),
-          .takes_the_location = false,
-          .operands = {kMachine, kMachine, kMachine, kTyped}};
+          .takes_the_location = false};
     case BuiltinFn::kConstraintUniqueRequire:
       return {
           .name = "constraint_unique_require",
@@ -2642,8 +2768,7 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "constraint_array_size",
           .declaration = RuntimeFunction("ConstraintArraySize"),
-          .takes_the_location = false,
-          .operands = {kMachine, kMachine, kTyped}};
+          .takes_the_location = false};
     case BuiltinFn::kRandomizeSettleFirst:
       return {
           .name = "randomize_settle_first",
@@ -2668,8 +2793,7 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "randomize_nested",
           .declaration = RuntimeFunction("RandomizeNested"),
-          .takes_the_location = false,
-          .operands = {kMachine, kMachine, kTyped}};
+          .takes_the_location = false};
     case BuiltinFn::kStaticConstraintBlockEnabled:
       return {
           .name = "static_constraint_block_enabled",
@@ -2679,14 +2803,12 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "rand_mode_set",
           .declaration = RuntimeFunction("RandModeSet"),
-          .takes_the_location = false,
-          .operands = {kMachine, kTyped}};
+          .takes_the_location = false};
     case BuiltinFn::kRandModeGet:
       return {
           .name = "rand_mode_get",
           .declaration = RuntimeFunction("RandModeGet"),
-          .takes_the_location = false,
-          .operands = {kMachine, kTyped}};
+          .takes_the_location = false};
     case BuiltinFn::kStaticConstraintModeSet:
       return {
           .name = "static_constraint_mode_set",
@@ -2879,10 +3001,29 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "dpi_open_array_handle",
           .declaration = Method{"Handle"},
           .takes_the_location = false};
-    case BuiltinFn::kDpiOpenArrayValue:
+    case BuiltinFn::kDpiOpenArrayElementCount:
       return {
-          .name = "dpi_open_array_value",
-          .declaration = Method{"ToValue"},
+          .name = "dpi_open_array_element_count",
+          .declaration = Method{"ElementCount"},
+          .takes_the_location = false,
+          .can_unwind = false};
+    case BuiltinFn::kDpiOpenArrayOrdinal:
+      return {
+          .name = "dpi_open_array_ordinal",
+          .declaration = Method{"Ordinal"},
+          .takes_the_location = false,
+          .can_unwind = false};
+    case BuiltinFn::kDpiOpenArrayPut:
+      return {
+          .name = "dpi_open_array_put",
+          .declaration = Method{"Put"},
+          .takes_the_location = false,
+          .mutates_receiver = true,
+          .operands = {kMachine, kMachine, kTyped}};
+    case BuiltinFn::kDpiOpenArrayWord:
+      return {
+          .name = "dpi_open_array_word",
+          .declaration = Method{"Word"},
           .takes_a_type_argument = true,
           .takes_the_location = false,
           .answer_told = AnswerTold::kAnswerType};
@@ -3064,6 +3205,74 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .takes_a_type_argument = true,
           .takes_the_location = false,
           .can_unwind = false};
+    case BuiltinFn::kAssociativeArrayConstruct:
+      return {
+          .name = "assoc_construct",
+          .declaration =
+              FreeFunction{
+                  .scope = "lyra::value",
+                  .identifier = "AssociativeArrayConstruct"},
+          .takes_a_type_argument = true,
+          .takes_the_location = false,
+          .can_unwind = false};
+    // The core of an associative array runs no code of the design's but the
+    // ending of an entry through its types' records, which unwinds out of
+    // nothing.
+    case BuiltinFn::kAssociativeArrayFind:
+      return AssociativeArrayCoreEntry("assoc_find", "AssociativeArrayFind");
+    case BuiltinFn::kAssociativeArrayPrepare:
+      return AssociativeArrayCoreEntry(
+          "assoc_prepare", "AssociativeArrayPrepare");
+    case BuiltinFn::kAssociativeArrayIndexOf:
+      return AssociativeArrayCoreEntry(
+          "assoc_index_of", "AssociativeArrayIndexOf");
+    case BuiltinFn::kAssociativeArrayCommit:
+      return AssociativeArrayCoreEntry(
+          "assoc_commit", "AssociativeArrayCommit");
+    case BuiltinFn::kAssociativeArrayRemove:
+      return AssociativeArrayCoreEntry(
+          "assoc_remove", "AssociativeArrayRemove");
+    case BuiltinFn::kAssociativeArrayClear:
+      return AssociativeArrayCoreEntry("assoc_clear", "AssociativeArrayClear");
+    case BuiltinFn::kAssociativeArrayFirst:
+      return AssociativeArrayCoreEntry(
+          "assoc_core_first", "AssociativeArrayFirst");
+    case BuiltinFn::kAssociativeArrayLast:
+      return AssociativeArrayCoreEntry(
+          "assoc_core_last", "AssociativeArrayLast");
+    case BuiltinFn::kAssociativeArrayNext:
+      return AssociativeArrayCoreEntry(
+          "assoc_core_next", "AssociativeArrayNext");
+    case BuiltinFn::kAssociativeArrayPrevious:
+      return AssociativeArrayCoreEntry(
+          "assoc_core_previous", "AssociativeArrayPrevious");
+    case BuiltinFn::kAssociativeArrayAfter:
+      return AssociativeArrayCoreEntry("assoc_after", "AssociativeArrayAfter");
+    case BuiltinFn::kAssociativeArrayBefore:
+      return AssociativeArrayCoreEntry(
+          "assoc_before", "AssociativeArrayBefore");
+    case BuiltinFn::kAssociativeArrayPrepareDefault:
+      return AssociativeArrayCoreEntry(
+          "assoc_prepare_default", "AssociativeArrayPrepareDefault");
+    case BuiltinFn::kAssociativeArraySetDefault:
+      return AssociativeArrayCoreEntry(
+          "assoc_set_default", "AssociativeArraySetDefault");
+    case BuiltinFn::kAssociativeArrayStatedDefault:
+      return AssociativeArrayCoreEntry(
+          "assoc_core_stated_default", "AssociativeArrayStatedDefault");
+    case BuiltinFn::kAssociativeArrayEnd:
+      return AssociativeArrayCoreEntry("assoc_end", "AssociativeArrayEnd");
+    case BuiltinFn::kAssociativeArrayAdopt:
+      return AssociativeArrayCoreEntry("assoc_adopt", "AssociativeArrayAdopt");
+    case BuiltinFn::kWildcardIndexHasUnknown:
+      return {
+          .name = "wildcard_index_has_unknown",
+          .declaration =
+              FreeFunction{
+                  .scope = "lyra::value",
+                  .identifier = "WildcardIndexHasUnknown"},
+          .takes_the_location = false,
+          .can_unwind = false};
     // The core of a queue runs no code of the design's either.
     case BuiltinFn::kQueueReserve:
       return {
@@ -3098,6 +3307,31 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
               FreeFunction{
                   .scope = "lyra::value",
                   .identifier = "ReportQueueWrittenAtAnInvalidIndex"},
+          .can_unwind = false};
+    case BuiltinFn::kAssociativeArrayReadAtAnInvalidIndex:
+      return {
+          .name = "assoc_read_at_an_invalid_index",
+          .declaration =
+              FreeFunction{
+                  .scope = "lyra::value",
+                  .identifier = "ReportAssociativeArrayReadAtAnInvalidIndex"},
+          .can_unwind = false};
+    case BuiltinFn::kAssociativeArrayReadAtAMissingEntry:
+      return {
+          .name = "assoc_read_at_a_missing_entry",
+          .declaration =
+              FreeFunction{
+                  .scope = "lyra::value",
+                  .identifier = "ReportAssociativeArrayReadAtAMissingEntry"},
+          .can_unwind = false};
+    case BuiltinFn::kAssociativeArrayWrittenAtAnInvalidIndex:
+      return {
+          .name = "assoc_written_at_an_invalid_index",
+          .declaration =
+              FreeFunction{
+                  .scope = "lyra::value",
+                  .identifier =
+                      "ReportAssociativeArrayWrittenAtAnInvalidIndex"},
           .can_unwind = false};
     case BuiltinFn::kQueueFreeRing:
       return {
@@ -3138,9 +3372,7 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .takes_the_location = false,
           .can_unwind = false};
     // A value a type starts as is the library's value of that type built out
-    // of nothing, as a C++ class's is its value-initialized object; a
-    // container is told the type it builds, whose elements and bound no
-    // operand states (LRM 7.10.5).
+    // of nothing, as a C++ class's is its value-initialized object.
     case BuiltinFn::kDefault:
       return {
           .name = "default",
@@ -3148,13 +3380,6 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .takes_a_type_argument = true,
           .takes_the_location = false,
           .can_unwind = false};
-    case BuiltinFn::kContainerDefault:
-      return {
-          .name = "default",
-          .declaration = ValueFunction("DefaultOf"),
-          .takes_a_type_argument = true,
-          .takes_the_location = false,
-          .answer_told = AnswerTold::kBuiltArray};
     case BuiltinFn::kWeakReferenceDefault:
       return {
           .name = "weak_reference_default",
@@ -3166,12 +3391,6 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "from_text",
           .declaration = Constructor{},
           .takes_the_location = false};
-    case BuiltinFn::kAssociativeArrayFromEntries:
-      return {
-          .name = "from_entries",
-          .declaration = Constructor{},
-          .takes_the_location = false,
-          .answer_told = AnswerTold::kBuiltArray};
     // A wildcard index and the image of an open array are each built over a
     // value whose type nothing else states (LRM 7.8.1, 35.5.6.1).
     case BuiltinFn::kWildcardIndexMake:
@@ -3237,8 +3456,7 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "dpi_open_array_make",
           .declaration = Constructor{},
-          .takes_the_location = false,
-          .operands = {kTyped}};
+          .takes_the_location = false};
     case BuiltinFn::kConcatStrings:
       return {
           .name = "concat",

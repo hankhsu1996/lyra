@@ -1,12 +1,11 @@
 #pragma once
 
-#include <cstdint>
 #include <memory>
 #include <new>
 
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/integral.hpp"
-#include "lyra/value/integral_words.hpp"
+#include "lyra/value/integral_value_type.hpp"
 #include "lyra/value/value_type.hpp"
 
 namespace lyra::value {
@@ -35,6 +34,14 @@ class AnyValue {
   // A copy of the value of `type` lying at `value`.
   [[nodiscard]] static auto CopyOf(const ValueType& type, const void* value)
       -> AnyValue;
+
+  // A copy of `value`, a value of the integral type `I`, held with that type:
+  // what an associative array with a wildcard index keeps the index the
+  // program wrote as (LRM 7.8.1).
+  template <IntegralValue I>
+  explicit AnyValue(const I& value)
+      : AnyValue(CopyOf(IntegralValueType::Of<I>().Type(), &value)) {
+  }
 
   AnyValue(const AnyValue& other);
   auto operator=(const AnyValue& other) -> AnyValue&;

@@ -36,14 +36,22 @@ inline constexpr auto kChangeTestRequirements =
 inline constexpr LibraryTrait kChangeTest{
     .requirements = kChangeTestRequirements};
 
-// An element of an array: the one at a machine index, to read and to write,
-// and where a write through a position lands.
+// An element of an array numbered by position: the one at a machine index,
+// to read and to write.
 inline constexpr auto kElementAccessRequirements =
     std::to_array<ValueOperation>(
-        {ElementAccessItem::kGetUnchecked, ElementAccessItem::kGetUncheckedMut,
-         ElementAccessItem::kElementPlace});
+        {ElementAccessItem::kGetUnchecked,
+         ElementAccessItem::kGetUncheckedMut});
 inline constexpr LibraryTrait kElementAccess{
     .requirements = kElementAccessRequirements};
+
+// Where a write through an index of an array lands -- a position, or an
+// associative array's index -- which the library's own steps within a write
+// ask (LRM 7.4.5, 7.8.7, 7.10.1).
+inline constexpr auto kIndexedWriteRequirements =
+    std::to_array<ValueOperation>({ElementAccessItem::kElementPlace});
+inline constexpr LibraryTrait kIndexedWrite{
+    .requirements = kIndexedWriteRequirements};
 
 // The value made a count long, which randomization asks (LRM 18.4).
 inline constexpr auto kResizeRequirements =
@@ -77,11 +85,18 @@ inline constexpr LibraryTrait kWholeValueQuestions{
     .requirements = kWholeValueQuestionsRequirements};
 
 // A value as a stream of bits (LRM 6.24.3): how wide it streams, how many of
-// its bits hold a value, and the value as bits and back.
+// its bits hold a value, and the value as bits.
 inline constexpr auto kStreamRequirements = std::to_array<ValueOperation>(
-    {StreamItem::kBitstreamWidth, StreamItem::kCountBits, StreamItem::kToBitVec,
-     StreamItem::kFromBitVec});
+    {StreamItem::kBitstreamWidth, StreamItem::kCountBits,
+     StreamItem::kToBitVec});
 inline constexpr LibraryTrait kStream{.requirements = kStreamRequirements};
+
+// A value read back out of a stream of bits, which a type that can be a
+// stream's destination has (LRM 11.4.14.3).
+inline constexpr auto kStreamReadRequirements =
+    std::to_array<ValueOperation>({StreamItem::kFromBitVec});
+inline constexpr LibraryTrait kStreamRead{
+    .requirements = kStreamReadRequirements};
 
 // The same for a value whose stream has a width its type fixes: the value as
 // exactly that many bits and back.

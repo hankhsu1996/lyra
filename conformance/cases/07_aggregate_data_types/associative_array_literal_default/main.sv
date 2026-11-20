@@ -1,9 +1,12 @@
+// @reports-none: warning
+//
 // An associative array literal lists index:value pairs and may name a default.
 // Assigning one replaces the whole contents of the array, so entries it does
 // not list are gone. The default is not an entry: it does not count towards
 // num(), and reading an index that has none yields it in place of the value
 // Table 7-1 would otherwise give. Allocating an entry for such an index, which
 // a read-modify-write does before it operates, starts it from that default.
+// A read the default answers issues no warning (LRM 7.8.6).
 // The default is a value of the element type, so a string literal given as
 // the default of an array of strings is that string. Assigning one associative
 // array to another clears the target of its entries and then copies the

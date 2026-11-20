@@ -16,7 +16,6 @@
 #include "lyra/lir/type_id.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/declared_member_storage.hpp"
-#include "lyra/support/library_decl.hpp"
 #include "lyra/support/runtime_object.hpp"
 #include "lyra/support/value_domain.hpp"
 
@@ -47,11 +46,8 @@ using PassMode = std::variant<
 // type it keeps and acts on, how wide an integral type is and whether it
 // holds x or z, the constant stating a type as the element type of an array,
 // which says how a value of it starts as well (LRM Table 7-1), the type's own
-// function taking some of the positions of a value of it (LRM 10.6.2), the
-// order an associative array
-// indexed by `key` holds its entries in, which the library states once for each
-// kind of index (LRM 7.8), or the operations the library compares and streams a
-// value of the type by.
+// function taking some of the positions of a value of it (LRM 10.6.2), or the
+// operations the library reads a value of the type out of a stream by.
 struct TypeConstantArg {
   lir::TypeId type;
 };
@@ -64,23 +60,19 @@ struct ElementTypeArg {
 struct TakePositionsArg {
   lir::TypeId type;
 };
-struct IndexOrderArg {
-  lir::TypeId key;
-};
 struct OperationsArg {
   lir::TypeId type;
 };
 using TypeArg = std::variant<
     TypeConstantArg, TypeExtentArg, ElementTypeArg, TakePositionsArg,
-    IndexOrderArg, OperationsArg>;
+    OperationsArg>;
 
 // What a callee takes ahead of the arguments a call states. An entry making
 // storage for the words of a value wider than a word is told how wide the
 // values held there are, one making a net of a value laid out by its type is
 // told that type with how a value of it starts and how its positions are
 // read and written, and one making storage for any other value laid out by its
-// type, or for a container the library holds, is told of the type what an entry
-// building such a value is told.
+// type is told of the type what an entry building such a value is told.
 struct NoImplicitArg {};
 struct WidthMetadataArg {
   lir::TypeId of;

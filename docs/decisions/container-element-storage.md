@@ -106,13 +106,13 @@ detached element (D3).
   mutates a container while a reference to an element is live.
 
 - **Element storage held directly in the map's nodes** (`map<Key, ElementStorage>`), for the
-  associative array. Correct for identity, and what the C++ backend's `std::map` already provides --
-  so this is rejected on a narrower ground than correctness. It puts the stability requirement on
-  the map, which then cannot be changed without re-deciding identity, and it gives the associative
-  array its own detachment machinery rather than the shared one of D6. **Its price is real and is
-  accepted knowingly**: `map<Key, SlotId>` plus an arena costs one extra dependent load on every
-  keyed access compared with storage in the node, about 1.1 ns by the reference measurements. One
-  lifetime mechanism for every container is worth that; three are not.
+  associative array. Correct for identity, and what the C++ backend's `std::map` provided when this
+  was decided -- so this is rejected on a narrower ground than correctness. It puts the stability
+  requirement on the map, which then cannot be changed without re-deciding identity, and it gives
+  the associative array its own detachment machinery rather than the shared one of D6. **Its price
+  is real and is accepted knowingly**: `map<Key, SlotId>` plus an arena costs one extra dependent
+  load on every keyed access compared with storage in the node, about 1.1 ns by the reference
+  measurements. One lifetime mechanism for every container is worth that; three are not.
 
 - **Per-container detached-element machinery.** Each container inventing its own keep-alive is the
   same mechanism written three times, and the rule it implements -- LRM 13.5.2's scope bound -- is
@@ -136,14 +136,15 @@ detached element (D3).
 
 ## Consequences
 
-- **The execution backend's associative array must change representation.** It is an index-ordered
-  `vector` of entries today, so any insertion moves entries and invariant 2 fails. The C++ backend's
-  `std::map` already satisfies identity and satisfies neither D3 nor D6.
+- **An associative array keeps each entry in storage of its own on both backends,** in one core the
+  library compiles once, so no insertion moves an entry and a leased entry is detached rather than
+  ended (D3).
 
-- **The associative map must stay ordered, or become sortable on demand.** LRM 7.8.2 / 7.8.4 require
-  traversal in index order, so moving stability out of the map into the arena does not make the map
-  free to be an unordered hash table. It frees the map from the _stability_ requirement, not from
-  the _ordering_ one.
+- **The associative map stays ordered.** LRM 7.8.2 / 7.8.4 require traversal in index order, so
+  moving stability out of the map into entry storage does not make the map free to be an unordered
+  hash table. It frees the map from the _stability_ requirement, not from the _ordering_ one. An
+  index of a type whose order the language leaves open (LRM 7.8.5) is kept in the order its entries
+  were made.
 
 - **A slot's nature is the open question inside this decision, and it decides the reference.** If a
   slot is an index into storage that may relocate, a reference needs the arena as well as the index:

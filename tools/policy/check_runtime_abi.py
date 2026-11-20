@@ -458,8 +458,8 @@ def run_self_tests() -> bool:
 
     ok = True
     ok &= expect(
-        entries_of("auto lyra_rt_sort_order(const void* n) -> void*;")
-        == [Entry("lyra_rt_sort_order", 1)],
+        entries_of("auto lyra_rt_dpi_open_array_word(const void* n) -> void*;")
+        == [Entry("lyra_rt_dpi_open_array_word", 1)],
         "an entry returning a value is read, with its line")
     ok &= expect(
         entries_of("\n\nvoid lyra_rt_cell_packed_set(void* cell);")
@@ -476,11 +476,13 @@ def run_self_tests() -> bool:
         == ["lyra_rt_a"],
         "an entry an attribute leads is still an entry")
     ok &= expect(
-        bindings_of('add("lyra_rt_sort_order", &lyra_rt_sort_order);')
-        == [Binding("lyra_rt_sort_order", "lyra_rt_sort_order", 1)],
+        bindings_of(
+            'add("lyra_rt_dpi_open_array_word", &lyra_rt_dpi_open_array_word);')
+        == [Binding(
+            "lyra_rt_dpi_open_array_word", "lyra_rt_dpi_open_array_word", 1)],
         "a binding yields the name it publishes and the function it names")
     ok &= expect(
-        not bindings_of("auto lyra_rt_sort_order(void* p) -> void*;"),
+        not bindings_of("auto lyra_rt_dpi_open_array_word(void* p) -> void*;"),
         "a declaration is not a binding")
 
     ok &= expect(

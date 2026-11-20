@@ -1,14 +1,13 @@
 #include "lyra/value/any_value.hpp"
 
-#include <cstdint>
 #include <utility>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_value_type.hpp"
 #include "lyra/value/integral_words.hpp"
-#include "lyra/value/take_built.hpp"
 #include "lyra/value/value_type.hpp"
+#include "lyra/value/wildcard_index.hpp"
 
 namespace lyra::value {
 
@@ -61,6 +60,16 @@ auto AnyValue::IsBitIdentical(const AnyValue& other) const -> bool {
   }
   return SameType(Type(), other.Type()) &&
          Type().BitIdentical(Bytes(), other.Bytes());
+}
+
+auto WildcardIndexHasUnknown(const AnyValue& written) -> bool {
+  const IntegralValueType* integral = written.Type().AsIntegral();
+  if (integral == nullptr) {
+    throw InternalError(
+        "a wildcard index is a value of a type that is not integral (LRM "
+        "7.8.1) -- please report this as a bug");
+  }
+  return HasUnknown(integral->Load(written.Bytes()).View());
 }
 
 }  // namespace lyra::value

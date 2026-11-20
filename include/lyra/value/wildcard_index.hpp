@@ -5,7 +5,6 @@
 #include <cstdint>
 #include <vector>
 
-#include "lyra/value/integral.hpp"
 #include "lyra/value/integral_words.hpp"
 
 namespace lyra::value {
@@ -37,6 +36,12 @@ namespace lyra::value {
   }
   return words;
 }
+
+class AnyValue;
+
+// Whether the index `written`, a value of the integral type it was written in,
+// holds an x or a z, which names no entry (LRM 7.8.1, 7.8.6).
+[[nodiscard]] auto WildcardIndexHasUnknown(const AnyValue& written) -> bool;
 
 // Whether the value the words `a` hold sits before the one `b` holds: the
 // clause's numerical comparison, across widths.

@@ -179,7 +179,6 @@ auto CodeGenTypes::GetFunctionType(const LlvmFnAbi& abi)
             },
             [&](const ElementTypeArg&) { params.push_back(ptr_ty_); },
             [&](const TakePositionsArg&) { params.push_back(ptr_ty_); },
-            [&](const IndexOrderArg&) { params.push_back(ptr_ty_); },
             [&](const OperationsArg&) { params.push_back(ptr_ty_); }},
         told);
   };

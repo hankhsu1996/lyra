@@ -11,6 +11,7 @@
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/language_trait.hpp"
 #include "lyra/support/library_trait.hpp"
 #include "lyra/support/value_operation.hpp"
 
@@ -62,11 +63,11 @@ struct TypeInterface {
 
 // The interface of `type`, a type no declaration of the source states its
 // operations for -- a fixed-size array (LRM 7.4), a tuple, a dynamic array
-// (LRM 7.5), a queue (LRM 7.10) -- or a record, whose declaration's methods
-// are each one of it: the operations on a whole value its parts decide, as a
-// generic impl of rustc's exists where its type arguments meet its bounds, and
-// a container's own. An associative array's operations are not yet stated
-// this way, and a type whose operations are stated otherwise has none here.
+// (LRM 7.5), an associative array (LRM 7.8), a queue (LRM 7.10) -- or a
+// record, whose declaration's methods are each one of it: the operations on a
+// whole value its parts decide, as a generic impl of rustc's exists where its
+// type arguments meet its bounds, and a container's own. A type whose
+// operations are stated otherwise has none here.
 [[nodiscard]] auto TypeInterfaceOf(const CompilationUnit& unit, TypeId type)
     -> std::optional<TypeInterface>;
 
@@ -103,13 +104,21 @@ struct ElementAllocation {
     -> std::optional<CallableCode>;
 
 // The operation of `type`'s interface a call naming the library entry `entry`
-// asks: the type's own method of that name, or the item of a trait it
-// implements that the entry names, as rustc finds a method by its name among
-// the items of the receiver type's impls. Nothing where the type declares
-// none, and the library's entry answers the call.
+// asks: the type's own method or the item of a language trait it implements of
+// that name, or the item of a library trait it implements that the entry names,
+// as rustc finds a method by its name among the items of the receiver type's
+// impls. Nothing where the type declares none, and the library's entry answers
+// the call.
 [[nodiscard]] auto OperationNamedByEntry(
     const CompilationUnit& unit, TypeId type, support::BuiltinFn entry)
     -> std::optional<support::ValueOperation>;
+
+// Whether `type` implements the language trait `trait`: whether its interface
+// declares every requirement, which a construct asks of its operand's type
+// before it calls one, as rustc selects an impl for a lang item.
+[[nodiscard]] auto ImplementsLanguageTrait(
+    const CompilationUnit& unit, TypeId type,
+    const support::LanguageTrait& trait) -> bool;
 
 // Which of the kinds of body the operation `answers` at `type` is, and
 // nothing where no unit can state it.

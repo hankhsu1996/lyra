@@ -66,4 +66,22 @@ struct UnpackedRange {
   return ranges;
 }
 
+// How many elements a run of dimensions spans, one where there is none; and
+// where in dimension `d` the element `k` of `dims` lies, counting from its
+// lowest index, the elements walked in ascending index at every dimension, the
+// last fastest (LRM 21.4.3, Annex H.7.3).
+[[nodiscard]] inline auto ElementsSpanned(std::span<const UnpackedRange> dims)
+    -> std::size_t {
+  std::size_t count = 1;
+  for (const UnpackedRange& dim : dims) {
+    count *= dim.Count();
+  }
+  return count;
+}
+[[nodiscard]] inline auto AscendingPositionIn(
+    std::span<const UnpackedRange> dims, std::size_t d, std::size_t k)
+    -> std::size_t {
+  return (k / ElementsSpanned(dims.subspan(d + 1))) % dims[d].Count();
+}
+
 }  // namespace lyra::value

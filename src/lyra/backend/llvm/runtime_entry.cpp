@@ -1,7 +1,6 @@
 #include "lyra/backend/llvm/runtime_entry.hpp"
 
 #include <format>
-#include <optional>
 #include <string>
 #include <string_view>
 #include <variant>
@@ -170,32 +169,6 @@ auto ValueTypeSymbol(support::ValueDomain domain) -> std::string {
             support::ValueDomainName(domain)));
   }
   return Symbol(domain, "value_type");
-}
-
-auto IndexOrderSymbol(support::ValueDomain domain) -> std::string {
-  constexpr std::string_view kIndexOrder = "index_order";
-  const std::optional<IndexOrder> order = IndexOrderOf(domain);
-  if (!order.has_value()) {
-    throw InternalError(
-        "llvm codegen: an associative array is indexed by values the "
-        "language admits as no index -- please report this as a bug");
-  }
-  switch (*order) {
-    case IndexOrder::kIntegral:
-      return std::format("{}integral_{}", kRuntimeSymbolPrefix, kIndexOrder);
-    case IndexOrder::kOwn:
-      return Symbol(domain, kIndexOrder);
-  }
-  throw InternalError("llvm codegen: unknown index order");
-}
-
-auto OperationFunctionsSymbol(support::ValueDomain domain) -> std::string {
-  if (!StatesOperationFunctions(domain)) {
-    throw InternalError(
-        "llvm codegen: the library states no operations of values it holds "
-        "this way -- please report this as a bug");
-  }
-  return Symbol(domain, "operation_functions");
 }
 
 auto ValueOperationsSymbol(support::ValueDomain domain) -> std::string {

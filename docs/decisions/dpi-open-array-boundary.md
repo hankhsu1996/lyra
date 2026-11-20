@@ -1,6 +1,7 @@
 # An open array crosses as a canonical boundary object, not a borrow of the actual
 
-Date: 2026-07-27 Status: accepted
+Date: 2026-07-27 Status: accepted. Revised 2026-11-19: the image is filled and read back by the
+array type's own code, and an input actual sized while the program runs is served.
 
 ## Context
 
@@ -106,9 +107,12 @@ is: produced by marshal-in, consumed by the foreign call and marshal-out, gone a
 lowered-call window ([dpi-foreign-boundary](dpi-foreign-boundary.md) decision 3).
 
 The object is monomorphic -- a canonical image is element-type-independent -- so it needs no type
-parameter, no accessor table, and no per-element-type generated code. Its two-state and four-state
-forms are one type distinguished by a runtime field, because the C side spells both
-`svOpenArrayHandle` and the ABI draws no distinction; this is the same shape choice
+parameter and no accessor table. Putting the actual's elements into it and taking them back out is
+the actual's array type's own code: a body of the type that walks its elements in the image's order
+and hands each one to the image by its ordinal, at the element's type, as a C++ program filling a
+foreign buffer writes the loop where it knows the type. Its two-state and four-state forms are one
+type distinguished by a runtime field, because the C side spells both `svOpenArrayHandle` and the
+ABI draws no distinction; this is the same shape choice
 [integral-representation](integral-representation.md) made for packed values.
 
 **What the image does need of the element type is its shape, and that comes from the actual's
@@ -193,11 +197,13 @@ than adding a third.
   `shortreal`, `string`, `chandle`, an unpacked struct) is legal SystemVerilog that Lyra does not
   yet accept, because serving it requires C layout for that element; the diagnostic says so rather
   than implying the LRM forbids it.
-- **The actual's own shape has to be a fact of its declaration, because the image is built before
-  the call.** H.7.6 reports each unsized dimension with the actual's range, and that range is stated
-  by the lowering along with everything else the image is laid out from, so an actual whose element
-  count the program fixes while it runs -- a dynamic array or a queue, which LRM 7.6 admits for an
-  input formal -- is refused by name on both backends.
+- **The actual's own shape is stated where the call is, because the image is built before the
+  call.** H.7.6 reports each unsized dimension with the actual's range, which the lowering states
+  along with everything else the image is laid out from: a fixed-size dimension's from its
+  declaration, and the dimension of a dynamic array or a queue, which LRM 7.6 admits for an input
+  formal, as `[0:size-1]`, its size read as the call begins. A dynamic array or a queue on a formal
+  that is written back is refused by name on both backends: the foreign side cannot change the
+  image's extent, so the write-back would need a size it has no way to state.
 - Both backends consume the same MIR: a boundary-object local constructed from the actual, a handle
   argument, and a reconstruct-and-store for a write-back direction. Only the realization of the
   boundary object differs.

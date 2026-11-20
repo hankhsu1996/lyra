@@ -33,7 +33,6 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
-#include "lyra/mir/storage_part.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -621,8 +620,8 @@ auto LowerHirAssociativeAssignmentPatternExpr(
     if (!default_or) return std::unexpected(std::move(default_or.error()));
     stated_default = block.Add(*std::move(default_or));
   }
-  return BuildAssociativeConstructionCall(
-      unit, block, result_type, std::move(entries), stated_default);
+  return BuildAssociativeConstruction(
+      unit, frame, result_type, std::move(entries), stated_default);
 }
 
 // One concrete instantiation per pass class. The handler templates are defined

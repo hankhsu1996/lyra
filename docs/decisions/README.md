@@ -127,17 +127,25 @@ the detail lives in the entry itself.
   declares what it asks of a value by name as traits, a library declaration lists those its types
   implement, MIR states each type's implementation, and both backends reach its items without
   choosing them; which bodies each compiles stays its own. A trait's items are a closed set, a kind
-  of array's own methods are its inherent impl, one table whose signatures MIR states and whose
-  bodies the lowering builds, held to the same names when Lyra is compiled, and a type's interface
-  is what it implements.
+  of array's own methods are its inherent impl, what a construct asks of a value handed to it is a
+  language trait the type implements with no item in its record, each kind's methods and language
+  traits' items are signatures MIR states and bodies the lowering builds, held to the same names
+  when Lyra is compiled, and a type's interface is what it implements.
 - [a-type-is-told-to-the-library-as-a-record-both-sides-read](a-type-is-told-to-the-library-as-a-record-both-sides-read.md)
   -- on the execution backend a type reaches the prebuilt library as a C-layout record declared once
   and read by both the code generator and the library, opening with the address of a table of
   function pointers each handed the type, as Swift's value witness table and Go's `abi.Type` are;
   not a fabricated object of a library C++ class measured at compiler run time. The table holds what
   every holder asks -- the steps of a value's life and whether a write changed it -- and comparison,
-  streaming, net resolution, takeover positions and key order are records handed to what asks each;
-  a type's default is MIR's, handed with the type. One table holding every operation is rejected.
+  streaming, net resolution and takeover positions are records handed to what asks each; a type's
+  default is MIR's, handed with the type. One table holding every operation is rejected.
+- [the-library-is-parametric-in-the-types-a-design-composes](the-library-is-parametric-in-the-types-a-design-composes.md)
+  -- the library's code for every type never chooses by a type's kind, and the library never walks
+  what a type is composed of; a facility it declares for one kind knows that kind and where its
+  elements lie, and reaches their values through their items. It reaches a composed value through a
+  service, an item of a trait the type implements, or a description read as data for a tool
+  reporting the design, and its own values are no composed type. A032 checks the choice by kind,
+  listing the places that still make one as a queue that only shrinks.
 - [a-type-the-library-declares-is-named-by-its-declaration](a-type-the-library-declares-is-named-by-its-declaration.md)
   -- a type is MIR's own only where MIR's constructs make, take apart or lay out its values or a
   language rule reads its parts; every other type is one alternative naming a declaration of the
@@ -230,27 +238,29 @@ the detail lives in the entry itself.
   compiles once, whose fields are a C layout both backends read, and every element committed is
   ended once after its last lease; every operation of a container type is a body the lowering builds
   for the type, compiled by both backends, and a container is a value laid out by its type. An
-  associative array's bodies work through its core's entries, told the element type's record. A
-  dynamic array's and a queue's reach and end their elements over the core's members, and every
-  write through a position is built on one body of the type, which the library's own steps reach
-  through the type's record; a queue's core holds nothing type-dependent, and every path a queue
-  runs on each call -- both ends, the bound, taking and giving back element storage from the run's
-  recycler for its size -- is the queue type's body, so that at `-O2 --lto` it costs close to what
-  hand-written C++ of the same semantics does. The associative core compares every key kind the
-  language orders itself, and an LRM 7.8.5 key through its equality. The type's interface in MIR
-  states its core and its four operations -- its default and a copy, each answering a value, a write
-  over a value and an end -- and the C++ type of a container type is the library's one class
-  template for both kinds, at the core and at a struct the backend writes declaring the items of the
-  type's implementation of the library's traits, whose special members realize the value's life and
-  relocate the core once for every such type; each item is defined once, in the type's own code
-  file, and every other operation is a free function; the library asks any array in the shapes MIR's
-  declarations have and takes a lease on the core. The whole algorithm a C++ template instantiated
-  per element type, the core handed a full table of the element's operations, a call of the library
-  per element access, a library template per kind carrying the operations out or answering the
-  library's questions through members MIR states no declaration of, a move keeping its source alive,
-  adapters the backend writes into each class, each special member a MIR body, a copy built in the
-  receiving object's storage, each body a specialization of a library template's member, each member
-  defined inline wherever it is used, and every operation a member of the type's class are rejected.
+  associative array's bodies work through its core's entries, which hold its element and index
+  types' records. A dynamic array's and a queue's reach and end their elements over the core's
+  members, and every write through an index -- a position, or an associative array's index -- is
+  built on one body of the type, which the library's own steps reach through the type's record; a
+  queue's core holds nothing type-dependent, and every path a queue runs on each call -- both ends,
+  the bound, taking and giving back element storage from the run's recycler for its size -- is the
+  queue type's body, so that at `-O2 --lto` it costs close to what hand-written C++ of the same
+  semantics does. The associative core compares every key kind the language orders itself, and keeps
+  an LRM 7.8.5 key's entries in the order made, for the type's own bodies to search by the index
+  type's equality. The type's interface in MIR states its core and its four operations -- its
+  default and a copy, each answering a value, a write over a value and an end -- and the C++ type of
+  a container type is the library's one class template for every kind, at the core and at a struct
+  the backend writes declaring the items of the type's implementation of the library's traits, whose
+  special members realize the value's life and relocate the core once for every such type; each item
+  is defined once, in the type's own code file, and every other operation is a free function; the
+  library asks any array in the shapes MIR's declarations have and takes a lease on the core. The
+  whole algorithm a C++ template instantiated per element type, the core handed a full table of the
+  element's operations, a call of the library per element access, a library template per kind
+  carrying the operations out or answering the library's questions through members MIR states no
+  declaration of, a move keeping its source alive, adapters the backend writes into each class, each
+  special member a MIR body, a copy built in the receiving object's storage, each body a
+  specialization of a library template's member, each member defined inline wherever it is used, and
+  every operation a member of the type's class are rejected.
 - [a-move-relocates-its-value](a-move-relocates-its-value.md) -- a move transfers a value's
   ownership and nothing ends its source, one meaning in MIR, in LIR, in the LLVM code generator and
   in what the runtime's table of a type calls a relocation; a type stating its own values' life
@@ -311,8 +321,8 @@ the detail lives in the entry itself.
   [an-array-method-is-a-loop-at-its-call](an-array-method-is-a-loop-at-its-call.md).
 - [an-array-method-is-a-loop-at-its-call](an-array-method-is-a-loop-at-its-call.md) -- an LRM 7.12
   method that asks something of each entry is a loop compiled where the call is, whose index is the
-  entry's own; a sort hands the library its keys, which it orders by their kind, and the array's
-  type applies the order of positions the library answers.
+  entry's own; a sort orders its keys by a body the compiler states for the key type, and the
+  array's type applies that order of positions.
 - [format-dispatch](format-dispatch.md) -- value formatting dispatches through `Formatter<T>` and
   `FormatArg`.
 - [rendering-a-value-by-its-type](rendering-a-value-by-its-type.md) -- how a value reads under LRM
@@ -1144,8 +1154,9 @@ the detail lives in the entry itself.
   carrier conversion expressed in MIR at each call, and an export's context is a thread-local
   ambient handle.
 - [dpi-open-array-boundary](dpi-open-array-boundary.md) -- an open array crosses as a canonical
-  boundary object owning its own storage, never as a borrow of the actual; the formal's unsized
-  shape rides the ABI carrier rather than the type system.
+  boundary object owning its own storage, never as a borrow of the actual, filled and read back by
+  the actual's array type's own code; the formal's unsized shape rides the ABI carrier rather than
+  the type system.
 - [foreign-code-is-linked-not-loaded](foreign-code-is-linked-not-loaded.md) -- a program has one
   linker, so a design's foreign code is an artifact that linker takes rather than an environment
   around it; foreign code handed over compiled (LRM Annex J) is linked as it is, each shared library
@@ -1588,8 +1599,9 @@ the detail lives in the entry itself.
 - [a-constraint-describes-a-problem-the-runtime-solves](a-constraint-describes-a-problem-the-runtime-solves.md)
   -- a constraint is code describing a problem to a solver the runtime carries, and MIR has no node
   for it; every class overrides three functions of the part each object starts with, its base's
-  called first, and a block is a virtual method called where its mode is on. Solving at compile
-  time, an external solver and an interpreted table of constraints are rejected.
+  called first, and a block is a virtual method called where its mode is on; a random array is
+  walked by its own type's code. Solving at compile time, an external solver, an interpreted table
+  of constraints and a runtime walk of an array's type are rejected.
 - [dpi-context-scope-is-an-extent](dpi-context-scope-is-an-extent.md) -- the scope a `context`
   import makes current is stated as an entering call and a cleanup that gives it back on every way
   out, never as a value whose destructor does it, and the chain it pushes onto belongs to whatever

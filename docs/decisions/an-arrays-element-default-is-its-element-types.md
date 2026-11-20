@@ -109,13 +109,14 @@ function D2 states. An entry that builds an array is handed the type of the arra
 the storage it builds into: for a fixed-size array and a queue the array's own type, which names the
 element type's constant, since a fixed-size array's bytes state nothing and a queue's type states
 its bound as well (D6); for any other kind the element type's constant, which the array it builds
-keeps the address of. Which of the two is decided by the type answered, in one place, and an entry
-declares only that it is told the array it builds. The two answers of LRM 7.4.5 -- the value an
-invalid read returns and the storage a discarded write lands on -- are asked of the element type's
-constant, whatever kind of array the position belongs to; each is built from the function the first
-time it is asked for and kept beside the constant, once per element type per unit, for as long as
-the program runs. A cell and a net are built from the same constant for the type they hold, so
-storage before its first write starts at what MIR states and no type answers its own default
+keeps the address of, beside an associative array's index type and its kind. Which of the two is
+decided by the type answered, in one place, and an entry declares only that it is told the array it
+builds. The two answers of LRM 7.4.5 -- the value an invalid read returns and the storage a
+discarded write lands on -- are asked of the element type's constant, whatever kind of array the
+position belongs to; each is built from the function the first time it is asked for and kept beside
+the constant, once per element type per unit, for as long as the program runs. A cell and a net are
+built from the same constant for the type they hold, so storage before its first write starts at
+what MIR states and no type answers its own default
 ([a-type-is-told-to-the-library-as-a-record-both-sides-read](a-type-is-told-to-the-library-as-a-record-both-sides-read.md)
 D5). On the C++ backend nothing is emitted for any of this: the host compiler's default construction
 of the element type is the same statement, and each container asks it where a fixed-size array

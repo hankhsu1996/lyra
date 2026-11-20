@@ -15,7 +15,6 @@
 #include "lyra/hir/expr.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
-#include "lyra/lowering/hir_to_mir/bitstream.hpp"
 #include "lyra/lowering/hir_to_mir/block_builder.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
 #include "lyra/lowering/hir_to_mir/condition.hpp"
@@ -763,11 +762,19 @@ auto ElementStep(
     mir::ExprId idx_id, mir::TypeId part_type) -> DescentStep {
   const mir::CompilationUnit& unit = unit_lowerer.Unit();
   const hir::Type& receiver = unit_lowerer.Hir().types.Get(receiver_type);
-  // An associative array is reached by the key the source wrote, which is a
-  // value of the index type rather than a place in any order (LRM 7.8).
+  // An associative array is reached by the key the source wrote, a value of
+  // the index type rather than a place in any order (LRM 7.8), which a
+  // wildcard index takes as any integral value (LRM 7.8.1).
   if (receiver.Is<hir::AssociativeArrayType>()) {
+    const mir::TypeId index =
+        unit.types.Get(unit_lowerer.TranslateType(receiver_type))
+            .IndexType()
+            .value();
     return DescentStep{
-        .to = StepToAssocElement{.key = idx_id}, .part_type = part_type};
+        .to =
+            StepToAssocElement{
+                .key = ConvertToType(unit, block, idx_id, index)},
+        .part_type = part_type};
   }
   // A character of a string is named the way `getc` and `putc` take one (LRM
   // Table 6-9, 6.16.2, 6.16.3): as an `int`, which an index is converted to

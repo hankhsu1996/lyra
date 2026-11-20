@@ -125,11 +125,12 @@ enum class BoundFreeItem : std::uint8_t {
 
 // An operation a type may answer with a body of its own: an item of the
 // equality trait, an item of a trait the library also answers, a bound-free
-// conversion, one of an array kind's own methods by the name the source asks
-// it by, or a step of the value's life. A value the library holds is asked an
-// item by the library entry's name. Only a type whose steps are not built from
-// its parts -- a run-time-sized container, whose elements are no parts a type
-// lays out -- answers a step with a body.
+// conversion, an operation an array kind is called by -- one of its own
+// methods or an item of a language trait it implements -- or a step of the
+// value's life. A value the library holds is asked an item by the library
+// entry's name. Only a type whose steps are not built from its parts -- a
+// run-time-sized container, whose elements are no parts a type lays out --
+// answers a step with a body.
 using ValueOperation = std::variant<
     EqualityItem, LibraryAnsweredItem, BoundFreeItem, BuiltinFn, ValueStep>;
 

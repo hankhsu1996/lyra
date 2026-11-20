@@ -10,6 +10,7 @@
 #include "lyra/lowering/hir_to_mir/callable_bindings.hpp"
 #include "lyra/lowering/hir_to_mir/callee_interface.hpp"
 #include "lyra/lowering/hir_to_mir/cast_lowering.hpp"
+#include "lyra/lowering/hir_to_mir/condition.hpp"
 #include "lyra/lowering/hir_to_mir/container_bodies.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
 #include "lyra/lowering/hir_to_mir/entry_walk.hpp"
@@ -22,7 +23,6 @@
 #include "lyra/mir/builder.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/stmt.hpp"
 #include "lyra/mir/storage_part.hpp"
 #include "lyra/mir/type.hpp"
@@ -34,17 +34,6 @@
 namespace lyra::lowering::hir_to_mir {
 
 namespace {
-
-// A call of the library entry `entry` on what `receiver` names, answering
-// `result`.
-auto EntryCall(
-    const mir::CompilationUnit& unit, mir::Builder block,
-    support::BuiltinFn entry, std::optional<mir::ExprId> receiver,
-    std::vector<mir::ExprId> arguments, mir::TypeId result) -> mir::ExprId {
-  return block.Add(
-      mir::MakeBuiltinCall(
-          unit, block.Body(), entry, receiver, std::move(arguments), result));
-}
 
 // The body answering `answers` with a value of `to` built out of the value of
 // `from` its one parameter refers to, the two of one kind and differing only
@@ -141,26 +130,39 @@ auto ConversionBody(
   if (to_type.IndexType().has_value()) {
     const mir::TypeId from_element =
         *unit.types.Get(from).ContainerElementType();
+    const mir::TypeId stated_type = mir::BorrowedPointerTo(
+        unit.types, from_element, mir::Mutability::kReadOnly);
+    const mir::LocalId stated = DeclareLocal(
+        frame,
+        block.Add(ContainerOperationCall(
+                      unit, block, support::BuiltinFn::kAssocStatedDefault,
+                      PathPlace(unit, block, NamedIn(unit, walked.path, block)),
+                      {}, stated_type)
+                      .value()));
     mir::Block given;
     mir::Builder given_builder = block.Into(given);
-    const mir::ExprId absent = EntryCall(
-        unit, given_builder, support::BuiltinFn::kAssocAbsentValue,
-        PathPlace(
-            unit, given_builder, NamedIn(unit, walked.path, given_builder)),
-        {}, from_element);
-    const mir::ExprId held = given_builder.ReadLocal(built, to);
-    const mir::ExprId converted =
-        ConvertToType(unit, given_builder, absent, element);
-    AssignLocal(
-        unit, given_builder, built,
-        EntryCall(
-            unit, given_builder, support::BuiltinFn::kAssocWithDefault, held,
-            {converted}, to));
+    given_builder.AppendStmt(
+        mir::ExprStmt{
+            .expr = given_builder.Add(
+                ContainerOperationCall(
+                    unit, given_builder,
+                    support::BuiltinFn::kAssocSetStatedDefault,
+                    given_builder.LocalPlace(built, to),
+                    {ConvertToType(
+                        unit, given_builder,
+                        given_builder.AsValue(
+                            unit.types,
+                            given_builder.Deref(
+                                unit.types,
+                                given_builder.ReadLocal(stated, stated_type),
+                                from_element)),
+                        element)},
+                    unit.builtins.void_type)
+                    .value())});
     block.AppendIfThen(
-        EntryCall(
-            unit, block, support::BuiltinFn::kAssocHasStatedDefault,
-            PathPlace(unit, block, NamedIn(unit, walked.path, block)), {},
-            unit.builtins.machine_bool),
+        BuildConditionNot(
+            unit, block,
+            BuildIsNull(unit, block, block.ReadLocal(stated, stated_type))),
         std::move(given));
   }
 

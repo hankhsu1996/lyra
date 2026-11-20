@@ -127,17 +127,8 @@ auto RuntimeOpOf(support::ValueStep step) -> RuntimeOp;
 // other symbol here names an entry.
 auto ValueTypeSymbol(support::ValueDomain domain) -> std::string;
 
-// The symbol of the order an associative array indexed by values held in
-// `domain` keeps its entries in (LRM 7.8), which the library defines once per
-// kind of index: one for every integral type, and one for each other kind the
-// language admits as an index, a wildcard index's among them (LRM 7.8.1).
-auto IndexOrderSymbol(support::ValueDomain domain) -> std::string;
-
-// The symbols of what the library states of the language's operations on a
-// value held in `domain`: the functions of a kind, which a container type's
-// operations name with its element's, and the whole of the operations of a
-// kind no other type parameterizes.
-auto OperationFunctionsSymbol(support::ValueDomain domain) -> std::string;
+// The symbol of the whole of what the library states of the language's
+// operations on a value held in `domain`, a kind no other type parameterizes.
 auto ValueOperationsSymbol(support::ValueDomain domain) -> std::string;
 
 // Witnesses the library defines once for every type of a kind, which generated
@@ -147,12 +138,6 @@ inline constexpr std::string_view kIntegralValueWitnessTableSymbol =
     "lyra_rt_integral_value_witness_table";
 inline constexpr std::string_view kIntegralOperationFunctionsSymbol =
     "lyra_rt_integral_operation_functions";
-inline constexpr std::string_view kFixedArrayPartsWitnessTableSymbol =
-    "lyra_rt_fixed_array_parts_witness_table";
-inline constexpr std::string_view kDynamicArrayPartsWitnessTableSymbol =
-    "lyra_rt_dynamic_array_parts_witness_table";
-inline constexpr std::string_view kQueuePartsWitnessTableSymbol =
-    "lyra_rt_queue_parts_witness_table";
 inline constexpr std::string_view kTypeLacksOperationSymbol =
     "lyra_rt_type_lacks_operation";
 

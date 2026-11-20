@@ -28,16 +28,6 @@ inline constexpr bool kIsBitStreamType<RealValue<Host>> = false;
 template <>
 inline constexpr bool kIsBitStreamType<UnmanagedRef> = false;
 
-// A value of `T` holds parts ordered by position, each a value of a type the
-// value states and handed out where it lies.
-template <typename T>
-concept HoldsParts = requires(const T& c, T& m, std::size_t index) {
-  { c.Count() } -> std::same_as<std::size_t>;
-  { c.ElementType() } -> std::same_as<const ElementType&>;
-  { c.GetUnchecked(index) } -> std::same_as<const void*>;
-  { m.GetUnchecked(index) } -> std::same_as<void*>;
-};
-
 // A value of `T` written into a stream of bits, the stream being an integral
 // value (LRM 6.24.3).
 template <typename T>
@@ -58,23 +48,6 @@ concept ReadsBitStream =
 // A question about a value's stream of bits the language defines for a kind
 // and Lyra does not yet answer, which a legal program can ask.
 [[noreturn]] void StreamNotYetSupported();
-
-// The parts of a value of `T`, each answered with what `T` itself does.
-template <HoldsParts T>
-inline constexpr PartsWitnessTable kPartsWitnessTableOf{
-    .count = [](const ValueType&, const void* value) -> std::size_t {
-      return static_cast<const T*>(value)->Count();
-    },
-    .type = [](const ValueType&, const void* value) -> const ValueType& {
-      return static_cast<const T*>(value)->ElementType().Type();
-    },
-    .at = [](const ValueType&, const void* value,
-             std::size_t index) -> const void* {
-      return static_cast<const T*>(value)->GetUnchecked(index);
-    },
-    .ref_at = [](const ValueType&, void* value, std::size_t index) -> void* {
-      return static_cast<T*>(value)->GetUnchecked(index);
-    }};
 
 // What `T` answers each operation of its table with, which is what `T` itself
 // does: C++ states a type's operations as its own members, so the table is
@@ -106,14 +79,6 @@ struct ValueWitnessesOf {
                                           const void* rhs) -> bool {
     return Of(lhs).IsBitIdentical(Of(rhs));
   };
-  static constexpr const PartsWitnessTable* kParts =
-      []() -> const PartsWitnessTable* {
-    if constexpr (HoldsParts<T>) {
-      return &kPartsWitnessTableOf<T>;
-    } else {
-      return nullptr;
-    }
-  }();
 };
 
 // The language's operations on a value of `T`, a kind of value no other type
@@ -199,12 +164,5 @@ constexpr auto LibraryValueType() -> ValueType {
 // names, stated once for `T`.
 template <LyraValue T>
 inline constexpr ValueType kValueTypeOf = LibraryValueType<T>();
-
-// Where that type lies, which a call naming the type of a value hands on, as
-// Rust's `type_id::<T>()` answers the type it is called at.
-template <LyraValue T>
-[[nodiscard]] constexpr auto TypeRecordOf() -> const ValueType* {
-  return &kValueTypeOf<T>;
-}
 
 }  // namespace lyra::value

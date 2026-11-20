@@ -44,7 +44,7 @@ auto ToldOfType(std::optional<lir::TypeId> stated, std::string_view what)
 
 // What an entry building an array of `built` is told of it, which no operand
 // states: a fixed-size unpacked array's type, a queue's whole type, or an
-// element type led by an associative array's index order.
+// element type.
 auto BuiltArrayTypeArgs(const lir::TypePool& types, lir::TypeId built)
     -> std::vector<TypeArg> {
   const lir::Type& array = types.Get(built);
@@ -58,11 +58,6 @@ auto BuiltArrayTypeArgs(const lir::TypePool& types, lir::TypeId built)
     throw InternalError(
         "llvm codegen: an entry told of the array it builds builds no array "
         "-- please report this as a bug");
-  }
-  // An associative array holds its entries in the order its index type
-  // imposes (LRM 7.8), which it is built holding.
-  if (const std::optional<lir::TypeId> key = array.IndexType()) {
-    return {IndexOrderArg{.key = *key}, ElementTypeArg{.type = *element}};
   }
   return {ElementTypeArg{.type = *element}};
 }
@@ -144,6 +139,7 @@ auto PassModeOf(support::OperandReading reading, lir::TypeId operand)
   switch (reading) {
     case support::OperandReading::kHeld:
     case support::OperandReading::kPosition:
+    case support::OperandReading::kKey:
     case support::OperandReading::kMachine:
       return PassDirect{};
     case support::OperandReading::kBits:
@@ -151,7 +147,6 @@ auto PassModeOf(support::OperandReading reading, lir::TypeId operand)
     case support::OperandReading::kNumber:
       return PassWithShape{.type = operand};
     case support::OperandReading::kTyped:
-    case support::OperandReading::kKey:
       return PassWithType{.type = operand};
   }
   throw InternalError("llvm codegen: unknown operand reading");
@@ -197,12 +192,10 @@ auto ToldModeOf(
           [](const ToldNothing&) -> Mode { return std::nullopt; },
           [](const ToldWidthMetadataAhead&) -> Mode { return std::nullopt; },
           [](const ToldTypeMetadataAhead&) -> Mode { return std::nullopt; },
-          [](const ToldContainerTypeAhead&) -> Mode { return std::nullopt; },
           [](const ToldTypeAndNetWitnessesAhead&) -> Mode {
             return std::nullopt;
           },
           [](const ToldTakePositions&) -> Mode { return std::nullopt; },
-          [](const ToldOperations&) -> Mode { return std::nullopt; },
           [&](const ToldWidthMetadata& t) -> Mode {
             if (t.after != index) {
               return std::nullopt;
@@ -235,39 +228,13 @@ auto ToldModeOf(
                 return std::nullopt;
             }
             throw InternalError("llvm codegen: unknown operand reading");
-          },
-          [&](const ToldKeyType& t) -> Mode {
-            if (t.after != index) {
-              return std::nullopt;
-            }
-            const std::optional<lir::TypeId> key = pool.Get(own).IndexType();
-            if (!key.has_value()) {
-              throw InternalError(
-                  "llvm codegen: a realization told the type a memory's keys "
-                  "are built at is handed no associative array -- please "
-                  "report this as a bug");
-            }
-            return PassWithType{.type = *key};
-          },
-          [&](const ToldEntryType& t) -> Mode {
-            if (t.after != index) {
-              return std::nullopt;
-            }
-            const auto* entries = pool.Get(own).As<lir::MachineArrayType>();
-            if (entries == nullptr) {
-              throw InternalError(
-                  "llvm codegen: a realization told the type of a literal's "
-                  "entries is handed no sequence of them -- please report "
-                  "this as a bug");
-            }
-            return PassWithType{.type = entries->element};
           }},
       realization->told);
 }
 
 // What a realization for values laid out by their type is told after its
-// operands: that type, once, however many values of it it takes or builds, how
-// the type takes some of a value's positions, or the type's operations.
+// operands: that type, once, however many values of it it takes or builds, or
+// how the type takes some of a value's positions.
 auto TypeArgsOfTheRealization(const std::optional<Realization>& realization)
     -> std::vector<TypeArg> {
   if (!realization.has_value()) {
@@ -283,17 +250,11 @@ auto TypeArgsOfTheRealization(const std::optional<Realization>& realization)
           [&](const ToldTakePositions&) -> Args {
             return {TakePositionsArg{.type = of}};
           },
-          [&](const ToldOperations&) -> Args {
-            return {OperationsArg{.type = of}};
-          },
           [](const ToldNothing&) -> Args { return {}; },
           [](const ToldWidthMetadata&) -> Args { return {}; },
           [](const ToldWidthMetadataAhead&) -> Args { return {}; },
           [](const ToldTypeMetadataAhead&) -> Args { return {}; },
-          [](const ToldContainerTypeAhead&) -> Args { return {}; },
-          [](const ToldTypeAndNetWitnessesAhead&) -> Args { return {}; },
-          [](const ToldKeyType&) -> Args { return {}; },
-          [](const ToldEntryType&) -> Args { return {}; }},
+          [](const ToldTypeAndNetWitnessesAhead&) -> Args { return {}; }},
       realization->told);
 }
 
@@ -362,8 +323,7 @@ auto TypeArgsToldAs(
 
 // What a call through `realization`, none where the library realizes the
 // entry once, hands it ahead of its operands.
-auto ImplicitArgOf(
-    const lir::TypePool& types, const std::optional<Realization>& realization)
+auto ImplicitArgOf(const std::optional<Realization>& realization)
     -> ImplicitArg {
   if (!realization.has_value()) {
     return NoImplicitArg{};
@@ -377,10 +337,6 @@ auto ImplicitArgOf(
             return TypeMetadataArg{
                 .args = {ElementTypeArg{.type = realization->of}}};
           },
-          [&](const ToldContainerTypeAhead&) -> ImplicitArg {
-            return TypeMetadataArg{
-                .args = BuiltArrayTypeArgs(types, realization->of)};
-          },
           [&](const ToldTypeAndNetWitnessesAhead&) -> ImplicitArg {
             return TypeAndNetWitnessesArg{.of = realization->of};
           },
@@ -389,12 +345,9 @@ auto ImplicitArgOf(
             return NoImplicitArg{};
           },
           [](const ToldLaidOutType&) -> ImplicitArg { return NoImplicitArg{}; },
-          [](const ToldKeyType&) -> ImplicitArg { return NoImplicitArg{}; },
-          [](const ToldEntryType&) -> ImplicitArg { return NoImplicitArg{}; },
           [](const ToldTakePositions&) -> ImplicitArg {
             return NoImplicitArg{};
-          },
-          [](const ToldOperations&) -> ImplicitArg { return NoImplicitArg{}; }},
+          }},
       realization->told);
 }
 
@@ -473,7 +426,7 @@ auto ArrangeCall(
   std::vector<TypeArg> type_args = TypeArgsOfTheRealization(realization);
   std::ranges::move(told_of_the_answer, std::back_inserter(type_args));
   return FnAbi{
-      .implicit_arg = ImplicitArgOf(types, realization),
+      .implicit_arg = ImplicitArgOf(realization),
       .named_part = named_part,
       .args = std::move(args),
       .type_args = std::move(type_args)};

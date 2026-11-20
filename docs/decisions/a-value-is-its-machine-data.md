@@ -98,24 +98,27 @@ never a description to interpret.
 **D6. A container whose size is a run-time quantity -- a queue, a dynamic array, an associative
 array -- holds its elements as raw storage in a core the library compiles once, and every operation
 on an element is compiled with the element's type.** An associative array's core is handed the
-element type's record and asks it only to end an element. A dynamic array's core holds the record
-for the size and alignment of the storage it hands out and for what a lease keeps past the array,
-and a queue's holds nothing that depends on the element type; the one function of either that ends
-such an element, a lease's, is handed its type by its caller. What a dynamic array or a queue does
-on every call -- reaching an element, putting one at an end and taking one out, holding a queue to
-its bound, taking and giving back an element's storage, ending the elements -- is the container
-type's own code over the core's fields, compiled with its caller. An element at an index lies where
-those fields say -- base plus index times element size, or a queue's ring -- and every write through
-an index, one that makes or drops an element included, is built on one such body. Building, copying,
-comparing, streaming and taking out an element are the operations of bodies the compiler builds for
-the container type, on both backends. A fixed-size unpacked array is no container: its size is a
-constant, so the compiler lays it out in place. Revised 2026-11-12: this said, for the execution
-backend alone, that the container acts on its elements through the functions generated for the
-element type and that the compiler addresses an element without a call. Acting through those
-functions made every element operation an indirect call from the library, and a queue's push and pop
-through its core took nearly ten times the instructions of hand-written C++ of the same semantics,
-which the requirement that `-O2 --lto` code match such C++ rules out. How the core and the bodies
-divide the work is
+element type's record and the index type's, and asks them only how large an entry is and how to end
+one; it finds an entry by an index of a kind whose order the language fixes, and keeps an index of
+any other type in the order its entries were made. A dynamic array's core holds the record for the
+size and alignment of the storage it hands out and for what a lease keeps past the array, and a
+queue's holds nothing that depends on the element type; the one function of either that ends such an
+element, a lease's, is handed its type by its caller. What a container does on every call --
+reaching an element, putting one at an end and taking one out, holding a queue to its bound, taking
+and giving back an element's storage, ending the elements, finding or making the entry an
+associative array's index names -- is the container type's own code over the core's fields and
+entries, compiled with its caller. An element at an index lies where those fields say -- base plus
+index times element size, a queue's ring, or the entry the core or the type's own search finds --
+and every write through an index, one that makes or drops an element included, is built on one such
+body. Building, copying, comparing, streaming and taking out an element are the operations of bodies
+the compiler builds for the container type, on both backends. A fixed-size unpacked array is no
+container: its size is a constant, so the compiler lays it out in place. Revised 2026-11-12: this
+said, for the execution backend alone, that the container acts on its elements through the functions
+generated for the element type and that the compiler addresses an element without a call. Acting
+through those functions made every element operation an indirect call from the library, and a
+queue's push and pop through its core took nearly ten times the instructions of hand-written C++ of
+the same semantics, which the requirement that `-O2 --lto` code match such C++ rules out. How the
+core and the bodies divide the work is
 [a-containers-operations-are-built-for-its-type-over-a-core](a-containers-operations-are-built-for-its-type-over-a-core.md).
 
 **D7. A write reports the range it reached, and a wait decided at the write tests that range against

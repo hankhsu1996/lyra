@@ -54,26 +54,25 @@ them has a case with none.
 A declaration held by value states its storage itself, and the runtime asserts it against every
 class a backend builds there: the class the library's own entries build, which the execution backend
 calls, and the class the C++ backend names, which is another where it is a class template over the
-arguments -- the library's container class -- or a class of its own for the same value -- a wildcard
-index. The storage stated is exactly the least every one of them fits; every backend gives a holder
-that storage, so a frame holds what MIR counted; and the check is made where the library is compiled
-and where a program built against it is, so a size is stated once. The runtime pairs each
-declaration with those classes in one listing, which every check reads, and so does the layout of a
-member holding a declaration's own object; a declaration whose object is held by value or as a
-member, and is missing from that listing or listed twice, fails to compile, as does one listed whose
-object is neither. An object the library defines for a type MIR owns -- an execution, which lies in
-its maker's storage until whoever drives it takes it, a reference, a counted hold, a write in
-progress and a part designated within one, a write into an object's properties, a class handle --
-states its storage beside the enumeration of such objects, keyed by the object, and is checked
-against the classes each backend builds the same way, so every holder gives every such object the
-storage stated for it. What a layer derives from these -- whether a value of one lies in storage its
-holder keeps a claim on, whether it is storage reached only where it lies, the runtime object a
-holder builds and ends, the name its entries carry, which domains the execution backend realizes an
-entry built for a declaration for -- is a function of them, never a second statement. No second
-enumeration of the runtime's objects spells the declarations again: an object a declaration states
-as its own, and a class of the runtime's, is named by that declaration wherever the runtime is asked
-about it -- a member holding one, the part a class of the source extends, and the identifier that
-part crosses the runtime's interface by.
+arguments -- the library's container class. The storage stated is exactly the least every one of
+them fits; every backend gives a holder that storage, so a frame holds what MIR counted; and the
+check is made where the library is compiled and where a program built against it is, so a size is
+stated once. The runtime pairs each declaration with those classes in one listing, which every check
+reads, and so does the layout of a member holding a declaration's own object; a declaration whose
+object is held by value or as a member, and is missing from that listing or listed twice, fails to
+compile, as does one listed whose object is neither. An object the library defines for a type MIR
+owns -- an execution, which lies in its maker's storage until whoever drives it takes it, a
+reference, a counted hold, a write in progress and a part designated within one, a write into an
+object's properties, a class handle -- states its storage beside the enumeration of such objects,
+keyed by the object, and is checked against the classes each backend builds the same way, so every
+holder gives every such object the storage stated for it. What a layer derives from these -- whether
+a value of one lies in storage its holder keeps a claim on, whether it is storage reached only where
+it lies, the runtime object a holder builds and ends, the name its entries carry, which domains the
+execution backend realizes an entry built for a declaration for -- is a function of them, never a
+second statement. No second enumeration of the runtime's objects spells the declarations again: an
+object a declaration states as its own, and a class of the runtime's, is named by that declaration
+wherever the runtime is asked about it -- a member holding one, the part a class of the source
+extends, and the identifier that part crosses the runtime's interface by.
 
 An argument is read by the role its parameter plays, never by its position: a reader that needs an
 argument asks for it and is refused where the declaration takes none, and a reader for whom it is

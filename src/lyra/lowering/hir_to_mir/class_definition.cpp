@@ -184,17 +184,18 @@ constexpr std::array kScopePhases{
 
 // The callback answering each question `randomize()` asks of an object of a
 // source class (LRM 18.6), by the member of its record that holds it: those
-// handed the call's problem, and the hooks before and after.
-constexpr std::array kRandomizationOnProblem{
+// handed the call's problem and where the call was written, the one handed
+// the problem alone, and the hooks before and after.
+constexpr std::array kRandomizationReportingAtTheCall{
     std::pair{
         &abi::ClassObjectInfo::rand_variables,
         support::LibraryCallback::kClassRandVariables},
     std::pair{
-        &abi::ClassObjectInfo::constrain,
-        support::LibraryCallback::kClassConstrain},
-    std::pair{
         &abi::ClassObjectInfo::rand_objects,
         support::LibraryCallback::kClassRandObjects}};
+constexpr std::array kRandomizationConstrain{std::pair{
+    &abi::ClassObjectInfo::constrain,
+    support::LibraryCallback::kClassConstrain}};
 constexpr std::array kRandomizationHooks{
     std::pair{
         &abi::ClassObjectInfo::pre_randomize,
@@ -1382,6 +1383,7 @@ auto RootOf(const mir::CompilationUnit& unit, mir::ClassId id)
 struct EntryPrototypes {
   mir::TypeId on_object;
   mir::TypeId on_object_and_problem;
+  mir::TypeId on_object_problem_and_location;
   // The body answering the instance an object keeps for its class (LRM 6.22)
   // is handed the object and answers the instance.
   mir::TypeId instance_of_object;
@@ -1389,10 +1391,11 @@ struct EntryPrototypes {
   [[nodiscard]] auto Of(support::LibraryCallback callback) const
       -> mir::TypeId {
     switch (callback) {
-      case support::LibraryCallback::kClassRandVariables:
       case support::LibraryCallback::kClassConstrain:
-      case support::LibraryCallback::kClassRandObjects:
         return on_object_and_problem;
+      case support::LibraryCallback::kClassRandVariables:
+      case support::LibraryCallback::kClassRandObjects:
+        return on_object_problem_and_location;
       case support::LibraryCallback::kScopeResolve:
       case support::LibraryCallback::kScopeInitialize:
       case support::LibraryCallback::kScopeCreateProcesses:
@@ -1467,7 +1470,9 @@ auto FactsOf(
     AddBodies(facts.bodies, unit, id, kScopePhases, prototypes);
   }
   if (facts.is_class_object) {
-    AddBodies(facts.bodies, unit, id, kRandomizationOnProblem, prototypes);
+    AddBodies(
+        facts.bodies, unit, id, kRandomizationReportingAtTheCall, prototypes);
+    AddBodies(facts.bodies, unit, id, kRandomizationConstrain, prototypes);
     AddBodies(facts.bodies, unit, id, kRandomizationHooks, prototypes);
   }
   for (const mir::VirtualSlot& behavior : mir::DispatchTableOf(unit, id)) {
@@ -1549,7 +1554,8 @@ auto ClassObjectInfoAddress(
     -> mir::ConstantValue {
   using abi::ClassObjectInfo;
   mir::LibraryRecordBuilder<ClassObjectInfo> info(unit);
-  SetEntries(info, kRandomizationOnProblem, bodies);
+  SetEntries(info, kRandomizationReportingAtTheCall, bodies);
+  SetEntries(info, kRandomizationConstrain, bodies);
   SetEntries(info, kRandomizationHooks, bodies);
   return AddressOf(unit, std::move(info).Intern());
 }
@@ -1643,12 +1649,19 @@ void StateObjectDefinitions(mir::CompilationUnit& unit) {
   }
   // A body handed only the object is entered as the library enters a phase,
   // and one handed the call's problem too takes it as every body answering
-  // such a callback declares it.
+  // such a callback declares it, with where the call was written after it
+  // where the body reports there.
   const EntryPrototypes prototypes{
       .on_object = mir::LibraryRecordMemberType(unit, &abi::ScopeInfo::resolve),
       .on_object_and_problem = unit.types.Intern(
           mir::Type{mir::MachineFunctionType{
               .params = {mir::ObjectRootPointer(unit.types), *problem},
+              .result = unit.builtins.void_type}}),
+      .on_object_problem_and_location = unit.types.Intern(
+          mir::Type{mir::MachineFunctionType{
+              .params =
+                  {mir::ObjectRootPointer(unit.types), *problem,
+                   unit.builtins.source_location},
               .result = unit.builtins.void_type}}),
       .instance_of_object = mir::LibraryRecordMemberType(
           unit, &abi::ObjectDefinition::declaring_instance)};

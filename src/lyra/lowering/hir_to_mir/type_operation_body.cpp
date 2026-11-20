@@ -6,6 +6,7 @@
 #include <utility>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/lowering/hir_to_mir/associative_bodies.hpp"
 #include "lyra/lowering/hir_to_mir/bound_free_conversion.hpp"
 #include "lyra/lowering/hir_to_mir/container_bodies.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
@@ -67,7 +68,12 @@ auto MakeTypeOperationBody(
       throw InternalError("hir_to_mir: unknown type of structural operations");
     case mir::TypeOperationKind::kDefault:
       return BuildDefaultBody(unit, type);
+    // An associative array's elements are named by its index, and every other
+    // run-time-sized container's by a position.
     case mir::TypeOperationKind::kContainer:
+      if (unit.types.Get(type).IndexType().has_value()) {
+        return BuildAssociativeOperationBody(unit, source);
+      }
       return BuildArrayOperationBody(unit, source);
   }
   throw InternalError("hir_to_mir: unknown kind of type operation");

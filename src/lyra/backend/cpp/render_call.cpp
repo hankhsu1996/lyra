@@ -386,8 +386,8 @@ void WriteDirectCallee(
           // one of its items, handed the object first:
           // `sv_type_1a2b_impl::GetUnchecked(a, i)`; the free function built
           // for it, where MIR builds it for the type -- a container's or a
-          // fixed-size array's own methods, a tuple's operations -- named by
-          // the types it is instantiated at:
+          // fixed-size array's own methods and language traits' items, a
+          // tuple's operations -- named by the types it is instantiated at:
           // `sv_type_1a2b_dynamic_array_from_array_3c4d(a)`, declared in
           // every code file that calls it; and otherwise the type's default,
           // which its class declares, `S::DeclaredDefault()`.

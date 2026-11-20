@@ -5,14 +5,18 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <iterator>
+#include <list>
 #include <map>
 #include <memory>
 #include <new>
 #include <span>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
+#include "lyra/value/any_value.hpp"
 #include "lyra/value/container_lease.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_value_type.hpp"
@@ -542,10 +546,12 @@ auto ChandleKey(Index index) -> const void* {
   return static_cast<const UnmanagedRef*>(index.bytes)->Address();
 }
 
-// LRM 7.8.1: a wildcard index is read at the type it was written in, as the
-// unsigned number it names.
+// LRM 7.8.1: a wildcard index is a value of the integral type it was written
+// in, read as the unsigned number it names.
 auto WildcardKey(Index index) -> std::vector<std::uint64_t> {
-  return WildcardIndexWords(index.type->AsIntegral()->Load(index.bytes).View());
+  const auto& written = *static_cast<const AnyValue*>(index.bytes);
+  return WildcardIndexWords(
+      written.Type().AsIntegral()->Load(written.Bytes()).View());
 }
 struct WildcardLess {
   auto operator()(
@@ -555,7 +561,8 @@ struct WildcardLess {
   }
 };
 
-// The entries of an associative array, in its index order.
+// The entries of an associative array, in its index order, or for an index of
+// a kind whose order the core does not know, in the order they were made.
 class Entries {
  public:
   Entries() = default;
@@ -565,14 +572,29 @@ class Entries {
   auto operator=(Entries&&) -> Entries& = delete;
   virtual ~Entries() = default;
 
-  [[nodiscard]] virtual auto Find(Index index) const -> void* = 0;
   virtual void Insert(void* entry) = 0;
-  // Takes the entry `index` names out, answering it, or none.
-  virtual auto Remove(Index index) -> void* = 0;
+  virtual void Remove(const void* entry) = 0;
   // Forgets every entry, answering them.
   virtual auto TakeAll() -> std::vector<void*> = 0;
   [[nodiscard]] virtual auto First() const -> void* = 0;
   [[nodiscard]] virtual auto Last() const -> void* = 0;
+  [[nodiscard]] virtual auto Next(const void* entry) const -> void* = 0;
+  [[nodiscard]] virtual auto Previous(const void* entry) const -> void* = 0;
+  // The same entries as an index kind whose order the core knows keeps them,
+  // and none where the core knows no order of the index type.
+  [[nodiscard]] virtual auto Ordered() const -> const class OrderedIndices* {
+    return nullptr;
+  }
+};
+
+// The entries of an index kind whose order the core knows, which also finds
+// the entry an index names and the ones on either side of it.
+class OrderedIndices : public Entries {
+ public:
+  [[nodiscard]] auto Ordered() const -> const OrderedIndices* final {
+    return this;
+  }
+  [[nodiscard]] virtual auto Find(Index index) const -> void* = 0;
   [[nodiscard]] virtual auto After(Index index) const -> void* = 0;
   [[nodiscard]] virtual auto Before(Index index) const -> void* = 0;
 };
@@ -580,7 +602,7 @@ class Entries {
 // The entries of an index kind whose order is fixed, kept in that order by
 // the key `KeyOf` reads off each index.
 template <typename Key, typename Less, Key (*KeyOf)(Index)>
-class OrderedEntries final : public Entries {
+class OrderedEntries final : public OrderedIndices {
  public:
   explicit OrderedEntries(const ValueType& element) : element_(&element) {
   }
@@ -590,16 +612,14 @@ class OrderedEntries final : public Entries {
     return found == map_.end() ? nullptr : found->second;
   }
   void Insert(void* entry) override {
-    map_.emplace(KeyOf(IndexOfEntry(*element_, entry)), entry);
+    where_.emplace(
+        entry,
+        map_.emplace(KeyOf(IndexOfEntry(*element_, entry)), entry).first);
   }
-  auto Remove(Index index) -> void* override {
-    const auto found = map_.find(KeyOf(index));
-    if (found == map_.end()) {
-      return nullptr;
-    }
-    void* entry = found->second;
-    map_.erase(found);
-    return entry;
+  void Remove(const void* entry) override {
+    const auto found = Where(entry);
+    map_.erase(found->second);
+    where_.erase(found);
   }
   auto TakeAll() -> std::vector<void*> override {
     std::vector<void*> all;
@@ -608,6 +628,7 @@ class OrderedEntries final : public Entries {
       all.push_back(entry);
     }
     map_.clear();
+    where_.clear();
     return all;
   }
   [[nodiscard]] auto First() const -> void* override {
@@ -615,6 +636,14 @@ class OrderedEntries final : public Entries {
   }
   [[nodiscard]] auto Last() const -> void* override {
     return map_.empty() ? nullptr : map_.rbegin()->second;
+  }
+  [[nodiscard]] auto Next(const void* entry) const -> void* override {
+    const auto after = std::next(Where(entry)->second);
+    return after == map_.end() ? nullptr : after->second;
+  }
+  [[nodiscard]] auto Previous(const void* entry) const -> void* override {
+    const auto at = Where(entry)->second;
+    return at == map_.begin() ? nullptr : std::prev(at)->second;
   }
   [[nodiscard]] auto After(Index index) const -> void* override {
     const auto found = map_.upper_bound(KeyOf(index));
@@ -626,36 +655,47 @@ class OrderedEntries final : public Entries {
   }
 
  private:
+  using Map = std::map<Key, void*, Less>;
+
+  // Where the entry `entry` lies in the order, which a step from it reads
+  // without building its key again.
+  [[nodiscard]] auto Where(const void* entry) const ->
+      typename std::unordered_map<
+          const void*, typename Map::iterator>::const_iterator {
+    const auto found = where_.find(entry);
+    if (found == where_.end()) {
+      throw InternalError(
+          "an associative array is asked the entry beside one it does not "
+          "hold -- please report this as a bug");
+    }
+    return found;
+  }
+
   const ValueType* element_;
-  std::map<Key, void*, Less> map_;
+  Map map_;
+  std::unordered_map<const void*, typename Map::iterator> where_;
 };
 
 // The entries of an index type with no order the core knows, in the order
-// they were made, found by the type's equality (LRM 7.8.5).
-class UnorderedEntries final : public Entries {
+// they were made (LRM 7.8.5). The array type's own code finds an entry by its
+// index, comparing each by the index type's equality, so nothing here reads an
+// index.
+class EntriesInOrderMade final : public Entries {
  public:
-  UnorderedEntries(const ValueType& element, IndexEqual equal)
-      : element_(&element), equal_(equal) {
-  }
-
-  [[nodiscard]] auto Find(Index index) const -> void* override {
-    const auto found = Position(index);
-    return found == entries_.size() ? nullptr : entries_[found];
-  }
   void Insert(void* entry) override {
     entries_.push_back(entry);
+    where_.emplace(entry, std::prev(entries_.end()));
   }
-  auto Remove(Index index) -> void* override {
-    const auto found = Position(index);
-    if (found == entries_.size()) {
-      return nullptr;
-    }
-    void* entry = entries_[found];
-    entries_.erase(entries_.begin() + static_cast<std::ptrdiff_t>(found));
-    return entry;
+  void Remove(const void* entry) override {
+    const auto found = Where(entry);
+    entries_.erase(found->second);
+    where_.erase(found);
   }
   auto TakeAll() -> std::vector<void*> override {
-    return std::exchange(entries_, {});
+    std::vector<void*> all(entries_.begin(), entries_.end());
+    entries_.clear();
+    where_.clear();
+    return all;
   }
   [[nodiscard]] auto First() const -> void* override {
     return entries_.empty() ? nullptr : entries_.front();
@@ -663,36 +703,38 @@ class UnorderedEntries final : public Entries {
   [[nodiscard]] auto Last() const -> void* override {
     return entries_.empty() ? nullptr : entries_.back();
   }
-  // An index the array does not hold has no place in the order its entries
-  // were made in, so no entry lies after or before it.
-  [[nodiscard]] auto After(Index index) const -> void* override {
-    const auto found = Position(index);
-    return found + 1 < entries_.size() ? entries_[found + 1] : nullptr;
+  [[nodiscard]] auto Next(const void* entry) const -> void* override {
+    const auto after = std::next(Where(entry)->second);
+    return after == entries_.end() ? nullptr : *after;
   }
-  [[nodiscard]] auto Before(Index index) const -> void* override {
-    const auto found = Position(index);
-    return found != 0 && found < entries_.size() ? entries_[found - 1]
-                                                 : nullptr;
+  [[nodiscard]] auto Previous(const void* entry) const -> void* override {
+    const auto at = Where(entry)->second;
+    return at == entries_.begin() ? nullptr : *std::prev(at);
   }
 
  private:
-  [[nodiscard]] auto Position(Index index) const -> std::size_t {
-    for (std::size_t i = 0; i < entries_.size(); ++i) {
-      if (equal_(IndexIn(*element_, entries_[i]), index.bytes)) {
-        return i;
-      }
+  using Order = std::list<void*>;
+
+  // Where the entry `entry` lies in the order, which a step from it reads in
+  // constant time.
+  [[nodiscard]] auto Where(const void* entry) const
+      -> std::unordered_map<const void*, Order::iterator>::const_iterator {
+    const auto found = where_.find(entry);
+    if (found == where_.end()) {
+      throw InternalError(
+          "an associative array is asked the entry beside one it does not "
+          "hold -- please report this as a bug");
     }
-    return entries_.size();
+    return found;
   }
 
-  const ValueType* element_;
-  IndexEqual equal_;
-  std::vector<void*> entries_;
+  Order entries_;
+  std::unordered_map<const void*, Order::iterator> where_;
 };
 
 auto MakeEntries(
-    IndexKind kind, const ValueType& index, const ValueType& element,
-    IndexEqual equal) -> std::unique_ptr<Entries> {
+    IndexKind kind, const ValueType& index, const ValueType& element)
+    -> std::unique_ptr<Entries> {
   switch (kind) {
     case IndexKind::kIntegral:
       if (index.AsIntegral()->Shape().width <= 64) {
@@ -714,7 +756,7 @@ auto MakeEntries(
       return std::make_unique<OrderedEntries<
           std::vector<std::uint64_t>, WildcardLess, &WildcardKey>>(element);
     case IndexKind::kOther:
-      return std::make_unique<UnorderedEntries>(element, equal);
+      return std::make_unique<EntriesInOrderMade>();
   }
   std::unreachable();
 }
@@ -723,23 +765,40 @@ auto EntriesOf(const AssociativeArrayCore& array) -> Entries& {
   return *static_cast<Entries*>(array.entries);
 }
 
-}  // namespace
-
-void AssociativeArrayConstruct(
-    AssociativeArrayCore& out, IndexKind kind, const ValueType& index,
-    const ValueType& element, IndexEqual equal) {
-  out = AssociativeArrayCore{
-      .entries = MakeEntries(kind, index, element, equal).release(),
-      .count = 0,
-      .element = &element,
-      .index = &index,
-      .equal = equal,
-      .stated_default = nullptr,
-      .kind = kind};
+// The entries of an array whose index kind has an order the core knows, which
+// alone is handed an index to find.
+auto OrderedIndicesOf(const AssociativeArrayCore& array)
+    -> const OrderedIndices& {
+  const OrderedIndices* ordered = EntriesOf(array).Ordered();
+  if (ordered == nullptr) {
+    throw InternalError(
+        "the core of an associative array is handed an index of a type whose "
+        "order it does not know -- please report this as a bug");
+  }
+  return *ordered;
 }
 
-void AssociativeArrayMove(
-    AssociativeArrayCore& from, AssociativeArrayCore& out) noexcept {
+}  // namespace
+
+auto AssociativeArrayConstruct(
+    std::int64_t kind, const ValueType* index, const ValueType* element)
+    -> AssociativeArrayCore {
+  if (kind < 0 || kind > static_cast<std::int64_t>(IndexKind::kOther)) {
+    throw InternalError(
+        "an associative array is built over a kind of index no kind names -- "
+        "please report this as a bug");
+  }
+  return AssociativeArrayCore{
+      .entries =
+          MakeEntries(static_cast<IndexKind>(kind), *index, *element).release(),
+      .count = 0,
+      .element = element,
+      .index = index,
+      .stated_default = nullptr,
+      .kind = static_cast<IndexKind>(kind)};
+}
+
+void TakeCore(AssociativeArrayCore& from, AssociativeArrayCore& out) noexcept {
   out = from;
   from.entries = nullptr;
   from.count = 0;
@@ -758,17 +817,23 @@ void AssociativeArrayEnd(AssociativeArrayCore& array) noexcept {
   }
 }
 
-auto AssociativeArrayFind(
-    const AssociativeArrayCore& array, const void* index,
-    const ValueType& index_type) -> void* {
-  return EntriesOf(array).Find({.bytes = index, .type = &index_type});
+void AssociativeArrayAdopt(
+    AssociativeArrayCore& array, AssociativeArrayCore& from) noexcept {
+  AssociativeArrayEnd(array);
+  TakeCore(from, array);
 }
 
-auto AssociativeArrayPrepare(
-    const AssociativeArrayCore& array, const ValueType& index_type) -> void* {
-  const EntryShape shape(*array.element, index_type);
+auto AssociativeArrayFind(const AssociativeArrayCore& array, const void* index)
+    -> void* {
+  return OrderedIndicesOf(array).Find({.bytes = index, .type = array.index});
+}
+
+// The entry holds the index type beside its index, so that a lease ending it
+// after the array that made it has ended knows how (LRM 13.5.2).
+auto AssociativeArrayPrepare(const AssociativeArrayCore& array) -> void* {
+  const EntryShape shape(*array.element, *array.index);
   void* entry = NewSlot(shape.slot, shape.size);
-  *static_cast<const ValueType**>(Offset(entry, shape.type_at)) = &index_type;
+  *static_cast<const ValueType**>(Offset(entry, shape.type_at)) = array.index;
   return entry;
 }
 
@@ -782,14 +847,11 @@ void AssociativeArrayCommit(AssociativeArrayCore& array, void* element) {
   ++array.count;
 }
 
-void AssociativeArrayErase(
-    AssociativeArrayCore& array, const void* index,
-    const ValueType& index_type) noexcept {
-  if (void* entry =
-          EntriesOf(array).Remove({.bytes = index, .type = &index_type})) {
-    --array.count;
-    ReleaseEntry(*array.element, entry);
-  }
+void AssociativeArrayRemove(
+    AssociativeArrayCore& array, void* element) noexcept {
+  EntriesOf(array).Remove(element);
+  --array.count;
+  ReleaseEntry(*array.element, element);
 }
 
 void AssociativeArrayClear(AssociativeArrayCore& array) noexcept {
@@ -809,24 +871,22 @@ auto AssociativeArrayLast(const AssociativeArrayCore& array) -> void* {
 
 auto AssociativeArrayNext(
     const AssociativeArrayCore& array, const void* element) -> void* {
-  return EntriesOf(array).After(IndexOfEntry(*array.element, element));
+  return EntriesOf(array).Next(element);
 }
 
 auto AssociativeArrayPrevious(
     const AssociativeArrayCore& array, const void* element) -> void* {
-  return EntriesOf(array).Before(IndexOfEntry(*array.element, element));
+  return EntriesOf(array).Previous(element);
 }
 
-auto AssociativeArrayAfter(
-    const AssociativeArrayCore& array, const void* index,
-    const ValueType& index_type) -> void* {
-  return EntriesOf(array).After({.bytes = index, .type = &index_type});
+auto AssociativeArrayAfter(const AssociativeArrayCore& array, const void* index)
+    -> void* {
+  return OrderedIndicesOf(array).After({.bytes = index, .type = array.index});
 }
 
 auto AssociativeArrayBefore(
-    const AssociativeArrayCore& array, const void* index,
-    const ValueType& index_type) -> void* {
-  return EntriesOf(array).Before({.bytes = index, .type = &index_type});
+    const AssociativeArrayCore& array, const void* index) -> void* {
+  return OrderedIndicesOf(array).Before({.bytes = index, .type = array.index});
 }
 
 auto AssociativeArrayPrepareDefault(const AssociativeArrayCore& array)

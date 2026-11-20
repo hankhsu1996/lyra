@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -39,6 +40,18 @@
 #include "lyra/support/value_operation.hpp"
 
 namespace lyra::lowering::hir_to_mir {
+
+// The rows of `first` followed by those of `second`, which a kind's table of
+// bodies is built of: its own methods' rows, then its language traits'.
+template <typename Row, std::size_t M, std::size_t N>
+consteval auto Concatenated(
+    const std::array<Row, M>& first, const std::array<Row, N>& second)
+    -> std::array<Row, M + N> {
+  std::array<Row, M + N> rows{};
+  std::ranges::copy(first, rows.begin());
+  std::ranges::copy(second, rows.begin() + M);
+  return rows;
+}
 
 // The receiver and the operands of a call of the operation `declared`
 // declares, each handed as its parameter takes it: borrowed where it takes a
@@ -128,6 +141,21 @@ class OperationBodies {
   // The one-bit type `==` answers over two values of this type.
   [[nodiscard]] auto EqualityAnswer() const -> mir::TypeId {
     return equality_answer_;
+  }
+
+  // Whether the stream of an array of `element` is one this lowering builds.
+  // An element holding a class handle streams the object the handle refers to
+  // (LRM 6.24.3), which is not yet supported, so each question about such an
+  // array's stream is a body telling the design so where it is asked,
+  // answering `answer`.
+  [[nodiscard]] auto StreamsItsElements(mir::TypeId element) const -> bool {
+    return !mir::HoldsClassHandle(Unit(), element);
+  }
+  void RefuseTheStream(mir::Builder block, mir::ExprId answer) const {
+    mir::AppendRunTimeCheck(
+        Unit(), block, BuildMachineBool(Unit(), block, false),
+        "streaming the object a class handle refers to is not yet supported");
+    block.AppendStmt(mir::ReturnStmt{.value = answer});
   }
 
   // `return` of what `answer(taken)` builds where `condition` holds, stated
@@ -302,8 +330,8 @@ class OperationBodies {
   }
 
   // The body answering `answers`, built by `answer`, which takes the item of
-  // each trait and each of the type's own methods. A step of a value's life
-  // and a bound-free conversion are never one of these types' own.
+  // each trait and each operation the type is called by. A step of a value's
+  // life and a bound-free conversion are never one of these types' own.
   template <typename Answer>
   static auto Dispatched(support::ValueOperation answers, Answer answer)
       -> mir::CallableCode {
@@ -355,16 +383,105 @@ class OperationBodies {
         std::move(operands), result);
   }
 
-  // What the parameter `local` refers to, of `type`, as the place it is.
+  // What the parameter `local` refers to, of `type`, as the place it is,
+  // reached through a reference of `mutability`, read-only where none is said.
   auto Referent(mir::Builder block, mir::LocalId local, mir::TypeId type)
       -> mir::ExprId {
     return block.Deref(
         Unit().types, block.LocalPlace(local, ReferenceTo(Unit(), type)), type);
   }
+  auto Referent(
+      mir::Builder block, mir::LocalId local, mir::TypeId type,
+      mir::Mutability mutability) -> mir::ExprId {
+    const mir::TypeId reference = Unit().types.Intern(
+        mir::Type{
+            mir::ReferenceType{.referent = type, .mutability = mutability}});
+    return block.Deref(Unit().types, block.LocalPlace(local, reference), type);
+  }
 
   // The value of this type the parameter `local` refers to.
   auto Whole(mir::Builder block, mir::LocalId local) -> mir::ExprId {
     return Referent(block, local, whole_);
+  }
+
+  // What the parameter `local` refers to, a value of this type, as the place
+  // it is, to read or to write.
+  auto Array(mir::Builder block, mir::LocalId local, mir::Mutability mutability)
+      -> mir::ExprId {
+    return Referent(block, local, whole_, mutability);
+  }
+  auto Read(mir::Builder block, mir::LocalId local) -> mir::ExprId {
+    return Array(block, local, mir::Mutability::kReadOnly);
+  }
+  auto Written(mir::Builder block, mir::LocalId local) -> mir::ExprId {
+    return Array(block, local, mir::Mutability::kMutable);
+  }
+
+  // A call of the core's entry `fn` on the array the place `array` names.
+  static auto Core(
+      mir::Builder block, support::BuiltinFn fn, mir::ExprId array,
+      std::vector<mir::ExprId> arguments, mir::TypeId result) -> mir::ExprId {
+    return block.Add(
+        mir::Expr{
+            .data =
+                mir::CallExpr{
+                    .callee = mir::Direct{.target = fn, .receiver = array},
+                    .arguments = std::move(arguments)},
+            .type = result});
+  }
+  static void Statement(mir::Builder block, mir::ExprId expr) {
+    block.AppendStmt(mir::ExprStmt{.expr = expr});
+  }
+  static auto CastTo(mir::Builder block, mir::ExprId value, mir::TypeId type)
+      -> mir::ExprId {
+    return block.Add(
+        mir::Expr{.data = mir::CastExpr{.operand = value}, .type = type});
+  }
+  // Whether the address `address` is no address.
+  auto IsNull(mir::Builder block, mir::ExprId address) -> mir::ExprId {
+    return BuildIsNull(Unit(), block, address);
+  }
+
+  // A call of the entry `fn` on the words of a memory task (LRM 21.4, 21.5)
+  // the parameter `words` refers to.
+  auto AskWords(
+      mir::Builder block, mir::LocalId words, support::BuiltinFn fn,
+      std::vector<mir::ExprId> arguments, mir::TypeId result) -> mir::ExprId {
+    return Core(block, fn, Words(block, words), std::move(arguments), result);
+  }
+  // The words the parameter `words` refers to, which a task's reads and
+  // plans and a dump's words change.
+  auto Words(mir::Builder block, mir::LocalId words) -> mir::ExprId {
+    return Referent(
+        block, words,
+        mir::LibraryTypeOf(Unit().types, support::LibraryDecl::kMemoryWords),
+        mir::Mutability::kMutable);
+  }
+  void TellWords(
+      mir::Builder block, mir::LocalId words, support::BuiltinFn fn,
+      std::vector<mir::ExprId> arguments) {
+    Statement(
+        block,
+        AskWords(
+            block, words, fn, std::move(arguments), Unit().builtins.void_type));
+  }
+  // What the entry `fn` answers on `receiver` for its element `k`, a machine
+  // index, told the type `type` it answers at: a memory task's word, or a
+  // DPI-C open array image's element, each at the type of the array's words.
+  static auto ElementAt(
+      mir::Builder block, support::BuiltinFn fn, mir::ExprId receiver,
+      mir::ExprId k, mir::TypeId type) -> mir::ExprId {
+    return block.Add(
+        mir::Expr{
+            .data =
+                mir::CallExpr{
+                    .callee =
+                        mir::Direct{
+                            .target = fn,
+                            .receiver = receiver,
+                            .type_arguments = {type}},
+                    .arguments = {k}},
+            .type = type});
   }
 
   // Member `i` of the value the parameter `local` refers to, where it lies:
@@ -390,8 +507,8 @@ class OperationBodies {
     return local;
   }
 
-  // Such a local holding a machine count; what it holds now; it moved to
-  // `value`; and a count the lowering holds, written as one.
+  // Such a local holding a machine number, a count or an index; what it holds
+  // now; it moved to `value`; and a count the lowering holds, written as one.
   auto DeclaredCount(
       mir::CallableCode& code, mir::Builder block, mir::ExprId initial)
       -> mir::LocalId {
@@ -413,6 +530,56 @@ class OperationBodies {
   }
   auto CountLiteral(mir::Builder block, std::uint64_t count) -> mir::ExprId {
     return mir::BuildMachineCount(Unit(), block, count);
+  }
+
+  // A loop over the machine indexes below the machine count `count`, read
+  // once ahead of the loop, after what `block` holds, whose body
+  // `each(body, index)` states, `index` the local holding each in turn. It
+  // counts a machine integer, as Rust's `for idx in 0..len` over a slice
+  // counts a `usize`, so no step of the loop is a four-state one.
+  template <typename Each>
+  void ForEachIndex(
+      mir::CallableCode& code, mir::Builder block, mir::ExprId count,
+      Each each) {
+    ForEachIndexBetween(code, block, CountLiteral(block, 0), count, each);
+  }
+  // The same over the machine indexes from `from` up to `below`.
+  template <typename Each>
+  void ForEachIndexBetween(
+      mir::CallableCode& code, mir::Builder block, mir::ExprId from,
+      mir::ExprId below, Each each) {
+    StepThrough(code, block, from, below, 1, each);
+  }
+  // A loop counting a machine integer from `from` up to `below`, read once
+  // ahead of the loop, by `stride`, after what `block` holds, whose body
+  // `each(body, at)` states, `at` the local holding each value in turn.
+  template <typename Each>
+  void StepThrough(
+      mir::CallableCode& code, mir::Builder block, mir::ExprId from,
+      mir::ExprId below, std::int64_t stride, Each each) {
+    const mir::TypeId machine = Unit().builtins.machine_int64;
+    const mir::LocalId limit = DeclaredCount(code, block, below);
+    const mir::LocalId at = code.AddLocal(machine);
+    mir::Block body;
+    mir::Builder body_builder = block.Into(body);
+    each(body_builder, at);
+    const mir::BlockId scope = block.AddScope(std::move(body));
+    const mir::ExprId within = mir::BuildMachineIntComparison(
+        Unit(), block, mir::BinaryOp::kLessThan, block.ReadLocal(at, machine),
+        block.ReadLocal(limit, machine));
+    const mir::ExprId next = mir::BuildMachineIntBinary(
+        Unit(), block, mir::BinaryOp::kAdd, block.ReadLocal(at, machine),
+        mir::BuildMachineIntLiteral(Unit(), block, stride));
+    std::vector<mir::ForInit> init;
+    init.emplace_back(mir::ForInitDecl{.induction_var = at, .init = from});
+    block.AppendStmt(
+        mir::ForStmt{
+            .init = std::move(init),
+            .condition = within,
+            .step = {block.Add(
+                mir::MakeAssignExpr(
+                    Unit().builtins, block.LocalPlace(at, machine), next))},
+            .scope = scope});
   }
 
   // The bits a part whose width the program decides takes of the run of
@@ -562,14 +729,7 @@ class OperationBodies {
   }
   // The value a body writing positions writes, where it lies.
   auto Written(mir::Builder block, const PositionsWrite& write) -> mir::ExprId {
-    return block.Deref(
-        Unit().types,
-        block.LocalPlace(
-            write.written, Unit().types.Intern(
-                               mir::Type{mir::ReferenceType{
-                                   .referent = whole_,
-                                   .mutability = mir::Mutability::kMutable}})),
-        whole_);
+    return Written(block, write.written);
   }
   auto ViewOf(mir::Builder block, const PositionsWrite& write) -> mir::ExprId {
     return block.ReadLocal(write.view, PositionsReadType());

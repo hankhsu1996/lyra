@@ -156,10 +156,11 @@ enum class BuiltinFn : std::uint16_t {
   kReverse,
   // An array whose elements a position names is sorted by its keys instead:
   // the positions its keys come from once in ascending order, or descending,
-  // which the library answers by comparing the keys as the kind of value they
-  // are -- integral, real or string, the only types the relational operators
-  // order (LRM 11.4.4, 6.16) -- and the array's elements put in an order of
-  // positions where they lie, which the array type's own body does.
+  // which a dynamic array of positions answers by a body of its own for the
+  // keys' type, comparing them by that type's own operators -- integral, real
+  // or string, the only types the relational operators order (LRM 11.4.4,
+  // 6.16) -- and the array's elements put in an order of positions where they
+  // lie, which the array type's own body does.
   kSortOrder,
   kApplyOrder,
   // LRM 7.10 queue insertion / removal.
@@ -168,40 +169,72 @@ enum class BuiltinFn : std::uint16_t {
   kPopBack,
   kPushFront,
   kPushBack,
-  // LRM 7.9. The traversal family (LRM 7.9.4 -- 7.9.7) writes the
-  // visited key through a `ref` index argument and returns 0 / 1 / -1.
+  // LRM 7.9: whether an index names an entry, and where the least, the
+  // greatest, the next greater and the next lesser index the array holds lies
+  // (LRM 7.9.4 -- 7.9.7), none where there is no such index; the use writes
+  // the one visited back and answers 1 or 0 (LRM 7.9.8).
   kExists,
   kAssocFirst,
   kAssocLast,
   kAssocNext,
   kAssocPrev,
-  // The smallest and largest currently allocated index (LRM 20.7 `$low` /
-  // `$high` over an associative dimension). Where no index is allocated each
-  // answers its answer type's default, which is the `'x` LRM 20.7 requires,
-  // since the query answers a 4-state type.
+  // The smallest and largest index an associative dimension holds (LRM 20.7
+  // `$low` / `$high`), each the array's first or last index read at the answer
+  // type, which holds its default where none is held: the `'x` LRM 20.7
+  // requires, since the query answers a 4-state type.
   kAssocMinIndex,
   kAssocMaxIndex,
-  // LRM 7.9.11: an associative array equal to the one acted on whose read of
-  // an index holding no entry yields the value stated, which is what a
-  // literal's `default:` asks for.
-  kAssocWithDefault,
-  // LRM 7.9.11: whether the array acted on was given a value its absent indexes
-  // read, as a machine boolean, and the value they read, which is the element
-  // type's default where none was given (LRM 7.8.6). An array built out of
-  // another's entries carries that value with them, as an assignment of the
-  // whole array does.
-  kAssocHasStatedDefault,
-  kAssocAbsentValue,
+  // LRM 7.9.11: where the value a `default:` clause gave an associative array
+  // lies, none where no clause gave one, which every index naming no entry
+  // reads; and that value set.
+  kAssocStatedDefault,
+  kAssocSetStatedDefault,
   // The accesses and the removal above as an associative array takes them (LRM
-  // 7.8, 7.9.3): by the key the source wrote, a value of the type it was
-  // written in, where every other container is reached by a position. A key
-  // and a position are different operands, so each access is an entry of its
-  // own, named where the source is read and the array's type is in hand.
+  // 7.8, 7.9.2): by the index the source wrote, where every other container is
+  // reached by a position. An index and a position are different operands, so
+  // each access is an entry of its own, named where the source is read and the
+  // array's type is in hand.
   kAssocElement,
   kAssocElementMut,
   kAssocDesignateElement,
   kAssocReferElement,
   kAssocDeleteIndex,
+  // What an associative array's core does with its entries (LRM 7.8), each a
+  // function of the library compiled once: an array of no entries told its
+  // index kind and the records of its index and element types; finding the
+  // entry an index of a kind whose order the core knows names; storage for an
+  // entry, where its index lies, and committing it; removing one or every
+  // entry; the entries in order, and the one after or before an index; the
+  // value a `default:` clause gives, its storage and setting it; ending the
+  // whole.
+  kAssociativeArrayConstruct,
+  kAssociativeArrayFind,
+  kAssociativeArrayPrepare,
+  kAssociativeArrayIndexOf,
+  kAssociativeArrayCommit,
+  kAssociativeArrayRemove,
+  kAssociativeArrayClear,
+  kAssociativeArrayFirst,
+  kAssociativeArrayLast,
+  kAssociativeArrayNext,
+  kAssociativeArrayPrevious,
+  kAssociativeArrayAfter,
+  kAssociativeArrayBefore,
+  kAssociativeArrayPrepareDefault,
+  kAssociativeArraySetDefault,
+  kAssociativeArrayStatedDefault,
+  kAssociativeArrayEnd,
+  kAssociativeArrayAdopt,
+  // LRM 7.8.6: a read through an index holding x or z, or naming no entry, of
+  // an array with no `default:` value, which reads the element default, and a
+  // write through an index holding x or z, which is ignored; each said where
+  // it was written.
+  kAssociativeArrayReadAtAnInvalidIndex,
+  kAssociativeArrayReadAtAMissingEntry,
+  kAssociativeArrayWrittenAtAnInvalidIndex,
+  // LRM 7.8.1: whether a wildcard index holds an x or a z, which names no
+  // entry (LRM 7.8.6).
+  kWildcardIndexHasUnknown,
   // LRM 6.16 string methods.
   kGetc,
   kPutc,
@@ -507,8 +540,8 @@ enum class BuiltinFn : std::uint16_t {
   // property reference names storage of, which the reference itself states;
   // and an element of a queue or an associative array, or a dynamic array's
   // elements, which only the step into the element can lease, so that step
-  // takes the lease, a dynamic array's and a queue's each its own. Then the
-  // reference a leased one carries, which is what the call is handed.
+  // takes the lease, each kind its own. Then the reference a leased one
+  // carries, which is what the call is handed.
   kLeaseObject,
   kReferElementLeased,
   kQueueReferElementLeased,
@@ -786,7 +819,7 @@ enum class BuiltinFn : std::uint16_t {
   kFileGets,
   kFileScan,
   kFileRead,
-  kFileReadMemory,
+  kFileReadWords,
   kFileSeek,
   kFileRewind,
   kFileTell,
@@ -879,11 +912,11 @@ enum class BuiltinFn : std::uint16_t {
   kRunHostCommand,
   kRunNullHostCommand,
   // LRM 21.4 $readmemh / $readmemb and LRM 21.5 $writememh / $writememb. Free
-  // functions on `lyra::runtime` taking the runtime handle, the memory, the
-  // file name, whatever addressing that memory's own kind states, the digit
-  // radix (16 / 2), and the address the run starts from. A load completes with
-  // the memory it filled, since a word the file does not address keeps what it
-  // held.
+  // functions on `lyra::runtime` taking the runtime handle, the file name, the
+  // declared ranges of a memory of fixed size and none of any other, the digit
+  // radix (16 / 2), and the address the run starts from, each answering the
+  // words the task moves between the file and the memory, which the memory
+  // type's own code then reads or writes through the entries below.
   //
   // Running upward from a start and running within a start-and-finish window
   // are two requests: the window bounds the addresses the file may name, lets
@@ -893,13 +926,45 @@ enum class BuiltinFn : std::uint16_t {
   //
   // A load into a memory of an enumerated type takes only the members' values
   // as words (LRM 21.4.2), so it is a load of its own, handed the
-  // enumeration's member list after the memory.
+  // enumeration's member list before the file name.
   kReadMem,
   kReadMemWithin,
   kReadEnumeratedMem,
   kReadEnumeratedMemWithin,
   kWriteMem,
   kWriteMemWithin,
+  // What a memory's own code asks of the words a task moves. A load reads the
+  // file by the addressing of the memory's kind -- its declared ranges, a count
+  // of elements from 0, or keys -- and a dump plans the order it writes in;
+  // then each word is asked its position in each dimension or its key, a
+  // load's word at the type of the memory's words, and a dump's word or entry
+  // is handed over, before the dump is written.
+  kMemoryWordsReadGrid,
+  kMemoryWordsReadDense,
+  kMemoryWordsReadKeyed,
+  kMemoryWordsPlanGrid,
+  kMemoryWordsPlanDense,
+  kMemoryWordsCount,
+  kMemoryWordsOrdinal,
+  kMemoryWordsKey,
+  kMemoryWordsBytesRead,
+  kMemoryWordsWord,
+  kMemoryWordsPut,
+  kMemoryWordsPutKeyed,
+  kMemoryWordsCommit,
+  // A memory's own code for a memory task (LRM 21.4, 21.5): its words taken
+  // from what a load read, each landing on the element its address names, and
+  // its words handed to a dump in the order the dump writes them.
+  kLoadWords,
+  kStoreWords,
+  // An array's own code for a DPI-C open array (LRM 35.5.6.1, Annex H.12): its
+  // elements written into the image in the image's order before the foreign
+  // call, and read back out of it after.
+  kToImage,
+  kFromImage,
+  // An array's own code walking it for a call of `randomize()` (LRM 18.4),
+  // after the call began the walk on the variable it is or lies in.
+  kWalkRandom,
   // LRM 9.4.1 `#N`. The runtime free functions answering the wait of a delay.
   // Each call takes the runtime handle, the amount of time the design asked to
   // wait, and the calling scope's time unit and precision powers; the runtime
@@ -1289,6 +1354,18 @@ enum class BuiltinFn : std::uint16_t {
   kConstraintMembers,
   kConstraintRand,
   kConstraintRandc,
+  // A random variable walked by its own type's code after a call above, or a
+  // listing, a reach through handles or a uniqueness set, begins the walk on
+  // the whole of it (LRM 18.4): an array of a fixed size it holds, one whose
+  // size the program chooses, and a value, the last two named by a reference
+  // and the type a record names, and each element's position entered before
+  // it and left after it, until the walk ends.
+  kRandomWalkFixedArray,
+  kRandomWalkResizableArray,
+  kRandomWalkEnter,
+  kRandomWalkLeave,
+  kRandomWalkLeaf,
+  kRandomWalkEnd,
   kConstraintVariable,
   kConstraintConstant,
   kRandomizeNested,
@@ -1487,13 +1564,17 @@ enum class BuiltinFn : std::uint16_t {
   kDpiLogicBufferData,
   // The open-array boundary image (LRM 35.5.6.1, Annex H.12).
   // `kDpiOpenArrayHandle` reads the opaque handle the foreign side receives in
-  // place of the actual; `kDpiOpenArrayValue` reads the image back as an SV
-  // value of the type it answers, whose every layer is of fixed size, which is
-  // what an `output` / `inout` open array stores into its actual. Each takes as
-  // its receiver the image, which the call site builds from the actual before
-  // the foreign call.
+  // place of the actual. The rest are what the actual's own code asks of the
+  // image as it fills it before the foreign call and reads it back after: how
+  // many elements it holds, the ordinal in the actual's unpacked dimension
+  // where its element at a position lies, and that element written from a
+  // value and read back at the type of the actual's elements. Each takes the
+  // image as its receiver.
   kDpiOpenArrayHandle,
-  kDpiOpenArrayValue,
+  kDpiOpenArrayElementCount,
+  kDpiOpenArrayOrdinal,
+  kDpiOpenArrayPut,
+  kDpiOpenArrayWord,
   // Runs a DPI-C import task's foreign call (LRM 35.5.2) on a fiber whose
   // native stack can be parked while simulation time advances. It is where the
   // import's caller stops, so it answers whether the caller must give up
@@ -1598,19 +1679,14 @@ enum class BuiltinFn : std::uint16_t {
   // The values the types the library declares start as, each built out of no
   // operands and called at the type it builds: a string of no characters, a
   // value of any type holding none and a run of no bits (LRM Table 6-7,
-  // 15.4.9, 11.4.14.1); a dynamic array, a queue and an associative array of no
-  // elements, each told the type it builds (LRM Table 7-1); and a weak
-  // reference referring to nothing (LRM 8.30).
+  // 15.4.9, 11.4.14.1); and a weak reference referring to nothing (LRM 8.30).
   kDefault,
-  kContainerDefault,
   kWeakReferenceDefault,
   // The constructors of the types the library declares, each reached by a
   // construction of the type it builds and by no call. A string is built from
-  // the host text it holds, an associative array from its entries (LRM
-  // 7.9.11), and a wildcard index from the integral value it is, which keeps
-  // the type it was written in (LRM 7.8.1).
+  // the host text it holds, and a wildcard index from the integral value it
+  // is, which keeps the type it was written in (LRM 7.8.1).
   kStringFromText,
-  kAssociativeArrayFromEntries,
   kWildcardIndexMake,
   // What a print, a wait and a call across the DPI-C boundary are built from:
   // the identity a child of the hierarchy carries (LRM 23.3.3.5), a leaf of a
@@ -1838,8 +1914,9 @@ enum class OperandReading : std::uint8_t {
   // A value of a type the entry keeps and acts on afterwards, crossing with
   // that type, since the entry was compiled without it.
   kTyped,
-  // The key an associative array is reached by, crossing with its type,
-  // since the array holds no index type of its own. Only an entry acting on
+  // The key an associative array is reached by, brought to the array's index
+  // type where the source wrote it (LRM 7.8.4), so its bytes are all that
+  // crosses: the array's type states its index type. Only an entry acting on
   // an associative array reads an operand so (LRM 7.8).
   kKey,
   // A count, a flag, a code address, storage the entry acts on, or a value or

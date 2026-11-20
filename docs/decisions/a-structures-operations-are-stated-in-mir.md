@@ -119,9 +119,9 @@ call, and so is every whole-value question a structure's own body asks of a memb
   `PartialEq` -- are generic over those components. A unit builds one only where its code calls it,
   as rustc builds `PartialEq for (A, B)` only where something calls it: a tagged union's comparison
   reaching a member of no data calls the tuple of no components. A tuple a lowering composes for
-  itself -- a completion's answer, the targets of a scan, an associative entry -- is compared by
-  nothing and gets none. Revised 2026-11-01: this said a tuple has no operations, which held until a
-  member of no data became the tuple of no components.
+  itself -- a completion's answer, the targets of a scan -- is compared by nothing and gets none.
+  Revised 2026-11-01: this said a tuple has no operations, which held until a member of no data
+  became the tuple of no components.
 - The methods are built while the declaration is made, so what a method answers of the structure
   itself -- whether it can hold an unknown, how wide its stream is -- is read off its members, and a
   method asking another of the structure's own questions names that method by the declaration being

@@ -1,10 +1,14 @@
 #include "lyra/diag/failure_context.hpp"
 
+#include <algorithm>
+#include <array>
+#include <cstddef>
 #include <exception>
 #include <format>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 #include <variant>
 
@@ -19,19 +23,39 @@ namespace lyra::diag {
 namespace {
 
 // What an exception left behind on its way out: the innermost place, and the
-// names from the innermost outward, already joined as a reader sees them.
+// names from the innermost outward, already joined as a reader sees them, as
+// far as they fit. A trail is written while the exception unwinds, so writing
+// it allocates nothing, which an exception thrown because memory ran out could
+// not survive; and it is trivially destructible, so no thread-exit destructor
+// is registered with the C library, a registration that ends the process
+// outright where memory has run out. The names a trail keeps are the
+// innermost, which place the failure.
 struct Trail {
   std::optional<SourceSpan> place;
-  std::string names;
+  std::array<char, 1024> names{};
+  std::size_t names_length = 0;
+
+  [[nodiscard]] auto Names() const -> std::string_view {
+    return {names.data(), names_length};
+  }
+  template <typename... Args>
+  void Append(std::format_string<Args...> format, Args&&... args) {
+    const auto room = static_cast<std::ptrdiff_t>(names.size() - names_length);
+    const auto written = std::format_to_n(
+        names.begin() + static_cast<std::ptrdiff_t>(names_length), room, format,
+        std::forward<Args>(args)...);
+    names_length += static_cast<std::size_t>(std::min(written.size, room));
+  }
 };
 
 struct ThreadWork {
   int in_progress = 0;
   Trail trail;
 };
+static_assert(std::is_trivially_destructible_v<ThreadWork>);
 
 auto Work() -> ThreadWork& {
-  thread_local ThreadWork work;
+  constinit thread_local ThreadWork work;
   return work;
 }
 
@@ -81,10 +105,10 @@ FailureContext::~FailureContext() {
             }
           },
           [&](const Named& named) {
-            if (!trail.names.empty()) {
-              trail.names += ", ";
+            if (trail.names_length != 0) {
+              trail.Append(", ");
             }
-            trail.names += std::format("{} '{}'", named.what, named.name);
+            trail.Append("{} '{}'", named.what, named.name);
           }},
       said_);
 }
@@ -96,8 +120,9 @@ auto InternalFailure(const std::exception& failure) -> Diagnostic {
   const Trail trail = std::exchange(Work().trail, Trail{});
   const DiagSpan place = trail.place.has_value() ? DiagSpan{*trail.place}
                                                  : DiagSpan{UnknownSpan{}};
-  const std::string names =
-      trail.names.empty() ? std::string{} : std::format(" ({})", trail.names);
+  const std::string names = trail.names_length == 0
+                                ? std::string{}
+                                : std::format(" ({})", trail.Names());
   if (checked != nullptr) {
     return Make(
         place, DiagCode::kInternalFailure, "{}{}", checked->Invariant(), names);

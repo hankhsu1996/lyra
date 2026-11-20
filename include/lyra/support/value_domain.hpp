@@ -54,11 +54,11 @@ enum class ValueDomain : std::uint8_t {
   kUnmanagedRef,
   // A value laid out by a type the design is compiled with, which the type it
   // is told describes: a structure, a union, a tuple a lowering composes, a
-  // fixed-size unpacked array, or a dynamic array or a queue, whose bytes are
-  // the core keeping its elements. The library does what it does with one by
-  // the type alone, so one realization serves every such value.
+  // fixed-size unpacked array, or a dynamic array, a queue or an associative
+  // array, whose bytes are the core keeping its elements. The library does
+  // what it does with one by the type alone, so one realization serves every
+  // such value.
   kLaidOut,
-  kAssocArray,
   kManagedRef,
 };
 

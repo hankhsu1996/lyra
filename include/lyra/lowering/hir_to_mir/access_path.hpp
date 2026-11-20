@@ -299,6 +299,13 @@ using HoldLease = std::function<mir::ExprId(mir::ExprId leased)>;
     const mir::CompilationUnit& unit, mir::Builder block,
     const DescentStep& step, mir::ExprId receiver) -> mir::Expr;
 
+// A reference to the part `step` reaches in what the reference `reference`
+// names, formed as a reference to a part of a variable is (LRM 13.5.2): the
+// part's storage, written through the whole's holder.
+[[nodiscard]] auto LentStep(
+    const mir::CompilationUnit& unit, mir::Builder block,
+    const DescentStep& step, mir::ExprId reference) -> mir::ExprId;
+
 // The part `step` reaches in what `receiver` names, taken for a read, at the
 // part's type: the part itself where it is storage of its own -- a field, or
 // what the reference an element's read form answers refers to -- and otherwise

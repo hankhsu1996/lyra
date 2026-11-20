@@ -88,7 +88,8 @@ TEST(MirImplTest, AFixedSizeArrayHasEachItemItsInterfaceDeclares) {
   EXPECT_TRUE(implements(of_ints, support::kFixedStream));
   EXPECT_TRUE(has_item(of_maps, support::StreamItem::kToBitVec));
   EXPECT_FALSE(has_item(of_maps, support::StreamItem::kFromBitVec));
-  EXPECT_FALSE(implements(of_maps, support::kStream));
+  EXPECT_TRUE(implements(of_maps, support::kStream));
+  EXPECT_FALSE(implements(of_maps, support::kStreamRead));
 }
 
 }  // namespace

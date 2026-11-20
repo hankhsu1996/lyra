@@ -84,12 +84,14 @@ arguments of that call are what the container's type does not already state, eve
 operand. For a dynamic array and a queue those are the element list and how many times it repeats,
 an empty one being the list with no elements. A queue's declared bound (LRM 7.10.5) is not among
 them: it is a fact of the queue's type, which the construction is told as it is told a fixed-size
-array's count, so what a queue's construction takes does not depend on whether it is bounded. For an
-associative array they are its entries. The value a literal's `default:` states (LRM 7.9.11) is no
-argument of the construction: the source may or may not write one, and a construction told apart by
+array's count, so what a queue's construction takes does not depend on whether it is bounded. An
+associative array's construction takes none: a literal is the empty array its type's default builds,
+each entry written into it as the array's own element write writes one, so a later entry of an equal
+index writes over an earlier one. The value a literal's `default:` states (LRM 7.9.11) is no
+argument of a construction: the source may or may not write one, and a construction told apart by
 how many arguments arrived is what this record rules out, so it is the operand of an operation on
-the array the entries built. A fixed-size array's type fixes its count, so its construction takes
-the list alone, laid down again and again until the array is full
+the array the entries were written into. A fixed-size array's type fixes its count, so its
+construction takes the list alone, laid down again and again until the array is full
 ([a-fixed-array-is-laid-out-by-its-type](a-fixed-array-is-laid-out-by-its-type.md)). What an element
 holds before it is written is among none of them, for any array kind: the element's type states it
 ([an-arrays-element-default-is-its-element-types](an-arrays-element-default-is-its-element-types.md)).
