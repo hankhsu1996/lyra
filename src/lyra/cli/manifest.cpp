@@ -922,22 +922,28 @@ auto LoadDeclarations(
     const fs::path& path, slang::SourceManager& sources,
     const BuildReading& given, const PortStoreChoice& ports)
     -> diag::Result<Declarations> {
-  auto root = LoadManifest(path, sources);
+  // Read from its directory as that lies, however the command named it, so
+  // every path it and the libraries it reaches name is spelled from the root
+  // directory as the front end spells each file it opens, which a compiler's
+  // prefix map compares as text. The file itself is not followed: a manifest
+  // linked from elsewhere still declares paths from where the link is.
+  std::error_code ec;
+  const fs::path dir_lies_at =
+      fs::weakly_canonical(fs::absolute(path, ec).parent_path(), ec);
+  const fs::path manifest = ec ? path : dir_lies_at / path.filename();
+  auto root = LoadManifest(manifest, sources);
   if (!root) {
     return std::unexpected(std::move(root.error()));
   }
-  fs::path lock_path = path.parent_path() / kLockFileName;
+  fs::path lock_path = manifest.parent_path() / kLockFileName;
   auto lock = ReadLockFile(lock_path);
   if (!lock) {
     return std::unexpected(std::move(lock.error()));
   }
   BuildReading reading{
       .language_version =
-          given.language_version
-              ? given.language_version
-              : (root->language_version
-                     ? root->language_version
-                     : std::string(frontend::kDefaultLanguageVersion)),
+          given.language_version.value_or(root->language_version.value_or(
+              std::string(frontend::kDefaultLanguageVersion))),
       .timescale = given.timescale ? given.timescale : root->timescale};
   ReachedLibraries reached(*root, sources, reading, ports, lock_path, *lock);
   if (auto ok = reached.Follow(*root); !ok) {

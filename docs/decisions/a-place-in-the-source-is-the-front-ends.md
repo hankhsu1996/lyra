@@ -212,7 +212,10 @@ The file name a program states is what `` `__FILE__ `` expands to at that place,
 answers, so a report and the directive never differ. LRM 20.10 requires exactly that of a severity
 task ("shall be the same as the `` `__FILE__ `` and `` `__LINE__ `` compiler directives"), and LRM
 22.13 says the directive expands to the path by which a tool opened the file, in a format the tool
-may choose, so a design named by a path reports that path, and a `` `line `` directive moves both.
+may choose. The format Lyra chooses is the file's path from the directory the design is declared in,
+or its absolute path where it lies elsewhere (`project-file.md` D11), so the name is the same
+wherever the build runs; the front end is told that once and answers both, and a `` `line ``
+directive moves both.
 
 ## Consequences
 

@@ -74,7 +74,7 @@ auto SlangSourceManager::PositionOf(diag::SourceSpan span) const
   }
   const slang::SourceLocation in_a_file = sources_->getFileLoc(written);
   return diag::SourcePosition{
-      .file = std::string(sources_->getFileName(in_a_file)),
+      .file = sources_->getMacroFileName(in_a_file),
       .line = static_cast<std::uint32_t>(sources_->getLineNumber(in_a_file)),
       .column =
           static_cast<std::uint32_t>(sources_->getColumnNumber(in_a_file))};

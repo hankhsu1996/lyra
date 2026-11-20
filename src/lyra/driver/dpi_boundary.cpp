@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <filesystem>
+#include <format>
 #include <iterator>
 #include <optional>
 #include <span>
@@ -346,7 +347,8 @@ auto ForeignCompileFlags(
 auto CompileDpiLink(
     std::span<const DpiLinkInput> inputs, const std::filesystem::path& cxx,
     OptimizationLevel optimization, support::Sanitizer sanitizer,
-    std::size_t width, const std::filesystem::path& header_dir,
+    std::size_t width, const std::filesystem::path& root_dir,
+    const std::filesystem::path& header_dir,
     const std::filesystem::path& work_dir)
     -> diag::Result<std::vector<DpiLinked>> {
   std::error_code created;
@@ -379,7 +381,9 @@ auto CompileDpiLink(
                       source, header_dir, optimization, sanitizer);
                   args.insert(
                       args.end(),
-                      {"-c", source.path.string(), "-o", object.string()});
+                      {std::format(
+                           "-ffile-prefix-map={}=", (root_dir / "").string()),
+                       "-c", source.path.string(), "-o", object.string()});
                   requests.push_back(
                       ProcessRequest{.exe = cxx, .args = std::move(args)});
                   names.push_back(source.path.filename().string());

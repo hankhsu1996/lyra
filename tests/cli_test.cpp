@@ -26,6 +26,7 @@
 #include <iterator>
 #include <map>
 #include <nlohmann/json.hpp>
+#include <optional>
 #include <set>
 #include <string>
 #include <string_view>
@@ -5585,6 +5586,161 @@ TEST(LyraBuild, KeepsAProgramByWhatBuiltIt) {
   EXPECT_NE(
       into_directory.stderr_text.find("is a directory"), std::string::npos)
       << into_directory.stderr_text;
+}
+
+// A project whose design names a header, a function of its compilation unit,
+// foreign code, a line directive and a library outside its directory, each
+// saying where it was written.
+auto WriteProjectNamingItsFiles(
+    const std::filesystem::path& project, const std::filesystem::path& prim)
+    -> void {
+  WriteFile(
+      prim / "lyra.toml",
+      "[library]\nname = \"prim\"\nfiles = [\"rtl/stage.sv\"]\n");
+  WriteFile(
+      prim / "rtl" / "stage.sv",
+      "module stage;\n  initial $info(\"stage\");\nendmodule\n");
+  WriteFile(
+      project / "lyra.toml",
+      "[library]\nname = \"app\"\nfiles = [\"rtl/top.sv\"]\n"
+      "incdir = [\"include\"]\ndpi = [\"c/model.c\"]\n"
+      "\n[design]\ntop = [\"Top\"]\n"
+      "\n[dependencies]\nprim = { path = \"../prim\" }\n");
+  WriteFile(
+      project / "include" / "where.svh",
+      "localparam string HEADER = `__FILE__;\n");
+  WriteFile(
+      project / "c" / "model.c",
+      "#include <stdio.h>\n"
+      "void model(void) {\n"
+      "  printf(\"%s\\n\", __FILE__);\n"
+      "  fflush(stdout);\n"
+      "}\n");
+  WriteFile(
+      project / "rtl" / "top.sv",
+      "function automatic int twice(int x);\n"
+      "  return 2 * x;\n"
+      "endfunction\n"
+      "module Top;\n"
+      "`include \"where.svh\"\n"
+      "  import \"DPI-C\" function void model();\n"
+      "  stage s ();\n"
+      "  initial begin\n"
+      "    $display(\"%s %s %0d\", `__FILE__, HEADER, twice(2));\n"
+      "    model();\n"
+      "    $info(\"top\");\n"
+      "`line 40 \"gen.sv\" 0\n"
+      "    $info(\"generated\");\n"
+      "  end\n"
+      "endmodule\n");
+}
+
+// What a build makes names a source by its path from the directory of the
+// manifest declaring the design, and a source outside that directory by its
+// absolute path, as Cargo hands rustc its workspace's files: a report, the
+// name `__FILE__` gives (LRM 20.10, 22.13) and foreign code's own `__FILE__`
+// alike, while a line directive's name stays as it was written. So the same
+// design built from another directory of the project, or from outside it,
+// performs nothing anew, and the project moved elsewhere whole makes again only
+// what names a source outside it. A manifest linked from elsewhere declares
+// its paths from where the link is.
+TEST(LyraBuild, ADesignIsKeptWhereverItIsBuiltFrom) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  const auto root = std::filesystem::weakly_canonical(*tmp_or);
+  const auto project = root / "project";
+  const auto prim = root / "prim";
+  WriteProjectNamingItsFiles(project, prim);
+  const std::string stage_report =
+      std::format("{}:2:11: info: stage", (prim / "rtl" / "stage.sv").string());
+
+  for (const std::string_view backend : {"llvm", "cpp"}) {
+    const auto store = root / std::format("store-{}", backend);
+    const std::string common = std::format(
+        "run --backend {} --cache-dir '{}'", backend, store.string());
+    std::optional<std::size_t> kept;
+    const std::array<std::pair<std::filesystem::path, std::string>, 3> from = {
+        {{project, common},
+         {project / "rtl", common},
+         {root, std::format("{} --config project/lyra.toml", common)}}};
+    for (const auto& [dir, command] : from) {
+      const auto run = RunLyraFrom(lyra, dir, command);
+      ASSERT_THAT(run, ExitedWithCode(0))
+          << backend << " from " << dir.string() << ": " << run.stderr_text;
+      EXPECT_NE(
+          run.stdout_text.find("rtl/top.sv include/where.svh 4\n"),
+          std::string::npos)
+          << backend << " from " << dir.string() << ": " << run.stdout_text;
+      EXPECT_NE(run.stdout_text.find("c/model.c\n"), std::string::npos)
+          << backend << " from " << dir.string() << ": " << run.stdout_text;
+      EXPECT_NE(
+          run.stderr_text.find("rtl/top.sv:11:5: info: top"), std::string::npos)
+          << backend << " from " << dir.string() << ": " << run.stderr_text;
+      EXPECT_NE(
+          run.stderr_text.find("gen.sv:40:5: info: generated"),
+          std::string::npos)
+          << backend << " from " << dir.string() << ": " << run.stderr_text;
+      EXPECT_NE(run.stderr_text.find(stage_report), std::string::npos)
+          << backend << " from " << dir.string() << ": " << run.stderr_text;
+      if (!kept) {
+        kept = KeptActions(store);
+      }
+      EXPECT_EQ(KeptActions(store), *kept)
+          << backend << " from " << dir.string()
+          << " performed a step anew for a design that did not change";
+    }
+  }
+
+  const auto moved = root / "moved";
+  std::filesystem::create_directories(moved);
+  std::filesystem::copy(
+      project, moved / "project", std::filesystem::copy_options::recursive);
+  std::filesystem::copy(
+      prim, moved / "prim", std::filesystem::copy_options::recursive);
+  const auto stats = root / "moved.json";
+  const auto run = RunLyraFrom(
+      lyra, moved / "project",
+      std::format(
+          "run --backend llvm --cache-dir '{}' --stats-file '{}'",
+          (root / "store-llvm").string(), stats.string()));
+  ASSERT_THAT(run, ExitedWithCode(0)) << run.stderr_text;
+  const nlohmann::json report = ReadJson(stats);
+  ASSERT_FALSE(report.is_discarded()) << "the run wrote no report of itself";
+  std::set<std::string> made_again;
+  for (const nlohmann::json& unit : report.at("bodies")) {
+    for (const nlohmann::json& artifact : unit.at("artifacts")) {
+      if (artifact.at("made").get<bool>()) {
+        made_again.insert(unit.at("name").get<std::string>());
+      }
+    }
+  }
+  EXPECT_EQ(made_again, std::set<std::string>{"prim.stage"})
+      << "moving the project with its dependency made again a unit other than "
+         "the dependency's, the one unit that names a source outside the "
+         "project";
+
+  const auto linked = root / "linked";
+  std::filesystem::copy(
+      project, linked, std::filesystem::copy_options::recursive);
+  std::filesystem::remove(linked / "lyra.toml");
+  std::filesystem::create_directories(root / "templates");
+  std::filesystem::copy_file(
+      project / "lyra.toml", root / "templates" / "lyra.toml");
+  std::filesystem::create_symlink(
+      std::filesystem::path("..") / "templates" / "lyra.toml",
+      linked / "lyra.toml");
+  const auto from_link = RunLyraFrom(
+      lyra, linked,
+      std::format(
+          "run --backend llvm --cache-dir '{}'",
+          (root / "store-llvm").string()));
+  ASSERT_THAT(from_link, ExitedWithCode(0)) << from_link.stderr_text;
+  EXPECT_NE(
+      from_link.stdout_text.find("rtl/top.sv include/where.svh 4\n"),
+      std::string::npos)
+      << from_link.stdout_text;
 }
 
 // A command leaves behind what it was asked for and nothing else. What a build

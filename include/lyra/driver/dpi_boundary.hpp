@@ -108,7 +108,10 @@ auto WriteDpiSurface(
 // `sanitizer`. A C source is compiled as C so its symbols keep C linkage, which
 // is what the emitted declaration expects and what a C++ compilation would
 // mangle away. The in-process build and the recipe an emitted project ships
-// both read it here, so the two compile a source alike.
+// both read it here, so the two compile a source alike. How the compiled code
+// names its source is not among them: the recipe runs in the project it ships
+// and names each source by its path there, and the in-process build, run from
+// wherever the command was, says where to name sources from itself.
 auto ForeignCompileFlags(
     const DpiSource& source, const std::filesystem::path& boundary,
     OptimizationLevel optimization, support::Sanitizer sanitizer)
@@ -123,12 +126,15 @@ auto ForeignCompileFlags(
 // include, which is why these compiles wait for every unit: that header is what
 // the units state of the foreign name space. Each is compiled as
 // `ForeignCompileFlags` says, checked for `sanitizer`, the one the compiler
-// links its own runtime for. As many compile at once as `width` allows, and
-// every one that fails is reported.
+// links its own runtime for, and with a source under `root_dir` named in what
+// it compiles to by its path from there, as the design's own sources are. As
+// many compile at once as `width` allows, and every one that fails is
+// reported.
 auto CompileDpiLink(
     std::span<const DpiLinkInput> inputs, const std::filesystem::path& cxx,
     OptimizationLevel optimization, support::Sanitizer sanitizer,
-    std::size_t width, const std::filesystem::path& header_dir,
+    std::size_t width, const std::filesystem::path& root_dir,
+    const std::filesystem::path& header_dir,
     const std::filesystem::path& work_dir)
     -> diag::Result<std::vector<DpiLinked>>;
 

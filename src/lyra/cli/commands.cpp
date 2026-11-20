@@ -27,6 +27,7 @@
 #include <slang/ast/symbols/InstanceSymbols.h>
 #include <slang/driver/Driver.h>
 #include <slang/text/Json.h>
+#include <slang/text/SourceManager.h>
 
 #include "lyra/backend/cpp/type_operation_bodies.hpp"
 #include "lyra/backend/llvm/emit.hpp"
@@ -380,7 +381,8 @@ auto BuildDpiLink(
   }
   auto built = driver::CompileDpiLink(
       ctx.dpi_inputs, host.cxx, host.optimization, host.sanitizer,
-      host.compile_width, dir, dir / driver::kObjectDir / driver::kDpiInputDir);
+      host.compile_width, ctx.root_dir, dir,
+      dir / driver::kObjectDir / driver::kDpiInputDir);
   if (!built) {
     ctx.sink->Report(std::move(built.error()));
     return std::nullopt;
@@ -914,7 +916,38 @@ auto RunProgram(const CommandContext& ctx) -> int {
 struct Request {
   ParsedArgs args;
   std::vector<driver::DpiLinkInput> dpi_inputs;
+  std::filesystem::path root_dir;
 };
+
+// The directory what the build makes names its sources from: the one holding
+// the manifest that declares the design, or, for a design the command line
+// names, the one the command was given in, where the paths it names start. It
+// is Cargo's workspace root, for Cargo's reason: what a build makes does not
+// depend on where in the project the command runs, nor on where the project
+// lies.
+auto RootDir(const Declarations* declared) -> std::filesystem::path {
+  if (declared != nullptr) {
+    return declared->root.path.parent_path();
+  }
+  std::error_code ec;
+  const std::filesystem::path here = std::filesystem::current_path(ec);
+  const std::filesystem::path lies_at =
+      std::filesystem::weakly_canonical(here, ec);
+  return ec ? here : lies_at;
+}
+
+// Has the front end name every source under `root_dir` by its path from it,
+// and every other source by its absolute path, wherever `__FILE__` names one
+// (LRM 22.13), and with it every report a running design makes (LRM 20.10).
+// What the front end shows a person reading a message is not changed. A name
+// no mapping matches would be the one a message shows, which is from the
+// working directory, so the filesystem root maps to itself.
+void SetMacroPrefixMap(
+    const std::filesystem::path& root_dir, slang::SourceManager& sources) {
+  sources.addMacroPrefixMapping(root_dir, "");
+  sources.addMacroPrefixMapping(
+      root_dir.root_path(), root_dir.root_path().string());
+}
 
 // Finds the design the command line and its declaration describe and resolves
 // the request against it, reporting whatever stops that. Nothing of the design
@@ -948,6 +981,8 @@ auto ResolveRequest(const Invocation& invocation) -> std::optional<Request> {
       return std::nullopt;
     }
   }
+  const std::filesystem::path root_dir = RootDir(declared);
+  SetMacroPrefixMap(root_dir, driver.sourceManager);
 
   auto parsed = ResolveCliOptions(
       *invocation.options, declared,
@@ -990,7 +1025,9 @@ auto ResolveRequest(const Invocation& invocation) -> std::optional<Request> {
     return std::nullopt;
   }
   return Request{
-      .args = *std::move(parsed), .dpi_inputs = *std::move(dpi_inputs)};
+      .args = *std::move(parsed),
+      .dpi_inputs = *std::move(dpi_inputs),
+      .root_dir = root_dir};
 }
 
 // Elaborates the design the request describes, printing what the front end
@@ -1045,6 +1082,7 @@ auto RunOnRequest(
                               .elaborated = &*elaborated,
                               .sink = &sink,
                               .dpi_inputs = request.dpi_inputs,
+                              .root_dir = request.root_dir,
                               .program_path = invocation.program_path});
   (*invocation.report)(sink);
   return sink.HasInternalErrors() ? kCompilerFailureExit : exit_code;
