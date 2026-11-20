@@ -440,7 +440,7 @@ void Runtime::RunAction(
   auto action = CoroutineProcess::Create(context, std::move(coroutine), rng);
   FrameActivation* const top = action->Thread().TopActivation();
   roots_.Adopt(std::move(action));
-  CoroutineThread::Run(*this, top);
+  top->Run(*this);
 }
 
 void Runtime::RegisterFinal(RegisteredFinal registered) {
@@ -777,7 +777,7 @@ void Runtime::ExecuteFinalProcedures() {
       CallingFinalProcedures(), root.InitializationSeeds().Split());
   FrameActivation* const top = thread->Thread().TopActivation();
   AdoptProcess(std::move(thread));
-  CoroutineThread::Run(*this, top);
+  top->Run(*this);
 }
 
 auto Runtime::CallingFinalProcedures() -> Coroutine<void> {

@@ -25,14 +25,14 @@ Reaction::Reaction(
 
 Reaction::~Reaction() = default;
 
-auto Reaction::Run(RuntimeEffects& effects) -> bool {
-  if (state_ != nullptr) {
+auto Reaction::CarryOn(RuntimeEffects& effects) -> bool {
+  if (current_run_ != nullptr) {
     throw InternalError(
-        "Reaction::Run: a reaction runs again while it runs -- please report "
-        "this as a bug");
+        "Reaction::CarryOn: a reaction runs again while it runs -- please "
+        "report this as a bug");
   }
-  RunningState state(Generator(), nullptr, nullptr);
-  state_ = &state;
+  CurrentRun run(Generator());
+  current_run_ = &run;
   bool left = false;
   {
     const RunnerGuard running(effects, *this);
@@ -44,7 +44,7 @@ auto Reaction::Run(RuntimeEffects& effects) -> bool {
       End(effects, false);
     }
   }
-  state_ = nullptr;
+  current_run_ = nullptr;
   return left;
 }
 
@@ -58,12 +58,12 @@ auto Reaction::ProcessIfMade() -> RuntimeProcess* {
 }
 
 auto Reaction::State() -> RunningState& {
-  if (state_ == nullptr) {
+  if (current_run_ == nullptr) {
     throw InternalError(
         "Reaction::State: a reaction holds what is in force only while a part "
         "of it runs -- please report this as a bug");
   }
-  return *state_;
+  return current_run_->state;
 }
 
 auto Reaction::Leaf() -> Activation* {
@@ -96,9 +96,11 @@ auto Reaction::MakeProcess() -> std::shared_ptr<RuntimeProcess> {
       RuntimeProcess::Create(*this, asked->seeded);
   process_ = Made{.process = made.get()};
   // From here on what it draws comes from the generator its process holds,
-  // including the rest of a run that is going on now.
-  if (state_ != nullptr) {
-    state_->generator = &made->Generator();
+  // including the rest of a run that is going on now, which holds the process
+  // to its end.
+  if (current_run_ != nullptr) {
+    current_run_->state.generator = &made->Generator();
+    current_run_->made_process = made;
   }
   return made;
 }
@@ -182,15 +184,15 @@ auto Reaction::HasLiveForeignCall() const -> bool {
 }
 
 auto Reaction::HeldState() const -> const RunningState* {
-  return state_;
+  return current_run_ != nullptr ? &current_run_->state : nullptr;
 }
 
 auto Reaction::Activity() const -> ProcessExecutionState {
   if (!set_up_) {
     return ProcessExecutionState::kCreated;
   }
-  return state_ != nullptr ? ProcessExecutionState::kRunning
-                           : ProcessExecutionState::kWaiting;
+  return current_run_ != nullptr ? ProcessExecutionState::kRunning
+                                 : ProcessExecutionState::kWaiting;
 }
 
 }  // namespace lyra::runtime

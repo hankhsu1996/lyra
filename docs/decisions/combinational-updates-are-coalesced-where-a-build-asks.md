@@ -5,7 +5,9 @@ by what it leaves (Rejected, "Judging the run of every process"). Revised again 
 update is an event unless the build asks for coalescing (Rejected, "Coalescing by default"). Revised
 2026-11-19: each library is built in the dialect it states; the shape is restated as change
 detection over an interval on the write path; the rewrite stating a write made once is removed.
-Revised again 2026-11-19: OpenTitan needs the option too.
+Revised again 2026-11-19: OpenTitan needs the option too. Revised once more 2026-11-19: the default
+stays, now argued from meaning alone, since what the option costs a real design was measured and is
+small; how many designs need the dialect no longer bears on it.
 
 ## Context
 
@@ -219,14 +221,18 @@ it lands, a per-interval observer's included.
 
 ## Rejected
 
-- **Coalescing by default.** The form of this decision before 2026-11-18: every design paid for it.
-  A fanout of 64 combinational readers, built `-O2 --lto`, counted 42% more instructions per cycle
-  than before any coalescing, and the rewrite brought that back to 3.5% only where each run writes
-  each variable once. It also made Lyra answer for a design relying on a schedule the standard does
-  not promise, on behalf of every design that does not, and departed from the standard's reading
-  wherever a procedure's side effects show it. Two real designs of the external suite need it,
-  OpenPiton and OpenTitan; the option serves them at no cost to the others. What coalescing costs a
-  real design has not been measured, and is what revisiting the default turns on.
+- **Coalescing by default.** The form of this decision before 2026-11-18. Its cost does not decide
+  it: four real designs that do not need the dialect run at most 1.6% more instructions built with
+  it (Consequences), though a fanout of 64 combinational procedures read by a 65th, where nearly
+  every execution of a cycle is such a procedure writing what another reads, counted 42% more. Its
+  meaning does. It would make Lyra answer for a design relying on a schedule the standard does not
+  promise, on behalf of every design that does not, and would depart from the standard's reading
+  without a word wherever a procedure's side effects show it -- an immediate assertion it runs, a
+  count it keeps -- where the default's failure stops the run and names the option. The default
+  keeps the standard's reading, as a compiler's dialect options do (Survey), and a library written
+  in the dialect states it in its own `lyra.toml`, so whoever builds that library as a dependency
+  gets the dialect without having to know of it. How many designs need it is no reason either way,
+  since a count says nothing of the next design's side effects; OpenPiton and OpenTitan need it.
 - **Coalescing a slot only once it fails to settle.** Running the slot again coalesced when its
   bound is reached gives a design two meanings depending on whether it loops, and what ran before
   the switch has already been told each write.
@@ -361,6 +367,10 @@ it lands, a per-interval observer's included.
   144.9M built with it. A write of bits of a packed value copies the words they lie in; a write of
   an array whose size changes, or of anything inside it by the variable's own steps, copies the
   array. A write by any other process keeps nothing.
+- What the option costs a real design that does not need it, 2026-11-19, LLVM, `-O2 --lto`, each
+  design's quick check counted whole under callgrind and passing its check both ways: VeeR-EH1
+  4,711.7M instructions without it and 4,749.7M with it (+0.8%), HammerBlade 2x1 5,140.3M and
+  5,148.3M (+0.2%), VeeR-EL2 16,407.8M and 16,673.3M (+1.6%), XuanTie-E902 10,410.0M both ways.
 - In a design built with the option, a change a kept packed value shows is told by its bits, so a
   wait reading only bits that moved back is not woken. A structure or an unpacked array written
   whole wakes a reader of any member or element of it where any of it moved; a member of an unpacked

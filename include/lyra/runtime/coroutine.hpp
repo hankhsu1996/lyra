@@ -58,8 +58,11 @@ struct Activation {
 
   // Runs this execution from where it stands, once the engine has taken it off
   // the queue it sat in, answering whether it was left -- ended by a departure
-  // or an error rather than stopping or running out its body.
-  virtual auto Run(RuntimeEffects& effects) -> bool = 0;
+  // or an error rather than stopping or running out its body. The process it
+  // runs as is held until this returns, because its own ending wakes what may
+  // drop every other hold on that process, as the last initial procedure of a
+  // program does by ending the program (LRM 24.3).
+  auto Run(RuntimeEffects& effects) -> bool;
 
   // The same, for an execution woken inside the occurrence it waited for, or
   // started where it is reached, which nothing outside it names: what left it
@@ -90,6 +93,12 @@ struct Activation {
   // runnable again, or stopped from outside, so nothing it was waiting on may
   // resume it.
   void Withdraw() noexcept;
+
+ private:
+  // The run as this kind of execution makes it, from where it stands. The
+  // process it has as the run begins is already held for the whole of it; one
+  // the run makes is the run's to hold.
+  virtual auto CarryOn(RuntimeEffects& effects) -> bool = 0;
 };
 
 // The activation of a coroutine frame -- a process body, a task body, a fork
@@ -104,8 +113,6 @@ struct FrameActivation final : Activation {
   auto operator=(FrameActivation&&) -> FrameActivation& = delete;
   ~FrameActivation() override;
 
-  // A frame is resumed through the thread it runs in.
-  auto Run(RuntimeEffects& effects) -> bool override;
   // A frame's is its thread's.
   [[nodiscard]] auto Context() const -> const ExecutionContext& override;
   [[nodiscard]] auto ProcessIfMade() -> RuntimeProcess* override;
@@ -129,6 +136,12 @@ struct FrameActivation final : Activation {
   // The frame awaiting this one's completion, resumed in its place (a task
   // returning to its caller); none for a process body, which ends its process.
   std::coroutine_handle<> continuation;
+
+ private:
+  // A frame is resumed through the thread it runs in -- the innermost frame
+  // where a task the thread enabled is suspended -- and where that ends its
+  // process, the process and its lineage are released.
+  auto CarryOn(RuntimeEffects& effects) -> bool override;
 };
 
 // A nested activation -- a called task -- takes over its process's thread and

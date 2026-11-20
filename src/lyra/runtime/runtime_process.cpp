@@ -199,10 +199,6 @@ void CoroutineThread::LeaveLeaf() {
   outer_leaves_.pop_back();
 }
 
-auto FrameActivation::Run(RuntimeEffects& effects) -> bool {
-  return CoroutineThread::Run(effects, this);
-}
-
 auto FrameActivation::Context() const -> const ExecutionContext& {
   return Thread().Context();
 }
@@ -433,18 +429,17 @@ void CoroutineThread::ReleaseExecution() {
   current_leaf_ = nullptr;
 }
 
-auto CoroutineThread::Run(RuntimeEffects& effects, FrameActivation* activation)
-    -> bool {
-  // Taken before the resume, since `activation` may be an enabled task's frame
-  // that is destroyed as control returns up the enable chain.
-  CoroutineThread& thread = activation->Thread();
-  const std::shared_ptr<RuntimeProcess> process = thread.process_->Shared();
-  if (!thread.ResumeWith(effects, activation)) {
+auto FrameActivation::CarryOn(RuntimeEffects& effects) -> bool {
+  // Taken before the resume, since this may be an enabled task's frame that is
+  // destroyed as control returns up the enable chain.
+  CoroutineThread& thread = Thread();
+  RuntimeProcess& process = *thread.process_;
+  if (!thread.ResumeWith(effects, this)) {
     return false;
   }
   const bool left =
-      process->TerminationCause() == ProcessTerminationCause::kKilled;
-  RuntimeProcess::ReleaseTerminatedLineage(*process);
+      process.TerminationCause() == ProcessTerminationCause::kKilled;
+  RuntimeProcess::ReleaseTerminatedLineage(process);
   return left;
 }
 

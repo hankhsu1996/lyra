@@ -46,9 +46,6 @@ class Reaction final : public Activation, public ProcessExecution {
   auto operator=(Reaction&&) -> Reaction& = delete;
   ~Reaction() override;
 
-  // Calls the part due now, and the passes it calls for, to the stop the last
-  // one parks at, as what runs.
-  auto Run(RuntimeEffects& effects) -> bool override;
   [[nodiscard]] auto Context() const noexcept
       -> const ExecutionContext& override;
   [[nodiscard]] auto ProcessIfMade() -> RuntimeProcess* override;
@@ -89,6 +86,22 @@ class Reaction final : public Activation, public ProcessExecution {
   };
   struct Ended {};
 
+  // One run of it as it goes on: what is in force while its parts run, and its
+  // process where the run made it, held to the run's end as the process it
+  // began with is, since the run's own ending may drop every other hold on it.
+  struct CurrentRun {
+    explicit CurrentRun(DrawRng& generator)
+        : state(generator, nullptr, nullptr) {
+    }
+
+    RunningState state;
+    std::shared_ptr<RuntimeProcess> made_process;
+  };
+
+  // Calls the part due now, and the passes it calls for, to the stop the last
+  // one parks at, as what runs.
+  auto CarryOn(RuntimeEffects& effects) -> bool override;
+
   // The generator its randomization calls draw from, which its process's
   // `srandom()` seeds once made (LRM 18.13.3).
   [[nodiscard]] auto Generator() -> DrawRng&;
@@ -111,9 +124,8 @@ class Reaction final : public Activation, public ProcessExecution {
   Wait wait_;
   ExecutionContext context_;
   std::variant<NotAskedFor, Made, Ended> process_;
-  // What is in force while a part of it runs; none between runs, since a part
-  // never stops.
-  RunningState* state_ = nullptr;
+  // None between runs, since a part never stops.
+  CurrentRun* current_run_ = nullptr;
   bool set_up_ = false;
 };
 

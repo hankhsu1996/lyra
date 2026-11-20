@@ -8,6 +8,7 @@ module Top;
   int a_child_ran = 0;
   int a_after_exit = 0;
   int b_ended_at = -1;
+  int c_after_exit = 0;
 
   initial begin
     #1 $exit();
@@ -16,6 +17,7 @@ module Top;
 
   a ua ();
   b ub ();
+  c uc ();
 
   final begin
     if (design_went_on !== 1) $fatal(1, "$exit in the design was not ignored");
@@ -23,6 +25,7 @@ module Top;
     if (a_other_ran !== 0) $fatal(1, "another initial of a went on after $exit");
     if (a_child_ran !== 0) $fatal(1, "a thread a started went on after $exit");
     if (b_ended_at !== 4) $fatal(1, "b ended at %0d, expected 4", b_ended_at);
+    if (c_after_exit !== 0) $fatal(1, "c's initial went on after its $exit");
     if ($time !== 4) $fatal(1, "the run ended at %0t, expected 4", $time);
     $display("All checks passed");
   end
@@ -46,4 +49,12 @@ endprogram
 
 program b;
   initial #4 Top.b_ended_at = $time;
+endprogram
+
+// Its one initial procedure calls $exit without ever waiting.
+program c;
+  initial begin
+    $exit();
+    Top.c_after_exit = 1;
+  end
 endprogram

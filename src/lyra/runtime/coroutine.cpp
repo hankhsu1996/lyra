@@ -2,6 +2,7 @@
 
 #include <coroutine>
 #include <exception>
+#include <memory>
 #include <utility>
 #include <variant>
 
@@ -9,6 +10,7 @@
 #include "lyra/runtime/cancellation.hpp"
 #include "lyra/runtime/intrusive_list.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
+#include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/wait.hpp"
 
 namespace lyra::runtime {
@@ -20,6 +22,15 @@ Activation::~Activation() = default;
 
 FrameActivation::FrameActivation() = default;
 FrameActivation::~FrameActivation() = default;
+
+// Nothing of this activation is read once it has been carried on: a frame's
+// run that ends its process destroys the frame, and this activation with it.
+auto Activation::Run(RuntimeEffects& effects) -> bool {
+  RuntimeProcess* const process = ProcessIfMade();
+  const std::shared_ptr<RuntimeProcess> held =
+      process != nullptr ? process->Shared() : nullptr;
+  return CarryOn(effects);
+}
 
 void Activation::RunAtTheOccurrence(RuntimeEffects& effects) {
   if (!Run(effects) || effects.TryRunning() == nullptr) {
