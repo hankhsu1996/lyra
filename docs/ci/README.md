@@ -229,7 +229,8 @@ running it, so the list holds the designs whose count of both compilers fits abo
 each is a job of its own. The corpus cases come second: each is one cost family, counted on both
 backends, and what it says is which path a real design's move came from. Two counts at an amount and
 at twice it are differenced, so what a run does once, starting and constructing the design, cancels
-exactly.
+exactly. A case's hand-written C++ program is counted in each run too, so each run's own report sets
+Lyra beside it, and is left out of the comparison, being the same program at both revisions.
 
 A count is the same however loaded the machine is, which is why it can say what a timing cannot: a
 change of a few percent stands out on a runner whose wall clock moves by half from one night to the
@@ -486,13 +487,15 @@ question, answered before the change lands, and a record of an earlier night sta
 its own run.
 
 `benchmark-nightly.yml` builds every case under `tests/benchmark/` on each backend and times it
-beside Verilator on the same sources, giving each tool the amount of work it needs to reach the same
-duration. It gates its own run on a narrower claim than a timing: a case that fails to build, fails
-to run, or outlives the time limit is red, while the rates themselves are printed for a reader.
-Failing a run on a rate would be reporting on the machine that ran it. Such a case costs only
-itself: the runner goes on to the others and exits non-zero only after printing its report, so a red
-run's summary still carries every rate that was obtained and names each case that has none, with the
-step that failed, how it ended, and the last lines it printed.
+beside Verilator on the same sources, and beside the case's hand-written C++ program where it has
+one, giving each tool the amount of work it needs to reach the same duration. It gates its own run
+on a narrower claim than a timing: a case that fails to build, fails to run, or outlives the time
+limit is red, and so is a hand-written program that prints something other than Lyra's, while the
+rates themselves are printed for a reader. Failing a run on a rate would be reporting on the machine
+that ran it. Such a case costs only itself: the runner goes on to the others and exits non-zero only
+after printing its report, so a red run's summary still carries every rate that was obtained and
+names each case that has none, with the step that failed, how it ended, and the last lines it
+printed.
 
 The comparison it prints needs no stored history, which is what makes it worth running unattended:
 both tools are measured on one machine in one run, so the ratio between them survives a slow runner

@@ -32,6 +32,7 @@ from run_benchmarks import (
     CELL_FAILED,
     CELL_NOT_RUN,
     DESIGN_FAMILY,
+    LYRA,
     MARK_PERCENT,
     STATUS_OK,
     read_count_file,
@@ -39,7 +40,12 @@ from run_benchmarks import (
 
 
 def read_side(path: str) -> tuple[str, dict[tuple[str, str, str], dict]]:
-    """The revision a side was counted at and its results, by measurement."""
+    """The revision a side was counted at and Lyra's results, by measurement.
+
+    A hand-written program a case holds is counted beside Lyra in each run,
+    and is the same program on both sides, so what it counts is no move of
+    the compiler's.
+    """
     given = Path(path)
     files = sorted(given.glob("*.json")) if given.is_dir() else [given]
     if not files:
@@ -50,7 +56,8 @@ def read_side(path: str) -> tuple[str, dict[tuple[str, str, str], dict]]:
         data = read_count_file(str(file))
         revisions.add(data["git"])
         for r in data["results"]:
-            results[(r["case"], r["measure"], r["backend"])] = r
+            if r["tool"] == LYRA:
+                results[(r["case"], r["measure"], r["backend"])] = r
     if len(revisions) != 1:
         raise ValueError(
             f"{path} holds counts of more than one revision: "

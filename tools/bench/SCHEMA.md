@@ -12,9 +12,10 @@ compiler's internals, which is what keeps a measurement independent of whether a
 happens to be available.
 
 A run either times or counts, and `metric` says which. A timing run measures Lyra on each backend
-and the reference simulator, and its number is `rate`. A count run, `--count`, measures Lyra alone,
-and its number is `instructions_per_unit`. A count run given `--design` counts real designs instead
-of the corpus, and each design has two results, its `build` and its `run`.
+and the reference simulator, and its number is `rate`. A count run, `--count`, measures Lyra and no
+reference simulator, and its number is `instructions_per_unit`. Either kind also measures the
+hand-written program of each case that holds one. A count run given `--design` counts real designs
+instead of the corpus, and each design has two results, its `build` and its `run`.
 
 ## Top-level object
 
@@ -37,8 +38,8 @@ All fields are always present. A field that does not apply carries its zero valu
 | `family`                | string        | The cost family it isolates, which is its directory; `designs` for a design.                             |
 | `measure`               | string        | `run` or `build` -- which of the two the measurement covers.                                             |
 | `work_unit`             | string        | What one unit of this case's work is called.                                                             |
-| `tool`                  | string        | `lyra` or `verilator`.                                                                                   |
-| `backend`               | string        | `llvm` or `cpp` for Lyra; empty for the reference simulator.                                             |
+| `tool`                  | string        | `lyra`, `verilator`, or `hand-written` for a case's hand-written program.                                |
+| `backend`               | string        | `llvm` or `cpp` for Lyra; empty for the reference simulator and a hand-written program.                  |
 | `status`                | string        | `ok` or `error`.                                                                                         |
 | `work`                  | int           | How many units the final timing covered, or the lower count's.                                           |
 | `seconds`               | float         | What the final timing took.                                                                              |
@@ -99,12 +100,13 @@ work did not show in both.
 `error` is a case one tool could not measure: a build or a run that exited non-zero, was killed by a
 signal, outlived the time limit, could not be started, or produced no binary, a count callgrind
 wrote no total for, or a count whose two readings of the same work disagree by too much to resolve a
-change worth marking. A simulation case whose backend's store could not be prepared is an `error`
-naming that, and so is each of a design's two results where its build failed. `detail` names the
-step and how it ended -- `build exited with status 1`,
-`run at +work=4 was killed by SIGSEGV (status 139)` -- and `output` holds the end of what that step
-printed. The fields a measurement fills stay at zero, so `status` and never a zero number is what
-says a case has none.
+change worth marking. A hand-written program is also an `error` where, run at the same small amount
+as Lyra's program, it printed something else, which `detail` quotes beside what Lyra's printed. A
+simulation case whose backend's store could not be prepared is an `error` naming that, and so is
+each of a design's two results where its build failed. `detail` names the step and how it ended --
+`build exited with status 1`, `run at +work=4 was killed by SIGSEGV (status 139)` -- and `output`
+holds the end of what that step printed. The fields a measurement fills stay at zero, so `status`
+and never a zero number is what says a case has none.
 
 **An `error` costs only its own case.** The run goes on to every other one, and the file is
 rewritten as each result arrives, so a run that is itself stopped leaves the results it had. A case
@@ -130,6 +132,8 @@ and a "Not measured" section names each one with its `detail` and `output`.
 - Removing a field or changing its type requires a version bump.
 - v8 added `resolution_percent`, and a design has a result per measure, which a v7 consumer keying
   results by case and backend would read as one.
+- Within v8, `tool` gained `hand-written`, whose results have an empty `backend`; a consumer that
+  reads Lyra's results selects them by `tool`.
 - v7 added `metric`, `backend` and `instructions_per_unit`, and a timing run now has one Lyra result
   per backend, which a v6 consumer keying results by case and tool would read as one.
 - `output` was added within v6, and `detail` changed what it says without changing its type.
