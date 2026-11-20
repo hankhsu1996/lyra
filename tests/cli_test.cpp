@@ -35,7 +35,9 @@
 
 #include "conformance/framework/process.hpp"
 #include "conformance/framework/process_matchers.hpp"
+#include "lyra/driver/runtime_export.hpp"
 #include "lyra/driver/subprocess.hpp"
+#include "lyra/ports/port.hpp"
 #include "tests/framework/cli_fixture.hpp"
 
 namespace {
@@ -459,6 +461,404 @@ TEST(LyraManifest, RefusesAForeignSourceCompiledTwoWays) {
       << other.stderr_text;
 }
 
+// A port of the supported library `name` in a store a run is given, its cell
+// `<name>er` printing `greeting`, prepared as Lyra prepares the ports it ships.
+auto WritePort(
+    const std::filesystem::path& store, std::string_view name,
+    std::string_view version, std::string_view port_version,
+    std::string_view greeting) -> void {
+  const std::filesystem::path tree = store / name / version / port_version;
+  WriteFile(
+      tree / "lyra.toml",
+      std::format("[library]\nname = \"{}\"\nfiles = [\"g.sv\"]\n", name));
+  WriteFile(
+      tree / "g.sv",
+      std::format(
+          "module {}er;\n  initial $display(\"{}\");\nendmodule\n", name,
+          greeting));
+  // A directory whose name is not how a port version is spelled gets no
+  // metadata, so a store holding it is one a resolution has to pass over.
+  const auto parsed = lyra::ports::ParsePortVersion(port_version);
+  if (!parsed) {
+    return;
+  }
+  const auto failed = lyra::test::PreparePort(
+      store, {.name = std::string(name),
+              .version = std::string(version),
+              .port_version = *parsed});
+  ASSERT_FALSE(failed.has_value()) << *failed;
+}
+
+// A project whose design instantiates `greet`'s cell, taking `greet` at
+// `version` from whichever store a run names.
+auto WriteGreetedProject(
+    const std::filesystem::path& root, std::string_view version) -> void {
+  WriteFile(
+      root / "lyra.toml",
+      std::format(
+          "[library]\nname = \"app\"\nfiles = [\"top.sv\"]\n"
+          "\n[design]\ntop = [\"Top\"]\n"
+          "\n[dependencies]\ngreet = {{ version = \"{}\" }}\n",
+          version));
+  WriteFile(root / "top.sv", "module Top;\n  greeter g ();\nendmodule\n");
+}
+
+// A published port is never changed: every port Lyra ships still has the
+// content it was published with, so a change to a port's recipe has to be a new
+// port version beside it.
+TEST(LyraSupportedLibrary, EveryShippedPortIsTheOnePublished) {
+  const auto lyra = ResolveLyra();
+  const auto store = lyra::driver::ResolveShippedPortStore(lyra.string());
+  ASSERT_TRUE(store.has_value()) << store.error().primary.message;
+  std::size_t checked = 0;
+  for (const auto& name : std::filesystem::directory_iterator(*store)) {
+    for (const auto& version : std::filesystem::directory_iterator(name)) {
+      for (const std::int64_t port_version : lyra::ports::PortVersionsIn(
+               *store, name.path().filename().string(),
+               version.path().filename().string())) {
+        const lyra::ports::PortIdentity port{
+            .name = name.path().filename().string(),
+            .version = version.path().filename().string(),
+            .port_version = port_version};
+        const auto verified = lyra::ports::VerifiedPort(*store, port);
+        EXPECT_TRUE(verified.has_value())
+            << "port " << port.name << " " << port.version << " "
+            << port.port_version
+            << " is not the content it was published with, and a published "
+               "port is never changed, so a change is a new port version: "
+            << verified.error();
+        ++checked;
+      }
+    }
+  }
+  EXPECT_GT(checked, 0U) << "no port is shipped at " << store->string();
+}
+
+// The reason a lock exists: a project keeps the port it first took across an
+// upgrade of the stores Lyra ships, while a project new to the upgraded store
+// takes its latest, and the same content laid out elsewhere is the same port.
+// The root's lock records what a library of the project's own took, and that
+// library keeps no lock of its own.
+TEST(LyraSupportedLibrary, AProjectKeepsThePortItLockedAcrossAnUpgrade) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  const auto before = *tmp_or / "before";
+  const auto after = *tmp_or / "after";
+  WritePort(before, "greet", "1.0", "1", "greet port 1");
+  WritePort(after, "greet", "1.0", "1", "greet port 1");
+  WritePort(after, "greet", "1.0", "2", "greet port 2");
+
+  const auto locked = *tmp_or / "locked";
+  WriteGreetedProject(locked, "1.0");
+  const auto first = RunLyraFrom(
+      lyra, locked,
+      std::format("run --backend llvm --ports '{}'", before.string()));
+  ASSERT_THAT(first, ExitedWithCode(0)) << first.stderr_text;
+  EXPECT_NE(first.stdout_text.find("greet port 1"), std::string::npos)
+      << first.stdout_text;
+  const std::string lock = ReadWholeFile(locked / "lyra.lock");
+  EXPECT_NE(lock.find("port_version = 1"), std::string::npos) << lock;
+
+  const auto upgraded = RunLyraFrom(
+      lyra, locked,
+      std::format("run --backend llvm --ports '{}'", after.string()));
+  ASSERT_THAT(upgraded, ExitedWithCode(0)) << upgraded.stderr_text;
+  EXPECT_NE(upgraded.stdout_text.find("greet port 1"), std::string::npos)
+      << upgraded.stdout_text;
+  EXPECT_EQ(ReadWholeFile(locked / "lyra.lock"), lock);
+
+  const auto fresh = *tmp_or / "fresh";
+  WriteGreetedProject(fresh, "1.0");
+  const auto latest = RunLyraFrom(
+      lyra, fresh,
+      std::format("run --backend llvm --ports '{}'", after.string()));
+  ASSERT_THAT(latest, ExitedWithCode(0)) << latest.stderr_text;
+  EXPECT_NE(latest.stdout_text.find("greet port 2"), std::string::npos)
+      << latest.stdout_text;
+  EXPECT_NE(
+      ReadWholeFile(fresh / "lyra.lock").find("port_version = 2"),
+      std::string::npos);
+
+  const auto elsewhere = *tmp_or / "moved" / "deeper" / "before";
+  std::filesystem::create_directories(elsewhere.parent_path());
+  std::filesystem::copy(
+      before, elsewhere, std::filesystem::copy_options::recursive);
+  const auto moved =
+      RunLyraFrom(lyra, locked, "check --ports ../moved/deeper/before");
+  EXPECT_THAT(moved, ExitedWithCode(0)) << moved.stderr_text;
+  EXPECT_EQ(ReadWholeFile(locked / "lyra.lock"), lock);
+
+  const auto nested = *tmp_or / "nested";
+  WriteFile(
+      nested / "mid" / "lyra.toml",
+      "[library]\nname = \"mid\"\nfiles = []\n"
+      "\n[dependencies]\ngreet = { version = \"1.0\" }\n");
+  WriteFile(
+      nested / "lyra.toml",
+      "[library]\nname = \"app\"\nfiles = [\"top.sv\"]\n"
+      "\n[design]\ntop = [\"Top\"]\n"
+      "\n[dependencies]\nmid = { path = \"mid\" }\n");
+  WriteFile(nested / "top.sv", "module Top;\nendmodule\n");
+  const auto through = RunLyraFrom(
+      lyra, nested, std::format("check --ports '{}'", after.string()));
+  ASSERT_THAT(through, ExitedWithCode(0)) << through.stderr_text;
+  EXPECT_NE(
+      ReadWholeFile(nested / "lyra.lock").find("port_version = 2"),
+      std::string::npos);
+  EXPECT_FALSE(std::filesystem::exists(nested / "mid" / "lyra.lock"));
+}
+
+// A port is taken only as it was prepared and as the lock recorded it, a lock
+// is read only as Lyra writes one, and a build that cannot resolve every
+// dependency, or would change a lock it was told not to, leaves the lock as it
+// was.
+TEST(LyraSupportedLibrary, RefusesAPortItCannotTrust) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  const auto store = *tmp_or / "store";
+  WritePort(store, "greet", "1.0", "1", "greet 1.0");
+  WritePort(store, "greet", "2.0", "1", "greet 2.0");
+  WritePort(store, "greet", "3.0", "01", "greet 3.0");
+  const auto refused = [&](const std::filesystem::path& project,
+                           std::string_view args, std::string_view expected) {
+    const auto checked = RunLyraFrom(lyra, project, args);
+    EXPECT_THAT(checked, ExitedWithCode(Ne(0)))
+        << project.string() << ": accepted";
+    EXPECT_NE(checked.stderr_text.find(expected), std::string::npos)
+        << project.string() << ": " << checked.stderr_text;
+  };
+  const std::string given = std::format("check --ports '{}'", store.string());
+
+  // Changed after it was prepared, before any project took it: refused, and
+  // never recorded in a lock.
+  const auto changed = *tmp_or / "changed";
+  std::filesystem::copy(
+      store, changed, std::filesystem::copy_options::recursive);
+  WriteFile(
+      changed / "greet" / "1.0" / "1" / "g.sv", "module greeter;\nendmodule\n");
+  const auto unlocked = *tmp_or / "unlocked";
+  WriteGreetedProject(unlocked, "1.0");
+  refused(
+      unlocked, std::format("check --ports '{}'", changed.string()),
+      "not the sha256:");
+  EXPECT_FALSE(std::filesystem::exists(unlocked / "lyra.lock"));
+
+  // Changed after a project locked it: refused against the lock too.
+  const auto locked = *tmp_or / "locked";
+  WriteGreetedProject(locked, "1.0");
+  ASSERT_THAT(RunLyraFrom(lyra, locked, given), ExitedWithCode(0));
+  const std::string lock = ReadWholeFile(locked / "lyra.lock");
+  refused(
+      locked, std::format("check --ports '{}'", changed.string()),
+      "not the sha256:");
+
+  // A lock naming a port the store does not hold.
+  std::string seventh = lock;
+  seventh.replace(seventh.find("port_version = 1"), 16, "port_version = 7");
+  WriteFile(locked / "lyra.lock", seventh);
+  refused(locked, given, "records port 7 of greet 1.0");
+
+  // A store holding the same port prepared again from other content, which
+  // states its own digest: what the lock recorded is not what it holds.
+  const auto again = *tmp_or / "again";
+  WritePort(again, "greet", "1.0", "1", "greet again");
+  WriteFile(locked / "lyra.lock", lock);
+  refused(
+      locked, std::format("check --ports '{}'", again.string()),
+      "records port 1 of greet 1.0 with the digest");
+
+  // A tree whose metadata names another port than the one its place names.
+  const auto misnamed = *tmp_or / "misnamed";
+  std::filesystem::create_directories(misnamed / "greet" / "1.0");
+  std::filesystem::copy(
+      store / "greet" / "2.0" / "1", misnamed / "greet" / "1.0" / "1",
+      std::filesystem::copy_options::recursive);
+  refused(
+      unlocked, std::format("check --ports '{}'", misnamed.string()),
+      "states port 1 of greet 2.0");
+
+  // A lock listing its libraries out of order, as two changes each adding one
+  // may merge into, records the same, and is kept as it is.
+  WritePort(store, "wave", "1.0", "1", "wave 1.0");
+  const auto ordered = *tmp_or / "ordered";
+  WriteFile(
+      ordered / "lyra.toml",
+      "[library]\nname = \"app\"\nfiles = [\"top.sv\"]\n"
+      "\n[dependencies]\ngreet = { version = \"1.0\" }\n"
+      "wave = { version = \"1.0\" }\n");
+  WriteFile(ordered / "top.sv", "module Top;\nendmodule\n");
+  ASSERT_THAT(RunLyraFrom(lyra, ordered, given), ExitedWithCode(0));
+  const std::string both = ReadWholeFile(ordered / "lyra.lock");
+  const std::size_t greet_at = both.find("\n[[library]]");
+  const std::size_t wave_at = both.find("\n[[library]]", greet_at + 1);
+  ASSERT_NE(wave_at, std::string::npos) << both;
+  const std::string swapped = both.substr(0, greet_at) + both.substr(wave_at) +
+                              both.substr(greet_at, wave_at - greet_at);
+  WriteFile(ordered / "lyra.lock", swapped);
+  const auto kept_order = RunLyraFrom(lyra, ordered, given + " --locked");
+  EXPECT_THAT(kept_order, ExitedWithCode(0)) << kept_order.stderr_text;
+  EXPECT_EQ(ReadWholeFile(ordered / "lyra.lock"), swapped);
+
+  // A lock not as Lyra writes one: a library written as one table, a key it
+  // never writes, and one library recorded twice.
+  std::string one_table = lock;
+  one_table.replace(one_table.find("[[library]]"), 11, "[library]");
+  WriteFile(locked / "lyra.lock", one_table);
+  refused(locked, given, "is not a lock file as Lyra writes one");
+  WriteFile(locked / "lyra.lock", lock + "source = \"elsewhere\"\n");
+  refused(locked, given, "is not a lock file as Lyra writes one");
+  WriteFile(
+      locked / "lyra.lock", lock + lock.substr(lock.find("\n[[library]]")));
+  refused(locked, given, "records library 'greet' twice");
+  WriteFile(locked / "lyra.lock", lock);
+
+  // A version the store holds no port of, including one only under a name no
+  // port version is spelled with.
+  const auto unknown = *tmp_or / "unknown";
+  WriteGreetedProject(unknown, "9.9");
+  refused(unknown, given, "holds no port of it");
+  WriteGreetedProject(unknown, "3.0");
+  refused(unknown, given, "holds no port of it");
+
+  // Two releases of one library in one build: a library of the project's own
+  // takes greet 1.0, and the design greet 2.0.
+  const auto conflict = *tmp_or / "conflict";
+  WriteFile(
+      conflict / "mid" / "lyra.toml",
+      "[library]\nname = \"mid\"\nfiles = []\n"
+      "\n[dependencies]\ngreet = { version = \"1.0\" }\n");
+  WriteFile(
+      conflict / "lyra.toml",
+      "[library]\nname = \"app\"\nfiles = [\"top.sv\"]\n"
+      "\n[dependencies]\nmid = { path = \"mid\" }\n"
+      "greet = { version = \"2.0\" }\n");
+  WriteFile(conflict / "top.sv", "module Top;\nendmodule\n");
+  refused(conflict, given, "the build already holds a library of that name");
+  EXPECT_FALSE(std::filesystem::exists(conflict / "lyra.lock"));
+
+  // A resolution failing at its second library leaves the lock it found, the
+  // first library it took differing from what that lock records.
+  const auto midway = *tmp_or / "midway";
+  WriteGreetedProject(midway, "1.0");
+  ASSERT_THAT(RunLyraFrom(lyra, midway, given), ExitedWithCode(0));
+  const std::string kept = ReadWholeFile(midway / "lyra.lock");
+  WriteFile(
+      midway / "lyra.toml",
+      "[library]\nname = \"app\"\nfiles = [\"top.sv\"]\n"
+      "\n[dependencies]\ngreet = { version = \"2.0\" }\n"
+      "absent = { version = \"1.0\" }\n");
+  refused(midway, given, "holds no port of it");
+  EXPECT_EQ(ReadWholeFile(midway / "lyra.lock"), kept);
+
+  // Told the lock may not change: a missing lock, and one recording a library
+  // no longer declared, are refused and left as they were.
+  const auto fresh = *tmp_or / "fresh";
+  WriteGreetedProject(fresh, "1.0");
+  refused(fresh, given + " --locked", "does not record what this build takes");
+  EXPECT_FALSE(std::filesystem::exists(fresh / "lyra.lock"));
+  WriteFile(
+      midway / "lyra.toml",
+      "[library]\nname = \"app\"\nfiles = [\"top.sv\"]\n");
+  WriteFile(midway / "top.sv", "module Top;\nendmodule\n");
+  refused(midway, given + " --locked", "does not record what this build takes");
+  EXPECT_EQ(ReadWholeFile(midway / "lyra.lock"), kept);
+  ASSERT_THAT(RunLyraFrom(lyra, midway, given), ExitedWithCode(0));
+  EXPECT_EQ(
+      ReadWholeFile(midway / "lyra.lock").find("[[library]]"),
+      std::string::npos)
+      << ReadWholeFile(midway / "lyra.lock");
+}
+
+// UVM 1.2 is taken from the port Lyra ships: a design names it by version and
+// is read against it, its C included, with no store given, under the time
+// scale the design states and the port does not.
+TEST(LyraSupportedLibrary, UvmIsTakenFromThePortLyraShips) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  WriteFile(
+      *tmp_or / "lyra.toml",
+      "[library]\nname = \"bench\"\nfiles = [\"top.sv\"]\n"
+      "\n[design]\ntop = [\"Top\"]\n"
+      "\n[dependencies]\nuvm = { version = \"1.2\" }\n"
+      "\n[compile]\ntimescale = \"1ns/1ns\"\n");
+  WriteFile(
+      *tmp_or / "top.sv",
+      "`include \"uvm_macros.svh\"\n"
+      "module Top;\n"
+      "  import uvm_pkg::*;\n"
+      "  initial `uvm_info(\"TOP\", \"from the shipped port\", UVM_LOW)\n"
+      "endmodule\n");
+  const auto checked = RunLyraFrom(lyra, *tmp_or, "check");
+  ASSERT_THAT(checked, ExitedWithCode(0)) << checked.stderr_text;
+  const std::string lock = ReadWholeFile(*tmp_or / "lyra.lock");
+  EXPECT_NE(lock.find("name = \"uvm\""), std::string::npos) << lock;
+  EXPECT_NE(lock.find("port_version = 1"), std::string::npos) << lock;
+}
+
+// One build is read under one language version and one default time scale,
+// the command line's where it gives one, else the root's, and for the language
+// version else the one Lyra reads by default. A dependency stating one is read
+// only where it is the build's, and one stating none takes the build's.
+TEST(LyraManifest, ADependencyIsReadAsTheBuildIs) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  WriteFile(
+      *tmp_or / "dep" / "lyra.toml",
+      "[library]\nname = \"dep\"\nfiles = []\n"
+      "\n[compile]\ntimescale = \"1ns/1ns\"\n");
+  const auto declare_root = [&](std::string_view compile) {
+    WriteFile(
+        *tmp_or / "app" / "lyra.toml",
+        std::format(
+            "[library]\nname = \"app\"\nfiles = [\"top.sv\"]\n"
+            "\n[dependencies]\ndep = {{ path = \"../dep\" }}\n{}",
+            compile));
+  };
+  WriteFile(*tmp_or / "app" / "top.sv", "module Top;\nendmodule\n");
+  const auto check = [&](std::string_view args) {
+    return RunLyraFrom(lyra, *tmp_or / "app", args);
+  };
+
+  declare_root("\n[compile]\ntimescale = \"1ns/1ns\"\n");
+  EXPECT_THAT(check("check"), ExitedWithCode(0));
+  const auto overridden = check("check --timescale 1ps/1ps");
+  EXPECT_THAT(overridden, ExitedWithCode(Ne(0)));
+  EXPECT_NE(
+      overridden.stderr_text.find(
+          "is '1ns/1ns' for library 'dep', and the build is read under "
+          "'1ps/1ps'"),
+      std::string::npos)
+      << overridden.stderr_text;
+
+  declare_root("");
+  EXPECT_THAT(check("check"), ExitedWithCode(Ne(0)));
+  const auto given = check("check --timescale 1ns/1ns");
+  EXPECT_THAT(given, ExitedWithCode(0)) << given.stderr_text;
+
+  WriteFile(
+      *tmp_or / "dep" / "lyra.toml",
+      "[library]\nname = \"dep\"\nfiles = []\n"
+      "\n[compile]\nstd = \"1800-2023\"\n");
+  const auto by_default = check("check");
+  EXPECT_THAT(by_default, ExitedWithCode(0)) << by_default.stderr_text;
+  const auto older = check("check --std 1800-2017");
+  EXPECT_THAT(older, ExitedWithCode(Ne(0)));
+  EXPECT_NE(
+      older.stderr_text.find(
+          "is '1800-2023' for library 'dep', and the build is read under "
+          "'1800-2017'"),
+      std::string::npos)
+      << older.stderr_text;
+}
+
 // Three libraries in a chain, `soc` on `prim` on `base`, written so that each
 // thing one library could leak into another is observable: `soc` and `prim`
 // each hold a cell `fifo`, a header `who.svh` and a define `FLAVOUR`, `soc`
@@ -661,14 +1061,16 @@ TEST(LyraManifest, RefusesADependencyThatIsNotOneLibrary) {
     std::string_view dependencies;
     std::string_view expected;
   };
-  static constexpr std::array<Refusal, 8> kRefusals = {
+  static constexpr std::array<Refusal, 9> kRefusals = {
       {{.dependencies = "prim = \"../prim\"\n",
         .expected = "is not a table saying where the library is declared"},
        {.dependencies = "prim = { git = \"https://example.com/prim\" }\n",
         .expected = "lyra.toml:5:10: error: '[dependencies.prim] git' is not a "
                     "recognized key"},
        {.dependencies = "prim = {}\n",
-        .expected = "a dependency has to say which directory declares it"},
+        .expected = "has to name either a 'path'"},
+       {.dependencies = "prim = { path = \"../prim\", version = \"1.0\" }\n",
+        .expected = "has to name either a 'path'"},
        {.dependencies = "prim = { path = \"../nowhere\" }\n",
         .expected = "which does not exist"},
        {.dependencies = "primitives = { path = \"../prim\" }\n",

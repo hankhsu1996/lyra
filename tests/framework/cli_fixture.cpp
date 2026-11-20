@@ -7,6 +7,7 @@
 #include <gtest/gtest.h>
 #include <memory>
 #include <nlohmann/json.hpp>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -14,6 +15,7 @@
 
 #include "conformance/framework/process.hpp"
 #include "lyra/driver/subprocess.hpp"
+#include "lyra/ports/port.hpp"
 #include "tools/cpp/runfiles/runfiles.h"
 
 namespace lyra::test {
@@ -87,6 +89,24 @@ auto RunLyraFrom(
     std::string_view args) -> ProcessOutcome {
   return RunShellScript(
       std::format("cd '{}' && '{}' {}", dir.string(), lyra.string(), args));
+}
+
+auto PreparePort(
+    const std::filesystem::path& store, const lyra::ports::PortIdentity& port)
+    -> std::optional<std::string> {
+  const std::filesystem::path tree =
+      store / port.name / port.version / std::to_string(port.port_version);
+  const auto digest = lyra::ports::DigestOfPreparedTree(tree);
+  if (!digest) {
+    return digest.error();
+  }
+  std::ofstream out(tree / lyra::ports::kPortMetadataFile);
+  out << lyra::ports::RenderPortMetadata({.identity = port, .digest = *digest});
+  out.close();
+  if (!out) {
+    return std::format("cannot write the metadata of '{}'", tree.string());
+  }
+  return std::nullopt;
 }
 
 auto WriteTrivialSource(const std::filesystem::path& path) -> void {

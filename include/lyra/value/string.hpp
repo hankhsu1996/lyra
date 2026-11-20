@@ -25,8 +25,7 @@ namespace lyra::value {
 
 // The text a C string holds. Foreign code hands a string across as a
 // `const char*` (LRM Annex H.8.10), and a null pointer, to which the standard
-// gives no meaning and which the UVM library hands back to say "none", holds
-// none.
+// gives no meaning and which foreign code hands back to say "none", holds none.
 [[nodiscard]] inline auto CStringText(const char* s) -> std::string_view {
   return s != nullptr ? std::string_view(s) : std::string_view();
 }

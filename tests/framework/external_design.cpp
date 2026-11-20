@@ -394,6 +394,15 @@ auto DescribedSuiteCases(
   for (const std::string& dir : suite_dirs) {
     suite_incdir.push_back((*sources_root / dir).lexically_normal().string());
   }
+  std::string dependencies;
+  if (const YAML::Node supported = Section(described, "dependencies");
+      supported.IsMap()) {
+    for (const auto& library : supported) {
+      dependencies += std::format(
+          "{} = {{ version = {} }}\n", library.first.as<std::string>(),
+          TomlString(library.second.as<std::string>()));
+    }
+  }
   std::string compile;
   if (const auto scale = LastOf({described}, "timescale")) {
     compile += std::format("timescale = {}\n", TomlString(*scale));
@@ -433,10 +442,10 @@ auto DescribedSuiteCases(
     }
     const std::string declaration = std::format(
         "[library]\nname = {}\nfiles = {}\nincdir = {}\ndefines = {}\n"
-        "\n[compile]\n{}",
+        "\n[dependencies]\n{}\n[compile]\n{}",
         TomlString(LibraryNameOf(std::format("{}_{}", suite, dir_name))),
         TomlArray(files), TomlArray(incdir), TomlArray(ListOf(both, "defines")),
-        compile);
+        dependencies, compile);
 
     // A case's own check replaces the suite's; the program it names is an
     // input of this run.

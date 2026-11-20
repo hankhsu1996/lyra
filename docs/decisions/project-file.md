@@ -160,12 +160,17 @@ their user cannot be published, and cannot be compiled once for two users.
 ```toml
 [dependencies]
 prim = { path = "../prim" }    # a directory whose lyra.toml declares library prim
+uvm  = { version = "1.2" }     # a release of a library Lyra supports
 ```
 
-The key is the library's name, because that name is written in source (`prim.fifo` in a
-configuration) and is the library's own to choose; a declaration found there under another name is
-refused. A build holds one library of a name, each read once however many libraries depend on it,
-and a library that reaches itself is refused.
+A library of the project's own is found where it lies; a release of a third-party library Lyra
+supports is found by its version, as a port Lyra ships, and the root's `lyra.lock` records which
+port the build took
+([a-supported-library-is-a-port-lyra-ships](a-supported-library-is-a-port-lyra-ships.md)). Either
+way what is reached is a declaration read as below. The key is the library's name, because that name
+is written in source (`prim.fifo` in a configuration) and is the library's own to choose; a
+declaration found there under another name is refused. A build holds one library of a name, each
+read once however many libraries depend on it, and a library that reaches itself is refused.
 
 **A named library beside the root's is not yet a dependency.** Run against the front end as it
 stood, with a root and one named library each holding a cell `fifo`:
@@ -229,8 +234,23 @@ private headers are not. Nothing else crosses: no define, no setting of `[compil
 | One build has one `std` and one `timescale`                      | No: a gap                                  |
 
 The gap is refused rather than papered over. The front end reads one build under one language
-version and one default time scale, so a dependency declaring another `std` or `timescale` than the
-root would be read under the root's answer -- a different library from the one its own build makes.
+version and one default time scale -- the command line's where it gives one, else the root's -- so a
+dependency declaring another `std` or `timescale` than the build's would be read under the build's
+answer, a different library from the one its own build makes. A dependency leaving either undeclared
+makes no claim on it and is read under the build's, and the two keys reach that for different
+reasons.
+
+- **`timescale` follows the standard.** A design element stating no time unit takes the tool's
+  default (LRM 3.14.2.3, 22.7), and the build's time scale is that default. A library that needs a
+  unit of its own states it in its text with `timeunit` or `` `timescale ``. A library published for
+  others cannot know its user's time scale, and leaves it undeclared for exactly this reason.
+- **`std` follows from the front end, and a library can still pin its own.** Rust gives each crate
+  its own edition and reads one that names none as the oldest, never as its dependent's. That needs
+  each crate compiled under its own language, and the front end reads one build under one version.
+  The standard gives a text its own keyword version with `` `begin_keywords `` (LRM 22.14), so a
+  library that needs one states it there. The versions differ chiefly in reserved words and syntax,
+  so a text read under one it was not written for is mostly refused while it is parsed.
+
 `coalesce_comb_updates` is not on that list: each unit is lowered under its own library's answer,
 which is the library its own build makes, and one stating nothing is read as the standard reads
 (`combinational-updates-are-coalesced-where-a-build-asks.md`). Nor is `assertions`: eliding an
@@ -244,11 +264,11 @@ reasoned and not measured. Spelling a declared library's cells `library.cell` ev
 one name, and costs the readable file names of every declared project on the C++ path for as long as
 an emitted file is named after its unit.
 
-**Not built:** fetching, versions, a lockfile, a registry; a dependent choosing among variants of a
-dependency (Cargo's features, Bender's `pass_targets`); dependencies only the design needs (Cargo's
-dev-dependencies), so the one list serves the library and its design alike. Two libraries declaring
-a package of one name cannot be used together: the standard has one package name space and forbids a
-configuration to rebind a package (LRM 3.13, 33.4), and the front end reports the duplicate.
+**Not built:** fetching, a registry; a dependent choosing among variants of a dependency (Cargo's
+features, Bender's `pass_targets`); dependencies only the design needs (Cargo's dev-dependencies),
+so the one list serves the library and its design alike. Two libraries declaring a package of one
+name cannot be used together: the standard has one package name space and forbids a configuration to
+rebind a package (LRM 3.13, 33.4), and the front end reports the duplicate.
 
 ## The axis inside B: shared versus local
 
@@ -264,9 +284,9 @@ Lyra's spelling of it: **does the option change what program is elaborated and l
 run produces and executes it?** Sources, include directories, defines, library search, the top, the
 compilation-unit model, the language version and the assertion policy all change the program. `-o`,
 `--backend`, `-O`, `--lto`, `--sanitize`, `--rebuild`, `--no-pch`, `--format`, `--color`, `--jobs`,
-`--cxx` and `--cache-dir` change only how this run produces, executes or reports on it -- and
-`--backend` cannot change the program at all, since North Star invariant 3 makes correctness
-independent of which path lowers it.
+`--cxx`, `--cache-dir`, `--ports` and `--locked` change only how this run produces, executes or
+reports on it -- and `--backend` cannot change the program at all, since North Star invariant 3
+makes correctness independent of which path lowers it.
 
 Every established manifest format draws the same line, and draws it as a file boundary: Cargo splits
 `Cargo.toml` from `.cargo/config.toml`, npm splits `package.json` from `.npmrc`. A manifest is
@@ -353,6 +373,7 @@ dpi       = ["tb/dpi_stubs.c"]                       # material
 
 [dependencies]
 prim      = { path = "../prim" }                     # material: another library, by name
+uvm       = { version = "1.2" }                      # material: a supported library, by release
 
 [compile]
 std         = "1800-2023"                            # selection
@@ -547,11 +568,11 @@ Five moves buy it, and each is worth more than the field it protects:
    that "what the design is" and "how this run produces it" are different questions is not. Every
    future feature lands on one side of that line.
 2. **Close the namespace.** D8 makes an unknown key an error, usually justified as typo detection.
-   Its larger effect is that a table or a key this version does not know -- `[workspace]`, a `git`
-   or `version` beside a dependency's `path` -- is reserved for free, and an older Lyra meeting a
-   newer manifest fails loudly instead of building a subtly different design. That is also why there
-   is no schema-version field: strict keys already give the loud failure a version field would give,
-   and a version with one value is speculation.
+   Its larger effect is that a table or a key this version does not know -- `[workspace]`, or a
+   `git` key on a dependency -- is reserved for free, and an older Lyra meeting a newer manifest
+   fails loudly instead of building a subtly different design. That is also why there is no
+   schema-version field: strict keys already give the loud failure a version field would give, and a
+   version with one value is speculation.
 
    **There is no `[package]` above `[library]`, and that is a decision rather than an omission.**
    Cargo separates `[package]` from `[lib]` and `[bin]` because one package holds several build
@@ -562,9 +583,10 @@ Five moves buy it, and each is worth more than the field it protects:
 3. **Resolve every reference against what declares it.** D3 decides on its own whether a second
    manifest could ever contribute sources. Without it, dependencies are impossible; with it, they
    are ordinary.
-4. **Reserve space, never fields.** No `version`, no registry, no lockfile, no `[workspace]`,
-   because nothing reads them. A namespace costs nothing to reserve; a field with no reader costs a
-   migration.
+4. **Reserve space, never fields.** No registry and no `[workspace]`, because nothing reads them. A
+   namespace costs nothing to reserve; a field with no reader costs a migration. A dependency's
+   `version` and the lock file came in once a supported library gave them a reader, which is the
+   condition this move set.
 5. **Refuse inference.** Manifests are never merged (D6). A workspace, if one is ever wanted, is
    declared by a root manifest -- not inferred by walking a tree, the way a configuration cascade
    does. An ecosystem needs relationships that can be published, and an inferred relationship cannot

@@ -3,11 +3,13 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <expected>
 #include <filesystem>
 #include <format>
 #include <map>
 #include <optional>
+#include <ranges>
 #include <span>
 #include <string>
 #include <string_view>
@@ -20,10 +22,15 @@
 #include <slang/text/SourceManager.h>
 
 #include "lyra/base/diag_message.hpp"
+#include "lyra/base/overloaded.hpp"
+#include "lyra/cli/lock_file.hpp"
 #include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
+#include "lyra/driver/runtime_export.hpp"
+#include "lyra/frontend/load.hpp"
 #include "lyra/frontend/slang_source_span.hpp"
+#include "lyra/ports/port.hpp"
 #include "lyra/support/assertion_policy.hpp"
 #include "lyra/support/simple_identifier.hpp"
 
@@ -44,7 +51,7 @@ struct InvocationKey {
   std::string_view option;
 };
 
-constexpr std::array<InvocationKey, 16> kInvocationKeys = {{
+constexpr std::array<InvocationKey, 18> kInvocationKeys = {{
     {.key = "out", .option = "--out"},
     {.key = "backend", .option = "--backend"},
     {.key = "optimization", .option = "-O"},
@@ -55,6 +62,8 @@ constexpr std::array<InvocationKey, 16> kInvocationKeys = {{
     {.key = "no_pch", .option = "--no-pch"},
     {.key = "rebuild", .option = "--rebuild"},
     {.key = "cache_dir", .option = "--cache-dir"},
+    {.key = "ports", .option = "--ports"},
+    {.key = "locked", .option = "--locked"},
     {.key = "color", .option = "--color"},
     {.key = "no_color", .option = "--no-color"},
     {.key = "jobs", .option = "--jobs"},
@@ -390,9 +399,10 @@ auto ReadDesign(
   return {};
 }
 
-// Each entry names a library and the directory its declaration is in. They are
-// handed back in the order the file writes them, which the parser does not
-// keep: it holds a table sorted by key.
+// Each entry names a library and how its declaration is found: the directory
+// it is in, or a release of a library Lyra supports. They are handed back in
+// the order the file writes them, which the parser does not keep: it holds a
+// table sorted by key.
 auto ReadDependencies(
     const ManifestText& file, const toml::table& table,
     std::vector<DeclaredDependency>& out) -> diag::Result<void> {
@@ -423,7 +433,8 @@ auto ReadDependencies(
                   "write it as '{}'",
                   std::format("{} = {{ path = \"../{}\" }}", name, name)));
     }
-    static constexpr std::array<std::string_view, 1> kKeys = {"path"};
+    static constexpr std::array<std::string_view, 2> kKeys = {
+        "path", "version"};
     const std::string table_name = std::format("dependencies.{}", name);
     if (auto ok = CheckKeys(file, table_name, *spec, kKeys); !ok) {
       return std::unexpected(std::move(ok.error()));
@@ -435,20 +446,35 @@ auto ReadDependencies(
         !ok) {
       return std::unexpected(std::move(ok.error()));
     }
-    if (!directory) {
+    std::optional<std::string> version;
+    if (auto ok = ReadString(
+            file, std::format("[{}] version", table_name), spec->get("version"),
+            version);
+        !ok) {
+      return std::unexpected(std::move(ok.error()));
+    }
+    // A library of the project's own is found where it lies; a release of a
+    // supported one is found by its version. Naming both, or neither, says
+    // nothing a build could follow.
+    if (directory.has_value() == version.has_value()) {
       return Fail(
           file, entry.first.source(),
-          "'[{}]' has no 'path', and a dependency has to say which directory "
-          "declares it",
+          "'[{}]' has to name either a 'path', the directory declaring a "
+          "library of the project's own, or a 'version' of a library Lyra "
+          "supports",
           table_name);
     }
+    const DependencySource source =
+        directory ? DependencySource{LocalLibrary{
+                        .manifest = (file.Path().parent_path() / *directory /
+                                     kManifestFileName)
+                                        .lexically_normal()}}
+                  : DependencySource{SupportedLibrary{.version = *version}};
     written.push_back(
         {.at = entry.second.source().begin,
          .dependency = {
              .name = name,
-             .manifest =
-                 (file.Path().parent_path() / *directory / kManifestFileName)
-                     .lexically_normal(),
+             .source = source,
              .declared_at = file.SpanOf(entry.first.source())}});
   }
   std::ranges::sort(written, {}, [](const Written& entry) {
@@ -468,12 +494,27 @@ auto Spelled(const std::optional<std::string>& setting) -> std::string {
 }
 
 // The libraries a build reaches, gathered by following each declaration's
-// dependencies, a library's own before the library.
+// dependencies, a library's own before the library. A supported library is
+// taken from a port: the one the lock found records for the version asked for,
+// else the latest of that version the store holds.
 class ReachedLibraries {
  public:
-  ReachedLibraries(const Manifest& root, slang::SourceManager& sources)
-      : root_(&root), sources_(&sources) {
-    declared_by_.emplace(root.library.name, Canonical(root.path));
+  ReachedLibraries(
+      const Manifest& root, slang::SourceManager& sources,
+      const BuildReading& reading, const PortStoreChoice& ports,
+      fs::path lock_path, const LockFile& lock)
+      : sources_(&sources),
+        reading_(&reading),
+        ports_(&ports),
+        lock_path_(std::move(lock_path)),
+        lock_(&lock) {
+    declared_by_.emplace(
+        root.library.name,
+        FoundDeclaration{
+            .file = Canonical(root.path),
+            .shown =
+                std::format("the library declared by '{}'", root.path.string()),
+            .port = std::nullopt});
   }
 
   auto Follow(const Manifest& from) -> diag::Result<void> {
@@ -491,7 +532,27 @@ class ReachedLibraries {
     return std::move(reached_);
   }
 
+  // What the lock states once this build is resolved: each port taken, in the
+  // order of its library's name.
+  [[nodiscard]] auto Lock() const -> LockFile {
+    LockFile lock;
+    for (const FoundDeclaration& found : std::views::values(declared_by_)) {
+      if (found.port) {
+        lock.libraries.push_back(*found.port);
+      }
+    }
+    return lock;
+  }
+
  private:
+  // A library's declaration as the build found it: its file, how a message
+  // shows where it came from, and the port it is part of where it is one.
+  struct FoundDeclaration {
+    fs::path file;
+    std::string shown;
+    std::optional<ports::PortMetadata> port;
+  };
+
   static auto Canonical(const fs::path& path) -> fs::path {
     std::error_code ec;
     fs::path canonical = fs::weakly_canonical(path, ec);
@@ -502,15 +563,32 @@ class ReachedLibraries {
   // dependency, which is where the build reached it from.
   auto Reach(const DeclaredDependency& dependency) -> diag::Result<void> {
     const diag::SourceSpan at = dependency.declared_at;
-    const fs::path file = Canonical(dependency.manifest);
+    auto found = std::visit(
+        Overloaded{
+            [&](const LocalLibrary& local) -> diag::Result<FoundDeclaration> {
+              return FoundDeclaration{
+                  .file = local.manifest,
+                  .shown = std::format(
+                      "the library declared by '{}'", local.manifest.string()),
+                  .port = std::nullopt};
+            },
+            [&](const SupportedLibrary& supported) {
+              return TakePort(dependency, supported);
+            }},
+        dependency.source);
+    if (!found) {
+      return std::unexpected(std::move(found.error()));
+    }
+    const fs::path manifest = found->file;
+    const fs::path file = Canonical(manifest);
     if (const auto met = declared_by_.find(dependency.name);
         met != declared_by_.end()) {
-      if (met->second != file) {
+      if (met->second.file != file) {
         return std::unexpected(Refusal(
             at,
-            "'[dependencies] {}' names the library declared by '{}', and the "
-            "build already holds a library of that name, declared by '{}'",
-            dependency.name, file.string(), met->second.string()));
+            "'[dependencies] {}' names {}, and the build already holds a "
+            "library of that name, {}",
+            dependency.name, found->shown, met->second.shown));
       }
       if (const auto loop = std::ranges::find(following_, dependency.name);
           loop != following_.end()) {
@@ -526,24 +604,28 @@ class ReachedLibraries {
     }
 
     std::error_code ec;
-    if (!fs::exists(dependency.manifest, ec)) {
+    if (!fs::exists(manifest, ec)) {
       return std::unexpected(Refusal(
           at, "'[dependencies] {}' names '{}', which does not exist",
-          dependency.name, dependency.manifest.string()));
+          dependency.name, manifest.string()));
     }
-    auto loaded = LoadManifest(dependency.manifest, *sources_);
+    auto loaded = LoadManifest(manifest, *sources_);
     if (!loaded) {
       return std::unexpected(std::move(loaded.error()));
     }
     if (loaded->library.name != dependency.name) {
       return std::unexpected(Refusal(
           at, "'[dependencies] {}' names '{}', which declares library '{}'",
-          dependency.name, dependency.manifest.string(), loaded->library.name));
+          dependency.name, manifest.string(), loaded->library.name));
     }
-    if (auto ok = CheckReadableBesideTheRoot(*loaded, at); !ok) {
+    if (auto ok = CheckReadableInTheBuild(*loaded, at); !ok) {
       return std::unexpected(std::move(ok.error()));
     }
-    declared_by_.emplace(dependency.name, file);
+    declared_by_.emplace(
+        dependency.name, FoundDeclaration{
+                             .file = file,
+                             .shown = std::move(found->shown),
+                             .port = std::move(found->port)});
     if (auto ok = Follow(*loaded); !ok) {
       return std::unexpected(std::move(ok.error()));
     }
@@ -552,35 +634,127 @@ class ReachedLibraries {
   }
 
   // The front end reads one build under one language version and one default
-  // time scale.
-  [[nodiscard]] auto CheckReadableBesideTheRoot(
+  // time scale. A library leaving either unstated makes no claim on it, and is
+  // read under the build's.
+  [[nodiscard]] auto CheckReadableInTheBuild(
       const Manifest& library, diag::SourceSpan at) const
       -> diag::Result<void> {
-    if (library.language_version != root_->language_version) {
+    if (library.language_version &&
+        library.language_version != reading_->language_version) {
       return std::unexpected(Refusal(
           at,
-          "'[compile] std' is {} for library '{}' and {} for library '{}'; "
-          "reading the libraries of one build under different language "
+          "'[compile] std' is {} for library '{}', and the build is read under "
+          "{}; reading the libraries of one build under different language "
           "versions is not yet supported",
           Spelled(library.language_version), library.library.name,
-          Spelled(root_->language_version), root_->library.name));
+          Spelled(reading_->language_version)));
     }
-    if (library.timescale != root_->timescale) {
+    if (library.timescale && library.timescale != reading_->timescale) {
       return std::unexpected(Refusal(
           at,
-          "'[compile] timescale' is {} for library '{}' and {} for library "
-          "'{}'; giving the libraries of one build different default time "
+          "'[compile] timescale' is {} for library '{}', and the build is read "
+          "under {}; giving the libraries of one build different default time "
           "scales is not yet supported",
           Spelled(library.timescale), library.library.name,
-          Spelled(root_->timescale), root_->library.name));
+          Spelled(reading_->timescale)));
     }
     return {};
   }
 
-  const Manifest* root_;
+  // The port a supported library is taken from, checked against what it was
+  // prepared with and against what the lock recorded of it.
+  auto TakePort(
+      const DeclaredDependency& dependency, const SupportedLibrary& supported)
+      -> diag::Result<FoundDeclaration> {
+    const diag::SourceSpan at = dependency.declared_at;
+    if (const auto met = declared_by_.find(dependency.name);
+        met != declared_by_.end() && met->second.port &&
+        met->second.port->identity.version == supported.version) {
+      return met->second;
+    }
+    auto store = Store(at);
+    if (!store) {
+      return std::unexpected(std::move(store.error()));
+    }
+    const ports::PortMetadata* locked = lock_->Find(dependency.name);
+    if (locked != nullptr && locked->identity.version != supported.version) {
+      locked = nullptr;
+    }
+    ports::PortIdentity port;
+    if (locked != nullptr) {
+      port = locked->identity;
+    } else {
+      const std::vector<std::int64_t> held =
+          ports::PortVersionsIn(*store, dependency.name, supported.version);
+      if (held.empty()) {
+        return std::unexpected(Refusal(
+            at,
+            "'[dependencies] {}' asks for version '{}', and '{}' holds no "
+            "port of it",
+            dependency.name, supported.version, store->string()));
+      }
+      port = {
+          .name = dependency.name,
+          .version = supported.version,
+          .port_version = held.back()};
+    }
+    const std::string shown = std::format(
+        "port {} of {} {}", port.port_version, port.name, port.version);
+    auto prepared = ports::VerifiedPort(*store, port);
+    if (!prepared) {
+      if (locked != nullptr) {
+        return std::unexpected(Refusal(
+            at, "'{}' records {}, which cannot be taken from '{}' ({})",
+            lock_path_.string(), shown, store->string(), prepared.error()));
+      }
+      return std::unexpected(Refusal(
+          at, "'[dependencies] {}' cannot be taken from {} ({})",
+          dependency.name, shown, prepared.error()));
+    }
+    if (locked != nullptr && locked->digest != prepared->metadata.digest) {
+      return std::unexpected(Refusal(
+          at,
+          "'{}' records {} with the digest {}, and the port this build would "
+          "take has {}",
+          lock_path_.string(), shown, locked->digest,
+          prepared->metadata.digest));
+    }
+    return FoundDeclaration{
+        .file = prepared->root / kManifestFileName,
+        .shown = std::format("{} as Lyra prepares it", shown),
+        .port = std::move(prepared->metadata)};
+  }
+
+  // The store a port is taken from, found once, as an absolute path so the
+  // declarations read from it name their files absolutely.
+  auto Store(diag::SourceSpan at) -> diag::Result<fs::path> {
+    if (store_) {
+      return *store_;
+    }
+    fs::path store;
+    if (ports_->given) {
+      store = *ports_->given;
+    } else {
+      auto shipped = driver::ResolveShippedPortStore(ports_->binary_path);
+      if (!shipped) {
+        return std::unexpected(diag::PlacedAt(std::move(shipped.error()), at));
+      }
+      store = *std::move(shipped);
+    }
+    std::error_code ec;
+    fs::path absolute = fs::absolute(store, ec);
+    store_ = ec ? store : absolute.lexically_normal();
+    return *store_;
+  }
+
   slang::SourceManager* sources_;
+  const BuildReading* reading_;
+  const PortStoreChoice* ports_;
+  fs::path lock_path_;
+  const LockFile* lock_;
+  std::optional<fs::path> store_;
   std::vector<Manifest> reached_;
-  std::map<std::string, fs::path> declared_by_;
+  std::map<std::string, FoundDeclaration> declared_by_;
   std::vector<std::string> following_;
 };
 
@@ -744,17 +918,42 @@ auto FindManifest(const fs::path& start) -> ManifestSearch {
   }
 }
 
-auto LoadDeclarations(const fs::path& path, slang::SourceManager& sources)
+auto LoadDeclarations(
+    const fs::path& path, slang::SourceManager& sources,
+    const BuildReading& given, const PortStoreChoice& ports)
     -> diag::Result<Declarations> {
   auto root = LoadManifest(path, sources);
   if (!root) {
     return std::unexpected(std::move(root.error()));
   }
-  ReachedLibraries reached(*root, sources);
+  fs::path lock_path = path.parent_path() / kLockFileName;
+  auto lock = ReadLockFile(lock_path);
+  if (!lock) {
+    return std::unexpected(std::move(lock.error()));
+  }
+  BuildReading reading{
+      .language_version =
+          given.language_version
+              ? given.language_version
+              : (root->language_version
+                     ? root->language_version
+                     : std::string(frontend::kDefaultLanguageVersion)),
+      .timescale = given.timescale ? given.timescale : root->timescale};
+  ReachedLibraries reached(*root, sources, reading, ports, lock_path, *lock);
   if (auto ok = reached.Follow(*root); !ok) {
     return std::unexpected(std::move(ok.error()));
   }
-  return Declarations{.dependencies = reached.Take(), .root = *std::move(root)};
+  // A missing lock records nothing, so a project that takes no supported
+  // library is never given one.
+  LockFile resolved = reached.Lock();
+  const bool unchanged = *lock == resolved;
+  return Declarations{
+      .dependencies = reached.Take(),
+      .root = *std::move(root),
+      .reading = std::move(reading),
+      .lock_path = std::move(lock_path),
+      .lock_update = unchanged ? std::nullopt
+                               : std::optional<LockFile>{std::move(resolved)}};
 }
 
 }  // namespace lyra::cli

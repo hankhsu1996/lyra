@@ -4,6 +4,7 @@ load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_static_library.bzl", "cc_static_library")
 load("//tools/bazel:copts.bzl", "LYRA_COPTS")
 load("//tools/bazel:embed.bzl", "embedded_text")
+load("//tools/bazel:ports.bzl", "port_store")
 load("//tools/bazel:shipped.bzl", "sanitizer_runtime", "shipped_artifact", "shipped_headers", "shipped_sources")
 
 # Compile every declared header once on its own, so a header that only builds
@@ -51,6 +52,15 @@ shipped_headers(
     root = "runtime_surface",
     strip_prefix = "third_party/systemverilog",
     visibility = ["//visibility:public"],
+)
+
+# The ports of the third-party libraries Lyra supports, each port version it has
+# ever published, so a project that locked one is built from it by every later
+# Lyra with no network.
+port_store(
+    name = "port_store",
+    ports = ["//ports/uvm/1.2/1:port"],
+    root = "port_store",
 )
 
 refresh_compile_commands(
@@ -104,6 +114,24 @@ cc_library(
         ":base",
         ":diag",
         "@nlohmann_json//:json",
+    ],
+)
+
+# A port of a supported third-party library: its identity, the digest of its
+# prepared content, and where a store of prepared ports holds it.
+cc_library(
+    name = "ports",
+    srcs = glob(["src/lyra/ports/*.cpp"]),
+    hdrs = glob(["include/lyra/ports/*.hpp"]),
+    copts = LYRA_COPTS,
+    includes = ["include"],
+    # A malformed metadata file is a failure the caller reports, so the TOML
+    # parser hands its error back rather than throwing one.
+    local_defines = ["TOML_EXCEPTIONS=0"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "@llvm-project//llvm:Support",
+        "@tomlplusplus",
     ],
 )
 
@@ -605,10 +633,12 @@ cc_library(
         ":compiler",
         ":diag",
         ":driver",
+        ":frontend",
         ":hir",
         ":lir",
         ":mir",
         ":mir_transform",
+        ":ports",
         ":profiling",
         ":program",
         ":status",
@@ -627,6 +657,7 @@ cc_binary(
         ":address_sanitizer_runtime",
         ":cpp_runtime",
         ":cpp_runtime_address_sanitized",
+        ":port_store",
         ":runtime_sources",
         ":runtime_surface",
         ":runtime_surface_svdpi",

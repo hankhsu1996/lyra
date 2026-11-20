@@ -30,6 +30,7 @@
 #include "conformance/framework/process.hpp"
 #include "conformance/framework/process_matchers.hpp"
 #include "lyra/driver/subprocess.hpp"
+#include "lyra/ports/port.hpp"
 #include "tests/framework/cli_fixture.hpp"
 
 namespace {
@@ -135,6 +136,61 @@ TEST(LyraEmittedProject, ProducesPortableBuildableProject) {
   EXPECT_THAT(other_run, ExitedWithCode(0)) << other_run.stderr_text;
   EXPECT_NE(other_run.stdout_text.find("ran 42"), std::string::npos)
       << "stdout: " << other_run.stdout_text;
+}
+
+// A supported library is taken from a port, its SystemVerilog and its foreign
+// half alike, and an emitted project carries what it took: it still builds and
+// runs once the store it was taken from is gone.
+TEST(LyraEmittedProject, CarriesThePortItTook) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  const auto store = *tmp_or / "store";
+  const auto tree = store / "greet" / "1.0" / "1";
+  std::filesystem::create_directories(tree / "c");
+  std::ofstream(tree / "lyra.toml")
+      << "[library]\nname = \"greet\"\nfiles = [\"greet.sv\"]\n"
+      << "dpi = [\"c/greet.c\"]\n";
+  std::ofstream(tree / "greet.sv")
+      << "module greeter;\n"
+      << "  import \"DPI-C\" function int greeting();\n"
+      << "  initial $display(\"greet %0d\", greeting());\n"
+      << "endmodule\n";
+  std::ofstream(tree / "c" / "greet.c")
+      << "int greeting(void) { return 42; }\n";
+  const auto failed = lyra::test::PreparePort(
+      store, {.name = "greet", .version = "1.0", .port_version = 1});
+  ASSERT_FALSE(failed.has_value()) << *failed;
+
+  const auto project = *tmp_or / "project";
+  std::filesystem::create_directories(project);
+  std::ofstream(project / "lyra.toml")
+      << "[library]\nname = \"app\"\nfiles = [\"top.sv\"]\n"
+      << "\n[design]\ntop = [\"Top\"]\n"
+      << "\n[dependencies]\ngreet = { version = \"1.0\" }\n";
+  std::ofstream(project / "top.sv")
+      << "module Top;\n  greeter g ();\nendmodule\n";
+  const auto out_dir = *tmp_or / "out";
+  const auto emitted = lyra::test::RunLyraFrom(
+      lyra, project,
+      std::format(
+          "emit cpp --ports '{}' -o '{}'", store.string(), out_dir.string()));
+  ASSERT_THAT(emitted, ExitedWithCode(0)) << emitted.stderr_text;
+
+  std::filesystem::remove_all(store);
+  auto sh_or = lyra::driver::FindOnPath("sh");
+  ASSERT_TRUE(sh_or.has_value()) << sh_or.error().Text();
+  const std::vector<std::string> rebuild = {
+      "-c", "cd '" + out_dir.string() + "' && sh build.sh"};
+  const auto built = RunChildProcess(*sh_or, rebuild);
+  ASSERT_THAT(built, ExitedWithCode(0))
+      << built.stdout_text << built.stderr_text;
+  const auto run = RunChildProcess(out_dir / "program", {});
+  EXPECT_THAT(run, ExitedWithCode(0)) << run.stderr_text;
+  EXPECT_NE(run.stdout_text.find("greet 42"), std::string::npos)
+      << "stdout: " << run.stdout_text;
 }
 
 // Re-emitting one directory at the other optimization must rebuild. The recipe

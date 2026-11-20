@@ -49,8 +49,9 @@ Both reduce to one question: _where does the Lyra runtime live for this binary?_
 ## Locating the runtime
 
 There is a single answer point: a resolver that, given the running binary's own path, returns the
-each file it ships. Every consumer depends on the resolved location, never on how it was found. The
-resolution strategy is therefore free to change without touching the emit, build, or run paths.
+location of each file it ships. Every consumer depends on the resolved location, never on how it was
+found. The resolution strategy is therefore free to change without touching the emit, build, or run
+paths.
 
 Resolution strategies:
 
@@ -62,10 +63,15 @@ Resolution strategies:
   the binary finds it from `argv0` / the executable path. This strategy drops into the same
   resolver; the emit, build, and run paths are unaffected.
 
-Until the install-relative strategy exists, `run`, `emit cpp`, and `build` work only where runfiles
-are present (the Bazel build tree and the tests). This is a property of how `lyra` locates _its own_
-runtime, not of the emitted output: an emitted project, once produced, carries its own runtime copy
-and build recipe and is independent of how `lyra` itself was distributed.
+The ports of the third-party libraries Lyra supports ship the same way and are found by the same
+strategies, from the same binary path
+([a-supported-library-is-a-port-lyra-ships](../decisions/a-supported-library-is-a-port-lyra-ships.md)).
+
+Until the install-relative strategy exists, `run`, `emit cpp` and `build`, and any command reading a
+design that takes a supported library, work only where runfiles are present (the Bazel build tree
+and the tests). This is a property of how `lyra` locates _its own_ runtime, not of the emitted
+output: an emitted project, once produced, carries its own runtime copy and build recipe and is
+independent of how `lyra` itself was distributed.
 
 ## The foreign-language boundary surface
 
