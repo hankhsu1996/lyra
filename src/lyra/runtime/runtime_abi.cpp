@@ -1313,10 +1313,10 @@ auto ReferFixedArrayElement(
   void* element = type.ElementMut(from.storage, named, formed);
   const bool accumulated = false;
   return BuildReference(
-      out, from.Part(
-               element, formed,
-               PartPath::Written(support::PartStep::kElement, named),
-               accumulated));
+      out,
+      from.Part(
+          element, formed,
+          PartPath::Written(support::PartStep::kElement, named), accumulated));
 }
 auto ReferDynamicArrayElement(
     const void* reference, const value::DynamicArrayType& type,
