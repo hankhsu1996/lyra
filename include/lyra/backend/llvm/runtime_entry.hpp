@@ -138,6 +138,10 @@ inline constexpr std::string_view kIntegralValueWitnessTableSymbol =
     "lyra_rt_integral_value_witness_table";
 inline constexpr std::string_view kIntegralOperationFunctionsSymbol =
     "lyra_rt_integral_operation_functions";
+inline constexpr std::string_view kFixedArrayStepWitnessTableSymbol =
+    "lyra_rt_fixed_array_step_witness_table";
+inline constexpr std::string_view kTupleStepWitnessTableSymbol =
+    "lyra_rt_tuple_step_witness_table";
 inline constexpr std::string_view kTypeLacksOperationSymbol =
     "lyra_rt_type_lacks_operation";
 

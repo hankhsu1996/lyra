@@ -1048,7 +1048,7 @@ using NamespaceReach = std::variant<
     }
     if (ns->scope_declarations.has_value()) {
       if (const std::optional<support::LibraryCallback> callback =
-              DataObjectCallbackOf(*ns->scope_declarations, id)) {
+              ScopeDeclarationsCallbackOf(*ns->scope_declarations, id)) {
         return ReachedAsLibraryCallback{.callback = *callback};
       }
     }

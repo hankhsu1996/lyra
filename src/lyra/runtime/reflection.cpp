@@ -1,14 +1,14 @@
 #include "lyra/runtime/reflection.hpp"
 
-#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <utility>
 #include <variant>
 #include <vector>
 
+#include "lyra/abi/records.hpp"
 #include "lyra/base/internal_error.hpp"
-#include "lyra/base/overloaded.hpp"
+#include "lyra/base/source_location.hpp"
 #include "lyra/value/any_value.hpp"
 #include "lyra/value/bit_vec.hpp"
 #include "lyra/value/integral.hpp"
@@ -123,6 +123,23 @@ void SelectionSettler::SettleUnfixed() {
   fixed_ = false;
 }
 
+void SelectionSettler::SettleWatchedStep(std::int64_t step) {
+  if (!unwatched_) {
+    steps_.push_back(step);
+  }
+}
+
+void SelectionSettler::SettleUnwatched() {
+  unwatched_ = true;
+}
+
+// Where a step no path takes stopped it, the path stands for the part it
+// reached and anything inside, as a path past its length does.
+auto SelectionSettler::WatchedPath() const -> PartPath {
+  const PartPath reached(steps_);
+  return unwatched_ ? reached.Join(PartPath::Inexact()) : reached;
+}
+
 auto SelectionSettler::Settled(const Selection& named) const -> Selection {
   std::vector<Selection::Step> steps = named.Steps();
   for (const auto& [depth, key] : keys_) {
@@ -160,8 +177,8 @@ void ValueSerializer::SerializeText(const value::String& value) {
   Receive(Serialized{&value});
 }
 
-void ValueSerializer::SerializeEvent(const value::ObjectRef& event) {
-  Receive(Serialized{&event});
+void ValueSerializer::SerializeObject(const value::ObjectRef& object) {
+  Receive(Serialized{&object});
 }
 
 auto ValueSerializer::SerializeSize(std::int64_t size) -> bool {
@@ -180,6 +197,29 @@ void ValueSerializer::Real(const value::Real& value) {
 
 void ValueSerializer::Real(const value::ShortReal& value) {
   SerializeReal(static_cast<double>(value.Value()));
+}
+
+namespace {
+
+// Keeps the trigger a data object's watching code hands it.
+class TriggerSubscriber final : public Subscriber {
+ public:
+  void Subscribe(const Trigger& handed) override {
+    trigger = handed;
+  }
+
+  Trigger trigger;
+};
+
+}  // namespace
+
+auto TriggerOfDataObject(
+    const abi::ScopeDeclarations& declarations, GcObject* instance,
+    std::int64_t row) -> Trigger {
+  TriggerSubscriber subscriber;
+  declarations.subscribe(
+      instance, row, subscriber, base::SourceLocation{base::kNoSourceLocation});
+  return subscriber.trigger;
 }
 
 }  // namespace lyra::runtime

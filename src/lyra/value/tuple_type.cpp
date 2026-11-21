@@ -1,6 +1,8 @@
 #include "lyra/value/tuple_type.hpp"
 
+#include <bit>
 #include <cstddef>
+#include <cstdint>
 #include <span>
 
 #include "lyra/base/internal_error.hpp"
@@ -27,6 +29,22 @@ auto TupleType::ComponentAt(void* laid_out, std::size_t index) const -> void* {
 auto TupleType::ComponentAt(const void* laid_out, std::size_t index) const
     -> const void* {
   return Offset(laid_out, Stated(*this, index).offset);
+}
+
+extern "C" {
+constinit const StepWitnessTable lyra_rt_tuple_step_witness_table{
+    .part = [](const ValueType& type, const void* value,
+               std::uint32_t step) -> ValuePart {
+      // A tuple type opens with the numbers every type states, so the type
+      // handed is the tuple type's own address.
+      const auto& tuple = *std::bit_cast<const TupleType*>(&type);
+      if (step >= tuple.Components().size()) {
+        return {.at = nullptr, .type = nullptr};
+      }
+      return {
+          .at = tuple.ComponentAt(value, step),
+          .type = tuple.Components()[step].type};
+    }};
 }
 
 }  // namespace lyra::value

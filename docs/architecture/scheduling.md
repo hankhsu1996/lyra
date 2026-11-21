@@ -47,14 +47,22 @@ procedure's timing control asks afresh at its next stop, since it waits only for
 it is reached (LRM 9.4.2); a continuous assignment or a procedural continuous assignment is
 sensitive whenever it executes, its own update included (LRM 4.9.1, 4.9.2), so its wait keeps a
 change the process makes itself while it runs, and its next stop places it again in the Active
-region of its set. Every write is told to every wait as it is made (LRM 4.3, 4.7), with one
-exception a build asks for: in a design built to coalesce combinational updates, where an
-`always_comb` or `always_latch` writes what another reads, the reader is triggered by the net change
-the writer's execution leaves of it: each execution is an interval, a variable it watches keeps the
-original of each part the interval modifies, and the two are compared, and what moved told, when the
-interval ends -- as the execution ends, and whenever such a reader begins or stops listening, armed,
-stopped or started again, or moved by a force or a release; a value written and written back within
-one interval wakes nothing (LRM 9.2.2.2).
+region of its set. What a write tells a wait is whether the part the wait watches may have changed:
+the write holds the value it replaced and the one it left, so it answers once for every wait on that
+storage, a part inside the part written included, and passes over each it shows unaffected. An
+observation that answers for a change of value itself still compares, since a write's account is
+only as good as every kind of write giving it: an event control waits for a change in its
+expression's value from where the wait began (LRM 9.4.2), and a foreign callback on a value or a
+size change, or on a class variable, keeps what it last read (LRM 38.36.1)
+([a-write-compares-what-it-reached](../decisions/a-write-compares-what-it-reached.md)). Every write
+is told to every wait as it is made (LRM 4.3, 4.7), with one exception a build asks for: in a design
+built to coalesce combinational updates, where an `always_comb` or `always_latch` writes what
+another reads, the reader is triggered by the net change the writer's execution leaves of it: each
+execution is an interval, a variable it watches keeps the original of each part the interval
+modifies, and the two are compared, and what moved told, when the interval ends -- as the execution
+ends, and whenever such a reader begins or stops listening, armed, stopped or started again, or
+moved by a force or a release; a value written and written back within one interval wakes nothing
+(LRM 9.2.2.2).
 
 A task is enabled with `co_await`: enabling a time-consuming task suspends the enabling process
 until the task completes (LRM 13.3). The scheduler resumes the innermost suspended frame, and each
@@ -248,24 +256,32 @@ condition reads into the Active region, and which ending the wait takes back wit
 
 ## Region structure
 
-A time slot runs regions in LRM 4.4 order: Preponed, Active, Inactive, NBA, Observed, Reactive,
-ReInactive, ReNBA, Postponed. That clause's PLI regions are absent, because there is no PLI.
+A time slot runs regions in LRM 4.4 order: Preponed, Pre-Active, Active, Inactive, Pre-NBA, NBA,
+Post-NBA, Observed, Reactive, ReInactive, ReNBA, Pre-Postponed, Postponed. Of that clause's PLI
+regions, these are the ones LRM Table 4-1 places a callback of foreign code in (LRM 4.10, 38.36.2);
+the rest -- Pre-Observed, Post-Observed, Pre-Re-NBA, Post-Re-NBA -- no callback names, so nothing is
+ever placed in them and they are not kept.
 
-Preponed runs once on entry, and Postponed on exit until nothing placed in it while it runs is left
-(LRM 16.4.1). Between them the slot repeats one step: take the earliest region from Active through
-ReNBA that has anything pending -- or, once the reactive set has begun and while it holds anything,
-the earliest of Reactive through ReNBA -- run it, and look again. Running a region produces work
-that lands back in the slot -- an NBA commit wakes a process into Active, a resumed process submits
-an NBA -- so the step repeats until nothing between those two bounds is left.
+Preponed runs once on entry, then Pre-Active once, before the regions that repeat (LRM 4.5); what is
+placed in Pre-Active while it runs runs there too. Postponed runs on exit until nothing placed in it
+while it runs is left (LRM 16.4.1). Between them the slot repeats one step: take the earliest region
+from Active through ReNBA that has anything pending -- or, once the reactive set has begun and while
+it holds anything, the earliest of Reactive through ReNBA -- run it, and look again; and once none
+of those holds anything, run Pre-Postponed, whose callbacks may write and so start the step again.
+Running a region produces work that lands back in the slot -- an NBA commit wakes a process into
+Active, a resumed process submits an NBA -- so the step repeats until nothing between those bounds
+is left.
 
 ```mermaid
 flowchart TB
-  P[Preponed] --> S
+  P[Preponed] --> PA[Pre-Active] --> S
   subgraph S [the earliest with work runs, then the scan restarts; a begun reactive set drains first]
     direction LR
-    A[Active] --> I[Inactive] --> N[NBA] --> O[Observed] --> R[Reactive] --> RI[ReInactive] --> RN[ReNBA]
+    A[Active] --> I[Inactive] --> PN[Pre-NBA] --> N[NBA] --> QN[Post-NBA] --> O[Observed] --> R[Reactive] --> RI[ReInactive] --> RN[ReNBA]
   end
-  S --> POST[Postponed]
+  S --> PP[Pre-Postponed]
+  PP -- what it placed --> S
+  PP --> POST[Postponed]
 ```
 
 That one step is LRM 4.5's loop. The reference algorithm writes it as two inner loops, one per

@@ -7,10 +7,14 @@
 #include <optional>
 #include <span>
 #include <utility>
+#include <variant>
 
 #include "lyra/base/fixed_array.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/runtime/observation.hpp"
+#include "lyra/value/integral_value_type.hpp"
 #include "lyra/value/integral_words.hpp"
+#include "lyra/value/value_type.hpp"
 
 namespace lyra::runtime {
 
@@ -46,7 +50,8 @@ Trigger::Trigger(
   }
 }
 
-Change::Change() = default;
+Change::Change(Shape shape) : shape_(std::move(shape)) {
+}
 Change::Change(const Change&) = default;
 Change::Change(Change&&) noexcept = default;
 auto Change::operator=(const Change&) -> Change& = default;
@@ -54,21 +59,26 @@ auto Change::operator=(Change&&) noexcept -> Change& = default;
 Change::~Change() = default;
 
 auto Change::Whole() -> Change {
-  return Change{};
+  return Change(Unknown{});
+}
+
+auto Change::Replacing(
+    const value::ValueType& type, const void* before, const void* after)
+    -> Change {
+  return Change(ReplacedValue{.type = &type, .before = before, .after = after});
 }
 
 auto Change::Elements(value::BitPositions reached) -> Change {
-  Change change;
-  change.reached_ = reached;
-  return change;
+  return Change(ElementRun{.reached = reached});
 }
 
-auto Change::WordsOf(std::size_t run) -> std::span<std::uint64_t> {
-  return std::span<std::uint64_t>(words_).subspan(run * count_, count_);
+auto Change::BitWords::WordsOf(std::size_t run) -> std::span<std::uint64_t> {
+  return std::span<std::uint64_t>(words).subspan(run * count, count);
 }
 
-auto Change::WordsOf(std::size_t run) const -> std::span<const std::uint64_t> {
-  return std::span<const std::uint64_t>(words_).subspan(run * count_, count_);
+auto Change::BitWords::WordsOf(std::size_t run) const
+    -> std::span<const std::uint64_t> {
+  return std::span<const std::uint64_t>(words).subspan(run * count, count);
 }
 
 namespace {
@@ -89,46 +99,54 @@ void KeepWords(
 auto Change::Reaching(
     const value::ConstIntegralView& storage, value::BitPositions reached)
     -> Change {
-  Change change;
-  change.reached_ = reached;
-  change.first_word_ = static_cast<std::size_t>(reached.lsb / 64U);
-  change.count_ =
-      value::WordCountForBits(reached.lsb + reached.width) - change.first_word_;
-  change.words_ = base::FixedArray<std::uint64_t, 4>(4 * change.count_);
-  KeepWords(storage.value, change.first_word_, change.WordsOf(kBeforeValue));
+  const auto first_word = static_cast<std::size_t>(reached.lsb / 64U);
+  const std::size_t count =
+      value::WordCountForBits(reached.lsb + reached.width) - first_word;
+  BitWords bits{
+      .reached = reached,
+      .first_word = first_word,
+      .count = count,
+      .words = base::FixedArray<std::uint64_t, 4>(4 * count)};
   KeepWords(
-      storage.unknown, change.first_word_, change.WordsOf(kBeforeUnknown));
-  return change;
+      storage.value, bits.first_word, bits.WordsOf(BitWords::kBeforeValue));
+  KeepWords(
+      storage.unknown, bits.first_word, bits.WordsOf(BitWords::kBeforeUnknown));
+  return Change(std::move(bits));
 }
 
 void Change::SetAfter(const value::ConstIntegralView& storage) {
-  KeepWords(storage.value, first_word_, WordsOf(kAfterValue));
-  KeepWords(storage.unknown, first_word_, WordsOf(kAfterUnknown));
+  auto& bits = std::get<BitWords>(shape_);
+  KeepWords(
+      storage.value, bits.first_word, bits.WordsOf(BitWords::kAfterValue));
+  KeepWords(
+      storage.unknown, bits.first_word, bits.WordsOf(BitWords::kAfterUnknown));
 }
 
 auto Change::ReachingInWord(
     std::uint64_t value, std::uint64_t unknown, value::BitPositions reached)
     -> Change {
-  Change change;
-  change.reached_ = reached;
-  change.count_ = 1;
-  change.words_ = base::FixedArray<std::uint64_t, 4>(4);
-  change.words_[kBeforeValue] = value;
-  change.words_[kBeforeUnknown] = unknown;
-  return change;
+  BitWords bits{
+      .reached = reached,
+      .first_word = 0,
+      .count = 1,
+      .words = base::FixedArray<std::uint64_t, 4>(4)};
+  bits.words[BitWords::kBeforeValue] = value;
+  bits.words[BitWords::kBeforeUnknown] = unknown;
+  return Change(std::move(bits));
 }
 
 void Change::SetAfterInWord(std::uint64_t value, std::uint64_t unknown) {
-  words_[kAfterValue] = value;
-  words_[kAfterUnknown] = unknown;
+  auto& bits = std::get<BitWords>(shape_);
+  bits.words[BitWords::kAfterValue] = value;
+  bits.words[BitWords::kAfterUnknown] = unknown;
 }
 
-auto Change::BitsUnmoved(value::BitPositions at) const -> bool {
+auto Change::BitWords::Unmoved(value::BitPositions at) const -> bool {
   const std::span<const std::uint64_t> before_value = WordsOf(kBeforeValue);
   const std::span<const std::uint64_t> before_unknown = WordsOf(kBeforeUnknown);
   const std::span<const std::uint64_t> after_value = WordsOf(kAfterValue);
   const std::span<const std::uint64_t> after_unknown = WordsOf(kAfterUnknown);
-  const std::uint64_t from = at.lsb - (std::uint64_t{first_word_} * 64U);
+  const std::uint64_t from = at.lsb - (std::uint64_t{first_word} * 64U);
   const std::uint64_t to = from + at.width;
   for (std::uint64_t position = from; position < to;) {
     const auto word = static_cast<std::size_t>(position / 64U);
@@ -147,35 +165,131 @@ auto Change::BitsUnmoved(value::BitPositions at) const -> bool {
 }
 
 auto Change::Unmoved() const -> bool {
-  return count_ != 0 && BitsUnmoved(reached_);
+  return std::visit(
+      Overloaded{
+          [](const BitWords& bits) { return bits.Unmoved(bits.reached); },
+          [](const Unknown&) { return false; },
+          [](const ElementRun&) { return false; },
+          [](const ReplacedValue&) { return false; },
+      },
+      shape_);
 }
 
-// A change of bits keeps the words they lie in, and one of elements none.
-auto Change::ElementsReached() const -> std::optional<value::BitPositions> {
-  if (count_ != 0 || reached_.width == 0) {
-    return std::nullopt;
-  }
-  return reached_;
-}
+namespace {
 
-auto Change::KnownUnchanged(value::BitPositions reads) const -> bool {
-  if (reached_.width == 0) {
-    return false;
-  }
-  const std::uint64_t reached_end = reached_.lsb + reached_.width;
+// The positions `reads` shares with `reached`, a width of zero reading every
+// position, and none where they share none.
+auto Shared(value::BitPositions reached, value::BitPositions reads)
+    -> std::optional<value::BitPositions> {
+  const std::uint64_t reached_end = reached.lsb + reached.width;
   const std::uint64_t read_end = reads.width == 0
                                      ? std::numeric_limits<std::uint64_t>::max()
                                      : reads.lsb + reads.width;
-  const std::uint64_t from = std::max(reads.lsb, reached_.lsb);
+  const std::uint64_t from = std::max(reads.lsb, reached.lsb);
   const std::uint64_t to = std::min(read_end, reached_end);
   if (from >= to) {
+    return std::nullopt;
+  }
+  return value::BitPositions{.lsb = from, .width = to - from};
+}
+
+// What became of a part between `was` and `now`, the part one step names
+// before and after: none where neither holds one, every wait on it asked where
+// one of them does not, and otherwise what the two values say.
+auto ChangeOfPart(value::ValuePart was, value::ValuePart now)
+    -> std::optional<Change> {
+  if (was.at == nullptr || now.at == nullptr) {
+    if (was.at == now.at) {
+      return std::nullopt;
+    }
+    return Change::Whole();
+  }
+  return Change::Between(*now.type, was.at, now.at);
+}
+
+}  // namespace
+
+auto Change::KnownUnchanged(value::BitPositions reads) const -> bool {
+  // A change of a value or of a run of elements reads the parts it is asked
+  // of; one read whole is moved, since it is told only where it moved.
+  const auto every_part_unmoved = [&] {
+    if (reads.width == 0) {
+      return false;
+    }
+    for (std::uint64_t step = reads.lsb; step < reads.lsb + reads.width;
+         ++step) {
+      if (Inside(static_cast<std::uint32_t>(step)).has_value()) {
+        return false;
+      }
+    }
     return true;
+  };
+  return std::visit(
+      Overloaded{
+          [](const Unknown&) { return false; },
+          [&](const ElementRun& run) {
+            return run.reached.width != 0 &&
+                   !Shared(run.reached, reads).has_value();
+          },
+          [&](const BitWords& bits) {
+            const std::optional<value::BitPositions> shared =
+                Shared(bits.reached, reads);
+            if (!shared.has_value()) {
+              return true;
+            }
+            // A change is told only where what it reached moved, so a read of
+            // all of it is moved.
+            const bool reads_all = shared->lsb == bits.reached.lsb &&
+                                   shared->width == bits.reached.width;
+            return !reads_all && bits.Unmoved(*shared);
+          },
+          [&](const ReplacedValue&) { return every_part_unmoved(); },
+      },
+      shape_);
+}
+
+auto Change::Inside(std::uint32_t step) const -> std::optional<Change> {
+  const value::BitPositions only{.lsb = step, .width = 1};
+  const auto by_reach = [&]() -> std::optional<Change> {
+    if (KnownUnchanged(only)) {
+      return std::nullopt;
+    }
+    return Whole();
+  };
+  return std::visit(
+      Overloaded{
+          [](const Unknown&) -> std::optional<Change> { return Whole(); },
+          [&](const ElementRun&) { return by_reach(); },
+          [&](const BitWords&) { return by_reach(); },
+          [&](const ReplacedValue& value) -> std::optional<Change> {
+            if (!value.type->HasSteps()) {
+              return Whole();
+            }
+            return ChangeOfPart(
+                value.type->PartAtStep(value.before, step),
+                value.type->PartAtStep(value.after, step));
+          }},
+      shape_);
+}
+
+auto Change::Between(
+    const value::ValueType& type, const void* before, const void* after)
+    -> std::optional<Change> {
+  if (const value::IntegralValueType* integral = type.AsIntegral()) {
+    const value::LoadedWords kept = integral->Load(before);
+    Change change = Reaching(
+        kept.View(),
+        value::BitPositions{.lsb = 0, .width = integral->Shape().width});
+    change.SetAfter(integral->Load(after).View());
+    if (change.Unmoved()) {
+      return std::nullopt;
+    }
+    return change;
   }
-  // Where no words are kept nothing shows a position reached as it was.
-  if (count_ == 0 || (from == reached_.lsb && to == reached_end)) {
-    return false;
+  if (type.BitIdentical(before, after)) {
+    return std::nullopt;
   }
-  return BitsUnmoved({.lsb = from, .width = to - from});
+  return Replacing(type, before, after);
 }
 
 }  // namespace lyra::runtime

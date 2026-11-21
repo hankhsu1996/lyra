@@ -1,14 +1,13 @@
 #pragma once
 
 #include <concepts>
-#include <cstddef>
 #include <cstdint>
 #include <memory>
 
 #include "lyra/base/source_location.hpp"
 #include "lyra/value/concepts.hpp"
-#include "lyra/value/element_type.hpp"
 #include "lyra/value/integral.hpp"
+#include "lyra/value/integral_value_type.hpp"
 #include "lyra/value/integral_words.hpp"
 #include "lyra/value/ptr_read.hpp"
 #include "lyra/value/real.hpp"
@@ -49,6 +48,29 @@ concept ReadsBitStream =
 // and Lyra does not yet answer, which a legal program can ask.
 [[noreturn]] void StreamNotYetSupported();
 
+// The type a value of `T`, whole or a part of another, is handed with to code
+// that reads it where it lies: an integral value's is the library's integral
+// type of it, so its bits can be read.
+template <LyraValue T>
+auto TypeOfPart() -> const ValueType&;
+
+// A value of `T` answers the part each step of a path names in it, each kind
+// of value holding parts by its own layout: a fixed-size array its element at
+// a position (LRM 7.4), a product its component by the component's index (LRM
+// 7.2).
+template <typename T>
+concept AnswersPartsAtSteps = requires(const T& value, std::uint32_t step) {
+  { value.PartAtStep(step) } -> std::same_as<ValuePart>;
+};
+
+// The part a step of a path names in a value of `T`, which `T` answers.
+template <AnswersPartsAtSteps T>
+inline constexpr StepWitnessTable kStepWitnessTableOf{
+    .part = [](const ValueType&, const void* value,
+               std::uint32_t step) -> ValuePart {
+      return static_cast<const T*>(value)->PartAtStep(step);
+    }};
+
 // What `T` answers each operation of its table with, which is what `T` itself
 // does: C++ states a type's operations as its own members, so the table is
 // made from them rather than written. Each reads the value as a `T`, and none
@@ -79,6 +101,14 @@ struct ValueWitnessesOf {
                                           const void* rhs) -> bool {
     return Of(lhs).IsBitIdentical(Of(rhs));
   };
+  static constexpr const StepWitnessTable* kSteps =
+      []() -> const StepWitnessTable* {
+    if constexpr (AnswersPartsAtSteps<T>) {
+      return &kStepWitnessTableOf<T>;
+    } else {
+      return nullptr;
+    }
+  }();
 };
 
 // The language's operations on a value of `T`, a kind of value no other type
@@ -164,5 +194,14 @@ constexpr auto LibraryValueType() -> ValueType {
 // names, stated once for `T`.
 template <LyraValue T>
 inline constexpr ValueType kValueTypeOf = LibraryValueType<T>();
+
+template <LyraValue T>
+auto TypeOfPart() -> const ValueType& {
+  if constexpr (IntegralValue<T>) {
+    return IntegralValueType::Of<T>().Type();
+  } else {
+    return kValueTypeOf<T>;
+  }
+}
 
 }  // namespace lyra::value

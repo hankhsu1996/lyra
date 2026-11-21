@@ -24,15 +24,22 @@ auto TimeResolutionOf(
 
 auto FillTime(RuntimeEffects& run, std::int8_t unit_power, s_vpi_time& time)
     -> bool {
+  return FillTimeAt(run, unit_power, run.Now(), time);
+}
+
+auto FillTimeAt(
+    RuntimeEffects& run, std::int8_t unit_power, SimTime at, s_vpi_time& time)
+    -> bool {
+  const std::int8_t global = run.GlobalPrecisionPower();
   switch (time.type) {
     case vpiSimTime: {
-      const SimTime now = NowInUnit(run, unit_power);
-      time.high = static_cast<PLI_UINT32>(now >> 32U);
-      time.low = static_cast<PLI_UINT32>(now & 0xFFFFFFFFU);
+      const SimTime steps = TicksToSteps(at, unit_power, global);
+      time.high = static_cast<PLI_UINT32>(steps >> 32U);
+      time.low = static_cast<PLI_UINT32>(steps & 0xFFFFFFFFU);
       return true;
     }
     case vpiScaledRealTime:
-      time.real = RealTimeInUnit(run, unit_power).Value();
+      time.real = TicksToRealSteps(at, unit_power, global);
       return true;
     case vpiSuppressTime:
       return true;

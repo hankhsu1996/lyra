@@ -55,20 +55,6 @@ void SetMember(ValueUnion& held, Member member) {
   held = std::bit_cast<ValueUnion>(bytes);
 }
 
-// What a value read hands foreign code points at, kept until the next read
-// (LRM 38.15), apart from what `vpi_get_str` hands out.
-struct ReadValueStore {
-  std::string text;
-  std::vector<s_vpi_vecval> vector;
-  std::vector<s_vpi_strengthval> strength;
-  s_vpi_time time{};
-};
-
-auto Store() -> ReadValueStore& {
-  static thread_local ReadValueStore store;
-  return store;
-}
-
 auto FormatDoesNotApply() -> std::unexpected<std::string> {
   return std::unexpected<std::string>(
       "the value format does not apply to the object");
@@ -120,9 +106,8 @@ auto RoundedToInt(double real) -> PLI_INT32 {
 }
 
 auto FillIntegral(
-    const value::ConstIntegralView& view, PLI_INT32 format, s_vpi_value& value)
-    -> VpiAnswer<void> {
-  ReadValueStore& store = Store();
+    const value::ConstIntegralView& view, PLI_INT32 format, s_vpi_value& value,
+    VpiValueStore& store) -> VpiAnswer<void> {
   switch (format) {
     case vpiBinStrVal:
       store.text = Formatted(value::FormatKind::kBinary, -1, view);
@@ -206,11 +191,12 @@ auto FillReal(double real, PLI_INT32 format, s_vpi_value& value)
   }
 }
 
-auto FillText(const value::String& text, PLI_INT32 format, s_vpi_value& value)
-    -> VpiAnswer<void> {
+auto FillText(
+    const value::String& text, PLI_INT32 format, s_vpi_value& value,
+    VpiValueStore& store) -> VpiAnswer<void> {
   if (format != vpiStringVal) return FormatDoesNotApply();
-  Store().text = std::string(text.View());
-  SetMember<PLI_BYTE8*>(value.value, Store().text.data());
+  store.text = std::string(text.View());
+  SetMember<PLI_BYTE8*>(value.value, store.text.data());
   return {};
 }
 
@@ -381,9 +367,14 @@ auto IntegralToWrite(const IntegralShape& shape, const s_vpi_value& value)
 
 }  // namespace
 
+auto ReadValueStore() -> VpiValueStore& {
+  static thread_local VpiValueStore store;
+  return store;
+}
+
 auto FillValue(
-    const ValueShape& shape, const HeldValue& held, s_vpi_value& value)
-    -> VpiAnswer<void> {
+    const ValueShape& shape, const HeldValue& held, s_vpi_value& value,
+    VpiValueStore& store) -> VpiAnswer<void> {
   if (value.format == vpiObjTypeVal) value.format = shape.natural_format;
   const PLI_INT32 format = value.format;
   if (format == vpiSuppressVal) return {};
@@ -392,11 +383,11 @@ auto FillValue(
           [&](const value::BitVec& bits) {
             return FillIntegral(
                 SignedView(bits, std::get<IntegralShape>(shape.held)), format,
-                value);
+                value, store);
           },
           [&](double real) { return FillReal(real, format, value); },
           [&](const value::String& text) {
-            return FillText(text, format, value);
+            return FillText(text, format, value, store);
           }},
       held);
 }

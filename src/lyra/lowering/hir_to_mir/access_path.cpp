@@ -1549,71 +1549,77 @@ auto PositionsNamedBy(
           mir::BuildMachineIntConditional(unit, block, reaches, width, none)};
 }
 
-auto PartNamedBy(
+auto WatchedStepOf(
     const mir::CompilationUnit& unit, mir::Builder block,
-    const AccessPath& path) -> NamedPart {
-  // A step to one part, as the path a wait watches names it: what kind of part
-  // it selects and the number it selects it by, none for an entry of an
-  // associative array, which has no position (LRM 7.8).
+    const DescentStep& step) -> std::optional<mir::ExprId> {
+  // A step to one part: what kind of part it selects and the number it
+  // selects it by, none for an entry of an associative array, which has no
+  // position (LRM 7.8).
   struct SelectedPart {
     support::PartStep kind;
     std::optional<mir::ExprId> number;
   };
+  const std::optional<SelectedPart> selected = std::visit(
+      Overloaded{
+          [&](const StepToElement& element) -> std::optional<SelectedPart> {
+            return SelectedPart{
+                .kind = support::PartStep::kElement,
+                .number = BuildToInt64Call(unit, block, element.position)};
+          },
+          [&](const StepToCharacter& character) -> std::optional<SelectedPart> {
+            return SelectedPart{
+                .kind = support::PartStep::kCharacter,
+                .number = BuildToInt64Call(unit, block, character.position)};
+          },
+          [&](const StepToComponent& component) -> std::optional<SelectedPart> {
+            return SelectedPart{
+                .kind = support::PartStep::kComponent,
+                .number = mir::BuildMachineIntLiteral(
+                    unit, block, component.position.value)};
+          },
+          // A member of an untagged union is a view of the whole union's
+          // storage, which is what a write through it changes.
+          [](const StepToUnionMember&) -> std::optional<SelectedPart> {
+            return std::nullopt;
+          },
+          [&](const StepToTaggedMember& member) -> std::optional<SelectedPart> {
+            return SelectedPart{
+                .kind = support::PartStep::kUnionMember,
+                .number = mir::BuildMachineIntLiteral(
+                    unit, block, member.position.value)};
+          },
+          [](const StepToAssocElement&) -> std::optional<SelectedPart> {
+            return SelectedPart{
+                .kind = support::PartStep::kAssocElement,
+                .number = std::nullopt};
+          },
+          [](const StepToBits&) -> std::optional<SelectedPart> {
+            return std::nullopt;
+          },
+          [](const StepToElementRun&) -> std::optional<SelectedPart> {
+            return std::nullopt;
+          },
+          [](const StepToQueueRun&) -> std::optional<SelectedPart> {
+            return std::nullopt;
+          }},
+      step.to);
+  if (!selected.has_value() || !support::FollowingOf(selected->kind).watched) {
+    return std::nullopt;
+  }
+  return selected->number;
+}
+
+auto PartNamedBy(
+    const mir::CompilationUnit& unit, mir::Builder block,
+    const AccessPath& path) -> NamedPart {
   NamedPart named;
   auto step = path.descent.begin();
   for (; step != path.descent.end(); ++step) {
-    const std::optional<SelectedPart> selected = std::visit(
-        Overloaded{
-            [&](const StepToElement& element) -> std::optional<SelectedPart> {
-              return SelectedPart{
-                  .kind = support::PartStep::kElement,
-                  .number = BuildToInt64Call(unit, block, element.position)};
-            },
-            [&](const StepToCharacter& character)
-                -> std::optional<SelectedPart> {
-              return SelectedPart{
-                  .kind = support::PartStep::kCharacter,
-                  .number = BuildToInt64Call(unit, block, character.position)};
-            },
-            [&](const StepToComponent& component)
-                -> std::optional<SelectedPart> {
-              return SelectedPart{
-                  .kind = support::PartStep::kComponent,
-                  .number = mir::BuildMachineIntLiteral(
-                      unit, block, component.position.value)};
-            },
-            // A member of an untagged union is a view of the whole union's
-            // storage, which is what a write through it changes.
-            [](const StepToUnionMember&) -> std::optional<SelectedPart> {
-              return std::nullopt;
-            },
-            [&](const StepToTaggedMember& member)
-                -> std::optional<SelectedPart> {
-              return SelectedPart{
-                  .kind = support::PartStep::kUnionMember,
-                  .number = mir::BuildMachineIntLiteral(
-                      unit, block, member.position.value)};
-            },
-            [](const StepToAssocElement&) -> std::optional<SelectedPart> {
-              return SelectedPart{
-                  .kind = support::PartStep::kAssocElement,
-                  .number = std::nullopt};
-            },
-            [](const StepToBits&) -> std::optional<SelectedPart> {
-              return std::nullopt;
-            },
-            [](const StepToElementRun&) -> std::optional<SelectedPart> {
-              return std::nullopt;
-            },
-            [](const StepToQueueRun&) -> std::optional<SelectedPart> {
-              return std::nullopt;
-            }},
-        step->to);
-    if (!selected.has_value() || !selected->number.has_value() ||
-        !support::FollowingOf(selected->kind).watched) {
+    const std::optional<mir::ExprId> number = WatchedStepOf(unit, block, *step);
+    if (!number.has_value()) {
       break;
     }
-    named.steps.push_back(*selected->number);
+    named.steps.push_back(*number);
   }
   if (step == path.descent.end()) {
     return named;

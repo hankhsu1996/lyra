@@ -32,6 +32,10 @@ class KeptCopy {
     }
   }
 
+  [[nodiscard]] auto Type() const -> const ValueType& {
+    return *type_;
+  }
+
   [[nodiscard]] auto Bytes() const -> const void* {
     return KeptHere() ? static_cast<const void*>(here_.data()) : apart_.Bytes();
   }

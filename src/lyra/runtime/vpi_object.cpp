@@ -17,6 +17,7 @@
 #include "lyra/runtime/runtime.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/scope.hpp"
+#include "lyra/runtime/vpi_callbacks.hpp"
 #include "lyra/runtime/vpi_time.hpp"
 #include "lyra/runtime/vpi_variable.hpp"
 #include "lyra/support/scope_kind.hpp"
@@ -46,6 +47,14 @@ auto ScopeDeclarationsOf(const ScopeHolder& holder)
       holder);
 }
 
+auto InstanceOf(const ScopeHolder& holder) -> GcObject* {
+  return std::visit(
+      Overloaded{
+          [](Scope* scope) -> GcObject* { return scope; },
+          [](const NamespaceObject&) -> GcObject* { return nullptr; }},
+      holder);
+}
+
 namespace {
 
 using support::ElaboratedScopeKind;
@@ -71,7 +80,9 @@ auto HolderOf(const VpiObject& object) -> std::optional<ScopeHolder> {
           [](const TypespecMemberObject&) -> Held { return std::nullopt; },
           [](const RangeObject&) -> Held { return std::nullopt; },
           [](const ConstantObject&) -> Held { return std::nullopt; },
-          [](const EnumConstantObject&) -> Held { return std::nullopt; }},
+          [](const EnumConstantObject&) -> Held { return std::nullopt; },
+          [](const CallbackObject&) -> Held { return std::nullopt; },
+          [](const TimeQueueObject&) -> Held { return std::nullopt; }},
       object);
 }
 
@@ -385,7 +396,18 @@ auto RelatedToObject(PLI_INT32 relation, const VpiObject& from, VpiMode mode)
           [&](const TypespecMemberObject&) { return of_variable(); },
           [&](const RangeObject&) { return of_variable(); },
           [&](const ConstantObject&) { return of_variable(); },
-          [&](const EnumConstantObject&) { return of_variable(); }},
+          [&](const EnumConstantObject&) { return of_variable(); },
+          // LRM 37.80, 37.81: a callback relates to nothing beside what
+          // `vpi_get_cb_info` answers, and a time queue to the callbacks it
+          // holds, which are asked of the run.
+          [](const CallbackObject&) -> Answer {
+            return std::unexpected<std::string>(
+                "a callback is related to no objects");
+          },
+          [](const TimeQueueObject&) -> Answer {
+            return std::unexpected<std::string>(
+                "a time queue is related only to its callbacks");
+          }},
       from);
 }
 
@@ -507,7 +529,9 @@ auto Step(const VpiObject& at, const NamePart& part)
           [&](const TypespecMemberObject&) { return none; },
           [&](const RangeObject&) { return none; },
           [&](const ConstantObject&) { return none; },
-          [&](const EnumConstantObject&) { return none; }},
+          [&](const EnumConstantObject&) { return none; },
+          [&](const CallbackObject&) { return none; },
+          [&](const TimeQueueObject&) { return none; }},
       at);
 }
 
@@ -788,7 +812,11 @@ auto ObjectIntegerProperty(
           [&](const TypespecMemberObject&) { return of_variable(); },
           [&](const RangeObject&) { return of_variable(); },
           [&](const ConstantObject&) { return of_variable(); },
-          [&](const EnumConstantObject&) { return of_variable(); }},
+          [&](const EnumConstantObject&) { return of_variable(); },
+          // A callback and a time queue answer only their type (LRM 37.80,
+          // 37.81).
+          [](const CallbackObject&) -> Answer { return VpiNotAProperty(); },
+          [](const TimeQueueObject&) -> Answer { return VpiNotAProperty(); }},
       object);
 }
 
@@ -883,7 +911,13 @@ auto ObjectStringProperty(
           [&](const TypespecMemberObject&) { return of_variable(); },
           [&](const RangeObject&) { return of_variable(); },
           [&](const ConstantObject&) { return of_variable(); },
-          [&](const EnumConstantObject&) { return of_variable(); }},
+          [&](const EnumConstantObject&) { return of_variable(); },
+          [](const CallbackObject&) -> VpiAnswer<std::optional<std::string>> {
+            return VpiNotAProperty();
+          },
+          [](const TimeQueueObject&) -> VpiAnswer<std::optional<std::string>> {
+            return VpiNotAProperty();
+          }},
       object);
 }
 
@@ -944,7 +978,9 @@ auto TypeOf(const VpiObject& object, VpiMode mode) -> PLI_INT32 {
           [&](const TypespecMemberObject&) { return of_variable(); },
           [&](const RangeObject&) { return of_variable(); },
           [&](const ConstantObject&) { return of_variable(); },
-          [&](const EnumConstantObject&) { return of_variable(); }},
+          [&](const EnumConstantObject&) { return of_variable(); },
+          [](const CallbackObject&) -> PLI_INT32 { return vpiCallback; },
+          [](const TimeQueueObject&) -> PLI_INT32 { return vpiTimeQueue; }},
       object);
 }
 
@@ -1085,6 +1121,10 @@ auto TypeName(PLI_INT32 type, VpiMode mode) -> std::optional<std::string_view> {
       return "vpiClockingBlock";
     case vpiIterator:
       return "vpiIterator";
+    case vpiCallback:
+      return "vpiCallback";
+    case vpiTimeQueue:
+      return "vpiTimeQueue";
     default:
       return std::nullopt;
   }
@@ -1093,6 +1133,18 @@ auto TypeName(PLI_INT32 type, VpiMode mode) -> std::optional<std::string_view> {
 auto Related(
     RuntimeEffects& run, PLI_INT32 relation, const Referent& from, VpiMode mode)
     -> VpiAnswer<std::vector<VpiObject>> {
+  if (relation == vpiCallback) return CallbacksRelatedTo(run, from);
+  if (relation == vpiTimeQueue) {
+    if (!std::holds_alternative<Simulation>(from)) {
+      return std::unexpected<std::string>(
+          "the time queues are related to no object");
+    }
+    std::vector<VpiObject> queues;
+    for (const SimTime at : AsRuntime(run).TimeQueues()) {
+      queues.emplace_back(TimeQueueObject{.at = at});
+    }
+    return queues;
+  }
   return std::visit(
       Overloaded{
           [&](const Simulation&) { return FromDesign(run, relation); },
@@ -1155,7 +1207,14 @@ auto RelatedOne(RuntimeEffects& run, PLI_INT32 relation, const Referent& from)
               [&](const TypespecMemberObject&) { return of_variable(); },
               [&](const RangeObject&) { return of_variable(); },
               [&](const ConstantObject&) { return of_variable(); },
-              [&](const EnumConstantObject&) { return of_variable(); }},
+              [&](const EnumConstantObject&) { return of_variable(); },
+              [](const CallbackObject&) -> Answer {
+                return std::unexpected<std::string>("a callback has no parent");
+              },
+              [](const TimeQueueObject&) -> Answer {
+                return std::unexpected<std::string>(
+                    "a time queue has no parent");
+              }},
           *object);
     default:
       if (IsVariablePart(*object)) return of_variable();

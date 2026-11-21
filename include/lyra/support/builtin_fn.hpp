@@ -854,8 +854,9 @@ enum class BuiltinFn : std::uint16_t {
   kDumpPortsFlush,
   // What the code reading and the code watching a data object hand a reader
   // reaching the design by name, each a method of what the reader handed in:
-  // an integral value's bits, a real, a string, the object an event variable
-  // names, how many elements an array whose size the run sets holds, the key
+  // an integral value's bits, a real, a string, the object an event or class
+  // variable names, how many elements an array whose size the run sets holds,
+  // the key
   // of an entry of an associative array, and the trigger a wait for a change
   // of the object would enrol (LRM 38.15, 21.7.2.3, 37.17 detail 9, 9.4.2). An
   // integral value crosses with its width, so one library function takes every
@@ -864,7 +865,7 @@ enum class BuiltinFn : std::uint16_t {
   kSerializeBits,
   kSerializeReal,
   kSerializeText,
-  kSerializeEvent,
+  kSerializeObject,
   kSerializeSize,
   kSerializeKey,
   kSubscribe,
@@ -878,12 +879,16 @@ enum class BuiltinFn : std::uint16_t {
   // What the code settling a selection hands the settler a reader handed it,
   // by the types alone: the key an entry of an associative array at a depth is
   // kept by, with its type, how many positions a takeover counts before the
-  // part a step reaches, and that a step reaches a part no takeover holds at a
-  // fixed position (LRM 7.8.4, 10.6.2); and, read back by a takeover, whether
-  // the part lies at a fixed position and how many positions lie before it.
+  // part a step reaches, that a step reaches a part no takeover holds at a
+  // fixed position (LRM 7.8.4, 10.6.2), the step a wait's path takes there, and
+  // that the path stops there (LRM 9.4.2); and, read back by a takeover,
+  // whether the part lies at a fixed position and how many positions lie
+  // before it.
   kSettleKey,
   kSettlePositions,
   kSettleUnfixed,
+  kSettleWatchedStep,
+  kSettleUnwatched,
   kSettledFixed,
   kSettledPositions,
   // What the code writing a data object takes from the deserializer a reader

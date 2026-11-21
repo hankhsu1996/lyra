@@ -59,6 +59,7 @@ auto ElementTypeOf() -> const ElementType& {
 struct NothingAsked {
   static constexpr auto BitIdentical = [](const ValueType&, const void*,
                                           const void*) -> bool { Unused(); };
+  static constexpr const StepWitnessTable* kSteps = nullptr;
 };
 
 // The functions of an array type as a unit states them: each operation on the
@@ -116,6 +117,9 @@ struct ArrayWitnesses {
           array.GetUnchecked(lhs, i), array.GetUnchecked(rhs, i));
     });
   }
+
+  static constexpr const StepWitnessTable* kSteps =
+      &lyra_rt_fixed_array_step_witness_table;
 };
 
 constexpr const ValueWitnessTable& kArrayWitnesses =

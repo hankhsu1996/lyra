@@ -5,8 +5,8 @@
 #include <optional>
 
 #include "lyra/base/source_location.hpp"
+#include "lyra/runtime/application_routine_calls.hpp"
 #include "lyra/runtime/cancellation.hpp"
-#include "lyra/runtime/import_call_chain.hpp"
 #include "lyra/runtime/region.hpp"
 #include "lyra/runtime/rng.hpp"
 #include "lyra/support/combinational_updates.hpp"
@@ -209,15 +209,15 @@ struct RunningState {
   // Null where an object takes its generator from `generator`.
   InitializationRng* object_seeds;
   EnclosingTargets targets;
-  ImportCallChain import_calls;
+  ApplicationRoutineCalls application_calls;
   // Null where no evaluation is in progress.
   ReadReport* evaluation_report = nullptr;
   // Whether this ended the run -- by a task that ends it, by a `vpi_control`
-  // carried out as an import returned, or by an error that ended it -- so it
-  // leaves at the next point that asks, and nothing of the design runs in it
-  // again (LRM 20.2). Unlike a disable or a kill, it puts no foreign frame
-  // beneath it in the disabled state (LRM 35.9), since the run does not go on
-  // past it.
+  // carried out as an application routine returned, or by an error that ended
+  // it -- so it leaves at the next point that asks, and nothing of the design
+  // runs in it again (LRM 20.2). Unlike a disable or a kill, it puts no foreign
+  // frame beneath it in the disabled state (LRM 35.9), since the run does not
+  // go on past it.
   bool ended_the_run = false;
 };
 

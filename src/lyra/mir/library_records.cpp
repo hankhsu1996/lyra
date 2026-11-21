@@ -106,6 +106,12 @@ auto MirTypeOf(const TypePool& types) -> TypeId {
     return LibraryTypeOf(types, support::LibraryDecl::kSourceLocation);
   } else if constexpr (std::is_same_v<Field, runtime::Subscriber&>) {
     return LibraryTypeOf(types, support::LibraryDecl::kSubscriber);
+  } else if constexpr (std::is_same_v<Field, runtime::CancellationTarget*>) {
+    return types.Intern(
+        Type{PointerType{
+            .pointee =
+                LibraryTypeOf(types, support::LibraryDecl::kCancellationTarget),
+            .ownership = PointerOwnership::kBorrowed}});
   } else if constexpr (std::is_same_v<Field, const value::ObjectRef&>) {
     // A handle, of whatever class, borrowed for the call.
     return types.Intern(

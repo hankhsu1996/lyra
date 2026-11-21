@@ -29,6 +29,10 @@ auto StepsToTicks(
 auto TicksToSteps(
     SimTime ticks, std::int8_t unit_power, std::int8_t global_power) noexcept
     -> SimTime;
+// `ticks` as such steps, keeping any fractional part.
+auto TicksToRealSteps(
+    SimTime ticks, std::int8_t unit_power, std::int8_t global_power) noexcept
+    -> double;
 
 // The current time scaled to `unit_power` and rounded to the nearest integer
 // (only the unit conversion rounds; precision does not).

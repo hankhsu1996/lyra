@@ -3,7 +3,7 @@
 #include <cstdint>
 
 #include "lyra/base/source_location.hpp"
-#include "lyra/runtime/import_call_chain.hpp"
+#include "lyra/runtime/application_routine_calls.hpp"
 #include "lyra/value/string.hpp"
 
 namespace lyra::runtime {
@@ -98,6 +98,11 @@ void ContextImportTaskReturned(
 void ContextImportFunctionReturned(
     RuntimeEffects& effects, base::SourceLocation at);
 
+// A callback's call has returned (LRM 38.36), which no design statement wrote:
+// a simulation control task foreign code asked for through `vpi_control` runs
+// now, as LRM 38.4 says, upon the return.
+void CallbackReturned(RuntimeEffects& effects);
+
 // LRM 35.9 item d: no exported subroutine is called at all once the execution
 // is in the disabled state, which is checked where such a call arrives. The
 // same check first holds the call to LRM 35.5.3, which lets an export be called
@@ -107,8 +112,9 @@ void ContextImportFunctionReturned(
 // foreign code is running under.
 void CheckExportReachable(RuntimeEffects& effects);
 
-// `vpi_control` asks for `control` once the context import foreign code is
-// running in returns (LRM 38.4), answering whether one is there to return.
+// `vpi_control` asks for `control` once the application routine foreign code
+// is running in returns -- a context import's call or a callback's (LRM 38.4)
+// -- answering whether one is there to return.
 auto RequestControl(RuntimeEffects& effects, ForeignControl control) -> bool;
 
 // Foreign code is about to run (LRM 35): each side hands over the standard

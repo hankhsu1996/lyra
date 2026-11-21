@@ -10,7 +10,9 @@
 // task, a function, a class, a clocking block -- or a variable or a part of
 // one. One declaration in each of several constructed scopes is so a
 // different object in each (LRM 36.10). A typespec, and what a relation from
-// one answers, is a constant of the unit and of no scope.
+// one answers, is a constant of the unit and of no scope. A callback and a
+// time queue are objects of the simulation, which VPI reaches as well (LRM
+// 36.10, 37.80, 37.81).
 
 #include <cstddef>
 #include <cstdint>
@@ -25,6 +27,7 @@
 #include <vector>
 
 #include "lyra/abi/records.hpp"
+#include "lyra/base/time.hpp"
 #include "lyra/runtime/reflection.hpp"
 #include "lyra/support/data_object.hpp"
 #include "vpi_user.h"
@@ -148,10 +151,27 @@ struct EnumConstantObject {
   auto operator==(const EnumConstantObject&) const -> bool = default;
 };
 
+// A callback foreign code registered (LRM 37.80), by its identity among those
+// the run has registered, in the order registered: one removed, or one that
+// has ended, names none.
+struct CallbackObject {
+  std::uint64_t id = 0;
+
+  auto operator<=>(const CallbackObject&) const = default;
+};
+
+// The time queue of a time (LRM 37.81), which is an object of the simulation
+// rather than of the design.
+struct TimeQueueObject {
+  SimTime at = 0;
+
+  auto operator==(const TimeQueueObject&) const -> bool = default;
+};
+
 using VpiObject = std::variant<
     Scope*, NamespaceObject, ScopeArray, LexicalScope, VariableObject,
     TypespecObject, TypespecMemberObject, RangeObject, ConstantObject,
-    EnumConstantObject>;
+    EnumConstantObject, CallbackObject, TimeQueueObject>;
 
 // An iteration foreign code steps through (LRM 38.23, 38.40): the objects one
 // relation answered when it was made, the object it was made on, if any, and
@@ -217,6 +237,9 @@ using VpiAnswer = std::expected<T, std::string>;
 // declaration.
 [[nodiscard]] auto ScopeDeclarationsOf(const ScopeHolder& holder)
     -> const abi::ScopeDeclarations&;
+// The object whose storage `holder`'s data objects are: the scope, none for a
+// namespace, whose unit holds them.
+[[nodiscard]] auto InstanceOf(const ScopeHolder& holder) -> GcObject*;
 [[nodiscard]] auto DeclarationPrefix(
     const ScopeHolder& holder, const abi::LexicalScopeRecord* enclosing)
     -> std::string;

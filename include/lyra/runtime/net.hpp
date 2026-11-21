@@ -80,15 +80,15 @@ enum class NetDecision : std::uint8_t { kShowsSource, kOneDriver, kResolution };
 // driver attaches while the design resolves, which is before any gives a value.
 void RequireUnsettled(const std::optional<NetDecision>& decision);
 
-// Replaces the whole of the value `net` shows, which lies at `shown`, by what
+// Replaces the whole of the value `net` shows, which `shown` holds, by what
 // the one driver deciding it gives, as a whole write of a variable is taken
 // (LRM 4.3): a net no wait is enrolled on has no one to tell, so nothing is
 // compared; a value it already shows moves nothing; and otherwise whoever
 // waits is told what moved (LRM 9.4.2). `already_shown` answers whether the
 // net shows the same bits, and `overwrite` replaces what it shows.
-template <class T, class AlreadyShown, class Overwrite>
+template <class HeldAs, class AlreadyShown, class Overwrite>
 void ShowDriverValue(
-    RuntimeEffects& runtime, Observable& net, const T& shown,
+    RuntimeEffects& runtime, Observable& net, const HeldAs& shown,
     AlreadyShown already_shown, Overwrite overwrite) {
   if (!net.HasMembers()) {
     overwrite();
@@ -97,7 +97,11 @@ void ShowDriverValue(
   if (already_shown()) {
     return;
   }
-  runtime.WakeParkedOn(net, PartPath{}, ReplaceWhole(shown, overwrite));
+  ReplaceHeld(
+      shown, net.WatchedInside(PartPath{}), overwrite,
+      [&](const Change& change) {
+        runtime.WakeParkedOn(net, PartPath{}, change);
+      });
 }
 
 // Where a write of the one driver of a net of a nettype with no resolution
@@ -462,8 +466,8 @@ class NetShowing {
     const void* next =
         forced ? bound.DriverOf(shown_).storage : LiveSource().storage;
     ShowDriverValue(
-        current_runtime(), *std::get<HeldByNet>(own_.holder).net,
-        own_value_->Get(), [&] { return own_value_->IsBitIdenticalTo(next); },
+        current_runtime(), *std::get<HeldByNet>(own_.holder).net, *own_value_,
+        [&] { return own_value_->IsBitIdenticalTo(next); },
         [&] { own_value_->AssignBytes(next); });
     if (forced) {
       bound.Release(shown_);
@@ -1168,10 +1172,13 @@ class PositionalNet : public ConnectableNet {
           "ResolvedNet: the net's declaration is installed twice");
     }
     installed_ = true;
+    // Nothing is yet enrolled to be told of it.
     Itself().LayPositions(
-        0, name_.Declare(
-               static_cast<support::StrengthLevel>(strength), NetFillOf(fill),
-               resolution, own_kind, Itself().PositionCount()));
+        0,
+        name_.Declare(
+            static_cast<support::StrengthLevel>(strength), NetFillOf(fill),
+            resolution, own_kind, Itself().PositionCount()),
+        [](const Change&) {});
   }
 
   // Shows `positions` over the net's own from `offset`, telling whoever waits
@@ -1179,10 +1186,9 @@ class PositionalNet : public ConnectableNet {
   void ShowPositions(
       RuntimeEffects& runtime, std::uint32_t offset,
       const NetPositions& positions) {
-    if (const std::optional<Change> change =
-            Itself().LayPositions(offset, positions)) {
-      runtime.WakeParkedOn(*this, PartPath{}, *change);
-    }
+    Itself().LayPositions(offset, positions, [&](const Change& change) {
+      runtime.WakeParkedOn(*this, PartPath{}, change);
+    });
   }
 
   // An override has come to cover the net. A driver keeps its contribution
@@ -1345,15 +1351,18 @@ class ResolvedNet<T> : public PositionalNet<ResolvedNet<T>, T> {
     return count_;
   }
 
-  // Writes the positions into the net's value where they lie, answering what
-  // moved, which what is kept of them from before says.
-  auto LayPositions(std::uint32_t offset, const NetPositions& positions)
-      -> std::optional<Change> {
+  // Writes the positions into the net's value where they lie, and has `tell`
+  // tell what moved, which what is kept of them from before says.
+  template <class Tell>
+  void LayPositions(
+      std::uint32_t offset, const NetPositions& positions, Tell tell) {
     auto&& own = Own();
     WriteOriginal<std::remove_cvref_t<decltype(own)>> kept(
         own, value::BitPositions{.lsb = offset, .width = positions.Count()});
     WritePositions(own, offset, positions);
-    return kept.ChangeTo(own);
+    if (const std::optional<Change> change = kept.ChangeTo(own)) {
+      tell(*change);
+    }
   }
 
   // Sets the one driver's contribution to the value lying at `bytes`, of the
@@ -1500,14 +1509,28 @@ class ResolvedNet<T> : public PositionalNet<ResolvedNet<T>, T> {
   }
 
   // Lays the positions into the aggregate where it lies, reaching only the
-  // parts they lie in, which says whether what it shows moved.
-  auto LayPositions(std::uint32_t offset, const NetPositions& positions)
-      -> std::optional<Change> {
-    if (!numbering_.WritePositions(
-            OwnBytes(), positions.View(), offset, positions.Count())) {
-      return std::nullopt;
+  // parts they lie in, which says whether what it shows moved, and has `tell`
+  // tell what did: where a wait watches a part of it, the aggregate it showed
+  // is kept until that is told, so each such wait is told whether its own part
+  // changed.
+  template <class Tell>
+  void LayPositions(
+      std::uint32_t offset, const NetPositions& positions, Tell tell) {
+    const auto lay = [&] {
+      return numbering_.WritePositions(
+          OwnBytes(), positions.View(), offset, positions.Count());
+    };
+    if (!this->WatchedInside(PartPath{})) {
+      if (lay()) tell(Change::Whole());
+      return;
     }
-    return Change::Whole();
+    const value::ValueType& type = held_.Type();
+    const value::KeptCopy before(type, OwnBytes());
+    if (!lay()) return;
+    if (const std::optional<Change> change =
+            Change::Between(type, before.Bytes(), OwnBytes())) {
+      tell(*change);
+    }
   }
 
   // Sets the one driver's contribution to the positions of the value of the
@@ -1744,8 +1767,11 @@ class UnresolvedNet : public Net {
     if (held_.IsBitIdentical(*shown)) {
       return;
     }
-    held_.Assign(*shown);
-    runtime.WakeParkedOn(*this, PartPath{}, Change::Whole());
+    ReplaceHeld(
+        held_, this->WatchedInside(PartPath{}), [&] { held_.Assign(*shown); },
+        [&](const Change& change) {
+          runtime.WakeParkedOn(*this, PartPath{}, change);
+        });
   }
 
   // What decides this net, settled the first time it is asked: its one driver
@@ -1796,7 +1822,7 @@ class UnresolvedNet : public Net {
             },
             [&](const Showing<T>& to) {
               ShowDriverValue(
-                  runtime, *this, to.shown->Get(),
+                  runtime, *this, *to.shown,
                   [&] { return to.shown->IsBitIdentical(value); },
                   [&] { to.shown->Assign(value); });
             }},
@@ -1819,7 +1845,7 @@ class UnresolvedNet : public Net {
             },
             [&](const Showing<T>& to) {
               ShowDriverValue(
-                  runtime, *this, to.shown->Get(),
+                  runtime, *this, *to.shown,
                   [&] { return to.shown->IsBitIdenticalTo(bytes); },
                   [&] { to.shown->AssignBytes(bytes); });
             }},

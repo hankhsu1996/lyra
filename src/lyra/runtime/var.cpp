@@ -2,10 +2,12 @@
 
 #include <algorithm>
 #include <bit>
+#include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <memory>
 #include <optional>
+#include <ranges>
 #include <span>
 #include <utility>
 #include <variant>
@@ -17,8 +19,6 @@
 #include "lyra/runtime/owned_call.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/trigger.hpp"
-#include "lyra/value/integral.hpp"
-#include "lyra/value/integral_value_type.hpp"
 #include "lyra/value/kept_copy.hpp"
 #include "lyra/value/value_type.hpp"
 
@@ -114,6 +114,17 @@ void ErasedReference::AfterModify(
       holder);
 }
 
+auto ErasedReference::WatchedInside() const -> bool {
+  return std::visit(
+      Overloaded{
+          [](std::monostate) { return false; },
+          [&](VariableCell* variable) {
+            return NamesItsPart() && variable->WatchedInside(part);
+          },
+          [](GcObject*) { return false; }, [](HeldByNet) { return false; }},
+      holder);
+}
+
 auto ErasedReference::ReportsTo() const -> Observable* {
   return std::visit(
       Overloaded{
@@ -167,26 +178,6 @@ auto PositionsASliceWrites(
   return {first, std::max(first, end)};
 }
 
-auto ChangeBetween(
-    const value::ValueType& type, const void* before, const void* now)
-    -> std::optional<Change> {
-  if (const value::IntegralValueType* integral = type.AsIntegral()) {
-    const value::LoadedWords kept = integral->Load(before);
-    Change change = Change::Reaching(
-        kept.View(),
-        value::BitPositions{.lsb = 0, .width = integral->Shape().width});
-    change.SetAfter(integral->Load(now).View());
-    if (change.Unmoved()) {
-      return std::nullopt;
-    }
-    return change;
-  }
-  if (type.BitIdentical(before, now)) {
-    return std::nullopt;
-  }
-  return Change::Whole();
-}
-
 void ExchangeLaidOut(const value::ValueType& type, void* live, void* kept) {
   const value::KeptCopy held(type, live);
   type.Assign(live, kept);
@@ -211,21 +202,46 @@ auto WrittenPartThrough(const ErasedReference& lent) -> WrittenPart {
   return {.place = *variable, .at = lent.part};
 }
 
-auto ErasedReference::Part(
-    void* storage, value::Formation formed, const PartPath& within,
-    bool accumulated) const -> ErasedReference {
+auto StepFormedAt(value::Formation formed, const PartPath& step) -> StepFormed {
   switch (formed) {
     case value::Formation::kExisting:
-      return {.holder = holder, .storage = storage, .part = part.Join(within)};
-    case value::Formation::kMade:
-      if (Watched()) {
-        AfterModify(PartPath{}, Change::Whole(), accumulated);
-      }
-      return {.holder = holder, .storage = storage, .part = part.Join(within)};
+      return ElementThere{};
     case value::Formation::kNowhere:
-      return {.holder = std::monostate{}, .storage = storage};
+      return ElementNowhere{};
+    case value::Formation::kMade:
+      return ElementMade{
+          .element = step.IsInexact()
+                         ? value::BitPositions{}
+                         : value::BitPositions{
+                               .lsb = step.Steps().front(), .width = 1}};
   }
-  throw InternalError("ErasedReference::Part: unknown formation");
+  throw InternalError("StepFormedAt: unknown formation");
+}
+
+auto ErasedReference::Part(
+    void* storage, const StepFormed& formed, const PartPath& within,
+    bool accumulated) const -> ErasedReference {
+  return std::visit(
+      Overloaded{
+          [&](const ElementThere&) -> ErasedReference {
+            return {
+                .holder = holder,
+                .storage = storage,
+                .part = part.Join(within)};
+          },
+          [&](const ElementNowhere&) -> ErasedReference {
+            return {.holder = std::monostate{}, .storage = storage};
+          },
+          [&](const ElementMade& made) -> ErasedReference {
+            if (Watched()) {
+              AfterModify(PartPath{}, made.ChangeMade(), accumulated);
+            }
+            return {
+                .holder = holder,
+                .storage = storage,
+                .part = part.Join(within)};
+          }},
+      formed);
 }
 
 auto LeaseObject(const ErasedReference& reference) -> LeasedReference {

@@ -125,8 +125,10 @@ class TableBuilder {
     const hir::ProceduralScopeDecl& decl = scopes.Get(id);
     if (const std::optional<support::LexicalScopeKind> kind =
             LexicalScopeKindOf(decl)) {
-      enclosing = AddLexical(*kind, decl.source_name, enclosing);
-      table_.procedural_scopes.emplace(id, *enclosing);
+      const LexicalScopeEntry entry =
+          AddLexical(*kind, decl.source_name, enclosing);
+      enclosing = entry.record;
+      table_.procedural_scopes.emplace(id, entry);
     }
     for (const hir::ProceduralScopeId child : decl.child_scopes) {
       AddProceduralScope(scopes, child, enclosing);
@@ -170,12 +172,12 @@ class TableBuilder {
 
   auto AddLexical(
       support::LexicalScopeKind kind, const std::optional<std::string>& name,
-      std::optional<mir::ConstantId> enclosing) -> mir::ConstantId {
-    const mir::ConstantId record = LexicalScopeRecordConstant(
-        *unit_, kind, name, enclosing,
-        static_cast<std::uint32_t>(table_.lexical.size()));
+      std::optional<mir::ConstantId> enclosing) -> LexicalScopeEntry {
+    const auto position = static_cast<std::uint32_t>(table_.lexical.size());
+    const mir::ConstantId record =
+        LexicalScopeRecordConstant(*unit_, kind, name, enclosing, position);
     table_.lexical.push_back(record);
-    return record;
+    return {.record = record, .position = position};
   }
 
   const mir::CompilationUnit* unit_;

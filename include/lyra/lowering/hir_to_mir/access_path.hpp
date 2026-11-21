@@ -543,6 +543,14 @@ struct NamedPart {
     const mir::CompilationUnit& unit, mir::Builder block,
     const AccessPath& path) -> NamedPart;
 
+// The number one step of a path is named by in the path a wait watches, none
+// where the step selects a part no such path names -- an entry of an
+// associative array, a member of an untagged union, bits of a packed value --
+// where that path stops.
+[[nodiscard]] auto WatchedStepOf(
+    const mir::CompilationUnit& unit, mir::Builder block,
+    const DescentStep& step) -> std::optional<mir::ExprId>;
+
 // Whether a write to the part `path` names lands on bits of a character of a
 // string, and so reads the character before putting it back.
 [[nodiscard]] auto WritesBitsOfACharacter(const AccessPath& path) -> bool;

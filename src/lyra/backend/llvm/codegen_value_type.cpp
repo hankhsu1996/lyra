@@ -559,11 +559,34 @@ auto CodeGenValueTypes::GetAddrOfLaidOutType(lir::TypeId type)
   }
   constant->setLinkage(*linkage);
   // The table, each witness where the library's declaration of it lays it
-  // out.
+  // out, and the library's answer for the part a path's step names, which
+  // reads it off the type it is handed: a fixed-size array's element by
+  // position, a tuple's component by index. A tagged union states none: a
+  // member holds a value only under its tag.
   ConstantRecord witnesses(ctx, sizeof(value::ValueWitnessTable));
   for (const Witness& witness : ValueWitnesses()) {
     witnesses.Place(witness.offset, FillWitness(type, witness));
   }
+  const FieldsShape fields = types_->FieldsOf(type);
+  llvm::Constant* steps = llvm::ConstantPointerNull::get(ptr);
+  switch (ValueTypeKindOf(stated)) {
+    case value::ValueTypeKind::kFixedArray:
+      steps = owner_->LibraryData(kFixedArrayStepWitnessTableSymbol);
+      break;
+    // A tuple's record is the one a product laid out by its own type opens; a
+    // container is a product of its core, and answers whole.
+    case value::ValueTypeKind::kOther:
+      if (std::holds_alternative<const ProductLayout*>(fields)) {
+        steps = owner_->LibraryData(kTupleStepWitnessTableSymbol);
+      }
+      break;
+    case value::ValueTypeKind::kIntegral:
+    case value::ValueTypeKind::kDynamicArray:
+    case value::ValueTypeKind::kQueue:
+    case value::ValueTypeKind::kAssociativeArray:
+      break;
+  }
+  witnesses.Place(OffsetInTable(&value::ValueWitnessTable::steps), steps);
   llvm::Constant* const table_data = std::move(witnesses).Build();
   llvm::GlobalVariable* const table =
       global(std::format("lyra.type{}.witnesses", key), table_data->getType());
@@ -741,7 +764,7 @@ auto CodeGenValueTypes::GetAddrOfLaidOutType(lir::TypeId type)
             return Defined(
                 key, constant, std::move(out).Build(), alignof(TupleType));
           }},
-      types_->FieldsOf(type));
+      fields);
 }
 
 auto CodeGenValueTypes::LinkageOfItsOperations(lir::TypeId type) const

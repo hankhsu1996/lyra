@@ -24,10 +24,10 @@
 #include "lyra/runtime/file_table.hpp"
 #include "lyra/runtime/finished_output.hpp"
 #include "lyra/runtime/hierarchy_segment.hpp"
-#include "lyra/runtime/interrupt_report.hpp"
 #include "lyra/runtime/plusargs.hpp"
 #include "lyra/runtime/runtime.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
+#include "lyra/runtime/signal_watcher.hpp"
 #include "lyra/runtime/third_party_licenses.hpp"
 #include "lyra/value/array_report.hpp"
 
@@ -99,7 +99,7 @@ auto RunSimulation(Runtime& runtime) -> int {
     // state, since a context import can already be reached from there (LRM
     // 10.5, 35.5.3).
     const AmbientRunContext run_context{runtime.DesignRoot(), runtime};
-    const InterruptReport interrupt_report{runtime};
+    const SignalWatcher signal_watcher{runtime};
     const ArrayReports array_reports;
     return runtime.Run();
   } catch (const std::exception&) {

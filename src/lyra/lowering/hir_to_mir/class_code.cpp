@@ -230,6 +230,7 @@ auto ClassHookPrototype(
     case support::LibraryCallback::kScopeForceDataObject:
     case support::LibraryCallback::kScopeReleaseDataObject:
     case support::LibraryCallback::kScopeSubscribeDataObject:
+    case support::LibraryCallback::kScopeDisableTarget:
       break;
   }
   throw InternalError(

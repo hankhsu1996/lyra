@@ -1109,7 +1109,7 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kAssertionControlDescribe:
     case support::BuiltinFn::kSerializeBits:
     case support::BuiltinFn::kSerializeText:
-    case support::BuiltinFn::kSerializeEvent:
+    case support::BuiltinFn::kSerializeObject:
     case support::BuiltinFn::kSerializeSize:
     case support::BuiltinFn::kSerializeKey:
     case support::BuiltinFn::kSubscribe:
@@ -1119,6 +1119,8 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kSettleKey:
     case support::BuiltinFn::kSettlePositions:
     case support::BuiltinFn::kSettleUnfixed:
+    case support::BuiltinFn::kSettleWatchedStep:
+    case support::BuiltinFn::kSettleUnwatched:
     case support::BuiltinFn::kSettledFixed:
     case support::BuiltinFn::kSettledPositions:
     case support::BuiltinFn::kDeserializeBits:

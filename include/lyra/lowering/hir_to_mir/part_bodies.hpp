@@ -22,8 +22,9 @@ class UnitLowerer;
 //   types: the key each entry it names is kept by, converted from what foreign
 //   code wrote as the design converts an index (LRM 7.8.4), and the positions a
 //   takeover of the variable counts before the part (LRM 10.6.2).
-// - `read` takes a reference to the value and hands the part's value, or, at an
-//   array whose size the run sets, its size and, where asked, its keys.
+// - `read` takes a reference to the value and hands the part's value or the
+//   object it names, or, at an array whose size the run sets, its size and,
+//   where asked, its keys.
 // - `write` takes a reference belonging to the variable and lands the value
 //   handed on the part, as the design's own write through a reference does.
 struct PartBodies {

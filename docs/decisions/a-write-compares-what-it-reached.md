@@ -106,7 +106,40 @@ part tells the write what forming it did.**
   written, and each reaches the part the way a write does, so an element a write would form is
   formed for any of them.
 - **A whole-value store compares the new value with the old one before writing it.** It keeps no
-  copy, except the old bits a packed variable's waits are passed over by.
+  copy, except the old bits a packed variable's waits are passed over by, and the old value where a
+  wait watches a part inside it (below).
+- **A write tells each wait on a part inside the part it reached whether that part changed**
+  (revised 2026-11-20). The write is what holds the value it replaced and the one it left, so it
+  answers once for every wait, and a wait on storage needs no copy. Where the part reached is not a
+  packed value, the change it tells is the two values, each read where it lies while the waits are
+  told, and the walk down the waits on parts inside asks the type for the part one step names -- a
+  fixed-size array's element by its position, a structure's member by its index, each answered by
+  that kind's own description in the type's record, as Swift's generic code reaches a field through
+  its type's metadata -- comparing that part's two values: a part left as it was is passed over with
+  everything inside it, and an integral one is told which of its bits moved. The value replaced is
+  kept for that only where a wait watches a part inside: a whole-value store copies it then, which
+  costs what the store costs anyway; a landing already holds it; a slice write answers the positions
+  it changed (above); an element a step makes is told as that one element. This revises the rule
+  that a wait on a part inside the part written was told only that it was reached, which ran an
+  `always_comb` reading one member again for a write of the whole structure that left that member as
+  it was (LRM 9.2.2.2.1). No type states a step to a member of a tagged union, nor a string to a
+  character, nor into an array whose size the run sets, whose elements a whole write moves and ends,
+  so a wait on any of those is told that it may have changed whenever what holds it did. An entry of
+  an associative array has no position, so a wait on one watches the whole array.
+- **What a write tells says which observers it may affect, never that a value is another**
+  (2026-11-20). Where the write kept no value to read at a part -- a part inside one it replaced
+  with nothing watched there, an element of an array whose size the run sets written through a
+  reference naming no position, a part inside an element made or ended, a member of a union -- it
+  can say only that the part may have changed, and an account of what it did is only as good as
+  every kind of write giving it. So an observer that answers for a change of value itself compares:
+  an event control its expression (LRM 9.4.2), and a foreign callback on a value, a size or which
+  object a class variable names what it reads now with what it last read (LRM 38.36.1,
+  [foreign-code-is-called-back-where-its-reason-places-it](foreign-code-is-called-back-where-its-reason-places-it.md)
+  D4), the write's telling deciding only that it looks. An `always_comb` takes the telling as it
+  comes, an extra run costing time and no value. What every write still owes is to tell each
+  observer it may have affected, since one left untold is never asked. This replaces two readings of
+  the same day: that a callback took every change told as its object's own, and that it took only
+  one the write marked as proven, which several kinds of write marked wrongly before any was found.
 - **A net driver gives the whole of the part it drives.** Its net resolves again only over the
   positions that driver drives (LRM 6.5, 6.6.7), so a driver of a net resolving positions opens no
   write. The one driver of an unresolved net is written into as a variable is, and its net's waits
@@ -119,7 +152,13 @@ part tells the write what forming it did.**
 - **Every observation keeps its own copy of what it reads, compared each time it is evaluated.**
   Verilator's answer (`V3SenExprBuilder`), which its static schedule affords. An implicit
   sensitivity reads the longest static prefix of what it selects (LRM 9.2.2.2.1), which is the whole
-  array for a variable index, so the cost moves from the write to every waiter.
+  array for a variable index, so the cost moves from the write to every waiter. This is about an
+  observation of storage, which a write can answer for; an observation of an expression's result,
+  which no storage holds, keeps that result itself
+  ([update-events-are-per-variable](update-events-are-per-variable.md) D2), and the two rules are
+  one rule applied to two kinds of observation. A foreign callback on a value or a size keeps one
+  all the same, compared only where a write tells it, since it answers for the value itself
+  (2026-11-20).
 - **Notify with the part written and let each waiter decide.** Icarus Verilog's answer
   (`__vpiArray::set_word` notifies with the address unconditionally). An implicit sensitivity has
   nothing to decide with, so a write that changed nothing would run it again.

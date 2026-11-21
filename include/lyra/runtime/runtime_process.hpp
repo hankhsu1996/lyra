@@ -223,6 +223,12 @@ class RuntimeProcess : public ClassObject {
     return termination_requested_ || terminated_;
   }
 
+  // What is in force for its execution that outlives a stop, the disable
+  // targets it is inside among it; none where nothing of it outlives one.
+  [[nodiscard]] auto HeldState() const -> const RunningState* {
+    return execution_->HeldState();
+  }
+
   // LRM 9.7 `suspend`: withdraw the active leaf from whatever would resume it
   // and record the suspended state. What the leaf is waiting for stays with it,
   // because starting the process again waits for that same thing; only its

@@ -60,6 +60,7 @@ struct InRegion {
 using Resumption = std::variant<
     WithoutStopping, OnAnOccurrence, LaterInThisTimeStep, AtTime, InRegion>;
 
+class CallbackWatch;
 class DumpWatch;
 class PerIntervalAwaiter;
 class ProgramThreads;
@@ -76,12 +77,14 @@ class SourceFollower;
 // wakes nothing either; a program, told as each of its initial procedures ends,
 // which ends the rest of its threads at once once they all have (LRM 24.3); an
 // expect statement's evaluation, told of each tick of its clock and each change
-// its disable condition reads, which wakes nothing either (LRM 16.17); or a
+// its disable condition reads, which wakes nothing either (LRM 16.17); a
 // value dump recording the place, which wakes nothing and records the change at
-// the end of the time step (LRM 21.7.1.4).
+// the end of the time step (LRM 21.7.1.4); or a callback foreign code placed
+// on the place, told of each write as it lands and called at the occurrence
+// (LRM 38.36.1).
 using Observer = std::variant<
     Awaiter*, PerIntervalAwaiter*, SampledValue*, SourceFollower*,
-    ProgramThreads*, PropertyEvaluation*, DumpWatch*>;
+    ProgramThreads*, PropertyEvaluation*, DumpWatch*, CallbackWatch*>;
 
 // One place an observer watches: an observable, a join, a `wait fork`
 // condition, a process's termination. It stands for as long as the observer

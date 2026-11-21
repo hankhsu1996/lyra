@@ -165,7 +165,7 @@ auto DispatchNameOf(const CompilationUnit& unit, CallableId method)
   }
   if (cls.scope_declarations.has_value()) {
     if (const std::optional<support::LibraryCallback> callback =
-            DataObjectCallbackOf(*cls.scope_declarations, method)) {
+            ScopeDeclarationsCallbackOf(*cls.scope_declarations, method)) {
       return *callback;
     }
   }

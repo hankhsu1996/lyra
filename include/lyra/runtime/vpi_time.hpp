@@ -26,5 +26,10 @@ class RuntimeEffects;
 // `vpiSuppressTime`; false where the type names no form.
 [[nodiscard]] auto FillTime(
     RuntimeEffects& run, std::int8_t unit_power, s_vpi_time& time) -> bool;
+// The same for the time `at`, in ticks of the global time precision: the time
+// of a time queue (LRM 37.81).
+[[nodiscard]] auto FillTimeAt(
+    RuntimeEffects& run, std::int8_t unit_power, SimTime at, s_vpi_time& time)
+    -> bool;
 
 }  // namespace lyra::runtime

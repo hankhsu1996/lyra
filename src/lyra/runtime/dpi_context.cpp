@@ -11,12 +11,12 @@
 #include "lyra/base/source_location.hpp"
 #include "lyra/base/time.hpp"
 #include "lyra/runtime/ambient_run_context.hpp"
+#include "lyra/runtime/application_routine_calls.hpp"
 #include "lyra/runtime/cancellation.hpp"
 #include "lyra/runtime/dpi_scope_handles.hpp"
 #include "lyra/runtime/file_table.hpp"
 #include "lyra/runtime/finish.hpp"
 #include "lyra/runtime/foreign_execution.hpp"
-#include "lyra/runtime/import_call_chain.hpp"
 #include "lyra/runtime/running_state.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/runtime_process.hpp"
@@ -28,7 +28,7 @@ namespace lyra::runtime {
 
 void EnterDpiScope(
     RuntimeEffects& effects, Scope* decl_scope, base::SourceLocation at) {
-  effects.Running().import_calls.Enter(decl_scope, at);
+  effects.Running().application_calls.EnterImport(decl_scope, at);
 }
 
 void LeaveDpiScope(RuntimeEffects& effects) {
@@ -37,7 +37,7 @@ void LeaveDpiScope(RuntimeEffects& effects) {
   // when the run ends is released where it stands, which runs the cleanups it
   // was holding open. The chain that entry belonged to is going with it.
   if (RunningState* running = effects.TryRunning(); running != nullptr) {
-    running->import_calls.Leave();
+    running->application_calls.Leave();
   }
 }
 
@@ -46,7 +46,7 @@ auto CurrentDpiScope() -> CurrentDpiHandle {
   if (running == nullptr) {
     return static_cast<Scope*>(nullptr);
   }
-  return running->import_calls.Current();
+  return running->application_calls.Current();
 }
 
 auto ReplaceDpiScope(CurrentDpiHandle handle) -> CurrentDpiHandle {
@@ -54,12 +54,12 @@ auto ReplaceDpiScope(CurrentDpiHandle handle) -> CurrentDpiHandle {
   if (running == nullptr) {
     return static_cast<Scope*>(nullptr);
   }
-  return running->import_calls.Replace(handle);
+  return running->application_calls.Replace(handle);
 }
 
 auto HandStringToForeignCaller(
     RuntimeEffects& effects, const value::String& text) -> const char* {
-  return effects.Running().import_calls.HandToForeignCaller(text);
+  return effects.Running().application_calls.HandToForeignCaller(text);
 }
 
 auto DisableIsActive(RuntimeEffects& effects) -> std::int32_t {
@@ -79,7 +79,7 @@ auto ExportedTaskReturnValue(RuntimeEffects& effects) -> std::int32_t {
 
 void AcknowledgeStop(RuntimeEffects& effects) {
   if (RunningState* running = effects.TryRunning(); running != nullptr) {
-    running->import_calls.AcknowledgeStop();
+    running->application_calls.AcknowledgeStop();
   }
 }
 
@@ -96,7 +96,7 @@ void ActOnRequestedControl(RuntimeEffects& effects, base::SourceLocation at) {
     return;
   }
   const std::optional<ForeignControl> requested =
-      running->import_calls.TakeRequestedControl();
+      running->application_calls.TakeRequestedControl();
   if (!requested.has_value()) {
     return;
   }
@@ -131,7 +131,7 @@ void ContextImportFunctionReturned(
   RunningState* running = effects.TryRunning();
   if (RunningIsDisabled(effects) &&
       (running == nullptr ||
-       !running->import_calls.InnermostAcknowledgedStop())) {
+       !running->application_calls.InnermostAcknowledgedStop())) {
     // LRM 35.9 item c.
     const base::SourceLocationScope bound(at);
     effects.ReportDesignFailure(
@@ -142,9 +142,14 @@ void ContextImportFunctionReturned(
   ActOnRequestedControl(effects, at);
 }
 
+void CallbackReturned(RuntimeEffects& effects) {
+  ActOnRequestedControl(effects, base::SourceLocation{base::kNoSourceLocation});
+}
+
 auto RequestControl(RuntimeEffects& effects, ForeignControl control) -> bool {
   RunningState* running = effects.TryRunning();
-  return running != nullptr && running->import_calls.RequestControl(control);
+  return running != nullptr &&
+         running->application_calls.RequestControl(control);
 }
 
 void CheckExportReachable(RuntimeEffects& effects) {
@@ -165,13 +170,20 @@ void BeforeForeignCodeRuns(RuntimeEffects& effects) {
 }
 
 auto ImportCallWrittenAt(RuntimeEffects& effects) -> base::SourceLocation {
-  return effects.Running().import_calls.WrittenAt();
+  return effects.Running().application_calls.WrittenAt();
 }
 
 void RequireAContextImportCall(RuntimeEffects& effects) {
-  if (const RunningState* running = effects.TryRunning();
-      running != nullptr && running->import_calls.InsideACall()) {
+  const RunningState* running = effects.TryRunning();
+  if (running != nullptr && running->application_calls.InsideAnImportCall()) {
     return;
+  }
+  // LRM 35.5.3, Annex H.9.
+  if (running != nullptr && running->application_calls.InsideACallbackCall()) {
+    throw SimulationError(
+        base::kNoSourceLocation,
+        "foreign code called an exported subroutine from a VPI callback, "
+        "which is no 'context' import's call");
   }
   throw SimulationError(
       base::kNoSourceLocation,
@@ -289,11 +301,11 @@ auto svGetUserData(const svScope scope, void* userKey) -> void* {
 // call to answer for, and a call the design did not write has no place.
 auto svGetCallerInfo(const char** fileName, int* lineNumber) -> int {
   const lyra::runtime::RunningState* running = Effects().TryRunning();
-  if (running == nullptr || !running->import_calls.InsideACall()) {
+  if (running == nullptr || !running->application_calls.InsideAnImportCall()) {
     return 0;
   }
   const lyra::base::SourceLocation written_at =
-      running->import_calls.WrittenAt();
+      running->application_calls.WrittenAt();
   if (!written_at.IsValid()) {
     return 0;
   }

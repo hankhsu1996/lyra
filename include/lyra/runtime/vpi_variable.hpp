@@ -18,10 +18,11 @@
 #include <vector>
 
 #include "lyra/abi/records.hpp"
-#include "lyra/base/source_location.hpp"
 #include "lyra/runtime/hierarchical_name.hpp"
+#include "lyra/runtime/trigger.hpp"
 #include "lyra/runtime/vpi_object.hpp"
 #include "lyra/value/bit_vec.hpp"
+#include "lyra/value/object_ref.hpp"
 #include "lyra/value/string.hpp"
 #include "vpi_user.h"
 
@@ -83,6 +84,12 @@ class VariablesByStorage {
 [[nodiscard]] auto TypeOfVariablePart(const VpiObject& object, VpiMode mode)
     -> PLI_INT32;
 
+// The type of the object `object` stands for in `mode`: of a reference object,
+// the one it is bound to (LRM 37.15 detail 3), and of any other, its own --
+// what decides what a value of it is and what a change of it calls back.
+[[nodiscard]] auto TypeOfActual(const VpiObject& object, VpiMode mode)
+    -> PLI_INT32;
+
 // The objects of type `relation` related to `from`, and the one where only
 // one can be.
 [[nodiscard]] auto RelatedToVariablePart(
@@ -91,6 +98,13 @@ class VariablesByStorage {
 [[nodiscard]] auto OneRelatedToVariablePart(
     RuntimeEffects& run, PLI_INT32 relation, const VpiObject& from)
     -> VpiAnswer<std::optional<VpiObject>>;
+
+// The number a step of a selection selects by, as `vpiIndex` answers it (LRM
+// 37.18 detail 6, 37.19), which a callback on an element is also handed (LRM
+// 38.36.1): a number, or an integral key of 64 bits or fewer by the number it
+// is at its type's signedness. A key of any other type is no number.
+[[nodiscard]] auto IndexOfStep(const Selection::Step& step)
+    -> std::optional<std::int64_t>;
 
 // An integer property and a string property of `of`.
 [[nodiscard]] auto VariablePartIntegerProperty(
@@ -124,6 +138,15 @@ struct ValueShape {
 [[nodiscard]] auto ValueShapeOf(const VpiObject& object)
     -> VpiAnswer<ValueShape>;
 
+// The trigger a wait for a change of what `object` names would enrol (LRM
+// 9.4.2), so whatever is told of its changes is told as the design's own wait
+// on that select would be: at the part its selection names, through what a
+// net shows and a port is bound to, reading the bits the object is where it is
+// bits of a packed value. Where the path a wait watches stops at a part
+// holding the object -- an associative array, an untagged union -- it watches
+// all of that part.
+[[nodiscard]] auto WatchOfVariablePart(const VariableObject& object) -> Trigger;
+
 // The value `object` holds now, read as the design's own read of it would be
 // (LRM 38.15); and a write of `written` to it as the design's own write
 // would land (LRM 38.34), what waits on it seeing the write. What the design
@@ -132,6 +155,11 @@ struct ValueShape {
     -> VpiAnswer<HeldValue>;
 [[nodiscard]] auto WriteVariablePart(
     const VpiObject& object, const HeldValue& written) -> VpiAnswer<void>;
+
+// The object the class variable `object` names now, read as the design's own
+// read of it would be. No foreign code is handed it (LRM 38.36.1).
+[[nodiscard]] auto ObjectNamedByVariablePart(const VpiObject& object)
+    -> VpiAnswer<value::ObjectRef>;
 
 // A procedural force of `object` to `forced`, and its release, answering the
 // value it holds after (LRM 38.34, 10.6.2).

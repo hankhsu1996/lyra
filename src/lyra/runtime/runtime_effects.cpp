@@ -32,6 +32,7 @@
 #include "lyra/runtime/timer.hpp"
 #include "lyra/runtime/value_change_wait.hpp"
 #include "lyra/runtime/value_dump.hpp"
+#include "lyra/runtime/vpi_callbacks.hpp"
 #include "lyra/runtime/wait.hpp"
 #include "lyra/support/assertion_control.hpp"
 #include "lyra/support/combinational_updates.hpp"
@@ -175,7 +176,7 @@ void RuntimeEffects::Wake(Activation* activation) {
       Schedule(Now(), context.regions.active, activation);
       return;
     case WakePlacement::kAtTheOccurrence:
-      AsRuntime(*this).woken_at_the_occurrence_.push_back(activation);
+      AsRuntime(*this).woken_at_the_occurrence_.emplace_back(activation);
       RunWokenAtTheOccurrence();
       return;
   }
@@ -417,17 +418,29 @@ void RuntimeEffects::AssertControlOfLoop(
 // waits behind every wait already reached; so executions that began to wait on
 // one event in some order run in that order at each occurrence they wait out.
 // A clocking block's drives land in the order they were made by this (LRM
-// 14.16.2).
+// 14.16.2). The callbacks of foreign code an occurrence made due run in that
+// order too, from the place the first of them was reached.
 void RuntimeEffects::RunWokenAtTheOccurrence() {
   Runtime& rt = AsRuntime(*this);
   if (rt.occurrences_being_told_ != 0) return;
   while (!rt.woken_at_the_occurrence_.empty()) {
-    std::vector<Activation*> woken;
+    std::vector<std::variant<Activation*, VpiCallbacks*>> woken;
     woken.swap(rt.woken_at_the_occurrence_);
-    for (Activation* activation : woken) {
-      activation->RunAtTheOccurrence(rt);
+    for (const std::variant<Activation*, VpiCallbacks*>& each : woken) {
+      std::visit(
+          Overloaded{
+              [&](Activation* activation) {
+                activation->RunAtTheOccurrence(rt);
+              },
+              [](VpiCallbacks* callbacks) { callbacks->RunDue(); }},
+          each);
     }
   }
+}
+
+void RuntimeEffects::RunCallbacksAtTheOccurrence(VpiCallbacks& callbacks) {
+  AsRuntime(*this).woken_at_the_occurrence_.emplace_back(&callbacks);
+  RunWokenAtTheOccurrence();
 }
 
 namespace {
@@ -483,7 +496,8 @@ void RuntimeEffects::TellChange(
             [&](PropertyEvaluation* evaluation) {
               evaluation->Reached(membership);
             },
-            [](DumpWatch* watch) { watch->Reached(); }},
+            [](DumpWatch* watch) { watch->Reached(); },
+            [](CallbackWatch* watch) { watch->Reached(); }},
         membership.observer);
   });
 }
@@ -528,7 +542,7 @@ void RuntimeEffects::TellIntervalChange(
             },
             [](Awaiter*) {}, [](SampledValue*) {}, [](SourceFollower*) {},
             [](ProgramThreads*) {}, [](PropertyEvaluation*) {},
-            [](DumpWatch*) {}},
+            [](DumpWatch*) {}, [](CallbackWatch*) {}},
         membership.observer);
   });
 }

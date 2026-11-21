@@ -1253,13 +1253,17 @@ auto UnitLowerer::RunNamespace() -> diag::Result<mir::CompilationUnit> {
         .elaborated = declared.elaborated,
         .lexical = declared.lexical,
         .data_objects = {},
-        .bodies = TakeDataObjectBodies(unit_, NamespaceBodies{})};
+        .bodies = TakeDataObjectBodies(unit_, NamespaceBodies{}),
+        .disable_target = TakeScopeBody(unit_, NamespaceBodies{})};
     if (auto stated = DescribeDataObjects(
             StructuralScopeLowerer(*this, scope), declared, NamespaceBodies{},
             *described, namespace_frame, scope.described);
         !stated) {
       return std::unexpected(std::move(stated.error()));
     }
+    StateDisableTargets(
+        unit_, declared, NamespaceBodies{}, *described, namespace_frame,
+        package_scopes);
   }
 
   // The classes this unit holds. A namespace replicates nothing, so an object

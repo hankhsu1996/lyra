@@ -1064,8 +1064,10 @@ the detail lives in the entry itself.
   into a part the write lands on -- a union's member included, reported at the union -- on the write
   in progress, an element step tells the write what forming it did (an element made, an index naming
   none), a slice write tells it the positions it changed, and a whole-value store compares before
-  writing. Observers keeping their own copies, and notifying without comparing, are rejected,
-  because an implicit sensitivity has nothing of its own to compare with.
+  writing. Observers keeping their own copies to compare at each evaluation, and notifying without
+  comparing, are rejected, because an implicit sensitivity has nothing of its own to compare with; a
+  foreign callback on a value, a size or a class variable compares what it last read where a write
+  tells it.
 - [a-part-of-a-variable-is-named-by-its-steps](a-part-of-a-variable-is-named-by-its-steps.md) -- a
   part of a variable is named by the steps that reach it, a member's index or an element's ordinal,
   and by a range of bits inside a packed value; a wait, a write, a reference and a procedure's
@@ -1190,7 +1192,8 @@ the detail lives in the entry itself.
   is `svdpi.h`'s own types, shipped among the runtime's headers; `svGetCallerInfo` answers where the
   running context import was written. Stubs answering an error, `<cstdarg>` in the runtime, acting
   where `vpi_control` is called, and a copy of the canonical types are rejected. Revised 2026-11-09:
-  the DPI routines.
+  the DPI routines. Revised 2026-11-19: a callback's call is an application routine too, upon whose
+  return `vpi_control` is carried out.
 - [a-scope-is-named-by-its-declaration](a-scope-is-named-by-its-declaration.md) -- every class of
   the hierarchy, every package and every compilation unit's scope states a record of each scope it
   declares and of the definition it comes from; a constructed scope's segment is the record it
@@ -1204,7 +1207,18 @@ the detail lives in the entry itself.
   the scope around it holds it; a handle refers to one and two handles to it compare equal; an
   iteration keeps what its relation answered; a relation or property not yet reached answers nothing
   with an error. A handle that is a scope's address, an object per procedural scope and a handle
-  holding the names it answers are rejected.
+  holding the names it answers are rejected. Revised 2026-11-19: a callback and a time queue are
+  objects of the simulation.
+- [foreign-code-is-called-back-where-its-reason-places-it](foreign-code-is-called-back-where-its-reason-places-it.md)
+  -- a callback is a registration attached to the source of its occurrence: the observers of a
+  variable, the target a disable ends, a timer in a PLI region the slot runs, a simulator action, a
+  signal; it runs as an application routine of no thread, at the occurrence once the telling has
+  ended, handed the value of its own change; a moment the run will not reach is refused, and so is a
+  write in Postponed. Comparing every watched variable against a copy at points of the loop, calling
+  back while observers are being told, reading the value at the call, calling a callback on what a
+  write says it did without a comparison, accepting a reason whose occurrence never happens, letting
+  a removed callback go at a later call into the callbacks rather than when its last user does, a
+  disable callback per activation ended, and a second owner of a signal are rejected.
 
 ### Compile-time model and specialization
 

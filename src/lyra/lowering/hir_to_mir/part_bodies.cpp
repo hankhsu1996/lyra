@@ -10,7 +10,6 @@
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
-#include "lyra/base/overloaded.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/lowering/hir_to_mir/access_path.hpp"
 #include "lyra/lowering/hir_to_mir/bitstream.hpp"
@@ -44,21 +43,28 @@ struct BodyParams {
   Handed sink;
 };
 
-// Whether a part of type `type` holds a value a reader reads out whole (LRM
-// 37.17 detail 11): an integral value, a real, a string or an event variable.
-// No step goes further into one; which bits of a packed value a reader names
-// is the reader's.
+// Whether a part of type `type` names an object rather than holding a value:
+// an event variable (LRM 37.27) or a class variable, whose object a reader
+// tells apart from another by which it is and reads nothing of.
+auto NamesAnObject(const hir::Type& type) -> bool {
+  return type.Is<hir::EventType>() || type.Is<hir::ClassHandleType>() ||
+         type.Is<hir::ImportedClassHandleType>();
+}
+
+// Whether a part of type `type` holds what a reader reads out whole (LRM 37.17
+// detail 11): an integral value, a real, a string, or the object a variable
+// names. No step goes further into one; which bits of a packed value a reader
+// names is the reader's.
 auto HoldsReadValue(const hir::Type& type) -> bool {
   return type.IsIntegral() || type.Is<hir::RealType>() ||
          type.Is<hir::ShortRealType>() || type.Is<hir::RealTimeType>() ||
-         type.Is<hir::StringType>() || type.Is<hir::EventType>();
+         type.Is<hir::StringType>() || NamesAnObject(type);
 }
 
-// Whether a part of type `type` holding a value a reader reads takes one a
-// write lands: every such value but an event's, which names an object rather
-// than holding a value (LRM 37.27).
+// Whether a part of type `type` holding what a reader reads takes a value a
+// write lands: every such part but one naming an object.
 auto TakesAWrittenValue(const hir::Type& type) -> bool {
-  return HoldsReadValue(type) && !type.Is<hir::EventType>();
+  return HoldsReadValue(type) && !NamesAnObject(type);
 }
 
 // Whether `step` reaches a member of a union, tagged or not.
@@ -94,8 +100,8 @@ auto SerializeEntryOf(const mir::CompilationUnit& unit, mir::TypeId held)
   if (type.IsDeclaredBy(support::LibraryDecl::kString)) {
     return support::BuiltinFn::kSerializeText;
   }
-  if (held == unit.builtins.event) {
-    return support::BuiltinFn::kSerializeEvent;
+  if (type.Is<mir::ManagedRefType>()) {
+    return support::BuiltinFn::kSerializeObject;
   }
   throw InternalError(
       "hir_to_mir: a data object is read as a value it holds none of -- "
@@ -379,7 +385,10 @@ void PartBodyBuilder::CallPartBody(
 // an array whose size the run sets lie at none; and
 // an entry of an associative array is named by the key its array keeps it by,
 // converted from what foreign code wrote as the design converts an index into
-// the index type (LRM 7.8.4).
+// the index type (LRM 7.8.4). Each step is also taken as the path a wait on
+// the part watches it by takes it, as the design's own wait on the select
+// does (LRM 9.4.2), so whatever learns of the part's changes enrols where the
+// design's wait would.
 auto PartBodyBuilder::Settle() -> mir::CallableCode {
   return Body(
       std::nullopt, support::LibraryDecl::kSelectionSettler, false,
@@ -439,6 +448,17 @@ auto PartBodyBuilder::Settle() -> mir::CallableCode {
                                   unit.builtins.void_type)
                             : CallOn(
                                   block, support::BuiltinFn::kSettleUnfixed,
+                                  settler, {}, unit.builtins.void_type));
+                    const std::optional<mir::ExprId> watched =
+                        WatchedStepOf(unit, block, step);
+                    Perform(
+                        block,
+                        watched.has_value()
+                            ? CallOn(
+                                  block, support::BuiltinFn::kSettleWatchedStep,
+                                  settler, {*watched}, unit.builtins.void_type)
+                            : CallOn(
+                                  block, support::BuiltinFn::kSettleUnwatched,
                                   settler, {}, unit.builtins.void_type));
                     CallPartBody(
                         block, PartBodiesOf(*owner_, part).settle, std::nullopt,
