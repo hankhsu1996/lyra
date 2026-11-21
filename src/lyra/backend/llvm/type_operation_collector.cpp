@@ -315,6 +315,35 @@ void TypeOperationCollector::VisitStore(
     const TargetLowering& lowering, const lir::Function& fn,
     const lir::StoreInstr& store) {
   VisitPlace(lowering, fn, store.place);
+  // Bits are written by an entry taking the value they lie in, or the write
+  // designating it, where the machine does not write them itself.
+  const auto bits =
+      std::ranges::find_if(store.place.chain, [](const auto& step) {
+        return std::holds_alternative<lir::SliceProjection>(step);
+      });
+  if (bits != store.place.chain.end()) {
+    const auto& last = std::get<lir::SliceProjection>(store.place.chain.back());
+    const lir::TypeId start = lir::OperandType(fn, last.start);
+    const lir::TypeId written = lir::OperandType(fn, store.value);
+    const lir::TypeId base = lir::OperandType(fn, store.place.base);
+    if (const auto* designated =
+            unit_->types.Get(base).As<lir::DesignationType>()) {
+      auto entry = lowering.DesignatedBitsCallOf(
+          base, designated->value, start, written);
+      if (entry) {
+        VisitAbi(entry->abi);
+      }
+      return;
+    }
+    VisitAbi(lowering
+                 .BitsStoreCallOf(
+                     lir::PlaceTypeBefore(
+                         *unit_, fn, store.place,
+                         std::distance(store.place.chain.begin(), bits)),
+                     start, written)
+                 .abi);
+    return;
+  }
   auto form = lowering.StoreFormOf(store);
   if (!form) {
     return;
@@ -325,18 +354,6 @@ void TypeOperationCollector::VisitStore(
           [&](const CellEntryStore& cell) { VisitAbi(cell.entry.abi); },
           [](const CellStore&) {}, [](const AddressStore&) {}},
       *form);
-}
-
-void TypeOperationCollector::VisitBitsStore(
-    const TargetLowering& lowering, const lir::Function& fn,
-    const lir::BitsStoreInstr& store) {
-  VisitPlace(lowering, fn, store.place);
-  VisitAbi(lowering
-               .BitsStoreCallOf(
-                   store,
-                   lir::PlaceTypeBefore(
-                       *unit_, fn, store.place, std::ssize(store.place.chain)))
-               .abi);
 }
 
 void TypeOperationCollector::VisitBeginStorage(
@@ -369,9 +386,6 @@ void TypeOperationCollector::VisitFunction(const lir::Function& fn) {
               },
               [&](const lir::StoreInstr& store) {
                 VisitStore(lowering, fn, store);
-              },
-              [&](const lir::BitsStoreInstr& store) {
-                VisitBitsStore(lowering, fn, store);
               },
               [&](const lir::BeginStorageInstr& begun) {
                 VisitBeginStorage(lowering, fn, begun.place);

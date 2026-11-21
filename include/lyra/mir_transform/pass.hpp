@@ -15,12 +15,14 @@
 
 namespace lyra::mir_transform {
 
-// What a rewrite of one body reads besides the body: the unit holding it, and
-// the front end's answers about the source the body was lowered from, as rustc
-// hands every MIR pass the `TyCtxt` holding the session's source map.
+// What a rewrite of one body reads besides the body: the unit holding it,
+// which code of the unit the body is, and the front end's answers about the
+// source the body was lowered from, as rustc hands every MIR pass the `TyCtxt`
+// holding the session's source map and a body that names its `MirSource`.
 struct PassContext {
   const mir::CompilationUnit* unit;
   const diag::SourceManager* sources;
+  const mir::CodeSource* at;
 };
 
 // One rewrite of MIR into MIR, named as its function is, as rustc names a pass
@@ -31,9 +33,7 @@ struct PassContext {
 // generated body can be, a process (LRM 9.2).
 struct Pass {
   std::string_view name;
-  auto (*run_on_body)(
-      const PassContext& context, const mir::CodeSource& at,
-      const mir::CallableCode& code)
+  auto (*run_on_body)(const PassContext& context, const mir::CallableCode& code)
       -> std::optional<mir::CallableCode> = nullptr;
   auto (*run_on_unit)(mir::CompilationUnit unit)
       -> mir::CompilationUnit = nullptr;

@@ -260,6 +260,8 @@ auto FoldedMachineArithmetic(BinaryOp op, std::int64_t lhs, std::int64_t rhs)
     case BinaryOp::kLessThan:
     case BinaryOp::kLogicalAnd:
     case BinaryOp::kLogicalOr:
+    case BinaryOp::kShl:
+    case BinaryOp::kShr:
       return std::nullopt;
   }
   throw InternalError("BuildMachineIntBinary: unknown binary operator");
@@ -292,6 +294,8 @@ auto FoldedMachineComparison(BinaryOp op, std::int64_t lhs, std::int64_t rhs)
     case BinaryOp::kBitwiseXor:
     case BinaryOp::kLogicalAnd:
     case BinaryOp::kLogicalOr:
+    case BinaryOp::kShl:
+    case BinaryOp::kShr:
       return std::nullopt;
   }
   throw InternalError("BuildMachineIntComparison: unknown binary operator");

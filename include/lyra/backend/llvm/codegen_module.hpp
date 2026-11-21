@@ -191,6 +191,8 @@ class CodeGenModule {
   // address is where the value lies. The module defines the ones its code and
   // its definitions name.
   auto GetAddrOfConstant(lir::ConstantId constant) -> llvm::GlobalVariable*;
+  // Whether every byte `constant` is laid out as is zero.
+  auto IsZeroConstant(lir::ConstantId constant) -> bool;
   // The address of what `referent` names, wherever the address stands: an
   // operand, a part of a constant, a slot of a table.
   auto AddressOf(const lir::Referent& referent) -> llvm::Constant*;

@@ -20,7 +20,9 @@
 #include "lyra/mir_transform/bound_frames.hpp"
 #include "lyra/mir_transform/elaborate_handle_derefs.hpp"
 #include "lyra/mir_transform/evaluation_temporaries.hpp"
+#include "lyra/mir_transform/expand_wide_integrals.hpp"
 #include "lyra/mir_transform/inst_simplify.hpp"
+#include "lyra/mir_transform/loop_idiom_recognize.hpp"
 #include "lyra/mir_transform/pass.hpp"
 #include "lyra/mir_transform/reaction.hpp"
 #include "lyra/mir_transform/state_caller_locations.hpp"
@@ -30,12 +32,17 @@ namespace lyra::mir_transform {
 
 namespace {
 
-// Each class handle opened by the library, which can fail; then where each
-// call was written, handed to every callee that reports there, the openings
-// included; then an evaluation order made explicit, which asks no value's
-// size; then where each value lies, in that order, so that no frame follows a
-// size a design declares.
+// Each operator over an integral value wider than a machine operates on at
+// once made a call of its type's operation, so what follows holds and orders
+// the operands of a call; then each class handle opened by the library, which
+// can fail; then where each call was written, handed to every callee that
+// reports there, the openings included; then an evaluation order made
+// explicit, which asks no value's size; then where each value lies, in that
+// order, so that no frame follows a size a design declares.
 constexpr std::array kBuiltToLegalized{
+    Pass{
+        .name = "ExpandWideIntegrals",
+        .run_on_body = ExpandWideIntegralsOnBody},
     Pass{
         .name = "ElaborateHandleDerefs",
         .run_on_body = ElaborateHandleDerefsOnBody},
@@ -53,9 +60,12 @@ constexpr std::array kBuiltToLegalized{
 using Step = std::variant<Conversion, Pass>;
 
 // InstSimplify runs on the unit as built: a whole it reads is then still a read
-// of the value, which boxing then holds wherever a frame could not.
-constexpr std::array<Step, 3> kPipeline{
+// of the value, which boxing then holds wherever a frame could not. So does
+// LoopIdiomRecognize, while a loop's move of a bit is still its one write of
+// what it reads, before the order an evaluation needs is made explicit.
+constexpr std::array<Step, 4> kPipeline{
     Pass{.name = "InstSimplify", .run_on_body = InstSimplifyOnBody},
+    Pass{.name = "LoopIdiomRecognize", .run_on_body = LoopIdiomRecognizeOnBody},
     Conversion{.into = mir::Phase::kLegalized, .passes = kBuiltToLegalized},
     Pass{.name = "SplitReactions", .run_on_unit = SplitReactions},
 };
@@ -92,7 +102,8 @@ auto Timed(
         [&](const mir::CompilationUnit& rewritten, const mir::CodeSource& at,
             const mir::CallableCode& code) {
           return pass.run_on_body(
-              PassContext{.unit = &rewritten, .sources = &sources}, at, code);
+              PassContext{.unit = &rewritten, .sources = &sources, .at = &at},
+              code);
         });
   }
   return unit;
@@ -181,7 +192,7 @@ auto TransformBody(
     const mir::CompilationUnit& unit, const mir::CodeSource& at,
     mir::CallableCode code, const PassOptions& options,
     const diag::SourceManager& sources) -> mir::CallableCode {
-  const PassContext context{.unit = &unit, .sources = &sources};
+  const PassContext context{.unit = &unit, .sources = &sources, .at = &at};
   WalkPipeline(
       options,
       [&](const Pass& pass) {
@@ -189,7 +200,7 @@ auto TransformBody(
           return false;
         }
         if (std::optional<mir::CallableCode> answer =
-                pass.run_on_body(context, at, code)) {
+                pass.run_on_body(context, code)) {
           code = *std::move(answer);
         }
         return true;

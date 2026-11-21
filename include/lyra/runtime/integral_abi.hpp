@@ -3,8 +3,11 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
+#include <string>
 #include <string_view>
+#include <utility>
 #include <variant>
 
 #include "lyra/base/internal_error.hpp"
@@ -15,20 +18,107 @@
 // integral values of types the library was compiled without (LRM 11.4, 20.8,
 // 20.9).
 //
-// The library holds one entry per operation, and the entries stand in one
-// table, in the order the operations are enumerated in, so a module reaches an
-// operation's entry by its position there. An integral value crosses as the
-// address of the bytes its type lays it out in, and what the operation has to
-// know of a type crosses as machine arguments: how many bits wide, whether read
-// as signed where the operation reads a number, whether able to hold x or z.
-// What an entry takes follows from the operation's own declaration by the one
-// rule below, which the module composing a call and the library defining the
-// entry both read.
+// The library holds one entry per operation a module calls it for, and the
+// entries stand in one table, in the order those operations are enumerated in,
+// so a module reaches an operation's entry by its position there. An integral
+// value crosses as the address of the bytes its type lays it out in, and what
+// the operation has to know of a type crosses as machine arguments: how many
+// bits wide, whether read as signed where the operation reads a number, whether
+// able to hold x or z. What an entry takes follows from the operation's own
+// declaration by the one rule below, which the module composing a call and the
+// library defining the entry both read.
 namespace lyra::runtime {
 
 // The symbol the table of entries is published under.
 inline constexpr std::string_view kIntegralEntriesSymbol =
     "lyra_rt_integral_operations";
+
+// Whether a generated module ever calls the library to carry `op` out, which
+// is what gives the operation an entry: an operation the library carries out
+// over a value wider than two words, or over one of at most two, and one whose
+// amount may be wider than what it moves (LRM 11.4.10, 11.4.3).
+[[nodiscard]] constexpr auto HasAnEntry(support::IntegralOp op) -> bool {
+  const support::IntegralOperation& operation =
+      support::IntegralOperationOf(op);
+  const bool wide_is_a_call = [&] {
+    switch (operation.wide) {
+      case support::WideAction::kLibCall:
+        return true;
+      case support::WideAction::kExpand:
+      case support::WideAction::kNever:
+        return false;
+    }
+    throw InternalError("unknown wide action");
+  }();
+  const bool primitive_is_a_call = [&] {
+    switch (operation.primitive) {
+      case support::PrimitiveAction::kLibCall:
+        return true;
+      case support::PrimitiveAction::kLegal:
+        return false;
+    }
+    throw InternalError("unknown primitive action");
+  }();
+  return wide_is_a_call || primitive_is_a_call || operation.reads_an_amount;
+}
+
+namespace detail {
+
+[[nodiscard]] constexpr auto CountOfEntries() -> std::size_t {
+  std::size_t count = 0;
+  for (const support::IntegralOperation& operation :
+       support::IntegralOperations()) {
+    if (HasAnEntry(operation.op)) {
+      ++count;
+    }
+  }
+  return count;
+}
+
+}  // namespace detail
+
+// The operations with an entry, in the order they are enumerated in; each
+// entry stands in the table at its operation's position here.
+inline constexpr auto kOperationsWithAnEntry = [] {
+  std::array<support::IntegralOp, detail::CountOfEntries()> operations{};
+  std::size_t at = 0;
+  for (const support::IntegralOperation& operation :
+       support::IntegralOperations()) {
+    if (HasAnEntry(operation.op)) {
+      operations.at(at) = operation.op;
+      ++at;
+    }
+  }
+  return operations;
+}();
+
+// The position of each operation's entry in the table, where it has one, by
+// the position of the operation in the order operations are enumerated in.
+inline constexpr auto kEntryRows = [] {
+  std::array<std::optional<std::size_t>, support::IntegralOperations().size()>
+      rows{};
+  std::size_t row = 0;
+  for (std::size_t at = 0; at < rows.size(); ++at) {
+    if (HasAnEntry(support::IntegralOperations()[at].op)) {
+      rows.at(at) = row;
+      ++row;
+    }
+  }
+  return rows;
+}();
+
+// The position of the entry carrying out `op` in the table.
+[[nodiscard]] constexpr auto EntryRowOf(support::IntegralOp op) -> std::size_t {
+  const std::optional<std::size_t> row = kEntryRows.at(std::to_underlying(op));
+  if (!row.has_value()) {
+    throw InternalError(
+        std::string("the integral operation '") +
+        std::string(support::IntegralOperationOf(op).name) +
+        "' is called in the library, which has no entry for it -- please "
+        "report this as a bug");
+  }
+  return *row;
+}
 
 // One fact of an integral type as an entry is told it.
 enum class IntegralTypeFact : std::uint8_t {

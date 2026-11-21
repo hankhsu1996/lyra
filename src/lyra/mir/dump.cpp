@@ -512,9 +512,6 @@ class MirDumper {
             [](const DesignationType& d) -> std::string {
               return std::format("Designation(value=Type[{}])", d.value.value);
             },
-            [](const BitsReferenceType& r) -> std::string {
-              return std::format("BitsReference(bits=Type[{}])", r.bits.value);
-            },
             [](const ObjectWriteType& w) -> std::string {
               return std::format(
                   "ObjectWrite(object=Type[{}])", w.object.value);
@@ -568,6 +565,10 @@ class MirDumper {
         return "LogicalAnd";
       case BinaryOp::kLogicalOr:
         return "LogicalOr";
+      case BinaryOp::kShl:
+        return "Shl";
+      case BinaryOp::kShr:
+        return "Shr";
     }
     throw InternalError("MirDumper: unknown BinaryOp");
   }
@@ -844,6 +845,16 @@ class MirDumper {
                   m.receiver.value,
                   std::visit(
                       [](const auto& t) { return FormatField(t); }, m.field));
+            },
+            [](const SliceExpr& m) -> std::string {
+              return std::format(
+                  "SliceExpr receiver=Expr[{}] start=Expr[{}]",
+                  m.receiver.value, m.start.value);
+            },
+            [](const IndexExpr& m) -> std::string {
+              return std::format(
+                  "IndexExpr receiver=Expr[{}] index=Expr[{}]",
+                  m.receiver.value, m.index.value);
             },
             [](const DerefExpr& d) -> std::string {
               return std::format("DerefExpr pointer=Expr[{}]", d.pointer.value);

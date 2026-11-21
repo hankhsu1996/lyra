@@ -5236,19 +5236,23 @@ TEST(LyraCommandLine, NamesWhichOptionalRewritesOfMirRun) {
   auto tmp_or = MakeScratchDir();
   ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
 
-  // A whole select written by a nonblocking assignment and a process stopping
-  // only at its loop head, which the two optional rewrites each change.
+  // A whole select written by a nonblocking assignment, a process stopping
+  // only at its loop head, and a loop moving bits one at a time, which the
+  // three optional rewrites each change.
   const auto src = *tmp_or / "test.sv";
-  std::ofstream(src) << "module Test;\n"
-                     << "  logic clk = 0;\n"
-                     << "  logic [7:0] d = 8'h5a;\n"
-                     << "  logic [7:0] q;\n"
-                     << "  always @(posedge clk) q[7:0] <= d[7:0];\n"
-                     << "  initial begin\n"
-                     << "    #1 clk = 1;\n"
-                     << "    #1 $display(\"q=%h\", q);\n"
-                     << "  end\n"
-                     << "endmodule\n";
+  std::ofstream(src)
+      << "module Test;\n"
+      << "  logic clk = 0;\n"
+      << "  logic [7:0] d = 8'h5a;\n"
+      << "  logic [7:0] q;\n"
+      << "  logic [99:0] moved = '0;\n"
+      << "  always @(posedge clk) q[7:0] <= d[7:0];\n"
+      << "  initial begin\n"
+      << "    for (int i = 0; i < 8; i++) moved[i + 80] = d[i];\n"
+      << "    #1 clk = 1;\n"
+      << "    #1 $display(\"q=%h moved=%h\", q, moved);\n"
+      << "  end\n"
+      << "endmodule\n";
   const std::string store = "--cache-dir=" + (*tmp_or / "store").string();
 
   struct Refusal {
@@ -5296,10 +5300,11 @@ TEST(LyraCommandLine, NamesWhichOptionalRewritesOfMirRun) {
     EXPECT_NE(every.stdout_text.find("q=5a"), std::string::npos)
         << every.stdout_text;
     const auto skipped = RunChildProcess(
-        lyra,
-        std::vector<std::string>{
-            "run", "--backend", backend, store, "--mir-verify-each",
-            "--mir-enable-passes=-InstSimplify,-SplitReactions", src.string()});
+        lyra, std::vector<std::string>{
+                  "run", "--backend", backend, store, "--mir-verify-each",
+                  "--mir-enable-passes=-InstSimplify,-LoopIdiomRecognize,"
+                  "-SplitReactions",
+                  src.string()});
     EXPECT_THAT(skipped, ExitedWithCode(0)) << skipped.stderr_text;
     EXPECT_EQ(skipped.stdout_text, every.stdout_text);
   }
@@ -5325,6 +5330,7 @@ TEST(LyraCommandLine, NamesWhichOptionalRewritesOfMirRun) {
   };
   const std::set<std::string> skipped = spans_of("-InstSimplify");
   EXPECT_FALSE(skipped.contains("InstSimplify"));
+  EXPECT_TRUE(skipped.contains("LoopIdiomRecognize"));
   EXPECT_TRUE(skipped.contains("OrderEvaluation"));
   EXPECT_TRUE(skipped.contains("BoundFrames"));
   EXPECT_TRUE(skipped.contains("SplitReactions"));

@@ -477,6 +477,44 @@ struct FieldAccessExpr {
   FieldRef field;
 };
 
+// The run of bits a select names within a packed value: `receiver[start +: n]`
+// where `n` is `Expr::type`'s width and `start` is a position in the
+// receiver's own numbering, its least significant bit 0 (LRM 7.4.1, 11.5.1).
+// It is a step of the place `receiver` is, as a field access is, and one node
+// serves reading the bits and writing them, which follows from what takes it --
+// a copy reads it, an assignment writes it -- as a part-select is one syntax in
+// the source. A receiver a computation makes is held for the full-expression,
+// as a field access's is. A receiver that is a write in progress designating a
+// value makes the bits a step of that designation, as an element designated
+// within the write is, so a write of them tells the write which bits move. A
+// part of a part is this node over this node, so
+// a chain of selects names one run of bits and is read or written once. Where
+// the bits start is evaluated before the receiver is reached, as a call's
+// arguments are before the object it is entered on.
+//
+// Each step names only what lies inside its own receiver: a position of the run
+// outside the receiver reads x, or 0 where the part has no unknown plane, and
+// takes no write, and a start that names no position (an x or z index) names
+// no bits at all (LRM 11.5.1). A run within a run is held to both.
+struct SliceExpr {
+  ExprId receiver;
+  ExprId start;
+};
+
+// The element of the machine array `receiver` names at the machine integer
+// `index`, as clang's `ArraySubscriptExpr` and rustc THIR's `ExprKind::Index`
+// name one: a step of the place `receiver` is, as a field access is, in the
+// storage that place lies in. A machine array is the compiler's own -- the
+// words a body built for a type reads a value laid out as words through -- so
+// the index lies within it by that body's construction and nothing is asked of
+// it, as C++ asks nothing of a subscript and rustc's `get_unchecked` nothing
+// of a slice. The index is evaluated before the array is reached, as a slice's
+// start is.
+struct IndexExpr {
+  ExprId receiver;
+  ExprId index;
+};
+
 // A value that is its parts and nothing more, composed from them in order. It
 // decomposes into nothing further, which is what makes it a primitive rather
 // than a call: no entry is named and no library is asked to do anything.
@@ -679,8 +717,8 @@ using ExprData = std::variant<
     FloatingLiteral, ReferenceExpr, UnaryExpr, BinaryExpr, CastExpr,
     ConditionalExpr, BlockExpr, AssignExpr, CallExpr, NewExpr, DerefExpr,
     AddressOfExpr, BorrowExpr, MoveExpr, CopyExpr, DiscriminantExpr,
-    FieldAccessExpr, ClosureExpr, CompositeExpr, TaggedUnionExpr, AwaitExpr,
-    WaitExpr, VectorGetExpr>;
+    FieldAccessExpr, SliceExpr, IndexExpr, ClosureExpr, CompositeExpr,
+    TaggedUnionExpr, AwaitExpr, WaitExpr, VectorGetExpr>;
 
 // `span` is the piece of source the node was lowered from, or no place where
 // it was lowered from none, as the front end gave it; only the front end opens
@@ -697,9 +735,10 @@ struct Expr {
 }
 
 // Whether `data` names storage rather than making a value, which is what its
-// kind is: a reference to storage, a dereference, or a field of a place, as
-// rustc's `Category::of` reads a THIR expression's kind. A reference to a
-// constant or to code names something that is no storage, so it is a value.
+// kind is: a reference to storage, a dereference, a field of a place, or bits
+// of one, as rustc's `Category::of` reads a THIR expression's kind. A reference
+// to a constant or to code names something that is no storage, so it is a
+// value.
 [[nodiscard]] auto IsPlace(const ExprData& data) -> bool;
 
 // Whether `data` is a constant: a value the same wherever and whenever it is
@@ -752,6 +791,18 @@ struct Expr {
       .type_arguments = support::RuntimeEntryOf(entry).takes_a_type_argument
                             ? std::vector{answer}
                             : std::vector<TypeId>{}};
+}
+
+[[nodiscard]] inline auto MakeSliceExpr(
+    ExprId receiver, ExprId start, TypeId type) -> Expr {
+  return Expr{
+      .data = SliceExpr{.receiver = receiver, .start = start}, .type = type};
+}
+
+[[nodiscard]] inline auto MakeIndexExpr(
+    ExprId receiver, ExprId index, TypeId element) -> Expr {
+  return Expr{
+      .data = IndexExpr{.receiver = receiver, .index = index}, .type = element};
 }
 
 [[nodiscard]] inline auto MakeFieldAccessExpr(

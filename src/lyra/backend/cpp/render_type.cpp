@@ -1,5 +1,6 @@
 #include "lyra/backend/cpp/render_type.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -65,6 +66,10 @@ auto MachineIntCppType(const mir::MachineIntType& m) -> std::string_view {
       return is_signed ? "std::int32_t" : "std::uint32_t";
     case mir::MachineIntWidth::k64:
       return is_signed ? "std::int64_t" : "std::uint64_t";
+    // The two-word integer both compilers that build the project name
+    // outright, as GCC and clang spell it.
+    case mir::MachineIntWidth::k128:
+      return is_signed ? "__int128" : "unsigned __int128";
   }
   throw InternalError("backend::cpp: unknown MachineIntWidth");
 }
@@ -363,12 +368,6 @@ void WriteOne(TargetText& out, const CppType& spelling) {
                 "the expression that opens the write, so nothing names its "
                 "type -- please report this as a bug");
           },
-          [](const mir::BitsReferenceType&) {
-            throw InternalError(
-                "backend::cpp: a reference to bits is written through where "
-                "it is taken, so nothing names its type -- please report this "
-                "as a bug");
-          },
           // Named where it is opened, by constructing it on the object.
           [&](const mir::ObjectWriteType& w) {
             Write(out, "lyra::runtime::ObjectWrite<", type(w.object), ">");
@@ -427,6 +426,12 @@ auto PrecedenceOf(const CppMachineIntLiteral& literal) -> Precedence {
 }
 
 void WriteOne(TargetText& out, const CppIntegralLiteral& literal) {
+  const auto zero = [](std::uint64_t word) { return word == 0U; };
+  if (std::ranges::all_of(literal.value_words, zero) &&
+      std::ranges::all_of(literal.state_words, zero)) {
+    Write(out, literal.type, "::Zero()");
+    return;
+  }
   Write(out, literal.type, "::FromWords(");
   WritePlane(out, literal.value_words);
   out += ", ";
@@ -464,7 +469,6 @@ auto DerefSpellingAsCpp(const mir::CompilationUnit& unit, mir::TypeId type_id)
             return DerefByOperator{};
           },
           [&](const mir::OpenWriteType&) { return reaches_nothing(); },
-          [&](const mir::BitsReferenceType&) { return reaches_nothing(); },
           // A write in progress into an object is dereferenced to the object,
           // as a guard is to what it guards.
           [&](const mir::ObjectWriteType&) -> DerefSpelling {
@@ -544,7 +548,6 @@ auto ReceiverSpellingAsCpp(
               },
               [&](const mir::DesignationType&) { return holds_no_object(); },
               [&](const mir::OpenWriteType&) { return holds_no_object(); },
-              [&](const mir::BitsReferenceType&) { return holds_no_object(); },
               [&](const mir::ObjectWriteType&) { return holds_no_object(); },
               [&](const mir::ManagedRefType&) { return holds_no_object(); },
               [&](const mir::UnmanagedRefType&) { return holds_no_object(); },
@@ -688,7 +691,6 @@ void WriteOne(TargetText& out, const CppConstructorName& constructor) {
           [&](const mir::DriverType& t) { by_naming_itself(t); },
           [&](const mir::OpenWriteType& t) { by_naming_itself(t); },
           [&](const mir::DesignationType& t) { by_naming_itself(t); },
-          [&](const mir::BitsReferenceType& t) { by_naming_itself(t); },
           [&](const mir::ObjectWriteType& t) { by_naming_itself(t); },
           [&](const mir::ClosureType& t) { by_naming_itself(t); },
           [](const mir::ErasedCallableType&) {
@@ -697,6 +699,14 @@ void WriteOne(TargetText& out, const CppConstructorName& constructor) {
                 "of the box or the borrow holding it, so none is constructed");
           },
       });
+}
+
+void WriteOne(TargetText& out, const CppBitsView& view) {
+  Write(out, "lyra::value::SliceOf<", view.part, ">");
+}
+
+void WriteOne(TargetText& out, const CppBitsRead& read) {
+  Write(out, "lyra::value::Slice<", read.part, ">");
 }
 
 void WriteOne(TargetText& out, const CppNewOwner& owner) {

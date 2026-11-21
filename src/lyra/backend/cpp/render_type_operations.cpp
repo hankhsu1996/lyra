@@ -70,6 +70,9 @@ auto OperationWord(support::ValueOperation answers) -> std::string {
           },
           [&](support::ValueStep) {
             return std::string(support::ValueOperationName(answers));
+          },
+          [&](support::IntegralOp) {
+            return std::string(support::ValueOperationName(answers));
           }},
       answers);
 }
@@ -119,6 +122,7 @@ auto IsNonMemberBody(
     case mir::TypeOperationKind::kToBoundFree:
     case mir::TypeOperationKind::kFromBoundFree:
     case mir::TypeOperationKind::kStructural:
+    case mir::TypeOperationKind::kExpandedIntegral:
       return true;
     case mir::TypeOperationKind::kDefault:
       return false;

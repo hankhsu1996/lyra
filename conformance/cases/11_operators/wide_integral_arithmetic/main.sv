@@ -37,6 +37,14 @@ module Top;
 
   logic [127:0] pow_zero_negative_exponent;
 
+  // Operands many words long, where the dividend's top words fall just short
+  // of a multiple of the divisor's.
+  bit [255:0] long_quotient, long_remainder;
+  bit [255:0] long_quotient_above, long_remainder_above;
+  // Quotients and remainders of many widths of divisor that do not satisfy
+  // n == q * d + r with r smaller than d and of n's sign.
+  int long_division_mismatches;
+
   initial begin
     div_by_zero_2state = 128'd1;
     mod_by_zero_2state = 128'd1;
@@ -148,6 +156,42 @@ module Top;
       exponent = -1;
       pow_zero_negative_exponent = unknown_zero ** exponent;
     end
+
+    begin
+      bit [255:0] dividend;
+      bit [255:0] divisor;
+      dividend = 256'h7fffffffffffffff_8000000000000000_0000000000000000_0000000000000000;
+      divisor = 256'h8000000000000000_0000000000000000_0000000000000001;
+      long_quotient = dividend / divisor;
+      long_remainder = dividend % divisor;
+      dividend = 256'h8000000000000000_0000000000000000_0000000000000000_7fffffffffffffff;
+      long_quotient_above = dividend / divisor;
+      long_remainder_above = dividend % divisor;
+    end
+
+    long_division_mismatches = 0;
+    for (int k = 0; k < 200; k++) begin
+      bit [999:0] n, d, q, r;
+      bit signed [999:0] sn, sd, sq, sr, magnitude_r, magnitude_d;
+      for (int w = 0; w < 32; w++) begin
+        n[w*32 +: 32] = $urandom;
+        d[w*32 +: 32] = $urandom;
+      end
+      d = d >> ((k * 5) % 999);
+      if (d == 0) d = 1;
+      q = n / d;
+      r = n % d;
+      if (q * d + r != n || r >= d) long_division_mismatches++;
+      sn = n;
+      sd = (k % 2 == 0) ? d : -d;
+      sq = sn / sd;
+      sr = sn % sd;
+      magnitude_r = sr < 0 ? -sr : sr;
+      magnitude_d = sd < 0 ? -sd : sd;
+      if (sq * sd + sr != sn || magnitude_r >= magnitude_d ||
+          (sr != 0 && (sr < 0) != (sn < 0)))
+        long_division_mismatches++;
+    end
   end
 
   final begin
@@ -214,6 +258,18 @@ module Top;
     if (pow_zero_negative_exponent !== {128{1'bx}})
       $fatal(1, "0 ** -1 gave %h, expected all x",
              pow_zero_negative_exponent);
+    if (long_quotient !== 256'hfffffffffffffffe ||
+        long_remainder !== 256'h7fffffffffffffffffffffffffffffff0000000000000002)
+      $fatal(1, "a 256-bit division gave %h remainder %h", long_quotient,
+             long_remainder);
+    if (long_quotient_above !== 256'hffffffffffffffff ||
+        long_remainder_above !==
+            256'h7fffffffffffffffffffffffffffffff8000000000000000)
+      $fatal(1, "a 256-bit division gave %h remainder %h",
+             long_quotient_above, long_remainder_above);
+    if (long_division_mismatches != 0)
+      $fatal(1, "%0d divisions of 1000-bit values broke n == q * d + r",
+             long_division_mismatches);
     $display("All checks passed");
   end
 endmodule

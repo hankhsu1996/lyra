@@ -54,9 +54,6 @@ class TypeOperationCollector {
   void VisitStore(
       const TargetLowering& lowering, const lir::Function& fn,
       const lir::StoreInstr& store);
-  void VisitBitsStore(
-      const TargetLowering& lowering, const lir::Function& fn,
-      const lir::BitsStoreInstr& store);
   void VisitBeginStorage(
       const TargetLowering& lowering, const lir::Function& fn,
       const lir::Place& place);

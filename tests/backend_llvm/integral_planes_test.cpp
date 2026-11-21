@@ -7,6 +7,7 @@
 #include <format>
 #include <gtest/gtest.h>
 #include <optional>
+#include <ranges>
 #include <set>
 #include <span>
 #include <string>
@@ -28,7 +29,9 @@
 #include <llvm/IR/Value.h>
 #include <llvm/Support/Casting.h>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/runtime/integral_abi.hpp"
 #include "lyra/support/integral_operation.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_operation.hpp"
@@ -47,7 +50,9 @@ using value::StateDomain;
 using Words = std::vector<std::uint64_t>;
 
 auto WordsOf(const llvm::APInt& bits) -> Words {
-  return {bits.getRawData(), bits.getRawData() + bits.getNumWords()};
+  const std::span<const std::uint64_t> raw(
+      bits.getRawData(), bits.getNumWords());
+  return {raw.begin(), raw.end()};
 }
 
 // One operand as an application hands it over: the two planes of an integral
@@ -66,8 +71,8 @@ auto MachineSample(std::uint64_t value) -> Sample {
 // The planes spelled most significant word first.
 auto Spelled(const Words& words) -> std::string {
   std::string spelled = "0x";
-  for (auto word = words.rbegin(); word != words.rend(); ++word) {
-    spelled += std::format("{:016x}", *word);
+  for (const std::uint64_t word : std::views::reverse(words)) {
+    spelled += std::format("{:016x}", word);
   }
   return spelled;
 }
@@ -299,6 +304,48 @@ struct Answer {
   auto operator==(const Answer&) const -> bool = default;
 };
 
+// The words of an operand as constants, which is what a folding builder reads
+// a part through: the word at an index the operand has, and 0 at any other.
+class ConstantWords final : public ValueWords {
+ public:
+  ConstantWords(
+      llvm::IRBuilderBase& builder, const Sample& sample,
+      const IntegralShape& shape)
+      : builder_(&builder), sample_(&sample), shape_(shape) {
+  }
+
+  [[nodiscard]] auto Read(Plane plane, llvm::Value* index) const
+      -> llvm::Value* override {
+    const auto* at = llvm::dyn_cast<llvm::ConstantInt>(index);
+    if (at == nullptr) {
+      ADD_FAILURE() << "a word is read at an index that does not fold";
+      return builder_->getInt64(0);
+    }
+    const Words* words = nullptr;
+    switch (plane) {
+      case Plane::kValue:
+        words = &sample_->value;
+        break;
+      case Plane::kUnknown:
+        if (!shape_.IsFourState()) {
+          return builder_->getInt64(0);
+        }
+        words = &sample_->unknown;
+        break;
+    }
+    const std::int64_t word = at->getSExtValue();
+    if (word < 0 || std::cmp_greater_equal(word, words->size())) {
+      return builder_->getInt64(0);
+    }
+    return builder_->getInt64(words->at(static_cast<std::size_t>(word)));
+  }
+
+ private:
+  llvm::IRBuilderBase* builder_;
+  const Sample* sample_;
+  IntegralShape shape_;
+};
+
 auto Spelled(const std::optional<IntegralShape>& shape, const Sample& sample)
     -> std::string {
   if (!shape.has_value()) {
@@ -411,9 +458,13 @@ class Application {
       }
       return builder.getInt64(chosen_[index].value.front());
     };
+    std::optional<ConstantWords> held;
+    const auto words = [&](std::size_t index) -> const ValueWords& {
+      return held.emplace(builder, chosen_[index], *shapes_.operands[index]);
+    };
     const std::optional<PlaneAnswer> built = LowerOnPlanes(
         builder, operation_->op, shapes_,
-        PlaneOperands{.planes = planes, .machine = machine});
+        PlaneOperands{.planes = planes, .machine = machine, .words = words});
     if (!built.has_value()) {
       has_arm_ = false;
       return;
@@ -591,11 +642,22 @@ auto ApplicationsOf(const IntegralOperation& operation)
   return applications;
 }
 
-auto PastOneWord(const IntegralShapes& shapes) -> bool {
+auto IsPastOneWord(const IntegralShapes& shapes) -> bool {
   const auto past = [](const std::optional<IntegralShape>& shape) {
     return shape.has_value() && !IsSingleWord(*shape);
   };
   return std::ranges::any_of(shapes.operands, past) || past(shapes.answer);
+}
+
+// Whether the code generator builds instructions for an application past one
+// machine word: where every value is at most two words, as a machine's own
+// two-word integer is.
+auto IsBuiltPastOneWord(const IntegralShapes& shapes) -> bool {
+  const auto two_words = [](const std::optional<IntegralShape>& shape) {
+    return !shape.has_value() || IsAtMostTwoWords(*shape);
+  };
+  return std::ranges::all_of(shapes.operands, two_words) &&
+         two_words(shapes.answer);
 }
 
 // The two statements of an operation -- the instructions the code generator
@@ -617,32 +679,38 @@ TEST(IntegralPlanesTest, EveryInlineOperationAnswersAsTheLibraryStatesIt) {
         ADD_FAILURE() << "an operand this test cannot make was read";
         return nullptr;
       };
-      EXPECT_FALSE(
-          LowerOnPlanes(
-              folding.builder, operation.op,
-              IntegralShapes{
-                  .operands = {std::nullopt},
-                  .answer =
-                      IntegralShape{
-                          .width = 8,
-                          .signedness = Signedness::kUnsigned,
-                          .domain = StateDomain::kFourState}},
-              PlaneOperands{.planes = unread, .machine = unread_machine})
-              .has_value())
+      const auto unread_words = [](std::size_t) -> const ValueWords& {
+        throw InternalError("an operand this test cannot make was read");
+      };
+      EXPECT_FALSE(LowerOnPlanes(
+                       folding.builder, operation.op,
+                       IntegralShapes{
+                           .operands = {std::nullopt},
+                           .answer =
+                               IntegralShape{
+                                   .width = 8,
+                                   .signedness = Signedness::kUnsigned,
+                                   .domain = StateDomain::kFourState}},
+                       PlaneOperands{
+                           .planes = unread,
+                           .machine = unread_machine,
+                           .words = unread_words})
+                       .has_value())
           << operation.name;
       without_arm.insert(operation.name);
       continue;
     }
     std::size_t compared_here = 0;
     bool has_arm = true;
-    const bool one_word_only = IsOnOneWordOnly(operation.op);
     for (IntegralShapes& shapes : ApplicationsOf(operation)) {
-      const bool past_one_word = PastOneWord(shapes);
+      const bool not_built =
+          IsPastOneWord(shapes) && !IsBuiltPastOneWord(shapes);
       const std::optional<std::size_t> count =
           Application(folding, operation, std::move(shapes)).Compare();
-      if (one_word_only && past_one_word) {
+      if (not_built) {
         EXPECT_FALSE(count.has_value())
-            << operation.name << " is built on planes past one machine word";
+            << operation.name
+            << " is built as instructions past one machine word";
         continue;
       }
       if (!count.has_value()) {
@@ -658,22 +726,28 @@ TEST(IntegralPlanesTest, EveryInlineOperationAnswersAsTheLibraryStatesIt) {
       EXPECT_EQ(compared_here, 0U)
           << operation.name
           << " is built on planes for some types and not others";
+      EXPECT_TRUE(runtime::HasAnEntry(operation.op))
+          << operation.name
+          << " is built on planes for no type and has no library entry";
       without_arm.insert(operation.name);
       continue;
     }
     EXPECT_GT(compared_here, 0U) << operation.name << " was never compared";
     compared += compared_here;
   }
-  // The operations whose work is long at every width, which are calls, the
-  // positions a procedural continuous assignment shows, which only a write it
-  // overrides asks for, and the positions a net resolved laid into a value,
-  // which only a net showing them asks for.
-  EXPECT_EQ(
-      without_arm,
-      (std::set<std::string_view>{
-          "pow", "count_bits", "clog2", "reverse_blocks", "from_text",
-          "read_canonical_bits", "read_canonical_logic", "from_sv_logic",
-          "take_positions", "with_positions"}));
+  // The operations the library carries out over a value of at most two words
+  // are exactly those the code generator builds no instructions for.
+  std::set<std::string_view> called;
+  for (const IntegralOperation& operation : support::IntegralOperations()) {
+    switch (operation.primitive) {
+      case support::PrimitiveAction::kLibCall:
+        called.insert(operation.name);
+        break;
+      case support::PrimitiveAction::kLegal:
+        break;
+    }
+  }
+  EXPECT_EQ(without_arm, called);
   EXPECT_GT(compared, 100000U);
 }
 

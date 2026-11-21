@@ -208,6 +208,7 @@ class ArrayBodies : public OperationBodies {
             [&](support::ValueStep step) -> mir::CallableCode {
               return Step(step);
             },
+            [](support::IntegralOp) -> mir::CallableCode { NoBodyBuilt(); },
             [&](support::EqualityItem item) {
               return AnswerEquality(*this, item);
             },

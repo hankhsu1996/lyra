@@ -62,9 +62,12 @@ class CodeGenFunction::IntegralEmitter {
   auto Lower(
       IntegralOp op, std::span<const OperandRef> operands,
       lir::TypeId answer_type, llvm::Value* out) -> llvm::Value*;
-  auto StoreBitsOfPlace(
+  auto StoreBitsInPlace(
       llvm::Value* at, lir::TypeId whole, std::span<const BitsPartRef> parts,
       OperandRef bits) -> bool;
+  auto ReadBitsInPlace(
+      llvm::Value* at, lir::TypeId whole, std::span<const BitsPartRef> parts,
+      lir::TypeId answer_type, llvm::Value* out) -> bool;
 
  private:
   // The types `op` applied to `operands` and answering at `answer_type` is
@@ -131,13 +134,13 @@ auto CodeGenFunction::IntegralEmitter::ShapesOf(
 
 auto CodeGenFunction::IntegralEmitter::EntryOf(IntegralOp op) -> llvm::Value* {
   llvm::Type* const table_type = llvm::ArrayType::get(
-      module_->Types().Ptr(), support::IntegralOperations().size());
+      module_->Types().Ptr(), runtime::kOperationsWithAnEntry.size());
   llvm::Constant* const table = module_->Module().getOrInsertGlobal(
       runtime::kIntegralEntriesSymbol, table_type);
   llvm::cast<llvm::GlobalVariable>(table)->setConstant(true);
   llvm::PointerType* const entry = module_->Types().Ptr();
   llvm::Value* const slot = builder_->CreateConstInBoundsGEP2_64(
-      table_type, table, 0, std::to_underlying(op));
+      table_type, table, 0, runtime::EntryRowOf(op));
   return builder_->CreateLoad(
       entry, slot, std::format("integral.{}", IntegralOperationOf(op).name));
 }
@@ -226,9 +229,15 @@ auto CodeGenFunction::IntegralEmitter::Lower(
         *builder_, operands[index].value, *shapes.operands.at(index));
   };
   const auto machine = [&](std::size_t index) { return operands[index].value; };
+  std::optional<WordsLyingAt> lying;
+  const auto words = [&](std::size_t index) -> const ValueWords& {
+    return lying.emplace(
+        *builder_, operands[index].value, *shapes.operands.at(index));
+  };
   if (const std::optional<PlaneAnswer> on_planes = LowerOnPlanes(
           *builder_, op, shapes,
-          PlaneOperands{.planes = planes, .machine = machine})) {
+          PlaneOperands{
+              .planes = planes, .machine = machine, .words = words})) {
     return std::visit(
         Overloaded{
             [&](const Planes& answer) {
@@ -258,6 +267,11 @@ auto CodeGenFunction::IntegralEmitter::WithBitsWritten(
         "llvm codegen: a part of an integral value is read or written over "
         "integral values alone -- please report this as a bug");
   };
+  const auto no_words = [](std::size_t) -> const ValueWords& {
+    throw InternalError(
+        "llvm codegen: a part within one word is reached by words -- please "
+        "report this as a bug");
+  };
   // `op` over `target`, where the part starts, and whatever else it takes,
   // answering a value of `answer`.
   const auto applied =
@@ -276,7 +290,10 @@ auto CodeGenFunction::IntegralEmitter::WithBitsWritten(
         };
         const std::optional<PlaneAnswer> answered = LowerOnPlanes(
             *builder_, op, shapes,
-            PlaneOperands{.planes = planes, .machine = no_machine_operand});
+            PlaneOperands{
+                .planes = planes,
+                .machine = no_machine_operand,
+                .words = no_words});
         if (!answered.has_value()) {
           throw InternalError(
               "llvm codegen: a part of a value stated on its planes is not "
@@ -303,26 +320,128 @@ auto CodeGenFunction::IntegralEmitter::WithBitsWritten(
       WithBitsWritten(taken, part_lying, parts, at + 1, bits), part_lying);
 }
 
-auto CodeGenFunction::IntegralEmitter::StoreBitsOfPlace(
+auto CodeGenFunction::IntegralEmitter::ReadBitsInPlace(
+    llvm::Value* at, lir::TypeId whole, std::span<const BitsPartRef> parts,
+    lir::TypeId answer_type, llvm::Value* out) -> bool {
+  const value::IntegralShape lying =
+      module_->Types().RequiredIntegralShapeOf(whole);
+  const value::IntegralShape answer =
+      module_->Types().RequiredIntegralShapeOf(answer_type);
+  const auto start_shape = [&](const BitsPartRef& part) {
+    return module_->Types().RequiredIntegralShapeOf(part.start.type);
+  };
+  const auto single = [&](lir::TypeId type) {
+    return IsSingleWord(module_->Types().RequiredIntegralShapeOf(type));
+  };
+  // Within one word, each part is taken out of the one before on planes.
+  if (single(whole) && std::ranges::all_of(parts, [&](const BitsPartRef& p) {
+        return single(p.type) && single(p.start.type);
+      })) {
+    const auto none = [](std::size_t) -> llvm::Value* {
+      throw InternalError(
+          "llvm codegen: bits of a value are read over integral values alone "
+          "-- please report this as a bug");
+    };
+    const auto no_words = [](std::size_t) -> const ValueWords& {
+      throw InternalError(
+          "llvm codegen: bits within one word are not reached by words -- "
+          "please report this as a bug");
+    };
+    Planes reached = LoadPlanes(*builder_, at, lying);
+    value::IntegralShape reached_shape = lying;
+    for (const BitsPartRef& part : parts) {
+      const value::IntegralShape part_shape{
+          .width = module_->Types().RequiredIntegralShapeOf(part.type).width,
+          .signedness = value::Signedness::kUnsigned,
+          .domain = answer.domain};
+      const std::array operands{
+          reached, LoadPlanes(*builder_, part.start.value, start_shape(part))};
+      const std::optional<PlaneAnswer> taken = LowerOnPlanes(
+          *builder_, IntegralOp::kSlice,
+          IntegralShapes{
+              .operands = {reached_shape, start_shape(part)},
+              .answer = part_shape},
+          PlaneOperands{
+              .planes = [&](std::size_t index) { return operands.at(index); },
+              .machine = none,
+              .words = no_words});
+      if (!taken.has_value()) {
+        throw InternalError(
+            "llvm codegen: bits within one word are not stated on planes -- "
+            "please report this as a bug");
+      }
+      reached = std::get<Planes>(*taken);
+      reached_shape = part_shape;
+    }
+    StorePlanes(*builder_, reached, out, answer);
+    return true;
+  }
+  // Past one word, the bits are read from the words they span; bits past what
+  // a frame keeps are the library's.
+  if (!IsReachedByWords(lying, answer)) {
+    return false;
+  }
+  std::vector<PartOfValue> reached;
+  reached.reserve(parts.size());
+  for (const BitsPartRef& part : parts) {
+    reached.push_back(
+        PartOfValue{
+            .start = LoadPlanes(*builder_, part.start.value, start_shape(part)),
+            .start_shape = start_shape(part),
+            .width =
+                module_->Types().RequiredIntegralShapeOf(part.type).width});
+  }
+  StorePlanes(
+      *builder_,
+      ReadPartOfWords(
+          *builder_, WordsLyingAt(*builder_, at, lying), lying, reached,
+          answer),
+      out, answer);
+  return true;
+}
+
+auto CodeGenFunction::IntegralEmitter::StoreBitsInPlace(
     llvm::Value* at, lir::TypeId whole, std::span<const BitsPartRef> parts,
     OperandRef bits) -> bool {
   const value::IntegralShape lying =
       module_->Types().RequiredIntegralShapeOf(whole);
-  // A part is reached and written back by operations on one word only, so the
-  // whole write is the library's past one machine word.
-  const auto on_planes = [&](lir::TypeId type) {
+  const value::IntegralShape bits_shape =
+      module_->Types().RequiredIntegralShapeOf(bits.type);
+  // Within one word, each part is taken out, changed and put back on planes.
+  const auto single = [&](lir::TypeId type) {
     return IsSingleWord(module_->Types().RequiredIntegralShapeOf(type));
   };
-  if (!on_planes(whole) || !on_planes(bits.type) ||
-      !std::ranges::all_of(parts, [&](const BitsPartRef& part) {
-        return on_planes(part.type) && on_planes(part.start.type);
+  if (single(whole) && single(bits.type) &&
+      std::ranges::all_of(parts, [&](const BitsPartRef& part) {
+        return single(part.type) && single(part.start.type);
       })) {
+    StorePlanes(
+        *builder_,
+        WithBitsWritten(
+            LoadPlanes(*builder_, at, lying), lying, parts, 0, bits),
+        at, lying);
+    return true;
+  }
+  // Past one word, the bits are written into the words they span; bits past
+  // what a frame keeps are the library's.
+  if (!IsReachedByWords(lying, bits_shape)) {
     return false;
   }
-  StorePlanes(
-      *builder_,
-      WithBitsWritten(LoadPlanes(*builder_, at, lying), lying, parts, 0, bits),
-      at, lying);
+  std::vector<PartOfValue> reached;
+  reached.reserve(parts.size());
+  for (const BitsPartRef& part : parts) {
+    const value::IntegralShape start_shape =
+        module_->Types().RequiredIntegralShapeOf(part.start.type);
+    reached.push_back(
+        PartOfValue{
+            .start = LoadPlanes(*builder_, part.start.value, start_shape),
+            .start_shape = start_shape,
+            .width =
+                module_->Types().RequiredIntegralShapeOf(part.type).width});
+  }
+  WritePartOfWords(
+      *builder_, WordsLyingAt(*builder_, at, lying), lying, reached,
+      LoadPlanes(*builder_, bits.value, bits_shape), bits_shape);
   return true;
 }
 
@@ -337,10 +456,17 @@ auto CodeGenFunction::LoadPosition(const OperandRef& position) -> Planes {
   return LoadPlanes(builder_, position.value, *stated);
 }
 
-auto CodeGenFunction::StoreBitsOnPlanes(
+auto CodeGenFunction::StoreBitsInPlace(
     llvm::Value* at, lir::TypeId whole, std::span<const BitsPartRef> parts,
     OperandRef bits) -> bool {
-  return IntegralEmitter(*this).StoreBitsOfPlace(at, whole, parts, bits);
+  return IntegralEmitter(*this).StoreBitsInPlace(at, whole, parts, bits);
+}
+
+auto CodeGenFunction::ReadBitsInPlace(
+    llvm::Value* at, lir::TypeId whole, std::span<const BitsPartRef> parts,
+    lir::TypeId answer_type, llvm::Value* out) -> bool {
+  return IntegralEmitter(*this).ReadBitsInPlace(
+      at, whole, parts, answer_type, out);
 }
 
 auto CodeGenFunction::LowerIntegral(
@@ -383,6 +509,10 @@ auto IntegralOpOf(lir::BinaryOp op) -> support::IntegralOp {
       return support::IntegralOp::kLogicalAnd;
     case lir::BinaryOp::kLogicalOr:
       return support::IntegralOp::kLogicalOr;
+    case lir::BinaryOp::kShl:
+      return support::IntegralOp::kShiftLeft;
+    case lir::BinaryOp::kShr:
+      return support::IntegralOp::kLogicalShiftRight;
   }
   throw InternalError("llvm codegen: unknown binary operator");
 }

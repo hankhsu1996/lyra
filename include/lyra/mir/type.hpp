@@ -132,8 +132,10 @@ struct MachineBoolType {
 // The widths a machine scalar comes in. Machine data is what crosses to a
 // target on the target's own terms -- a foreign call's by-value argument, a
 // table the runtime reads as raw storage -- so the widths are the ones a C
-// type system names outright.
-enum class MachineIntWidth : std::uint8_t { k8, k16, k32, k64 };
+// type system names outright, and the two-word integer C's `__int128` and
+// Rust's `u128` are, which a body over a value's words takes a word's product
+// and a two-word quotient in.
+enum class MachineIntWidth : std::uint8_t { k8, k16, k32, k64, k128 };
 
 // The width as a number. A target names the type it has for each width rather
 // than spelling one from a count, so this is for a reader of the width and not
@@ -516,19 +518,6 @@ struct DesignationType {
   auto operator==(const DesignationType&) const -> bool = default;
 };
 
-// A reference to some bits of an integral value lying in storage, of type
-// `bits`, through which a write lands on them where they lie (LRM 11.5.1), as
-// `std::bitset`'s `operator[]` answers a reference to one bit. Bits are no
-// storage of their own, so it is no pointer: it names the storage they lie
-// in, or a place designated within a write in progress, and where in it they
-// start, and a write through it is its `set`. Nothing holds one past the
-// full-expression that takes it.
-struct BitsReferenceType {
-  TypeId bits;
-
-  auto operator==(const BitsReferenceType&) const -> bool = default;
-};
-
 // A write in progress into the properties of an object (LRM 8.4), opened on
 // the object alone, which answers the object as `object`, the class its
 // properties are reached through. It is an object the writer holds and it ends
@@ -560,8 +549,7 @@ class Type {
       ReferenceWrapperType, PointerType, ReferenceType, ManagedRefType,
       UnmanagedRefType, VectorType, TupleType, ObservableType, ResolvedType,
       UnresolvedType, DriverType, OpenWriteType, DesignationType,
-      BitsReferenceType, ObjectWriteType, RecordType, ClosureType,
-      ErasedCallableType>;
+      ObjectWriteType, RecordType, ClosureType, ErasedCallableType>;
 
  public:
   explicit Type(Data data) : data_(std::move(data)) {
@@ -737,16 +725,25 @@ enum class StructuralOperationsType : std::uint8_t { kFixedArray, kTuple };
 // from: an array's passage into or out of the form of it with no queue bounded
 // (LRM 7.6, 7.10.5), the parts of a value no declaration states operations for,
 // or the default of a data type, which code holding an array asks for by the
-// element type alone (LRM 7.4.5), and every operation of a run-time-sized
+// element type alone (LRM 7.4.5), every operation of a run-time-sized
 // container (LRM 7.5, 7.8, 7.10), built over the core the library keeps its
-// elements in.
+// elements in, and an operator on an integral value wider than a machine
+// operates on at once, built over its words.
 enum class TypeOperationKind : std::uint8_t {
   kToBoundFree,
   kFromBoundFree,
   kStructural,
   kDefault,
-  kContainer
+  kContainer,
+  kExpandedIntegral
 };
+
+// Whether `type` is an integral type wider than the widest integer a machine
+// operates on as a value of its own, whose operators are bodies built at its
+// width, a word at a time, as LLVM's type legalization expands an integer type
+// no register holds (`TypeExpandInteger`).
+[[nodiscard]] auto IsExpandedIntegral(const TypePool& types, TypeId type)
+    -> bool;
 
 // Whether `type` is a run-time-sized container (LRM 7.5, 7.8, 7.10) whose
 // operations are bodies built for its type, over the core the library keeps

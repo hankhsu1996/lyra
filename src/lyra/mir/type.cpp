@@ -32,6 +32,8 @@ auto BitsOf(MachineIntWidth width) -> std::uint32_t {
       return 32;
     case MachineIntWidth::k64:
       return 64;
+    case MachineIntWidth::k128:
+      return 128;
   }
   throw InternalError("mir: unknown MachineIntWidth");
 }
@@ -181,7 +183,6 @@ auto Type::Hash::operator()(const Type& type) const -> std::size_t {
           [&](const DriverType& t) { HashId(seed, t.value); },
           [&](const OpenWriteType& t) { HashId(seed, t.value); },
           [&](const DesignationType& t) { HashId(seed, t.value); },
-          [&](const BitsReferenceType& t) { HashId(seed, t.bits); },
           [&](const ObjectWriteType& t) { HashId(seed, t.object); },
           [&](const RecordType& t) { HashField(seed, t.declaration.value); },
           [&](const ClosureType& t) { HashField(seed, t.closure_id.value); },
@@ -269,7 +270,6 @@ auto Type::IsAddressOnly() const -> bool {
           [](const DriverType&) { return false; },
           [](const OpenWriteType&) { return false; },
           [](const DesignationType&) { return false; },
-          [](const BitsReferenceType&) { return false; },
           [](const ObjectWriteType&) { return false; },
           [](const RecordType&) { return false; },
           [](const ClosureType&) { return false; },
@@ -383,7 +383,6 @@ auto Type::IsAggregateOrLibraryValue() const -> bool {
           [](const UnresolvedType&) { return false; },
           [](const OpenWriteType&) { return false; },
           [](const DesignationType&) { return false; },
-          [](const BitsReferenceType&) { return false; },
           [](const ObjectWriteType&) { return false; },
 
           // `void` is the absence of a value, which nothing holds.
@@ -476,9 +475,6 @@ auto Type::ValueMovability() const -> support::Movability {
           [](const DesignationType&) {
             return support::Movability::kImmovable;
           },
-          [](const BitsReferenceType&) {
-            return support::Movability::kImmovable;
-          },
           [](const ObjectWriteType&) {
             return support::Movability::kImmovable;
           },
@@ -536,7 +532,6 @@ auto Type::ContainerElementType() const -> std::optional<TypeId> {
           [](const DriverType&) -> Element { return std::nullopt; },
           [](const OpenWriteType&) -> Element { return std::nullopt; },
           [](const DesignationType&) -> Element { return std::nullopt; },
-          [](const BitsReferenceType&) -> Element { return std::nullopt; },
           [](const ObjectWriteType&) -> Element { return std::nullopt; },
 
           // These refer to a value living elsewhere rather than holding one,
@@ -635,11 +630,16 @@ auto IsDataType(const TypePool& types, TypeId type) -> bool {
           [](const DriverType&) { return false; },
           [](const OpenWriteType&) { return false; },
           [](const DesignationType&) { return false; },
-          [](const BitsReferenceType&) { return false; },
           [](const ObjectWriteType&) { return false; },
           // Code: a closure, and one of no known type.
           [](const ClosureType&) { return false; },
           [](const ErasedCallableType&) { return false; }});
+}
+
+auto IsExpandedIntegral(const TypePool& types, TypeId type) -> bool {
+  const Type& stated = types.Get(type);
+  return stated.IsIntegral() &&
+         stated.Integral().bit_width > value::kWidestPrimitiveBits;
 }
 
 auto IsLaidOutContainer(const TypePool& types, TypeId type) -> bool {
@@ -701,9 +701,6 @@ auto StructuralOperationsTypeOf(const Type& type)
           [&](const DriverType& t) { return by_a_declaration_or_none(t); },
           [&](const OpenWriteType& t) { return by_a_declaration_or_none(t); },
           [&](const DesignationType& t) { return by_a_declaration_or_none(t); },
-          [&](const BitsReferenceType& t) {
-            return by_a_declaration_or_none(t);
-          },
           [&](const ObjectWriteType& t) { return by_a_declaration_or_none(t); },
           [&](const RecordType& t) { return by_a_declaration_or_none(t); },
           [&](const ClosureType& t) { return by_a_declaration_or_none(t); },

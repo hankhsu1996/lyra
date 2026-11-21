@@ -2,7 +2,7 @@
 // is treated as an unsigned value, so a negative operand counts as the
 // unsigned value its bits spell, and an argument of 0 produces 0. None of that
 // depends on whether the argument is a constant or a value the simulation
-// computes (LRM 20.8.1).
+// computes, or on how many bits it has (LRM 20.8.1).
 module Top;
   parameter int unsigned Bytes = 8;
 
@@ -17,6 +17,10 @@ module Top;
   int computed_zero;
   int computed_wide;
   int computed_negative;
+  logic [99:0] two_words;
+  logic [199:0] four_words;
+  int computed_two_words;
+  int computed_four_words;
 
   initial begin
     folded_power_of_two = $clog2(Bytes);
@@ -35,6 +39,10 @@ module Top;
     computed_wide = $clog2(width);
     width = -1;
     computed_negative = $clog2(width);
+    two_words = (100'h1 << 90) | 100'h1;
+    computed_two_words = $clog2(two_words);
+    four_words = 200'h1 << 150;
+    computed_four_words = $clog2(four_words);
   end
 
   final begin
@@ -57,6 +65,10 @@ module Top;
     if (computed_negative !== 32)
       $fatal(1, "$clog2 of an all-ones operand was %0d, expected 32",
              computed_negative);
+    if (computed_two_words !== 91)
+      $fatal(1, "$clog2(2**90 + 1) was %0d, expected 91", computed_two_words);
+    if (computed_four_words !== 150)
+      $fatal(1, "$clog2(2**150) was %0d, expected 150", computed_four_words);
     $display("All checks passed");
   end
 endmodule

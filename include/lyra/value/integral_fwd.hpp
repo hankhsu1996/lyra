@@ -59,9 +59,9 @@ template <std::uint64_t kWidth>
 using SignedLogicVector =
     Integral<kWidth, Signedness::kSigned, StateDomain::kFourState>;
 
-// Some bits of a value of `T` held where a write lands, read and written at
-// the type `Part`.
-template <IntegralValue T, IntegralValue Part>
+// Some bits of a value of `T` where it is held, read and written at the type
+// `Part`; `T` is const where they are only read.
+template <class T, IntegralValue Part>
 class BitsRef;
 
 }  // namespace lyra::value

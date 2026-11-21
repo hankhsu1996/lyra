@@ -205,6 +205,10 @@ enum class SignatureType : std::uint8_t {
   kCount,
   kBool,
   kBit,
+  // One bit, holding x where the type does (LRM 11.4.4), and the `integer`
+  // type (LRM 6.11).
+  kTruth,
+  kInteger,
   kNothing,
   kRun,
   // What `==` answers at the type (LRM 11.4.5).
@@ -257,6 +261,8 @@ constexpr auto NamesTheTypeArgument(SignatureType type) -> bool {
     case SignatureType::kCount:
     case SignatureType::kBool:
     case SignatureType::kBit:
+    case SignatureType::kTruth:
+    case SignatureType::kInteger:
     case SignatureType::kNothing:
     case SignatureType::kRun:
     case SignatureType::kEqualityAnswer:
@@ -517,6 +523,85 @@ auto OperationSignatureOf(support::BuiltinFn name) -> const Signature& {
       "as a bug");
 }
 
+// An integral operator's, as the language states it (LRM 11.4): each integral
+// value it reads by a reference it only reads and each machine value by value,
+// and its answer. An operator answering at a type no operand settles -- a
+// conversion, a replication, a value made of a machine number -- is an
+// operation of the type it makes, as a converting constructor is its class's,
+// and an integral operand is then taken at the type it is taken at; any other
+// operator is an operation of its first integral operand's type, and another
+// integral operand is taken at the type it is taken at. An operator handed
+// what a foreign call or a net leaves behind is no operation a type answers,
+// and asking for its signature is its asker's defect.
+auto IntegralSignatureOf(support::IntegralOp op) -> Signature {
+  using enum SignatureType;
+  const support::IntegralOperation& operation =
+      support::IntegralOperationOf(op);
+  Signature signature{.result = kNothing, .params = {}, .param_count = 0};
+  bool first_integral = !support::AnswersAtTheTypeOfTheCall(operation.answer);
+  for (const support::IntegralOperandKind kind : operation.operands.Kinds()) {
+    SignatureParam param = ByValue(kNothing);
+    switch (kind) {
+      case support::IntegralOperandKind::kBits:
+      case support::IntegralOperandKind::kNumber:
+        param = In(first_integral ? kSelf : kAt);
+        first_integral = false;
+        break;
+      case support::IntegralOperandKind::kSameType:
+        param = In(kSelf);
+        break;
+      case support::IntegralOperandKind::kMachineInt:
+        param = ByValue(kMachine);
+        break;
+      case support::IntegralOperandKind::kMachineBool:
+        param = ByValue(kBool);
+        break;
+      case support::IntegralOperandKind::kSvLogic:
+      case support::IntegralOperandKind::kText:
+      case support::IntegralOperandKind::kCanonicalBits:
+      case support::IntegralOperandKind::kCanonicalLogic:
+      case support::IntegralOperandKind::kPositions:
+        throw InternalError(
+            std::format(
+                "mir: the signature of the integral operation \"{}\", which "
+                "no type answers with a body, is asked -- please report this "
+                "as a bug",
+                operation.name));
+    }
+    signature.params.at(signature.param_count++) = param;
+  }
+  switch (operation.answer) {
+    case support::IntegralAnswer::kOfFirstOperand:
+      signature.result = kSelf;
+      break;
+    case support::IntegralAnswer::kOneBit:
+      signature.result = kTruth;
+      break;
+    case support::IntegralAnswer::kTwoStateBit:
+      signature.result = kBit;
+      break;
+    case support::IntegralAnswer::kInt:
+      signature.result = kCount;
+      break;
+    case support::IntegralAnswer::kInteger:
+      signature.result = kInteger;
+      break;
+    case support::IntegralAnswer::kPosition:
+      signature.result = kPosition;
+      break;
+    case support::IntegralAnswer::kOfTheCall:
+      signature.result = kSelf;
+      break;
+    case support::IntegralAnswer::kMachineBool:
+      signature.result = kBool;
+      break;
+    case support::IntegralAnswer::kMachineInt:
+      signature.result = kMachine;
+      break;
+  }
+  return signature;
+}
+
 // What the operation `answers` of the type `a` takes and answers. Each trait's
 // items are answered together, so a trait gaining an item stops here until
 // its signature is stated.
@@ -676,6 +761,9 @@ auto SignatureOf(
           },
           [](support::BuiltinFn operation) -> Signature {
             return OperationSignatureOf(operation);
+          },
+          [](support::IntegralOp op) -> Signature {
+            return IntegralSignatureOf(op);
           }},
       answers);
 }
@@ -720,6 +808,10 @@ auto TypeNamed(
       return unit.builtins.machine_bool;
     case SignatureType::kBit:
       return unit.builtins.bit1;
+    case SignatureType::kTruth:
+      return PackedVectorOf(types, 1, types.Get(self).Integral().state_kind);
+    case SignatureType::kInteger:
+      return unit.builtins.integer;
     case SignatureType::kNothing:
       return unit.builtins.void_type;
     case SignatureType::kRun:
@@ -845,6 +937,12 @@ auto ValueOperationDeclaration(
       support::BuiltinFn::kQueueAllocate,
       support::ElementAccessItem::kGetUnchecked,
       support::ElementAccessItem::kGetUncheckedMut};
+  // An integral operator answers a value of every operand it is handed,
+  // whatever bits they hold, so a body answering one cannot unwind.
+  if (std::holds_alternative<support::IntegralOp>(answers)) {
+    declaration.can_unwind = false;
+    return declaration;
+  }
   if (!IsLaidOutContainer(unit.types, a)) {
     return declaration;
   }
@@ -1010,9 +1108,29 @@ auto ElementAllocationOf(const CompilationUnit& unit, TypeId type)
   return std::nullopt;
 }
 
+// An integral type's laid out as words: each operator the language defines on
+// it that a body built at its width answers, an operator taking or answering
+// another integral type a family taken at that type.
+auto WordsInterface(TypeId type) -> TypeInterface {
+  TypeInterface interface{.type = type, .operations = {}, .families = {}};
+  for (const support::IntegralOperation& operation :
+       support::IntegralOperations()) {
+    if (!support::IsAnsweredAtItsWidth(operation.op)) {
+      continue;
+    }
+    (IntegralSignatureOf(operation.op).TakenAtAType() ? interface.families
+                                                      : interface.operations)
+        .emplace_back(operation.op);
+  }
+  return interface;
+}
+
 auto TypeInterfaceOf(const CompilationUnit& unit, TypeId type)
     -> std::optional<TypeInterface> {
   const Type& stated = unit.types.Get(type);
+  if (IsExpandedIntegral(unit.types, type)) {
+    return WordsInterface(type);
+  }
   if (stated.IsDeclaredBy(support::LibraryDecl::kDynamicArray)) {
     return ContainerInterface(unit, type, kDynamicArrayOperations);
   }
@@ -1091,7 +1209,8 @@ auto OperationNamedByEntry(
             [&](support::BuiltinFn method) { return method == entry; },
             [](support::EqualityItem) { return false; },
             [](support::BoundFreeItem) { return false; },
-            [](support::ValueStep) { return false; }},
+            [](support::ValueStep) { return false; },
+            [](support::IntegralOp) { return false; }},
         operation);
   };
   for (const std::vector<support::ValueOperation>* declared :
@@ -1127,6 +1246,16 @@ auto TypeOperationKindOf(
     if (RecordKindOf(unit, type).has_value()) {
       return is_default ? Kind{TypeOperationKind::kDefault} : std::nullopt;
     }
+    // An integral type's operators are bodies of its own, and its default is
+    // a data type's, which its interface states nothing about.
+    if (IsExpandedIntegral(unit.types, type)) {
+      if (is_default) {
+        return TypeOperationKind::kDefault;
+      }
+      return Declares(WordsInterface(type), answers)
+                 ? Kind{TypeOperationKind::kExpandedIntegral}
+                 : std::nullopt;
+    }
     if (const std::optional<TypeInterface> interface =
             TypeInterfaceOf(unit, type)) {
       if (!Declares(*interface, answers)) {
@@ -1161,7 +1290,8 @@ auto TypeOperationKindOf(
           },
           [&](support::EqualityItem) -> Kind { return declared(false); },
           [&](support::BuiltinFn) -> Kind { return declared(false); },
-          [&](support::ValueStep) -> Kind { return declared(false); }},
+          [&](support::ValueStep) -> Kind { return declared(false); },
+          [&](support::IntegralOp) -> Kind { return declared(false); }},
       answers);
 }
 

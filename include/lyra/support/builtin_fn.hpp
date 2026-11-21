@@ -31,26 +31,16 @@ enum class BuiltinFn : std::uint16_t {
   kElement,
   kElementMut,
   kQueueElementMut,
-  // LRM 7.4 / 7.10 / 11.5 several parts in a row of a value, read as a value.
+  // LRM 7.4 / 7.10 several elements in a row of a container, read as a value.
   //
-  // They are three operations, each with operands of its own. Bits of an
-  // integral value are named by where they start, and are as many as the type
-  // they are read at is wide (LRM 11.5.1). Elements of a fixed-size or dynamic
-  // array are named by where they start, and are as many as the array type
-  // they are read at holds (LRM 7.4.6). A queue's slice is bounded by two
-  // positions the running program can move, and is read as a queue the slice
-  // builds (LRM 7.10.1).
-  kSlice,
+  // They are two operations, each with operands of its own. Elements of a
+  // fixed-size or dynamic array are named by where they start, and are as many
+  // as the array type they are read at holds (LRM 7.4.6). A queue's slice is
+  // bounded by two positions the running program can move, and is read as a
+  // queue the slice builds (LRM 7.10.1). Bits of an integral value are no
+  // entry: they are a step of the place the value is.
   kElementSlice,
   kQueueSlice,
-  // LRM 11.5.1: a reference to bits of an integral value, named by where they
-  // start and as many as the type it is called at is wide, through which a
-  // write lands on them where they lie -- as `std::bitset`'s `operator[]`
-  // answers a reference to one bit. It is taken on the place the value lies
-  // in, on a reference to bits the value is part of, or on the value
-  // designated within a write in progress, and a write through it is the
-  // reference's `set`.
-  kSliceMut,
   // LRM 7.6: a value written into several elements of a fixed-size or dynamic
   // array in a row, one assignment to the whole window, answering the
   // positions of the elements it changed (LRM 4.3). A window is several
@@ -461,8 +451,7 @@ enum class BuiltinFn : std::uint16_t {
   // Reading what a cell holds, and replacing it. Both act on the wrapper rather
   // than name its storage: a read answers with a reference to what the cell
   // shows, and a write publishes the change to whatever the wrapper relates
-  // to in the object graph (LRM 4.3). A write through a reference to bits is
-  // the same replacement, of the bits the reference names. Naming the wrapper
+  // to in the object graph (LRM 4.3). Naming the wrapper
   // itself is the bare place, which is how rebinding a reference stays a
   // different program from writing through one.
   //
@@ -1882,16 +1871,13 @@ enum class EntryAnswer : std::uint8_t {
 
 // How an entry that reaches one part of the value it acts on names that part:
 // by a coordinate the program computes (LRM 7.4.5, 7.8, 7.10.1), by a
-// declaration-order position (LRM 7.2, 7.3), as a slice of consecutive
-// elements (LRM 7.4.6), or as bits of an integral value (LRM 11.5.1), which
-// lie inside the value rather than being storage of their own. Reading the
-// part and writing into it name it the same way, so the entry for each shares
-// the answer.
+// declaration-order position (LRM 7.2, 7.3), or as a slice of consecutive
+// elements (LRM 7.4.6). Reading the part and writing into it name it the same
+// way, so the entry for each shares the answer.
 enum class PartSelection : std::uint8_t {
   kElement,
   kComponent,
   kSlice,
-  kBits,
 };
 
 // How an entry reads one operand it is handed, which is the whole of what a

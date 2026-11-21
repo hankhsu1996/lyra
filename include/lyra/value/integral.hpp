@@ -250,23 +250,6 @@ class WrittenWords {
     return copy;
   }
 
-  // A value of `shape` with every position clear, built where it will lie: a
-  // value laid out as words is written into `bytes` as it is built, and a
-  // narrower one is laid out there when it is stored. Nothing the value is
-  // made from may lie at `bytes`, which are cleared before any of it is read.
-  [[nodiscard]] static auto ZeroedAt(void* bytes, IntegralShape shape)
-      -> WrittenWords {
-    if (!IsLaidOutAsWords(shape)) {
-      return WrittenWords(shape);
-    }
-    WrittenWords lying{
-        shape, Borrowed{.words = static_cast<std::uint64_t*>(bytes)}};
-    const IntegralView written = lying.MutableView();
-    std::ranges::fill(written.value, std::uint64_t{0});
-    std::ranges::fill(written.unknown, std::uint64_t{0});
-    return lying;
-  }
-
   // Lays the value out at `bytes`, which does nothing where it was written
   // there.
   void StoreTo(void* bytes) const {
@@ -989,24 +972,16 @@ constexpr auto InsertBits(T& a, std::int64_t start, const Bits& bits)
   return Insert(a.MutableView(), bits.View(), start);
 }
 
-// The same write, landing only on the positions `within` names: bits written
-// through a part of a part reach nothing outside the outer part. Answers the
-// positions written.
-template <IntegralValue T, IntegralValue Bits>
-constexpr auto InsertBitsWithin(
-    T& a, std::int64_t start, const Bits& bits, BitPositions within)
-    -> std::optional<BitPositions> {
-  return InsertWithin(a.MutableView(), bits.View(), start, within);
-}
-
-// Some bits of a value held where a write lands (LRM 11.5.1): the bits of a
-// value of `Part` from `start`, counted from the value's least significant bit,
-// which lie inside the positions `within` names -- all of the value's, or those
-// of the part this one was taken in. `Part` is the type the bits are written
-// at. A write lands on the bits and leaves every other position, and a
-// start that names no position names none to write. A part taken in these
-// composes the same way.
-template <IntegralValue T, IntegralValue Part>
+// Some bits of a value where it is held (LRM 11.5.1): the bits of a value of
+// `Part` from `start`, counted from the value's least significant bit, which
+// lie inside the positions `within` names -- all of the value's, or those of
+// the part this one was taken in. `Part` is the type the bits are read and
+// written at. A read answers x, or 0 in a two-state part, at every position
+// outside those; a write lands on the bits and leaves every other position;
+// and a start that names no position names nothing to read or write. A part
+// taken in these composes the same way. `T` is const where the bits are only
+// read.
+template <class T, IntegralValue Part>
 class BitsRef {
  public:
   constexpr BitsRef(
@@ -1014,12 +989,32 @@ class BitsRef {
       : root_(&root), start_(start), within_(within) {
   }
 
+  // The bits, as a value of `Part`.
+  [[nodiscard]] constexpr auto Get() const -> Part {
+    Part out = Part::Zero();
+    FillDefault(out.MutableView());
+    if (const std::optional<BitPositions> reached = Reached()) {
+      InsertWithin(
+          out.MutableView(), root_->View(), -*start_,
+          BitPositions{
+              .lsb = reached->lsb - static_cast<std::uint64_t>(*start_),
+              .width = reached->width});
+    }
+    return out;
+  }
+
+  // A write of `bits` over these, as an assignment to a part-select is.
+  constexpr auto operator=(const Part& bits) -> BitsRef& {
+    Set(bits);
+    return *this;
+  }
+
   // Writes `bits`, answering the positions of the value it reached.
   constexpr auto Set(const Part& bits) -> std::optional<BitPositions> {
     if (!start_) {
       return std::nullopt;
     }
-    return InsertBitsWithin(*root_, *start_, bits, within_);
+    return InsertWithin(root_->MutableView(), bits.View(), *start_, within_);
   }
 
   // A reference to the bits of a value of `Inner` at `position` within these.
@@ -1042,7 +1037,8 @@ class BitsRef {
     if (!start_) {
       return std::nullopt;
     }
-    return ClampedBitRange(T::kWidth, Part::kWidth, *start_, within_);
+    return ClampedBitRange(
+        std::remove_const_t<T>::kWidth, Part::kWidth, *start_, within_);
   }
 
  private:
@@ -1050,6 +1046,40 @@ class BitsRef {
   std::optional<std::int64_t> start_;
   BitPositions within_;
 };
+
+// LRM 7.4.1, 11.5.1: the bits of a value of `Part` from the position `start`
+// names, within the value `root` holds where it lies -- a select of a packed
+// value, read or written as the place it is.
+template <IntegralValue Part, IntegralValue T, IntegralValue P>
+[[nodiscard]] constexpr auto SliceOf(T& root, const P& start)
+    -> BitsRef<T, Part> {
+  return BitsRef<T, Part>{
+      root, PositionNamed(start.View()),
+      BitPositions{.lsb = 0, .width = T::kWidth}};
+}
+template <IntegralValue Part, IntegralValue T, IntegralValue P>
+[[nodiscard]] constexpr auto SliceOf(const T& root, const P& start)
+    -> BitsRef<const T, Part> {
+  return BitsRef<const T, Part>{
+      root, PositionNamed(start.View()),
+      BitPositions{.lsb = 0, .width = T::kWidth}};
+}
+
+// The same within the bits `outer` already names: a select of a select.
+template <IntegralValue Part, class T, IntegralValue Outer, IntegralValue P>
+[[nodiscard]] constexpr auto SliceOf(
+    const BitsRef<T, Outer>& outer, const P& start) -> BitsRef<T, Part> {
+  return outer.template SliceMut<Part>(start);
+}
+
+// The value of the bits from the position `start` names within `receiver`, a
+// reference to bits or a part of storage rather than a whole value: a read of
+// a select of a select, or of a select of a part.
+template <IntegralValue Part, class R, IntegralValue P>
+  requires(!IntegralValue<R>)
+[[nodiscard]] constexpr auto Slice(const R& receiver, const P& start) -> Part {
+  return SliceOf<Part>(receiver, start).Get();
+}
 
 // LRM 6.24.3: a value's bits written into a stream below the `filled` most
 // significant positions already written, the first item of a stream being its

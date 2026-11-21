@@ -82,6 +82,10 @@ auto BinaryOpToken(mir::BinaryOp op) -> std::string_view {
       return "&&";
     case mir::BinaryOp::kLogicalOr:
       return "||";
+    case mir::BinaryOp::kShl:
+      return "<<";
+    case mir::BinaryOp::kShr:
+      return ">>";
   }
   throw InternalError("BinaryOpToken: unknown MIR BinaryOp");
 }
@@ -107,6 +111,9 @@ auto BinaryPrecedence(mir::BinaryOp op) -> Precedence {
     case mir::BinaryOp::kAdd:
     case mir::BinaryOp::kSub:
       return Precedence::kAdditive;
+    case mir::BinaryOp::kShl:
+    case mir::BinaryOp::kShr:
+      return Precedence::kShift;
     case mir::BinaryOp::kLessThan:
     case mir::BinaryOp::kLessEqual:
     case mir::BinaryOp::kGreaterThan:
@@ -245,6 +252,25 @@ void RenderFieldAccessExpr(
                 t.position.value, ">()");
           }},
       m.field);
+}
+
+// The bits a slice names, taken by `taken` -- their view, or their read --
+// around what they are taken on and where they start. What they are taken on
+// is the view of the bits a slice before it names, where it is one, so a
+// select of a select is one place.
+void WriteSlice(
+    const ScopeView& view, TargetText& out, const mir::SliceExpr& slice,
+    const auto& taken) {
+  Write(out, taken, "(");
+  const mir::Expr& receiver = view.Expr(slice.receiver);
+  if (const auto* outer = std::get_if<mir::SliceExpr>(&receiver.data)) {
+    WriteSlice(
+        view, out, *outer,
+        CppBitsView{.part = CppType(view.Unit(), receiver.type)});
+  } else {
+    Write(view, out, slice.receiver);
+  }
+  Write(view, out, ", ", slice.start, ")");
 }
 
 // A reference is a name, or a scope and a name, `C::x`; the kinds differ only
@@ -446,6 +472,14 @@ void RenderNewExpr(
 // parentheses.
 void RenderAssignExpr(
     const ScopeView& view, const mir::AssignExpr& a, TargetText& out) {
+  const mir::Expr& target_expr = view.Expr(a.target);
+  if (const auto* bits = std::get_if<mir::SliceExpr>(&target_expr.data)) {
+    WriteSlice(
+        view, out, *bits,
+        CppBitsView{.part = CppType(view.Unit(), target_expr.type)});
+    Write(view, out, " = ", a.value);
+    return;
+  }
   const Operand target{.expr = a.target, .at_least = Precedence::kPrefix};
   Write(view, out, target, " = ", a.value);
 }
@@ -728,6 +762,21 @@ void RenderExpr(
           },
           [&](const mir::FieldAccessExpr& m) {
             RenderFieldAccessExpr(view, m, out);
+          },
+          // Bits stand where they are read as the value they hold, as clang's
+          // `EmitLoadOfLValue` loads a bit-field; only an assignment's target
+          // and a slice taken on them name the view of them itself.
+          // C++'s subscript of an array ([expr.sub]).
+          [&](const mir::IndexExpr& m) {
+            Write(
+                view, out,
+                Operand{.expr = m.receiver, .at_least = Precedence::kPostfix},
+                "[", m.index, "]");
+          },
+          [&](const mir::SliceExpr& m) {
+            WriteSlice(
+                view, out, m,
+                CppBitsRead{.part = CppType(view.Unit(), expr.type)});
           },
           [&](const mir::ClosureExpr& cl) { RenderClosureExpr(view, cl, out); },
           [&](const mir::CompositeExpr& c) {

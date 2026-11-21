@@ -5,6 +5,7 @@
 #include <variant>
 
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/integral_operation.hpp"
 #include "lyra/support/value_step.hpp"
 
 namespace lyra::support {
@@ -126,13 +127,16 @@ enum class BoundFreeItem : std::uint8_t {
 // An operation a type may answer with a body of its own: an item of the
 // equality trait, an item of a trait the library also answers, a bound-free
 // conversion, an operation an array kind is called by -- one of its own
-// methods or an item of a language trait it implements -- or a step of the
-// value's life. A value the library holds is asked an item by the library
-// entry's name. Only a type whose steps are not built from its parts -- a
-// run-time-sized container, whose elements are no parts a type lays out --
-// answers a step with a body.
+// methods or an item of a language trait it implements -- a step of the
+// value's life, or an operator the language defines on an integral value,
+// which a type laid out as more words than the machine operates on at once
+// answers with a body built at its width. A value the library holds is asked an
+// item by the library entry's name. Only a type whose steps are not built from
+// its parts -- a run-time-sized container, whose elements are no parts a type
+// lays out -- answers a step with a body.
 using ValueOperation = std::variant<
-    EqualityItem, LibraryAnsweredItem, BoundFreeItem, BuiltinFn, ValueStep>;
+    EqualityItem, LibraryAnsweredItem, BoundFreeItem, BuiltinFn, ValueStep,
+    IntegralOp>;
 
 // Whether the operation is asked of a value, which the body answering it takes
 // as its receiver, rather than of a type, which builds one.

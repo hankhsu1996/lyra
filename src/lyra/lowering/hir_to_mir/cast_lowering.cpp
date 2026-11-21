@@ -469,7 +469,6 @@ auto BuildValueConversion(
           [&](const mir::DriverType& t) { return none(t); },
           [&](const mir::OpenWriteType& t) { return none(t); },
           [&](const mir::DesignationType& t) { return none(t); },
-          [&](const mir::BitsReferenceType& t) { return none(t); },
           [&](const mir::ObjectWriteType& t) { return none(t); },
           [&](const mir::RecordType& t) { return none(t); },
           [&](const mir::ClosureType& t) { return none(t); },

@@ -3,7 +3,6 @@
 #include <optional>
 
 #include "lyra/mir/callable_code.hpp"
-#include "lyra/mir/code_source.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir_transform/pass.hpp"
 
@@ -15,7 +14,7 @@ namespace lyra::mir_transform {
 // writing them is writing it, so a select of the whole is the whole wherever
 // it stands.
 auto InstSimplifyOnBody(
-    const PassContext& context, const mir::CodeSource& at,
-    const mir::CallableCode& code) -> std::optional<mir::CallableCode>;
+    const PassContext& context, const mir::CallableCode& code)
+    -> std::optional<mir::CallableCode>;
 
 }  // namespace lyra::mir_transform

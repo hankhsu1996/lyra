@@ -1465,6 +1465,11 @@ auto CodeGenModule::DefinitionOf(lir::TypeId type)
   return GlobalNamed(*symbol);
 }
 
+auto CodeGenModule::IsZeroConstant(lir::ConstantId constant) -> bool {
+  const lir::ConstantDecl& decl = unit_->constants.Get(constant);
+  return ValueData(decl.type, decl.value)->isNullValue();
+}
+
 auto CodeGenModule::GetAddrOfConstant(lir::ConstantId constant)
     -> llvm::GlobalVariable* {
   if (const auto found = constants_.find(constant); found != constants_.end()) {

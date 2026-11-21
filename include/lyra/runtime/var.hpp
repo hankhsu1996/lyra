@@ -2179,6 +2179,13 @@ class DesignatedBits {
   auto operator=(DesignatedBits&&) -> DesignatedBits& = delete;
   ~DesignatedBits() = default;
 
+  // A write of `value` over these, as an assignment to a part-select is.
+  template <class Value>
+  auto operator=(const Value& value) -> DesignatedBits& {
+    Set(value);
+    return *this;
+  }
+
   template <class Value>
   void Set(const Value& value) {
     if (whole_.has_value() && write_->Announces()) {
@@ -2251,3 +2258,27 @@ auto VariableRef<T>::Mutate() const -> ScopedMutation<VariableRef<T>> {
 static_assert(OverridableSink<VariableRef<value::Logic>>);
 
 }  // namespace lyra::runtime
+
+namespace lyra::value {
+
+// LRM 11.5.1: the bits of a value of `Bits` from the position `start` names,
+// within the value a write in progress designates or within bits of it it
+// already names: a select written within the write, which hears which bits
+// moved.
+template <IntegralValue Bits, class Sink, class Part, IntegralValue P>
+[[nodiscard]] auto SliceOf(
+    runtime::Designation<Sink, Part>& designation, const P& start) {
+  return designation.template SliceMut<Bits>(start);
+}
+template <IntegralValue Bits, class Sink, class Part, IntegralValue P>
+[[nodiscard]] auto SliceOf(
+    runtime::Designation<Sink, Part>&& designation, const P& start) {
+  return designation.template SliceMut<Bits>(start);
+}
+template <IntegralValue Bits, class Sink, class Outer, IntegralValue P>
+[[nodiscard]] auto SliceOf(
+    const runtime::DesignatedBits<Sink, Outer>& outer, const P& start) {
+  return outer.template SliceMut<Bits>(start);
+}
+
+}  // namespace lyra::value

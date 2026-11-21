@@ -173,10 +173,22 @@ class TargetLowering {
   // How `store` is carried out.
   [[nodiscard]] auto StoreFormOf(const lir::StoreInstr& store) const
       -> diag::Result<StoreForm>;
-  // The entry writing the bits `store` states within a value of type `whole`,
+  // The entries reading and writing bits of type `bits` within a value of type
+  // `whole` lying in storage, the last part starting at a value of `start`,
   // where the machine does not.
+  [[nodiscard]] auto BitsLoadCallOf(
+      lir::TypeId whole, lir::TypeId start, lir::TypeId bits) const
+      -> EntryCall;
   [[nodiscard]] auto BitsStoreCallOf(
-      const lir::BitsStoreInstr& store, lir::TypeId whole) const -> EntryCall;
+      lir::TypeId whole, lir::TypeId start, lir::TypeId bits) const
+      -> EntryCall;
+  // The entry writing bits of type `bits` within the value of type `value` a
+  // write in progress designates, reached through `designation`, the last part
+  // starting at a value of `start`; it keeps what the bits held and tells the
+  // variable which of them moved (LRM 4.3).
+  [[nodiscard]] auto DesignatedBitsCallOf(
+      lir::TypeId designation, lir::TypeId value, lir::TypeId start,
+      lir::TypeId bits) const -> diag::Result<EntryCall>;
   // How a step at `coordinates` into the value of `container` is taken for
   // `access`.
   [[nodiscard]] auto ElementStepOf(

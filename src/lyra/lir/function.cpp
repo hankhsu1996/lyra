@@ -138,7 +138,6 @@ auto CallReturns(const CallTarget& target) -> bool {
           [](const CreationTarget&) { return true; },
           [](const ValueCellTarget&) { return true; },
           [](const OpenWriteTarget&) { return true; },
-          [](const DesignatedBitsTarget&) { return true; },
           [](const EndValueTarget&) { return true; },
           [](const CopyValueTarget&) { return true; },
           [](const RelocateValueTarget&) { return true; },
@@ -190,9 +189,6 @@ auto CallCanUnwind(
             }
             throw InternalError("lir: unknown open-write operation");
           },
-          // Writing bits within a write is what a slice write is, which can
-          // raise.
-          [](const DesignatedBitsTarget&) { return true; },
           [](const EndValueTarget&) { return false; },
           [](const CopyValueTarget&) { return false; },
           [](const RelocateValueTarget&) { return false; },

@@ -1765,6 +1765,34 @@ void InsertDesignatedWideBits(
   }
 }
 
+// Bits read out of an integral value `width` bits wide lying at `bytes` (LRM
+// 11.5.1): read where the value lies and kept where a part reaches, every other
+// position of the answer reading x, or 0 in a two-state answer.
+void ExtractBitsAt(
+    const void* bytes, std::int64_t width, bool is_four_state,
+    void* outer_parts, std::uint64_t outer_parts_count, const void* start,
+    void* bits, std::int64_t count, bool bits_are_four_state) {
+  const value::IntegralShape answer_shape =
+      BitsShape(count, bits_are_four_state);
+  value::ScopedWordsWrite answer(bits, answer_shape);
+  value::FillDefault(answer.MutableView());
+  const std::optional<ResolvedBitRange> range =
+      ResolveBitRange(width, outer_parts, outer_parts_count, start, count);
+  if (!range.has_value()) {
+    return;
+  }
+  value::VisitLaidOut(
+      bytes, BitsShape(width, is_four_state),
+      [&](value::AnyConstIntegralView auto whole) {
+        value::InsertWithin(
+            answer.MutableView(), whole, -range->start,
+            value::BitPositions{
+                .lsb = range->clamped.lsb -
+                       static_cast<std::uint64_t>(range->start),
+                .width = range->clamped.width});
+      });
+}
+
 // Bits written into an integral value `width` bits wide lying at `bytes`,
 // which nothing is told of (LRM 11.5.1).
 void InsertBitsAt(
@@ -3858,6 +3886,15 @@ void lyra_rt_set_scope_place(void* self, void* parent, const void* segment) {
 auto lyra_rt_attach_scope(void* child) -> void* {
   return Scope::Attach(
       lyra::runtime::OwnedObject<Scope>(static_cast<Scope*>(child)));
+}
+
+void lyra_rt_extract_bits(
+    const void* whole, std::int64_t whole_width, bool whole_is_four_state,
+    void* outer_parts, std::uint64_t outer_parts_count, const void* start,
+    void* bits, std::int64_t bits_width, bool bits_are_four_state) {
+  lyra::runtime::ExtractBitsAt(
+      whole, whole_width, whole_is_four_state, outer_parts, outer_parts_count,
+      start, bits, bits_width, bits_are_four_state);
 }
 
 void lyra_rt_insert_bits(

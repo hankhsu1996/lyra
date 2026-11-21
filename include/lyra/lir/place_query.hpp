@@ -57,8 +57,9 @@ auto DestinationType(
 auto IsPlaceLocal(const Function& fn, const Operand& operand) -> bool;
 
 // Whether computing a value brings one into existence rather than naming one
-// that already exists. A load names the value its place holds, where it lies; a
-// cast reads a value as another type; and a library entry that answers with
+// that already exists. A load names the value its place holds, where it lies,
+// except a load of bits, which lie at no address of their own; a cast reads a
+// value as another type; and a library entry that answers with
 // storage it was handed names that storage. Every call, build, update and
 // operator makes a value of its own, and a value moved in is one too, as far as
 // where it goes is concerned. Where that value's type is an owned one, what

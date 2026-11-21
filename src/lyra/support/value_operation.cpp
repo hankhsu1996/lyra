@@ -7,6 +7,7 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/integral_operation.hpp"
 #include "lyra/support/value_step.hpp"
 
 namespace lyra::support {
@@ -145,14 +146,21 @@ auto EntryNaming(ValueOperation operation) -> std::optional<BuiltinFn> {
             return LibraryEntryOf(item);
           },
           [](BuiltinFn fn) -> std::optional<BuiltinFn> { return fn; },
-          [](ValueStep) -> std::optional<BuiltinFn> { return std::nullopt; }},
+          [](ValueStep) -> std::optional<BuiltinFn> { return std::nullopt; },
+          [](IntegralOp) -> std::optional<BuiltinFn> { return std::nullopt; }},
       operation);
 }
 
 }  // namespace
 
-// An operation a library entry names is asked and named as that entry is.
+// An operation a library entry names is asked and named as that entry is. An
+// integral operator takes its operands as arguments, none of them a receiver,
+// since an operator's operands run first to last and a call's receiver runs
+// after its arguments.
 auto ReachesAReceiver(ValueOperation operation) -> bool {
+  if (std::holds_alternative<IntegralOp>(operation)) {
+    return false;
+  }
   return EntryNaming(operation)
       .transform([](BuiltinFn fn) {
         return ActsOnAnObject(RuntimeEntryOf(fn).declaration);
@@ -181,7 +189,8 @@ auto ValueOperationName(ValueOperation operation) -> std::string_view {
             return RuntimeEntryOf(LibraryEntryOf(item)).name;
           },
           [](BuiltinFn fn) { return RuntimeEntryOf(fn).name; },
-          [](ValueStep step) { return ValueStepName(step); }},
+          [](ValueStep step) { return ValueStepName(step); },
+          [](IntegralOp op) { return IntegralOperationOf(op).name; }},
       operation);
 }
 

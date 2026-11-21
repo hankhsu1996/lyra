@@ -3,7 +3,6 @@
 #include <optional>
 
 #include "lyra/mir/callable_code.hpp"
-#include "lyra/mir/code_source.hpp"
 #include "lyra/mir_transform/pass.hpp"
 
 namespace lyra::mir_transform {
@@ -18,7 +17,7 @@ namespace lyra::mir_transform {
 // every call, so that no site composing a call has to know which callees take
 // one, and the verifier can hold every call to it.
 auto StateCallerLocationsOnBody(
-    const PassContext& context, const mir::CodeSource& at,
-    const mir::CallableCode& code) -> std::optional<mir::CallableCode>;
+    const PassContext& context, const mir::CallableCode& code)
+    -> std::optional<mir::CallableCode>;
 
 }  // namespace lyra::mir_transform

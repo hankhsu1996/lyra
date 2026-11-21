@@ -1,7 +1,9 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <optional>
+#include <span>
 #include <variant>
 #include <vector>
 
@@ -37,13 +39,81 @@ struct IntegralShapes {
   std::optional<value::IntegralShape> answer;
 };
 
+// One plane of a value held as words.
+enum class Plane : std::uint8_t { kValue, kUnknown };
+
+// The words of a value held as words, as reading a part of it reads them: a
+// word of a plane named by its index, which is 0 where the value has no word
+// there or no such plane. Where the words come from is the implementer's:
+// storage where the value lies, or words already known.
+class ValueWords {
+ public:
+  ValueWords() = default;
+  ValueWords(const ValueWords&) = delete;
+  ValueWords(ValueWords&&) = delete;
+  auto operator=(const ValueWords&) -> ValueWords& = delete;
+  auto operator=(ValueWords&&) -> ValueWords& = delete;
+  virtual ~ValueWords() = default;
+
+  [[nodiscard]] virtual auto Read(Plane plane, llvm::Value* index) const
+      -> llvm::Value* = 0;
+};
+
+// The words of a value a part is written into: also the bits a mask selects of
+// a word replaced, which changes nothing where the value has no word there or
+// no such plane, and the same at an index the value is known to have a word
+// at, which then asks nothing of the index.
+class MutableValueWords : public ValueWords {
+ public:
+  virtual void Replace(
+      Plane plane, llvm::Value* index, llvm::Value* bits,
+      llvm::Value* mask) const = 0;
+  virtual void ReplaceHeld(
+      Plane plane, llvm::Value* index, llvm::Value* bits,
+      llvm::Value* mask) const = 0;
+};
+
+// The words of the value of type `shape` lying at `at`, each plane a run of
+// 64-bit words, the unknown plane after the value plane. A word is loaded and
+// stored only at an index the value has, so an index past either end reads 0
+// and writes nothing.
+class WordsLyingAt final : public MutableValueWords {
+ public:
+  WordsLyingAt(
+      llvm::IRBuilderBase& builder, llvm::Value* at,
+      const value::IntegralShape& shape);
+
+  [[nodiscard]] auto Read(Plane plane, llvm::Value* index) const
+      -> llvm::Value* override;
+  void Replace(
+      Plane plane, llvm::Value* index, llvm::Value* bits,
+      llvm::Value* mask) const override;
+  void ReplaceHeld(
+      Plane plane, llvm::Value* index, llvm::Value* bits,
+      llvm::Value* mask) const override;
+
+ private:
+  [[nodiscard]] auto Holds(llvm::Value* index) const -> llvm::Value*;
+  // The word at `at` with the bits `mask` selects replaced by those of `bits`.
+  void ReplaceAt(llvm::Value* at, llvm::Value* bits, llvm::Value* mask) const;
+  [[nodiscard]] auto PlaneAt(Plane plane) const -> llvm::Value*;
+  [[nodiscard]] auto WordAt(Plane plane, llvm::Value* index) const
+      -> llvm::Value*;
+
+  llvm::IRBuilderBase* builder_;
+  llvm::Value* at_;
+  value::IntegralShape shape_;
+};
+
 // Where an operation on planes takes its operands from, each by its
-// position among them: the planes of one that is an integral value, and the
-// machine value of one that is not. Planes are asked for where the operation
-// reads them, so whatever reading them emits lands there.
+// position among them: the planes of one that is an integral value, the
+// machine value of one that is not, and the words of one an operation reaches
+// part of by words. Each is asked for where the operation reads it, so
+// whatever reading it emits lands there.
 struct PlaneOperands {
   llvm::function_ref<Planes(std::size_t)> planes;
   llvm::function_ref<llvm::Value*(std::size_t)> machine;
+  llvm::function_ref<const ValueWords&(std::size_t)> words;
 };
 
 // What an operation on planes answers with: the planes of an integral
@@ -65,86 +135,68 @@ using PlaneAnswer = std::variant<Planes, llvm::Value*>;
   return shape.width <= 64;
 }
 
-// Whether `op` is instructions only where every value it reads and answers is
-// one machine word, and a call past that: a product, a quotient and a
-// remainder, whose work grows with the square of the width, and reaching a
-// part, which on planes shifts the whole value to where the part starts and so
-// grows with the whole width however narrow the part, where the library
-// touches only the words the part spans.
-[[nodiscard]] constexpr auto IsOnOneWordOnly(support::IntegralOp op) -> bool {
-  switch (op) {
-    case support::IntegralOp::kMultiply:
-    case support::IntegralOp::kDivide:
-    case support::IntegralOp::kModulo:
-    case support::IntegralOp::kSlice:
-    case support::IntegralOp::kWithSlice:
-      return true;
-    case support::IntegralOp::kAdd:
-    case support::IntegralOp::kSubtract:
-    case support::IntegralOp::kNegate:
-    case support::IntegralOp::kPower:
-    case support::IntegralOp::kTakePositions:
-    case support::IntegralOp::kWithPositions:
-    case support::IntegralOp::kBitwiseAnd:
-    case support::IntegralOp::kBitwiseOr:
-    case support::IntegralOp::kBitwiseXor:
-    case support::IntegralOp::kBitwiseXnor:
-    case support::IntegralOp::kBitwiseNot:
-    case support::IntegralOp::kEqual:
-    case support::IntegralOp::kNotEqual:
-    case support::IntegralOp::kLess:
-    case support::IntegralOp::kLessEqual:
-    case support::IntegralOp::kGreater:
-    case support::IntegralOp::kGreaterEqual:
-    case support::IntegralOp::kCaseEqual:
-    case support::IntegralOp::kWildcardEqual:
-    case support::IntegralOp::kCasezMatch:
-    case support::IntegralOp::kCasexMatch:
-    case support::IntegralOp::kLogicalAnd:
-    case support::IntegralOp::kLogicalOr:
-    case support::IntegralOp::kLogicalNot:
-    case support::IntegralOp::kLogicalEquivalence:
-    case support::IntegralOp::kIsTrue:
-    case support::IntegralOp::kReductionAnd:
-    case support::IntegralOp::kReductionOr:
-    case support::IntegralOp::kReductionXor:
-    case support::IntegralOp::kReductionNand:
-    case support::IntegralOp::kReductionNor:
-    case support::IntegralOp::kReductionXnor:
-    case support::IntegralOp::kShiftLeft:
-    case support::IntegralOp::kLogicalShiftRight:
-    case support::IntegralOp::kArithmeticShiftRight:
-    case support::IntegralOp::kReplicate:
-    case support::IntegralOp::kConvert:
-    case support::IntegralOp::kFromInt:
-    case support::IntegralOp::kFromBool:
-    case support::IntegralOp::kToInt64:
-    case support::IntegralOp::kToPosition:
-    case support::IntegralOp::kHasUnknown:
-    case support::IntegralOp::kBitIdentical:
-    case support::IntegralOp::kCountBits:
-    case support::IntegralOp::kCeilLog2:
-    case support::IntegralOp::kMergeConditional:
-    case support::IntegralOp::kReverseBlocks:
-    case support::IntegralOp::kFromText:
-    case support::IntegralOp::kReadCanonicalBits:
-    case support::IntegralOp::kReadCanonicalLogic:
-    case support::IntegralOp::kFromSvLogic:
-      return false;
-  }
-  throw InternalError("llvm codegen: unknown integral operation");
+// Whether a value of `shape` is at most two machine words per plane, the
+// widest integer whose every operation the machine target carries out in a few
+// instructions or a call of its own runtime.
+[[nodiscard]] constexpr auto IsAtMostTwoWords(const value::IntegralShape& shape)
+    -> bool {
+  return shape.width <= value::kWidestPrimitiveBits;
 }
 
-// `op` as the instructions it is on planes (LRM 11.4), where every integral
-// value it is handed and answers with is stated on its planes, so the
-// operation costs the words it touches. Nothing for an operation whose work is
-// long at every width, for one on one word only past one machine word, or over
-// a larger value. It builds only arithmetic on the planes it is handed, so over
-// constant planes a folding builder answers with constants.
+// Whether a part of type `part` of a value of `whole` is read and written by
+// the words it spans, where the value lies: a value held as words, and a part
+// a frame keeps. The code of one site then follows the part and never the
+// value, as the work does, so it holds at every width of the value; a part
+// past what a frame keeps is the library's, which touches only its words.
+[[nodiscard]] constexpr auto IsReachedByWords(
+    const value::IntegralShape& whole, const value::IntegralShape& part)
+    -> bool {
+  return !IsSingleWord(whole) && IsStatedOnPlanes(part);
+}
+
+// `op` as the instructions it is (LRM 11.4), where every integral value it is
+// handed and answers with is at most two machine words, as a machine's own
+// two-word integer is: an operator over a wider value is its type's own body,
+// which MIR states, and nothing is built for one here, nor for an operation
+// whose work is long at every width. It builds only arithmetic on what it is
+// handed, so over constant planes and words a folding builder answers with
+// constants.
 auto LowerOnPlanes(
     llvm::IRBuilderBase& builder, support::IntegralOp op,
     const IntegralShapes& shapes, const PlaneOperands& operands)
     -> std::optional<PlaneAnswer>;
+
+// One part a write reaches through, as it is written: where it starts within
+// what it is a part of, the type that start is a value of, and how many bits
+// the part has.
+struct PartOfValue {
+  Planes start{};
+  value::IntegralShape start_shape;
+  std::uint64_t width = 0;
+};
+
+// LRM 11.5.1: the bits `parts` name, outermost first, the last as wide as
+// `answer`, of the value of type `whole` whose words are `words`, where
+// `IsReachedByWords` holds of the value and the answer. A position outside the
+// value, or outside a part the bits are reached through, reads x, or 0 in a
+// two-state answer, and so does every bit where a part names no position. Only
+// the words the bits span are read.
+auto ReadPartOfWords(
+    llvm::IRBuilderBase& builder, const ValueWords& words,
+    const value::IntegralShape& whole, std::span<const PartOfValue> parts,
+    const value::IntegralShape& answer) -> Planes;
+
+// LRM 11.5.1: `bits` written over the bits `parts` name, outermost first, in
+// the value of type `whole` whose words are `words`, where `IsReachedByWords`
+// holds of the value and the bits. A part reaches nothing outside the part it
+// is taken in nor outside the value, and a start naming no position writes
+// nothing; bits with no x settle the positions they land on, and an x or z
+// lands in a two-state value as 0. Only the words the bits span are read and
+// written.
+void WritePartOfWords(
+    llvm::IRBuilderBase& builder, const MutableValueWords& words,
+    const value::IntegralShape& whole, std::span<const PartOfValue> parts,
+    Planes bits, const value::IntegralShape& bits_shape);
 
 // The planes of the value of type `shape` lying at `at`, each loaded as the
 // integer its bytes are and cut to the value's width.

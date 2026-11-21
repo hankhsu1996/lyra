@@ -29,6 +29,10 @@ enum class BinaryOp : std::uint8_t {
   kGreaterEqual,
   kLogicalAnd,
   kLogicalOr,
+  // A machine integer shifted by a count of its own type, logically where it
+  // is unsigned, as C's `<<` and `>>` are.
+  kShl,
+  kShr,
 };
 
 // What an operator answers with: a value of the type its operands are of, or

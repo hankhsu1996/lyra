@@ -232,7 +232,6 @@ auto LaidOut(const CompilationUnit& unit, TypeId type, const auto& part)
           [](const DesignationType&) {
             return StatedLayoutOf(support::LibraryObject::kDesignation);
           },
-          [&](const BitsReferenceType& t) { return handle(t); },
           // A write into an object's properties is the library's object the
           // writer holds while it writes there.
           [](const ObjectWriteType&) {
