@@ -31,6 +31,7 @@
 #include "lyra/base/diag_message.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
+#include "lyra/diag/diagnostic.hpp"
 #include "lyra/frontend/slang_source_span.hpp"
 #include "lyra/hir/callee_interface.hpp"
 #include "lyra/hir/class_ref.hpp"
@@ -197,9 +198,28 @@ auto InvocationModeOf(
   if (call.classQualifier == nullptr) return hir::InvocationMode::kVirtual;
   auto named = lowerer.Owner().InternType(*call.classQualifier, span);
   if (!named) return std::unexpected(std::move(named.error()));
-  return *named == frame.Exprs().Get(receiver).type
-             ? hir::InvocationMode::kVirtual
-             : hir::InvocationMode::kSuper;
+  if (*named == frame.Exprs().Get(receiver).type) {
+    return hir::InvocationMode::kVirtual;
+  }
+  // A pure virtual method has no body for such a call to run (LRM 8.21), and
+  // the front end refuses the call unless a tolerant reading relaxed that,
+  // which lends it no meaning either.
+  if (const auto* const* method =
+          std::get_if<const slang::ast::SubroutineSymbol*>(&call.subroutine);
+      method != nullptr &&
+      (*method)->flags.has(slang::ast::MethodFlags::Pure)) {
+    return std::unexpected(
+        diag::Make(
+            span, diag::DiagCode::kErrorInvalidFrontendSemantics,
+            base::DiagMessage(
+                "pure virtual method '{}' has no implementation for a call "
+                "through 'super' or a superclass scope to run",
+                (*method)->name))
+            .WithNote(
+                "call it without the qualifier to run the override the "
+                "object's class gives"));
+  }
+  return hir::InvocationMode::kSuper;
 }
 
 // Arms what a sampled value function's operand reads, so it answers for one.

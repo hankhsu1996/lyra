@@ -638,9 +638,12 @@ A call through `super`, or through the scope of a superclass, runs the method of
 NOTE, "A method without a statement body is still a legal, callable method", reads as the other side
 and is not: its example is a virtual method declared with an empty body, which is an implementation,
 and a pure method has none. SystemVerilog's class model is Java's (8.7), and Java refuses the same
-call ("a compile-time error if the compile-time declaration is abstract", JLS 15.12.3). Lyra refuses
-it in the front end it pins, where every call's name is resolved. Call the method without the
-qualifier to reach the override.
+call ("a compile-time error if the compile-time declaration is abstract", JLS 15.12.3). The front
+end refuses it where every call's name is resolved, with an error that
+`-Wno-error=qualified-pure-virtual-call` and `--compat all` make a warning; a tolerant reading lends
+the method no body either, so Lyra then refuses it where it reads the call. A call naming the body's
+own class is not this one: Lyra reads it as the unqualified name, which dispatches and reaches the
+override. Call the method without the qualifier to reach the override.
 
 ### Not settled by the standard, accepted by the front end
 
