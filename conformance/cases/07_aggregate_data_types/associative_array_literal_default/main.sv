@@ -8,7 +8,10 @@
 // a read-modify-write does before it operates, starts it from that default.
 // A read the default answers issues no warning (LRM 7.8.6).
 // The default is a value of the element type, so a string literal given as
-// the default of an array of strings is that string. Assigning one associative
+// the default of an array of strings is that string, and an assignment
+// pattern written with the element type is that element (LRM 10.9.1; a default
+// is not an assignment-like context, so an untyped pattern would take no type
+// from it, LRM 10.8). Assigning one associative
 // array to another clears the target of its entries and then copies the
 // source's (LRM 7.9.11, 7.8.7, 7.9.9).
 module Top;
@@ -32,6 +35,11 @@ module Top;
 
   string named [int];
   string named_missing;
+
+  typedef int pair_t[2];
+  pair_t pairs [int];
+  int pair_missing_second;
+  int pair_count;
 
   int source [string];
   int target [string];
@@ -61,6 +69,10 @@ module Top;
 
     named = '{default: "x"};
     named_missing = named[4];
+
+    pairs = '{default: pair_t'{1, 2}};
+    pair_missing_second = pairs[3][1];
+    pair_count = pairs.num();
 
     source["p"] = 7;
     target["old"] = 1;
@@ -103,6 +115,11 @@ module Top;
 
     if (named_missing != "x")
       $fatal(1, "named_missing was \"%s\", expected \"x\"", named_missing);
+
+    if (pair_missing_second !== 2)
+      $fatal(1, "pair_missing_second was %0d, expected 2", pair_missing_second);
+    if (pair_count !== 0)
+      $fatal(1, "pair_count was %0d, expected 0", pair_count);
 
     if (exists_overwritten !== 0)
       $fatal(1, "exists_overwritten was %0d, expected 0", exists_overwritten);

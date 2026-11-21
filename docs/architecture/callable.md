@@ -165,13 +165,13 @@ has the normalized contract `t : (self, int a, int c_in) -> Coroutine<Outputs{ b
 The call site supplies `a` and the snapshot of `c`, and after completion writes each output-pack
 component to the caller's actual place. Copy-out happens after completion because the values ride
 the result; an `output` formal has no copy-in; only a `ref` parameter is a live alias. Every other
-formal is a variable of the lifetime the subroutine gives it. An automatic subroutine's is the
-body's own, fresh at each call. A static subroutine's is one variable every call shares (LRM
-13.3.2): its instance's for a subroutine of the design hierarchy, and its namespace's for one of a
-package or the compilation-unit scope, which every name reaching it names as it names the
-namespace's other variables (LRM 6.21, 26.2). The body assigns its argument to it as it begins and
-the call reads its output from it, so the data flow above is the same and only where the variable
-lives differs.
+formal, and a function's result variable (LRM 13.4.1), is a variable of the lifetime the subroutine
+gives it. An automatic subroutine's is the body's own, fresh at each call. A static subroutine's is
+one variable every call shares (LRM 13.3.2): its instance's for a subroutine of the design
+hierarchy, and its namespace's for one of a package or the compilation-unit scope, which every name
+reaching it names as it names the namespace's other variables (LRM 6.21, 26.2). The body assigns its
+argument to it as it begins and the call reads its output from it, so the data flow above is the
+same and only where the variable lives differs.
 
 Closures across languages share the same core and differ only at the edges. C++ lambdas capture per
 variable: `[x]` owns a copy of `x`, `[&x]` owns a reference to `x`; both are owned fields, and the

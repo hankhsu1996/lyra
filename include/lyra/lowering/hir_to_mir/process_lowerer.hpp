@@ -555,10 +555,10 @@ class ProcessLowerer {
   // fills that payload is the result variable, if the body has one, followed
   // by each output / inout formal.
   mir::TypeId result_type_;
-  std::optional<hir::ProceduralVarId> result_var_;
+  std::optional<hir::SubroutineVariable> result_var_;
   Passing result_passing_ = Passing::kByValue;
   mir::TypeId declared_result_type_;
-  std::vector<hir::FormalVariable> output_vars_;
+  std::vector<hir::SubroutineVariable> output_vars_;
   BodyWriter body_writer_;
 
   std::map<hir::ProceduralVarId, PromotedVarBinding> pending_activation_;

@@ -1,7 +1,8 @@
 # Storage a type owns is brought up by whatever brings up its declarer
 
 Date: 2026-09-10 Status: accepted; D5 added 2026-11-06, which corrects what D2 assumed of a method's
-static, extended 2026-11-07 to a static subroutine's formals, and 2026-11-12 to a design element's
+static, extended 2026-11-07 to a static subroutine's formals, 2026-11-12 to a design element's, and
+2026-11-20 to a static function's result
 
 ## Status
 
@@ -163,11 +164,14 @@ output and inout formals included, and keep their values between calls (LRM 13.3
 `P::t.a` is a static variable of `t` like any other, and its namespace declares it with no
 initializer: it holds its type's default until a call writes it. The subroutine's parameter list
 names that entry as the variable its position binds, and a call writes the value it hands in to it
-and takes the values it hands back from it. A class keeps none, because a class method is automatic
-(LRM 8.6). This entry first stated D5 for a variable a subroutine declares in its body, and the
-lowering read that as the front end's declared variables only, so a formal stayed a variable of the
-body: the subroutine's own bare name reached it, and every path naming it, its own `t.a` included,
-was an internal error or a refusal.
+and takes the values it hands back from it. So is a static function's result, the variable named
+like the function (LRM 13.4.1): a call reads what the last call left in it, and one that writes
+nothing returns that (LRM 13.4). The front end gave the result automatic lifetime whatever the
+function's until slang 12.2 (upstream `3efe5877f`), and the body declared it. A class keeps none of
+these, because a class method is automatic (LRM 8.6). This entry first stated D5 for a variable a
+subroutine declares in its body, and the lowering read that as the front end's declared variables
+only, so a formal stayed a variable of the body: the subroutine's own bare name reached it, and
+every path naming it, its own `t.a` included, was an internal error or a refusal.
 
 The reason it is the declarer's entry rather than the body's own variable is the unit boundary.
 Another unit has no body of the subroutine, only the declarer's published declaration, and a key is

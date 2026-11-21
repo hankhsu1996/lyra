@@ -60,10 +60,11 @@ auto LowerStaticPropertyRefExpr(
 auto LowerNamespaceValueRefExpr(
     UnitLowerer& unit_lowerer, const hir::NamespaceValueRef& r) -> mir::Expr;
 
-// The storage of the variable a formal is: a variable of the body, or one its
-// namespace keeps (LRM 13.3.2, 26.2). The expression evaluates nothing.
-auto LowerFormalVariableExpr(
+// The storage of a formal or a function's result: a variable of the body, or
+// one the scope declaring the subroutine keeps (LRM 13.3.2, 26.2). The
+// expression evaluates nothing.
+auto LowerSubroutineVariableExpr(
     ProcessLowerer& process, const WalkFrame& frame,
-    const hir::FormalVariable& variable) -> mir::Expr;
+    const hir::SubroutineVariable& variable) -> mir::Expr;
 
 }  // namespace lyra::lowering::hir_to_mir

@@ -16,13 +16,16 @@
 
 namespace lyra::hir {
 
-// The variable a formal is, which a call writes what it hands in to and takes
-// what it hands back from (LRM 13.5): a variable of the subroutine's body for
-// an automatic formal, or, for a static subroutine, one of the variables the
-// scope declaring it keeps (LRM 13.3.2) -- a design element's, reached from its
-// own instance, or a package's or the compilation-unit scope's (LRM 26.2) --
-// which every name reaching it, the body's own included, names the same way.
-using FormalVariable =
+// A variable a subroutine declares for its calls to pass values through -- a
+// formal, which a call writes what it hands in to and takes what it hands back
+// from (LRM 13.5), or a function's result, which its name holds (LRM 13.4.1).
+// It has the subroutine's lifetime (LRM 6.21): a variable of the body, which
+// each call makes anew, for an automatic subroutine, or, for a static one, one
+// of the variables the scope declaring it keeps (LRM 13.3.2), which every call
+// shares -- a design element's, reached from its own instance, or a package's
+// or the compilation-unit scope's (LRM 26.2) -- and which every name reaching
+// it, the body's own included, names the same way.
+using SubroutineVariable =
     std::variant<ProceduralVarId, RoutedValueRef, NamespaceValueRef>;
 
 // A formal as its subroutine declares it: the variable a call binds at its
@@ -32,7 +35,7 @@ using FormalVariable =
 // for a formal with no default, and for a method, whose class states its
 // defaults with the rest of what a call reads of it.
 struct SubroutineParam {
-  FormalVariable variable;
+  SubroutineVariable variable;
   // The type the formal is declared with, which a call binds by wherever the
   // variable lives.
   TypeId type;
@@ -43,12 +46,12 @@ struct SubroutineParam {
 };
 
 // LRM 13.4.1 implicit result variable: a non-void function implicitly declares
-// a body-local variable of the return type that the body reads and writes
-// through the function name. `result_var` indexes the body's procedural-var
-// arena for that variable; it is absent for void functions and tasks, which
-// yield no value, and for a function whose result stands as the actual of a
-// formal binding a place, whose one return names the place and which no
-// variable could hold.
+// a variable of the return type that the body reads and writes through the
+// function name, and a call that writes nothing returns what it holds (LRM
+// 13.4). `result_var` is that variable; it is absent for void functions and
+// tasks, which yield no value, and for a function whose result stands as the
+// actual of a formal binding a place, whose one return names the place and
+// which no variable could hold.
 //
 // `result_direction` is the direction of the formal whose actual the result
 // stands as: `input` for every function the source writes, whose result the
@@ -89,7 +92,7 @@ struct SubroutineDecl {
   TypeId result_type;
   ParamDirection result_direction = ParamDirection::kInput;
   std::vector<SubroutineParam> params;
-  std::optional<ProceduralVarId> result_var;
+  std::optional<SubroutineVariable> result_var;
   ProceduralBody body;
   std::optional<StmtId> root_stmt;
   Reads reads;

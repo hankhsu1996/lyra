@@ -2,7 +2,8 @@
 
 ## Date
 
-2026-10-22; revised 2026-11-03 (a branch is named by the whole release tag).
+2026-10-22; revised 2026-11-03 (a branch is named by the whole release tag) and 2026-11-20 (how a
+commit upstream took after the release is replayed).
 
 ## Status
 
@@ -50,7 +51,11 @@ the release tag as its branch, and Lyra's pin moves to it; the old branch stays 
 every commit Lyra named on it is still reachable. A carried commit the release already has, as
 written or reworked by upstream, is not replayed, and one upstream took after the release is
 replayed as upstream's own commit, so the list of what the fork carries shrinks at each move to what
-is still owed upstream.
+is still owed upstream. Where upstream's commit does not apply to the release as written, because it
+was made on a tree the release does not have, the fork's backport of it is replayed instead, naming
+upstream's commit by `-x`; a later move drops it once its base holds that commit. Upstream's release
+branches take fixes only, so what Lyra sends upstream as a change of behaviour or of the API stays
+carried until the next major release holds it.
 
 **D3. The release Lyra's `MODULE.bazel` names says which branch its pinned commit must be on, and a
 check holds the two together.** `tools/policy/check_pinned_sources.py` fetches the branch named for
@@ -66,6 +71,12 @@ same commits, and the tag `lyra/v10-a9e580e7` became `lyra/v10.0-a9e580e7`. A bu
 front end by its commit, never by a branch, so no earlier Lyra commit stopped building: every commit
 `MODULE.bazel` had ever named was checked reachable from the new names before the old ones were
 removed.
+
+The move to 12.2 (2026-11-20) was the first to a patch release on the same release branch: `v12.2`
+is `v12.1` with fixes upstream took from its main line, and none of the changes Lyra had sent
+upstream since 12.1. Of the commits `lyra/v12.1` carried, the two that release holds were dropped,
+four of those upstream took after it replayed as the fork's backports, which is what D2's sentence
+on them now says, and the rest replayed onto `lyra/v12.2`.
 
 ## Rejected
 

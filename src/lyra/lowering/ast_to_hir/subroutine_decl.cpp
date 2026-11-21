@@ -405,35 +405,36 @@ struct SubroutineLoweringResult {
   std::optional<std::vector<hir::ExprId>> base_arguments;
 };
 
-// The variable `formal` is: for an automatic formal, one the body declares;
-// for a static one (LRM 13.3.2), a variable of the scope declaring the
-// subroutine, reached as every name reaching it reaches it -- a design
-// element's from its own instance, a namespace's as the namespace's (LRM
-// 26.2).
-auto FormalVariableOf(
+// The variable `var`, a formal or a function's result, is: for an automatic
+// subroutine's, one the body declares; for a static one's (LRM 13.3.2,
+// 13.4.1), a variable of the scope declaring the subroutine, reached as every
+// name reaching it reaches it -- a design element's from its own instance, a
+// namespace's as the namespace's (LRM 26.2).
+auto SubroutineVariableOf(
     UnitLowerer& unit_lowerer, ProcessLowerer& lowerer, const WalkFrame& frame,
-    hir::ProceduralBody& body, const slang::ast::FormalArgumentSymbol& formal,
-    hir::TypeId type) -> diag::Result<hir::FormalVariable> {
-  if (!HasStaticStorage(formal)) {
-    return hir::FormalVariable{
-        lowerer.AddProceduralVar(frame, body, formal, type)};
+    hir::ProceduralBody& body, const slang::ast::VariableSymbol& var,
+    hir::TypeId type) -> diag::Result<hir::SubroutineVariable> {
+  if (!HasStaticStorage(var)) {
+    return hir::SubroutineVariable{
+        lowerer.AddProceduralVar(frame, body, var, type)};
   }
   auto target = unit_lowerer.ResolveValueTarget(
-      frame, formal, RouteOrigin{.start = FromReader{}, .written = {}},
-      frontend::PointSpanOf(formal.location));
+      frame, var, RouteOrigin{.start = FromReader{}, .written = {}},
+      frontend::PointSpanOf(var.location));
   if (!target) return std::unexpected(std::move(target.error()));
   return std::visit(
       Overloaded{
           [](const hir::RoutedValueRef& ref) {
-            return hir::FormalVariable{ref};
+            return hir::SubroutineVariable{ref};
           },
           [](const hir::NamespaceValueRef& ref) {
-            return hir::FormalVariable{ref};
+            return hir::SubroutineVariable{ref};
           },
-          [](const hir::StaticPropertyRef&) -> hir::FormalVariable {
+          [](const hir::StaticPropertyRef&) -> hir::SubroutineVariable {
             throw InternalError(
-                "FormalVariableOf: a class keeps a formal, though a class "
-                "method is automatic (LRM 8.6) -- please report this as a bug");
+                "SubroutineVariableOf: a class keeps a formal or a result, "
+                "though a class method is automatic (LRM 8.6) -- please report "
+                "this as a bug");
           }},
       *target);
 }
@@ -480,7 +481,7 @@ auto LowerSubroutineDeclImpl(
     auto type = unit_lowerer.InternType(
         formal->getType(), frontend::PointSpanOf(formal->location));
     if (!type) return std::unexpected(std::move(type.error()));
-    auto variable = FormalVariableOf(
+    auto variable = SubroutineVariableOf(
         unit_lowerer, lowerer, body_frame, body, *formal, *type);
     if (!variable) return std::unexpected(std::move(variable.error()));
     params.push_back(
@@ -491,10 +492,13 @@ auto LowerSubroutineDeclImpl(
             .default_evaluator = DefaultEvaluatorOf(unit_lowerer, *formal)});
   }
 
-  std::optional<hir::ProceduralVarId> result_var;
+  std::optional<hir::SubroutineVariable> result_var;
   if (sym.returnValVar != nullptr) {
-    result_var = lowerer.AddProceduralVar(
-        body_frame, body, *sym.returnValVar, *return_type_or);
+    auto variable = SubroutineVariableOf(
+        unit_lowerer, lowerer, body_frame, body, *sym.returnValVar,
+        *return_type_or);
+    if (!variable) return std::unexpected(std::move(variable.error()));
+    result_var = *std::move(variable);
   }
 
   // Base-call args (LRM 8.7) evaluate in the constructor's own frame and can
@@ -675,13 +679,13 @@ auto LowerEvaluatorDecl(
   // has (LRM 13.4.1); one standing as the actual of a formal binding a place
   // names that place, which no variable holds.
   const bool names_a_place = result_direction != hir::ParamDirection::kInput;
-  std::optional<hir::ProceduralVarId> result_var;
+  std::optional<hir::SubroutineVariable> result_var;
   if (!names_a_place) {
-    result_var = body.procedural_vars.Declare();
+    const hir::ProceduralVarId var = body.procedural_vars.Declare();
     body.procedural_vars.Define(
-        *result_var,
-        hir::ProceduralVarDecl{.name = std::nullopt, .type = result_type});
-    root.declarations.push_back(*result_var);
+        var, hir::ProceduralVarDecl{.name = std::nullopt, .type = result_type});
+    root.declarations.push_back(var);
+    result_var = var;
   }
   const slang::ast::Expression* place = ArgLValue(expr);
   const slang::ast::Expression& evaluated = place != nullptr ? *place : expr;

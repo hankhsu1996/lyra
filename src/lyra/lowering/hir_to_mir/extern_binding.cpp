@@ -148,7 +148,8 @@ auto RunDefinition(
     const hir::SubroutineParam& param = declared.params[i];
     const mir::TypeId value = unit_lowerer.TranslateType(param.type);
     const auto named = [&] {
-      return block.Add(LowerFormalVariableExpr(process, frame, param.variable));
+      return block.Add(
+          LowerSubroutineVariableExpr(process, frame, param.variable));
     };
     const auto read = [&] {
       return PathValue(

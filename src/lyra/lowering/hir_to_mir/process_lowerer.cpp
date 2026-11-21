@@ -320,20 +320,22 @@ auto DeclareParameterVar(
 }
 
 // The variables a subroutine's scope declares before its first statement: the
-// formals that are variables of its body and, for a non-void function, its
-// result (LRM 13.4.1).
+// formals and, for a non-void function, the result (LRM 13.4.1) that are
+// variables of its body.
 auto DeclaredAhead(const hir::SubroutineDecl& decl)
     -> std::vector<hir::ProceduralVarId> {
   std::vector<hir::ProceduralVarId> declared;
   declared.reserve(decl.params.size() + 1);
-  for (const auto& param : decl.params) {
-    if (const auto* var = std::get_if<hir::ProceduralVarId>(&param.variable)) {
-      declared.push_back(*var);
-    }
-  }
-  if (decl.result_var.has_value()) {
-    declared.push_back(*decl.result_var);
-  }
+  const auto declare = [&](const hir::SubroutineVariable& variable) {
+    std::visit(
+        Overloaded{
+            [&](hir::ProceduralVarId var) { declared.push_back(var); },
+            [](const hir::RoutedValueRef&) {},
+            [](const hir::NamespaceValueRef&) {}},
+        variable);
+  };
+  for (const auto& param : decl.params) declare(param.variable);
+  if (decl.result_var.has_value()) declare(*decl.result_var);
   return declared;
 }
 
@@ -458,7 +460,7 @@ auto ProcessLowerer::LowerSubroutine(
       const mir::LocalId parameter = bindings.DeclareAnonymous(value_type);
       const AccessPath place{
           .owner = body.Add(
-              LowerFormalVariableExpr(*this, body_frame, param.variable)),
+              LowerSubroutineVariableExpr(*this, body_frame, param.variable)),
           .descent = {}};
       body.AppendStmt(
           mir::ExprStmt{
@@ -505,17 +507,24 @@ auto ProcessLowerer::LowerSubroutine(
     }
   }
 
-  // LRM 13.4.1 implicit result variable. A non-void function's same-name var is
-  // a default-initialized body variable (declared without its source name,
-  // which is the function's own and has to keep resolving to the function for
-  // a self-recursive call): the leading completion-payload component, the value
-  // a fall-through or value-less `return` carries. void functions and tasks
-  // have none.
+  // LRM 13.4.1 implicit result variable: the leading completion-payload
+  // component, the value a fall-through or value-less `return` carries. One the
+  // body declares starts at its default on each call (declared without its
+  // source name, which is the function's own and has to keep resolving to the
+  // function for a self-recursive call); one every call shares (LRM 13.3.2)
+  // keeps what the last call left. void functions and tasks have none.
   if (src.result_var.has_value()) {
-    body_frame.Builder().AppendStmt(LowerVarStart(
-        *this, body_frame, *src.result_var, std::nullopt,
-        DefaultInitialValue(
-            *this, body_frame, src.body.procedural_vars.Get(*src.result_var))));
+    std::visit(
+        Overloaded{
+            [&](hir::ProceduralVarId var) {
+              body_frame.Builder().AppendStmt(LowerVarStart(
+                  *this, body_frame, var, std::nullopt,
+                  DefaultInitialValue(
+                      *this, body_frame, src.body.procedural_vars.Get(var))));
+            },
+            [](const hir::RoutedValueRef&) {},
+            [](const hir::NamespaceValueRef&) {}},
+        *src.result_var);
     result_var_ = src.result_var;
   }
 
@@ -878,10 +887,11 @@ auto ProcessLowerer::BuildReturnPayload(
     components.push_back(*explicit_value);
   } else if (result_var_.has_value()) {
     components.push_back(
-        read(LowerProceduralVarRefExpr(*this, frame, *result_var_)));
+        read(LowerSubroutineVariableExpr(*this, frame, *result_var_)));
   }
-  for (const hir::FormalVariable& output : output_vars_) {
-    components.push_back(read(LowerFormalVariableExpr(*this, frame, output)));
+  for (const hir::SubroutineVariable& output : output_vars_) {
+    components.push_back(
+        read(LowerSubroutineVariableExpr(*this, frame, output)));
   }
   return block.Add(
       mir::Expr{
