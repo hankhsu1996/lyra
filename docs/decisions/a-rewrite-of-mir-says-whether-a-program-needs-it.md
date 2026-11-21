@@ -1,8 +1,8 @@
 # A rewrite of MIR says whether a program needs it
 
 Date: 2026-10-18. Status: accepted; D1 and D3 revised 2026-10-26; why the conversions are MIR's
-re-derived 2026-10-30. Revises the stage `a-process-stopping-only-at-its-loop-head-is-called.md`
-added.
+re-derived 2026-10-30; D3 revised 2026-11-20 for which checks every build makes. Revises the stage
+`a-process-stopping-only-at-its-loop-head-is-called.md` added.
 
 The 2026-10-26 revision: a policy stated on each rewrite let a required rewrite and the phase it
 brings the unit into be two facts. Required is now where a rewrite stands -- inside a conversion
@@ -59,6 +59,25 @@ leaves the stage, unless the command only shows it to a person, and, where a bui
 arrives, after every optional rewrite and on reaching each phase, so a defect is reported against
 what made it; between the rewrites of one conversion a unit is in neither phase, as rustc validates
 at a phase change and Swift commits a SIL stage only once its pipeline is done.
+
+The 2026-11-20 revision. The check every build makes is of what one node or statement states, at a
+cost that follows the unit's size; what holds only across a whole body -- the order operands run in,
+a computation reached once, a move as a local's last use, the bytes a frame keeps together, what a
+block expression yields outliving it, a closure kept past its frame -- is checked where a build asks
+for every check, which the conformance gate and the external designs do on every case. Those checks
+work out again, over all of a body, what a rewrite or the lowering established, and the
+evaluation-order one runs the analysis the rewrite has just run. Measured on VeeR-EH1, lowering to
+LIR, the check as it leaves the stage was 27% of the whole (158G of 581G instructions under
+callgrind, on an unoptimized Lyra). rustc always validates at the change to its final phase, and its
+validator makes the checks it calls "somewhat expensive" only under `-Zvalidate-mir`
+(`rustc_mir_transform/src/validate.rs`), which also asks for validation after every pass; its checks
+that run a dataflow analysis over a body -- which storage is live where -- are a pass of their own
+under `-Zlint-mir` (`rustc_mir_transform/src/lint.rs`). clang leaves LLVM's verifier out of a build
+without assertions (`clang/lib/Driver/ToolChains/Clang.cpp`, `-disable-llvm-verifier`), and LLVM
+calls the costly ones expensive checks, off by default. What the split gives up is a user's own
+design meeting a defect only a whole-body check would find, which then shows as a wrong answer
+rather than as an internal error; north star 1 puts the iteration loop first, and the gate and the
+nightly keep the checks running over every case and every real design.
 
 **D4. Which code a unit holds is stated once, beside the unit.** Every code -- a constructor with
 the nodes it enters its base's constructor with, a class's and the unit's callables, a record's
@@ -163,6 +182,8 @@ library a program links, so each phase is named by the conversion that reaches i
 - `--mir-enable-passes` and `--mir-verify-each` are options of every command that takes a design to
   MIR. Lowering is never kept, and what it produces keys every kept object, so neither needs a key
   of its own.
+- `--mir-verify-each` is also what asks for every check, so the run that places a defect and the run
+  that finds one are the same run.
 - A whole write of a signed vector by its whole select is the vector's own write; the conversion it
   needs is folded where the written value is a constant.
 - Each rewrite is a span of `--time-trace`.

@@ -69,9 +69,9 @@ auto BuildOptions(const ConformancePath& path) -> std::vector<std::string> {
   // failed for. Both want the diagnostic as it was written rather than wrapped
   // in the escape sequences that colour it for a terminal.
   options.emplace_back("--no-color");
-  // Each case's MIR is checked as the lowering states it and after every
-  // rewrite, so a defect is reported against whichever made it rather than
-  // only as the unit leaves the last.
+  // Each case's MIR is put to every check, as the lowering states it and
+  // after every rewrite: what holds only across a whole body is checked only
+  // where a run asks, and a defect is reported against whichever step made it.
   options.emplace_back("--mir-verify-each");
   if (const char* scratch = std::getenv("TEST_TMPDIR");
       scratch != nullptr && *scratch != '\0') {

@@ -111,6 +111,20 @@ auto VerifiesEachStep(VerifierKind verifier) -> bool {
   throw InternalError("mir_transform: unknown verifier kind");
 }
 
+// Which checks each verification makes: every check where the unit is checked
+// after each step, which is a run asking to find a defect, and otherwise what
+// every build checks.
+auto ChecksOf(VerifierKind verifier) -> mir::Checks {
+  switch (verifier) {
+    case VerifierKind::kEachStep:
+      return mir::Checks::kAll;
+    case VerifierKind::kOutput:
+    case VerifierKind::kNone:
+      return mir::Checks::kEveryBuild;
+  }
+  throw InternalError("mir_transform: unknown verifier kind");
+}
+
 // Whether the unit is checked once, as it leaves the last rewrite.
 auto VerifiesOutput(VerifierKind verifier) -> bool {
   switch (verifier) {
@@ -182,7 +196,8 @@ auto TransformBody(
       },
       [](mir::Phase) {},
       [&](mir::Phase phase, std::string_view when) {
-        mir::VerifyBody(unit, phase, at, code, when);
+        mir::VerifyBody(
+            unit, phase, at, code, when, ChecksOf(options.verifier));
       });
   return code;
 }
@@ -209,7 +224,9 @@ auto Transform(
         return true;
       },
       [&](mir::Phase phase) { unit.phase = phase; },
-      [&](mir::Phase, std::string_view when) { mir::Verify(unit, when); });
+      [&](mir::Phase, std::string_view when) {
+        mir::Verify(unit, when, ChecksOf(options.verifier));
+      });
   return unit;
 }
 

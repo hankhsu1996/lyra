@@ -290,9 +290,9 @@ what the construct means.
   completes, as a C++ full-expression's temporaries do; what is wanted afterwards is owned by where
   it went, a variable, a callee, or a deferred effect's closure. A closure the runtime keeps past
   the frame that made it -- a deferred effect, a started body -- refers, without owning, only to
-  storage that lives for the whole run, and the unit's verification refuses any other. Every copy,
-  transfer and end follows from these by one rule, which the lowering to LIR and the C++ target both
-  apply.
+  storage that lives for the whole run, and the unit's verification refuses any other where a build
+  asks for every check. Every copy, transfer and end follows from these by one rule, which the
+  lowering to LIR and the C++ target both apply.
 - Action shapes for constructs that bind behavior to schedule events (always blocks, continuous
   assignments, deferred assertions, concurrent assertions).
 - What decides how a definition is linked, which no node states because it is no fact of the
@@ -509,7 +509,8 @@ suspect, not the analysis (`lowering_organization.md` states this discipline in 
     reaching an object through a class handle, which opens the handle and can fail the design, in
     the unit as it is built as much as once a conversion has made the opening a call. Which
     computations would be harmless to repeat is not stated and not asked: a call with no effect is a
-    call. The unit's verification refuses a body that breaks this, where the unit is produced.
+    call. The unit's verification refuses a body that breaks this, where the unit is produced and a
+    build asks for every check.
 
     _Programming-language consequence: an expression is a tree, and a value used twice has a name.
     This is the relation a compiler's syntax tree has to a value bound once and referred to from
@@ -553,11 +554,17 @@ suspect, not the analysis (`lowering_organization.md` states this discipline in 
   layer below, which has no such consumer. The verification asks of a unit what its phase requires;
   it is verified once, as it leaves the rewrites, since that is the form every consumer reads, and
   on reaching each phase and after each optional rewrite where a build asks; a dump, which a person
-  reads rather than a consumer, shows it unchecked. A rewrite builds a node through the same
-  builders as the lowering, folding included. A consumer cannot tell a node a rewrite built from one
-  the lowering built, so a cost the program's meaning does not decide -- how a process that stops
-  only at the head of its loop is compiled -- is taken out once for both backends, and HIR-to-MIR
-  still states the meaning one way.
+  reads rather than a consumer, shows it unchecked. Every build checks what one node or statement
+  states, at a cost that follows the unit's size; what holds only across a whole body or the unit --
+  the order operands run in, a computation reached once, a move as a local's last use, the bytes a
+  frame keeps together, a closure kept past its frame -- has to be worked out again over all of it,
+  so it is checked where a build asks for every check, as rustc's validator makes its costly checks,
+  and its lint pass its dataflow analyses, only where a build asks, and LLVM builds its expensive
+  checks only where asked. A rewrite builds a node through the same builders as the lowering,
+  folding included. A consumer cannot tell a node a rewrite built from one the lowering built, so a
+  cost the program's meaning does not decide -- how a process that stops only at the head of its
+  loop is compiled -- is taken out once for both backends, and HIR-to-MIR still states the meaning
+  one way.
 - `binding_and_capture.md` owns the lexical reference contract MIR's value references obey: a
   reference names a binding materialized in its own callable body, and a binding crosses a closure
   boundary only as a captured environment field. MIR carries no navigation distance to a

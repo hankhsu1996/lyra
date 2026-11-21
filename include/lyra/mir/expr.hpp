@@ -428,8 +428,9 @@ struct BorrowExpr {
 // it, so the place owns nothing afterwards, keeps no object in use, and ends
 // with nothing to release. `Expr::type` is the operand's type -- a move changes
 // how ownership crosses, not the value. The unit's verification takes it only
-// of a whole local, as that local's last use on every way that reaches the
-// local's end, run exactly once there. An ordinary read is a copy.
+// of a whole local and, where a build asks for every check, as that local's
+// last use on every way that reaches the local's end, run exactly once there.
+// An ordinary read is a copy.
 //
 // Operand must be a type whose value can be transferred. Alias-style handle
 // types carry no ownership to move, so lowering never wraps them here -- a

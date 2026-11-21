@@ -142,8 +142,9 @@ puts it, and only one too large for a frame is held apart. What the library buil
 machine data are as many as the calls the source wrote, and a frame keeps them as the target's own
 code keeps them. A variable's cell keeps its value inline, so a cell counts that value, and past the
 budget the cell itself is held through a box -- whether the frame keeps the holder, apart from
-whether the holder keeps the value inline. The unit's verification refuses a body whose frame keeps
-more. The budget is a constant of the representation, beside the bound on one value.
+whether the holder keeps the value inline. Where a build asks for every check, the unit's
+verification refuses a body whose frame keeps more. The budget is a constant of the representation,
+beside the bound on one value.
 
 So no width a design declares reaches a frame, and the values a body keeps past the budget cost it
 an address each. That bounds what MIR states and not the target's whole frame, which still follows
