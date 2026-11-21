@@ -569,10 +569,22 @@ auto CodeGenValueTypes::GetAddrOfLaidOutType(lir::TypeId type)
   }
   const FieldsShape fields = types_->FieldsOf(type);
   llvm::Constant* steps = llvm::ConstantPointerNull::get(ptr);
-  if (stated.Is<lir::UnpackedArrayType>()) {
-    steps = owner_->LibraryData(kFixedArrayStepWitnessTableSymbol);
-  } else if (std::holds_alternative<const ProductLayout*>(fields)) {
-    steps = owner_->LibraryData(kTupleStepWitnessTableSymbol);
+  switch (ValueTypeKindOf(stated)) {
+    case value::ValueTypeKind::kFixedArray:
+      steps = owner_->LibraryData(kFixedArrayStepWitnessTableSymbol);
+      break;
+    // A tuple's record is the one a product laid out by its own type opens; a
+    // container is a product of its core, and answers whole.
+    case value::ValueTypeKind::kOther:
+      if (std::holds_alternative<const ProductLayout*>(fields)) {
+        steps = owner_->LibraryData(kTupleStepWitnessTableSymbol);
+      }
+      break;
+    case value::ValueTypeKind::kIntegral:
+    case value::ValueTypeKind::kDynamicArray:
+    case value::ValueTypeKind::kQueue:
+    case value::ValueTypeKind::kAssociativeArray:
+      break;
   }
   witnesses.Place(OffsetInTable(&value::ValueWitnessTable::steps), steps);
   llvm::Constant* const table_data = std::move(witnesses).Build();
