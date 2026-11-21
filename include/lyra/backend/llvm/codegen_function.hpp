@@ -341,6 +341,10 @@ class CodeGenFunction {
   auto LoadPlace(const lir::Place& place, lir::TypeId result_type)
       -> diag::Result<llvm::Value*>;
   auto LowerStore(const lir::StoreInstr& store) -> diag::Result<llvm::Value*>;
+  // Puts `operand` at `out` as a fill of zeros where it is a constant of no
+  // bits but zeros and of a type that is its bytes; answers whether it did.
+  auto FilledWithZeros(
+      const lir::Operand& operand, lir::TypeId type, llvm::Value* out) -> bool;
   auto LowerUse(const lir::UseInstr& use, const DestinationRef& destination)
       -> diag::Result<llvm::Value*>;
   // What a place ending in steps selecting bits holds: the bits, read from the

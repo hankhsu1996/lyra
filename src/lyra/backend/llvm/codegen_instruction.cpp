@@ -32,10 +32,12 @@
 #include "lyra/lir/integral_constant.hpp"
 #include "lyra/lir/place_query.hpp"
 #include "lyra/lir/type.hpp"
+#include "lyra/lir/value_step.hpp"
 #include "lyra/runtime/object_layout.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/declared_member_storage.hpp"
 #include "lyra/support/float_width.hpp"
+#include "lyra/support/layout.hpp"
 #include "lyra/support/runtime_object.hpp"
 #include "lyra/support/value_domain.hpp"
 #include "lyra/support/value_step.hpp"
@@ -432,6 +434,26 @@ auto CodeGenFunction::LowerStore(const lir::StoreInstr& store)
       *form);
 }
 
+// Puts `operand` into the storage at `out`, a value of `type`, as a fill of
+// zeros where it is a constant every byte of which is zero and the type is its
+// bytes, rather than a copy of data the module would hold, as clang stores an
+// all-zero initializer (`emitStoresForConstant` in
+// `clang/lib/CodeGen/CGDecl.cpp`). Answers whether it did.
+auto CodeGenFunction::FilledWithZeros(
+    const lir::Operand& operand, lir::TypeId type, llvm::Value* out) -> bool {
+  const auto* constant = std::get_if<lir::ConstantRef>(&operand);
+  if (constant == nullptr ||
+      !std::holds_alternative<lir::TrivialStep>(
+          lir::StepOf(module_->Unit(), type, support::ValueStep::kCopy)) ||
+      !module_->IsZeroConstant(constant->constant)) {
+    return false;
+  }
+  const support::Layout layout = module_->Types().LayoutOf(type).layout;
+  builder_.CreateMemSet(
+      out, builder_.getInt8(0), layout.size, llvm::Align(layout.align));
+  return true;
+}
+
 // A value moved where an assignment puts it: into a transient it is the one
 // value still, as rustc moves an operand into an SSA local; into storage, one
 // lying in storage moves there and nothing is left behind where it was made,
@@ -439,6 +461,11 @@ auto CodeGenFunction::LowerStore(const lir::StoreInstr& store)
 auto CodeGenFunction::LowerUse(
     const lir::UseInstr& use, const DestinationRef& destination)
     -> diag::Result<llvm::Value*> {
+  if (const auto* place = std::get_if<PlaceRef>(&destination);
+      place != nullptr &&
+      FilledWithZeros(use.operand, place->type, place->address)) {
+    return place->address;
+  }
   auto value = LowerOperand(use.operand);
   if (!value) {
     return value;
@@ -1771,20 +1798,26 @@ auto CodeGenFunction::LowerOrdinaryCall(
             return nullptr;
           },
           [&](const lir::CopyValueTarget&) -> Lowered {
+            llvm::Value* const out = EnsureDestination(destination);
+            if (FilledWithZeros(call.args.at(0), result_type, out)) {
+              return out;
+            }
             auto copied = LowerOperand(call.args.at(0));
             if (!copied) {
               return std::unexpected(std::move(copied.error()));
             }
-            return CopyValue(
-                result_type, *copied, EnsureDestination(destination));
+            return CopyValue(result_type, *copied, out);
           },
           [&](const lir::RelocateValueTarget&) -> Lowered {
+            llvm::Value* const out = EnsureDestination(destination);
+            if (FilledWithZeros(call.args.at(0), result_type, out)) {
+              return out;
+            }
             auto relocated = LowerOperand(call.args.at(0));
             if (!relocated) {
               return std::unexpected(std::move(relocated.error()));
             }
-            return RelocateValue(
-                result_type, *relocated, EnsureDestination(destination));
+            return RelocateValue(result_type, *relocated, out);
           },
           [&](const lir::ValueCellTarget& t) { return called(t); },
           [&](const lir::OpenWriteTarget& t) { return called(t); },
