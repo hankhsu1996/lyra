@@ -766,8 +766,9 @@ void RegisterCliOptions(slang::CommandLine& cmd, CliOptions& opts) {
       "<+Name|-Name,...>");
   cmd.add(
       "--mir-verify-each", opts.mir_verify_each,
-      "check MIR as lowered, after every optional rewrite and on reaching "
-      "each phase, rather than once after the last");
+      "check MIR with every check, as lowered, after every optional rewrite "
+      "and on reaching each phase, rather than with what every build checks, "
+      "once after the last");
 }
 
 auto SplitAtSeparator(std::span<char* const> raw) -> SplitArgv {

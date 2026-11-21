@@ -172,7 +172,9 @@ auto LyraCommand(
 // The build of a case, from the directory its declaration is written to, with
 // the front end's `options` and Lyra's `build_options`. A design of this size
 // draws warnings by the thousand, and what stops it is an error, so only
-// errors are asked for.
+// errors are asked for. Its MIR is put to every check, as each conformance
+// case's is, since a real design reaches shapes no case writes and what holds
+// only across a whole body is checked where a run asks for it.
 auto BuildCommand(
     const std::filesystem::path& lyra, const std::vector<std::string>& options,
     const std::vector<std::string>& build_options) -> std::string {
@@ -181,8 +183,8 @@ auto BuildCommand(
   return LyraCommand(
       lyra,
       std::format(
-          "build --backend llvm --progress=none -Wnone -j {} --cache-dir cache "
-          "-o sim",
+          "build --backend llvm --progress=none -Wnone --mir-verify-each -j {} "
+          "--cache-dir cache -o sim",
           kBuildWidth),
       given);
 }

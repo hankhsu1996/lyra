@@ -54,14 +54,14 @@
 namespace lyra::mir {
 namespace {
 
-// Checks `unit` as it would be held in `phase`.
-void VerifyIn(Phase phase, CompilationUnit unit) {
+// Checks `unit` as it would be held in `phase`, making `checks`.
+void VerifyIn(Phase phase, CompilationUnit unit, Checks checks = Checks::kAll) {
   unit.phase = phase;
-  mir::Verify(unit, "under test");
+  mir::Verify(unit, "under test", checks);
 }
 
 // Checks `unit` as every backend reads it, which is the phase holding it to
-// the most.
+// the most, making every check.
 void Verify(const CompilationUnit& unit) {
   VerifyIn(Phase::kLegalized, unit);
 }
@@ -1373,6 +1373,7 @@ TEST(MirVerifyTest, AMoveIsTheLastUseOfAWholeLocal) {
     kNamedBefore,
     kNamedFirstInRunOrder,
     kInABlockStatement,
+    kNamedAfterItsBlock,
     kNamedInTheMovingStatement,
     kNamedInItsBlocksValue,
     kNamedAfter,
@@ -1380,6 +1381,7 @@ TEST(MirVerifyTest, AMoveIsTheLastUseOfAWholeLocal) {
     kAddressKeptInANestedBlock,
     kAddressKeptInATuple,
     kAddressAssigned,
+    kAddressAssignedInABlock,
     kUnderAnArm,
     kInABranch,
     kInALoopBody,
@@ -1491,23 +1493,47 @@ TEST(MirVerifyTest, AMoveIsTheLastUseOfAWholeLocal) {
                                                  u.builtins.machine_bool})}},
                         .type = pair})});
       }
-      if (shape == Shape::kAddressAssigned) {
-        const LocalId kept = code.locals.Add(LocalDecl{.type = pointer});
+      // A tuple holding the moved local's address beside a flag: a holder a
+      // write may change, as no local referring to storage is.
+      const TypeId kept_pair = u.types.Intern(
+          Type{TupleType{.elements = {pointer, u.builtins.machine_bool}}});
+      const auto assign_address = [&](Builder at, LocalId kept) {
+        const ExprId address = at.Add(
+            Expr{
+                .data =
+                    AddressOfExpr{
+                        .operand = at.Add(MakeLocalRefExpr(moved, type))},
+                .type = pointer});
+        const ExprId flag = at.Add(
+            Expr{.data = NullLiteral{}, .type = u.builtins.machine_bool});
+        return at.Add(
+            Expr{
+                .data =
+                    AssignExpr{
+                        .target = at.Add(MakeLocalRefExpr(kept, kept_pair)),
+                        .value = at.Add(
+                            Expr{
+                                .data = CompositeExpr{.parts = {address, flag}},
+                                .type = kept_pair})},
+                .type = u.builtins.void_type});
+      };
+      if (shape == Shape::kAddressAssigned ||
+          shape == Shape::kAddressAssignedInABlock) {
+        const LocalId kept = code.locals.Add(LocalDecl{.type = kept_pair});
         body.AppendStmt(
             LocalDeclStmt{
                 .target = kept,
                 .init =
-                    body.Add(Expr{.data = NullLiteral{}, .type = pointer})});
-        body.AppendStmt(
-            ExprStmt{
-                .expr = body.Add(
-                    Expr{
-                        .data =
-                            AssignExpr{
-                                .target =
-                                    body.Add(MakeLocalRefExpr(kept, pointer)),
-                                .value = address_of_moved()},
-                        .type = u.builtins.void_type})});
+                    body.Add(Expr{.data = NullLiteral{}, .type = kept_pair})});
+        if (shape == Shape::kAddressAssigned) {
+          body.AppendStmt(ExprStmt{.expr = assign_address(body, kept)});
+        } else {
+          Block nested;
+          Builder nested_at(nested, diag::SourceSpan{});
+          nested_at.AppendStmt(
+              ExprStmt{.expr = assign_address(nested_at, kept)});
+          body.AppendStmt(BlockStmt{.scope = body.AddScope(std::move(nested))});
+        }
       }
       if (shape == Shape::kNamedInTheMovingStatement) {
         Block steps;
@@ -1530,6 +1556,7 @@ TEST(MirVerifyTest, AMoveIsTheLastUseOfAWholeLocal) {
         return;
       }
       const bool inside = shape == Shape::kInABlockStatement ||
+                          shape == Shape::kNamedAfterItsBlock ||
                           shape == Shape::kInABranch ||
                           shape == Shape::kInALoopBody;
       Block inner;
@@ -1568,7 +1595,8 @@ TEST(MirVerifyTest, AMoveIsTheLastUseOfAWholeLocal) {
                 .condition = condition,
                 .scope = body.AddScope(std::move(inner))});
       }
-      if (shape == Shape::kInABlockStatement) {
+      if (shape == Shape::kInABlockStatement ||
+          shape == Shape::kNamedAfterItsBlock) {
         body.AppendStmt(BlockStmt{.scope = body.AddScope(std::move(inner))});
       }
       if (shape == Shape::kInABranch) {
@@ -1580,7 +1608,7 @@ TEST(MirVerifyTest, AMoveIsTheLastUseOfAWholeLocal) {
                 .then_scope = body.AddScope(std::move(inner)),
                 .else_scope = std::nullopt});
       }
-      if (shape == Shape::kNamedAfter) {
+      if (shape == Shape::kNamedAfter || shape == Shape::kNamedAfterItsBlock) {
         body.AppendStmt(ExprStmt{.expr = copy_of_moved(body)});
       }
       // Held last by the block, run second, before the move.
@@ -1602,9 +1630,11 @@ TEST(MirVerifyTest, AMoveIsTheLastUseOfAWholeLocal) {
       "names it again in the statement that moves it");
   ExpectRefused(moving(Shape::kNamedInItsBlocksValue), "names it again");
   ExpectRefused(moving(Shape::kNamedAfter), "names it again after the move");
+  ExpectRefused(
+      moving(Shape::kNamedAfterItsBlock), "names it again after the move");
   for (const Shape kept :
        {Shape::kAddressKept, Shape::kAddressKeptInATuple,
-        Shape::kAddressAssigned}) {
+        Shape::kAddressAssigned, Shape::kAddressAssignedInABlock}) {
     ExpectRefused(moving(kept), "stores an address of its storage in a value");
   }
   for (const Shape not_once :
@@ -1613,6 +1643,156 @@ TEST(MirVerifyTest, AMoveIsTheLastUseOfAWholeLocal) {
     ExpectRefused(
         moving(not_once),
         "a move not run exactly once through its local's block");
+  }
+
+  // A loop's induction variable lives as long as the loop's body, so an
+  // address of a local the body declares, kept in it, reaches that local
+  // after its move.
+  const CompilationUnit kept_by_the_loop = UnitWithCode([](CompilationUnit& u,
+                                                           CallableCode& code) {
+    const TypeId type = u.builtins.int_type;
+    const TypeId pointer =
+        BorrowedPointerTo(u.types, type, Mutability::kMutable);
+    const TypeId holder = u.types.Intern(
+        Type{TupleType{.elements = {pointer, u.builtins.machine_bool}}});
+    const LocalId cursor = code.locals.Add(LocalDecl{.type = holder});
+    const LocalId moved = code.locals.Add(LocalDecl{.type = type});
+    const LocalId taker = code.locals.Add(LocalDecl{.type = type});
+    Builder body(code.Body(), diag::SourceSpan{});
+    Block each;
+    Builder each_at(each, diag::SourceSpan{});
+    each_at.AppendStmt(
+        LocalDeclStmt{
+            .target = moved,
+            .init = each_at.Add(Expr{.data = NullLiteral{}, .type = type})});
+    const ExprId address = each_at.Add(
+        Expr{
+            .data =
+                AddressOfExpr{
+                    .operand = each_at.Add(MakeLocalRefExpr(moved, type))},
+            .type = pointer});
+    const ExprId flag = each_at.Add(
+        Expr{.data = NullLiteral{}, .type = u.builtins.machine_bool});
+    each_at.AppendStmt(
+        ExprStmt{
+            .expr = each_at.Add(
+                Expr{
+                    .data =
+                        AssignExpr{
+                            .target =
+                                each_at.Add(MakeLocalRefExpr(cursor, holder)),
+                            .value = each_at.Add(
+                                Expr{
+                                    .data =
+                                        CompositeExpr{.parts = {address, flag}},
+                                    .type = holder})},
+                    .type = u.builtins.void_type})});
+    each_at.AppendStmt(
+        LocalDeclStmt{
+            .target = taker,
+            .init = each_at.Add(
+                Expr{
+                    .data =
+                        MoveExpr{
+                            .operand =
+                                each_at.Add(MakeLocalRefExpr(moved, type))},
+                    .type = type})});
+    body.AppendStmt(
+        ForStmt{
+            .init = {ForInitDecl{
+                .induction_var = cursor,
+                .init = body.Add(Expr{.data = NullLiteral{}, .type = holder})}},
+            .condition = std::nullopt,
+            .step = {},
+            .scope = body.AddScope(std::move(each))});
+  });
+  ExpectRefused(
+      kept_by_the_loop, "stores an address of its storage in a value");
+
+  // A move is checked against the whole body around it, which every build
+  // leaves to a run that asks for every check.
+  for (const Shape broken :
+       {Shape::kNamedAfter, Shape::kAddressKept, Shape::kInALoopBody}) {
+    EXPECT_NO_THROW(
+        VerifyIn(Phase::kLegalized, moving(broken), Checks::kEveryBuild));
+  }
+}
+
+// What one node or statement states is checked in every build; what holds only
+// across a whole body -- a computation reached once, an evaluation order a
+// target cannot reorder -- is checked where a run asks for every check, as
+// LLVM leaves its expensive checks to a build that asks for them.
+TEST(MirVerifyTest, WhatHoldsAcrossABodyIsCheckedWhereEveryCheckIsAsked) {
+  const CompilationUnit reached_twice =
+      UnitWithBody([](const CompilationUnit& u, Builder body) {
+        const ExprId computed = AddComputation(u, body);
+        body.AppendStmt(ExprStmt{.expr = AddSum(u, body, computed, computed)});
+      });
+  EXPECT_NO_THROW(
+      VerifyIn(Phase::kLegalized, reached_twice, Checks::kEveryBuild));
+  ExpectRefused(reached_twice, "one run evaluates it at two of them");
+
+  const CompilationUnit reordered = UnitWithBody([](const CompilationUnit& u,
+                                                    Builder body) {
+    body.AppendStmt(
+        ExprStmt{.expr = AddSum(u, body, AddCall(u, body), AddCall(u, body))});
+  });
+  EXPECT_NO_THROW(VerifyIn(Phase::kLegalized, reordered, Checks::kEveryBuild));
+  ExpectRefused(
+      reordered,
+      "an operand a target could run in the other order to another answer");
+
+  // Locals each small enough for a frame, together more than one keeps.
+  const CompilationUnit crowded =
+      UnitWithCode([](CompilationUnit& u, CallableCode& code) {
+        const TypeId small = u.types.Intern(
+            Type{UnpackedArrayType{
+                .element_type = u.builtins.int_type, .count = 128}});
+        for (int at = 0; at < 40; ++at) {
+          code.locals.Add(LocalDecl{.type = small});
+        }
+      });
+  EXPECT_NO_THROW(VerifyIn(Phase::kLegalized, crowded, Checks::kEveryBuild));
+  ExpectRefused(crowded, "bytes of values in its frame, more than");
+}
+
+// What a move takes is a whole local, which one node states, so every build
+// refuses a move of part of one.
+TEST(MirVerifyTest, EveryBuildRefusesAMoveOfPartOfALocal) {
+  const CompilationUnit unit =
+      UnitWithCode([](CompilationUnit& u, CallableCode& code) {
+        const TypeId type = u.builtins.int_type;
+        const TypeId pair =
+            u.types.Intern(Type{TupleType{.elements = {type, type}}});
+        const LocalId local = code.locals.Add(LocalDecl{.type = pair});
+        const LocalId taker = code.locals.Add(LocalDecl{.type = type});
+        Builder body(code.Body(), diag::SourceSpan{});
+        body.AppendStmt(
+            LocalDeclStmt{
+                .target = local,
+                .init = body.Add(Expr{.data = NullLiteral{}, .type = pair})});
+        const ExprId part = body.Add(
+            Expr{
+                .data =
+                    FieldAccessExpr{
+                        .receiver = body.LocalPlace(local, pair),
+                        .field =
+                            ComponentFieldTarget{
+                                .position = base::ComponentIndex{0}}},
+                .type = type});
+        body.AppendStmt(
+            LocalDeclStmt{
+                .target = taker,
+                .init = body.Add(
+                    Expr{.data = MoveExpr{.operand = part}, .type = type})});
+      });
+  try {
+    VerifyIn(Phase::kLegalized, unit, Checks::kEveryBuild);
+    FAIL() << "a move of part of a local was accepted";
+  } catch (const InternalError& error) {
+    const std::string message = error.what();
+    EXPECT_NE(message.find("a move of part of a value"), std::string::npos)
+        << message;
   }
 }
 

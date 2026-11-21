@@ -55,9 +55,10 @@ struct PassOverride {
 };
 
 // When the unit is checked, as LLVM's `opt` names the same choice: once, as
-// it leaves the last rewrite; as lowered, after every optional rewrite and on
-// reaching each phase; or not at all, which only a command showing the unit to
-// a person asks for.
+// it leaves the last rewrite, for what every build checks; as lowered, after
+// every optional rewrite and on reaching each phase, for every check, which is
+// a run asking to find a defect; or not at all, which only a command showing
+// the unit to a person asks for.
 enum class VerifierKind : std::uint8_t { kNone, kOutput, kEachStep };
 
 // What a build asks of the rewrites beyond running them as the pipeline states:

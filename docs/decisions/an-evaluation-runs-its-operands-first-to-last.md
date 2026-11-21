@@ -1,6 +1,7 @@
 # An evaluation runs its operands first to last
 
-Date: 2026-10-28. Status: accepted.
+Date: 2026-10-28. Status: accepted; D2's verification made where a build asks for every check,
+2026-11-20.
 
 ## The requirement
 
@@ -47,38 +48,38 @@ receiver formed first lacks here
 ([a-formal-default-is-evaluated-by-its-callee](a-formal-default-is-evaluated-by-its-callee.md) D2).
 
 **D2. The conversion into the legalized phase leaves no node with two operands a target could run in
-the other order to another answer, and the verification refuses a unit that does.** The test is the
-shape of the evaluation, never whether two operands conflict, and it runs both ways: an operand
-needs a temporary where what runs after it could change what it evaluates to, and where its side
-effects could change what a later one evaluates to. A node has side effects unless it is a constant,
-a read, a reference formed, an operation over values, a construction or the making of an execution
-(D4), made of nodes without; a write, a suspension and every other call have them. What a node
-evaluates to can be changed by the side effects of what runs beside it where it reads storage other
-than the frame's own locals, or is a call with side effects, a write, a suspension, a choice or a
-run of steps; a read of a local of the frame whose address nothing takes -- which every temporary
-the conversion declares is -- can be changed only by what beside it mutates that local, by writing,
-moving out of, lending or handing it to a call as storage. A local's address is taken by a borrow,
-an address-of, a call binding a reference to it, and a call answering a reference through which it
-can be written, as rustc's `borrowed_locals` gathers them; what a box a local holds owns counts as
-that local. Taking ahead holds the operand in a temporary, as rustc's builder takes each operand
-into one "so that we capture the value of `x` at this time"; it is read back as a copy where a copy
-holds its value entire, as rustc consumes a `Copy` place by `Operand::Copy`, and moved where a copy
-would be a second owner or nothing holds one -- a box, a payload built for the call that reads it.
-Which of the two is a fact of the operand's type, never of what made it. Otherwise -- a closure,
-whose captures' references were handed out where it was made, a value standing for storage
-elsewhere, a run of machine values built where it is kept -- what inside it has to run first is
-taken ahead in its place, held against what runs after the whole of it, and the rest is formed where
-it stands. A value a borrow refers to, or an operation is entered on, that the evaluation makes is
-made first in a temporary the borrow or the operation then reaches, so a view answered into it --
-the C string of a string -- lasts as long as the evaluation's temporaries, as a C++ temporary lasts
-to the end of its full-expression. What each node does is asked once, and each node's operands are
-held against what runs after them in one pass from the last back, which the verification repeats
-over the form. A call a suspension waits on stands at the top of its statement, so where one of its
-arguments has to be taken ahead, the statement runs after the steps declaring the temporary: inside
-a block of its own, or, where the statement declares a local, just before it in its own block, since
-a block around a declaration would end the name it declares. A target is then free to run what
-remains in any order its language gives: C++ needs nothing of its own, and the execution backend has
-no order to choose.
+the other order to another answer, and the verification refuses a unit that does where a build asks
+for every check.** The test is the shape of the evaluation, never whether two operands conflict, and
+it runs both ways: an operand needs a temporary where what runs after it could change what it
+evaluates to, and where its side effects could change what a later one evaluates to. A node has side
+effects unless it is a constant, a read, a reference formed, an operation over values, a
+construction or the making of an execution (D4), made of nodes without; a write, a suspension and
+every other call have them. What a node evaluates to can be changed by the side effects of what runs
+beside it where it reads storage other than the frame's own locals, or is a call with side effects,
+a write, a suspension, a choice or a run of steps; a read of a local of the frame whose address
+nothing takes -- which every temporary the conversion declares is -- can be changed only by what
+beside it mutates that local, by writing, moving out of, lending or handing it to a call as storage.
+A local's address is taken by a borrow, an address-of, a call binding a reference to it, and a call
+answering a reference through which it can be written, as rustc's `borrowed_locals` gathers them;
+what a box a local holds owns counts as that local. Taking ahead holds the operand in a temporary,
+as rustc's builder takes each operand into one "so that we capture the value of `x` at this time";
+it is read back as a copy where a copy holds its value entire, as rustc consumes a `Copy` place by
+`Operand::Copy`, and moved where a copy would be a second owner or nothing holds one -- a box, a
+payload built for the call that reads it. Which of the two is a fact of the operand's type, never of
+what made it. Otherwise -- a closure, whose captures' references were handed out where it was made,
+a value standing for storage elsewhere, a run of machine values built where it is kept -- what
+inside it has to run first is taken ahead in its place, held against what runs after the whole of
+it, and the rest is formed where it stands. A value a borrow refers to, or an operation is entered
+on, that the evaluation makes is made first in a temporary the borrow or the operation then reaches,
+so a view answered into it -- the C string of a string -- lasts as long as the evaluation's
+temporaries, as a C++ temporary lasts to the end of its full-expression. What each node does is
+asked once, and each node's operands are held against what runs after them in one pass from the last
+back, which the verification repeats over the form where a build asks for every check. A call a
+suspension waits on stands at the top of its statement, so where one of its arguments has to be
+taken ahead, the statement runs after the steps declaring the temporary: inside a block of its own,
+or, where the statement declares a local, just before it in its own block, since a block around a
+declaration would end the name it declares. A target is then free to run what remains in any order
+its language gives: C++ needs nothing of its own, and the execution backend has no order to choose.
 
 **D3. Every call has side effects, whatever it calls.** No fact about what a library entry does
 decides an order: a call of the library has side effects as much as a call of the program's own code

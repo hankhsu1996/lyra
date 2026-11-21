@@ -1657,22 +1657,23 @@ the detail lives in the entry itself.
   -- the stage's rewrites are one ordered list, in which the conversion from the built phase into
   the legalized one is required and every other rewrite is optional and runs in every build unless a
   build skips it by name; a unit records its phase, the verification asks what that phase requires,
-  and a build may have the unit checked after each optional rewrite and on reaching each phase;
-  which code a unit holds is stated once beside the unit, a rewrite builds through MIR's own
-  builders, and a value handed to something of a type it states is of that type. Each rewrite
-  walking the unit itself, optional rewrites only in an optimized build, and checking every rewrite
-  in every build are rejected.
+  and a build may have the unit put to every check after each optional rewrite and on reaching each
+  phase, where every build checks what each node and statement states; which code a unit holds is
+  stated once beside the unit, a rewrite builds through MIR's own builders, and a value handed to
+  something of a type it states is of that type. Each rewrite walking the unit itself, optional
+  rewrites only in an optimized build, and checking every rewrite in every build are rejected.
 - [an-evaluation-runs-its-operands-first-to-last](an-evaluation-runs-its-operands-first-to-last.md)
   -- a node's operands run as MIR lists them, a write's value before its target and a call's
   arguments before the object it is entered on, and the legalized phase leaves no two operands a
   target could run in the other order to another answer -- one whose value what runs after it could
   change, or whose side effects could change a later one, is taken ahead, whole or by what inside it
-  has to run first -- which the verification checks, so every target runs one order whatever its
-  language leaves open; the test is the shape of the evaluation, every call is taken to run code,
-  and no fact about a library entry decides an order. Each backend ordering for itself, any order
-  the standard allows, stating on each entry what it reads and changes, asking whether two operands
-  conflict, taking every operand into a temporary, leaving an operand that cannot be held where it
-  stands, the receiver first and a write's target first are rejected.
+  has to run first -- which the verification checks where a build asks for every check, so every
+  target runs one order whatever its language leaves open; the test is the shape of the evaluation,
+  every call is taken to run code, and no fact about a library entry decides an order. Each backend
+  ordering for itself, any order the standard allows, stating on each entry what it reads and
+  changes, asking whether two operands conflict, taking every operand into a temporary, leaving an
+  operand that cannot be held where it stands, the receiver first and a write's target first are
+  rejected.
 - [activation-disposition](activation-disposition.md) -- an activation has one authoritative
   disposition (Executing / Runnable / Blocked / Suspended(saved) / Terminal); a wait is a retainable
   pending capability distinct from where the activation is parked, supplied uniformly by each

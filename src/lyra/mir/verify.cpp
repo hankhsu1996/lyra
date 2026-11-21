@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <format>
 #include <iterator>
+#include <limits>
 #include <map>
 #include <optional>
 #include <set>
@@ -442,37 +443,43 @@ void VerifyNoRunEvaluatesTwice(
 void VerifyPlacesAreRead(
     const CompilationUnit& unit, const Block& block,
     std::span<const ExprId> entered_at, const auto& describe) {
-  const auto as_value = [&](ExprId id, std::string_view taker) {
+  // `taker` says what takes the operand, and is asked only once there is
+  // something to report, since the check runs over every node of every body.
+  const auto as_value = [&](ExprId id, const auto& taker) {
     if (IsReadablePlace(unit.types, block.exprs.Get(id))) {
       throw InternalError(
           std::format(
               "mir verify: in {}, {} takes {} (expression {} of its block) as "
               "a value, and a place stands as one only under a read",
-              describe(), taker, Describe(block.exprs.Get(id).data), id.value));
+              describe(), taker(), Describe(block.exprs.Get(id).data),
+              id.value));
     }
   };
-  const auto as_storage = [&](ExprId id, std::string_view taker) {
+  const auto as_storage = [&](ExprId id, const auto& taker) {
     if (std::holds_alternative<CopyExpr>(block.exprs.Get(id).data)) {
       throw InternalError(
           std::format(
               "mir verify: in {}, {} takes a read (expression {} of its "
               "block) where it takes the storage itself, so it would act on a "
               "copy",
-              describe(), taker, id.value));
+              describe(), taker(), id.value));
     }
+  };
+  const auto named = [](std::string_view taker) {
+    return [taker] { return std::string(taker); };
   };
   for (const StmtId id : block.root_stmts) {
     ForEachExpr(block.stmts.Get(id).data, [&](ExprId operand) {
-      as_value(operand, "a statement");
+      as_value(operand, named("a statement"));
     });
   }
   for (const ExprId id : entered_at) {
-    as_value(id, "a block expression");
+    as_value(id, named("a block expression"));
   }
   std::vector<std::vector<ExprId>> entries(block.child_scopes.size());
   for (const ExprId id : block.exprs.Ids()) {
     const ExprData& data = block.exprs.Get(id).data;
-    const std::string taker = Describe(data);
+    const auto taker = [&data] { return Describe(data); };
     ForEachOperandAsTaken(
         unit.types, block.exprs.Get(id), [&](ExprId operand, OperandUse use) {
           switch (use) {
@@ -491,7 +498,7 @@ void VerifyPlacesAreRead(
                         "mir verify: in {}, {} takes {} (expression {} of its "
                         "block), which names no place or names storage with no "
                         "value to read",
-                        describe(), taker,
+                        describe(), taker(),
                         Describe(block.exprs.Get(operand).data),
                         operand.value));
               }
@@ -2604,26 +2611,39 @@ void VerifyOrderIsExplicit(
   }
 }
 
-// No body keeps a value too large for a frame in one, nor values together
-// larger than a frame may keep of them -- the locals it declares and what its
-// expressions make and read: every such value is held through a box.
+// No body keeps a value too large for a frame in one -- a local it declares, or
+// what its expressions make and read: every such value is held through a box.
 void VerifyFramesHoldNoLargeValue(
     const CompilationUnit& unit, const CallableCode& code,
     const auto& describe) {
-  std::size_t kept = 0;
-  for (const LocalId id : code.locals.Ids()) {
-    const TypeId type = code.locals.Get(id).type;
-    if (IsTooLargeForAFrame(unit, type)) {
+  for (const LocalDecl& local : code.locals) {
+    if (IsTooLargeForAFrame(unit, local.type)) {
       throw InternalError(
           std::format(
               "mir verify: {} declares a local too large for a frame -- please "
               "report this as a bug",
               describe()));
     }
+  }
+  if (code.body.has_value()) {
+    VerifyLargeValuesLieInStorage(
+        unit, *code.body, !unit.types.Get(code.result_type).Is<CoroutineType>(),
+        {}, describe);
+  }
+}
+
+// No body keeps values together larger than a frame may keep of them -- the
+// locals it declares and what its expressions make and read -- which is a sum
+// over the whole body.
+void VerifyFramesHoldNoMoreThanTheBudget(
+    const CompilationUnit& unit, const CallableCode& code,
+    const auto& describe) {
+  std::size_t kept = 0;
+  for (const LocalId id : code.locals.Ids()) {
     // A parameter lies where the signature the source wrote puts it, which no
     // frame chooses.
     if (!std::ranges::contains(code.params, id)) {
-      kept += FrameBytesOf(unit, type);
+      kept += FrameBytesOf(unit, code.locals.Get(id).type);
     }
   }
   if (code.body.has_value()) {
@@ -2635,11 +2655,6 @@ void VerifyFramesHoldNoLargeValue(
             "mir verify: {} keeps {} bytes of values in its frame, more than "
             "{} -- please report this as a bug",
             describe(), kept, value::kMaxFrameBytes));
-  }
-  if (code.body.has_value()) {
-    VerifyLargeValuesLieInStorage(
-        unit, *code.body, !unit.types.Get(code.result_type).Is<CoroutineType>(),
-        {}, describe);
   }
 }
 
@@ -2909,82 +2924,182 @@ auto HoldsAnAddress(const TypePool& types, TypeId type) -> bool {
   return false;
 }
 
+// An address of a local's own storage stored where it could reach the local
+// past the statement storing it, in a holder living as long as the blocks
+// `holder_depth` deep: a local declared there, a parameter at the body's own
+// depth, or storage no local of the body holds, which outlives the body's
+// blocks as a parameter does. `what` says what forms the address and the value
+// storing it.
+struct StoredAddress {
+  int holder_depth = 0;
+  std::string what;
+};
+
 // What one statement does with each local it reaches: how often it moves it,
-// how often it names it otherwise, and whether it stores, in something that
-// can hold an address and lives as long as the block being checked, an
-// address of the local's own storage, which could reach the local past the
-// statement. A local a nested block declares ends with that block, and a
-// borrow handed to a call lends for the call alone, so only what the call
-// answers carries an address on.
+// how often it names it otherwise, and the stored address of its storage whose
+// holder is declared least deep, where there is one.
 struct LocalUses {
   int moves = 0;
   int names = 0;
-  // What forms the address and the value storing it, where one is stored.
-  std::optional<std::string> stored_as_an_address;
+  std::optional<StoredAddress> stored;
 };
 using UsesOfLocals = std::map<LocalId, LocalUses>;
 
-// What the nodes reached from `id` in `block` do with each local, an address
-// counted only where it is stored in one of `holders`, the locals living as
-// long as the block being checked, or in storage no local of the body holds.
+void AddStored(LocalUses& into, const StoredAddress& stored) {
+  if (!into.stored.has_value() ||
+      stored.holder_depth < into.stored->holder_depth) {
+    into.stored = stored;
+  }
+}
+
+void AddUses(UsesOfLocals& into, const UsesOfLocals& from) {
+  for (const auto& [local, uses] : from) {
+    LocalUses& merged = into[local];
+    merged.moves += uses.moves;
+    merged.names += uses.names;
+    if (uses.stored.has_value()) {
+      AddStored(merged, *uses.stored);
+    }
+  }
+}
+
+// What each statement of a block does with each local, the blocks it runs
+// included, and last, where the block is a block expression's, what the value
+// it yields does.
+using BlockUses = std::vector<UsesOfLocals>;
+
+// What each block of one body does with each local, worked out once per block:
+// the walk of a block adds in what each block it runs does, and the check of
+// that block reads the same summary, so no node is walked twice however deep
+// the blocks nest.
 class UseCollector {
  public:
-  UseCollector(
-      const TypePool& types, const CallableCode& code,
-      const std::set<LocalId>& holders)
-      : types_(&types), code_(&code), holders_(&holders) {
+  UseCollector(const TypePool& types, const CallableCode& code)
+      : types_(&types), code_(&code) {
+    for (const LocalId param : code.params) {
+      depth_of_.emplace(param, 0);
+    }
+    if (code.body.has_value()) {
+      RecordDepths(*code.body, 0);
+    }
   }
 
-  // What the statement `stmt` of `block` does, the blocks it runs included,
-  // each walked in the order it runs.
-  void Statement(const Block& block, const Stmt& stmt, UsesOfLocals& uses) {
-    std::vector<bool> seen(block.exprs.size());
-    const auto stored = [&](LocalId target, ExprId value) {
-      if (holders_->contains(target) &&
-          HoldsAnAddress(*types_, code_->locals.Get(target).type)) {
-        AddressesIn(block, value, value, uses);
-      }
-    };
-    if (const auto* decl = std::get_if<LocalDeclStmt>(&stmt.data)) {
-      stored(decl->target, decl->init);
-    }
-    if (const auto* loop = std::get_if<ForStmt>(&stmt.data)) {
-      for (const ForInit& init : loop->init) {
-        if (const auto* d = std::get_if<ForInitDecl>(&init)) {
-          stored(d->induction_var, d->init);
-        }
-      }
-    }
-    ForEachExpr(stmt.data, [&](ExprId id) { Node(block, id, seen, uses); });
-    ForEachBlockRun(stmt.data, [&](BlockId id) {
-      const Block& inner = block.child_scopes.Get(id);
-      for (const StmtId run : inner.root_stmts) {
-        Statement(inner, inner.stmts.Get(run), uses);
-      }
-    });
+  // How many blocks enclose the declaration of `local`, a parameter's being
+  // the body's and a loop's induction variable's its body's; a local no
+  // statement declares lies deeper than every block.
+  [[nodiscard]] auto DepthOf(LocalId local) const -> int {
+    const auto found = depth_of_.find(local);
+    return found == depth_of_.end() ? kDeclaredByNoStatement : found->second;
   }
 
-  // What the value `value` of `block` does, the value a block expression
-  // yields after its statements.
-  void Value(const Block& block, ExprId value, UsesOfLocals& uses) {
-    std::vector<bool> seen(block.exprs.size());
-    Node(block, value, seen, uses);
+  // What each statement of `block`, `depth` blocks deep, does, and last what
+  // `yields`, the value it yields, does.
+  auto UsesOf(const Block& block, int depth, std::optional<ExprId> yields)
+      -> const BlockUses& {
+    if (const auto found = made_.find(&block); found != made_.end()) {
+      return found->second;
+    }
+    const std::map<BlockId, ExprId> yielded = YieldsOf(block);
+    std::vector<std::size_t> stamp(block.exprs.size(), 0);
+    Walk at{
+        .block = &block,
+        .depth = depth,
+        .yielded = &yielded,
+        .stamp = &stamp,
+        .walk = 0};
+    BlockUses uses;
+    for (const StmtId id : block.root_stmts) {
+      ++at.walk;
+      Statement(at, block.stmts.Get(id), uses.emplace_back());
+    }
+    if (yields.has_value()) {
+      ++at.walk;
+      Node(at, *yields, uses.emplace_back());
+    }
+    return made_.emplace(&block, std::move(uses)).first->second;
+  }
+
+  // The value each block expression of `block` yields, by the block it runs.
+  static auto YieldsOf(const Block& block) -> std::map<BlockId, ExprId> {
+    std::map<BlockId, ExprId> yielded;
+    for (const Expr& expr : block.exprs) {
+      if (const auto* steps = std::get_if<BlockExpr>(&expr.data)) {
+        yielded.emplace(steps->scope, steps->value);
+      }
+    }
+    return yielded;
   }
 
  private:
-  void Node(
-      const Block& block, ExprId id, std::vector<bool>& seen,
-      UsesOfLocals& uses) {
-    if (seen.at(id.value)) {
+  static constexpr int kDeclaredByNoStatement = std::numeric_limits<int>::max();
+
+  // One block being walked, `depth` blocks deep: the value each of its block
+  // expressions yields, and for each of its nodes the walk that last reached
+  // it, so a node standing at two places of one statement counts once there.
+  struct Walk {
+    const Block* block;
+    int depth;
+    const std::map<BlockId, ExprId>* yielded;
+    std::vector<std::size_t>* stamp;
+    std::size_t walk;
+  };
+
+  // A loop's induction variable lives as long as the loop's body, which is
+  // one block deeper than the loop.
+  void RecordDepths(const Block& block, int depth) {
+    for (const StmtId id : block.root_stmts) {
+      const StmtData& data = block.stmts.Get(id).data;
+      if (const auto* decl = std::get_if<LocalDeclStmt>(&data)) {
+        depth_of_.emplace(decl->target, depth);
+      }
+      if (const auto* loop = std::get_if<ForStmt>(&data)) {
+        for (const ForInit& init : loop->init) {
+          if (const auto* induction = std::get_if<ForInitDecl>(&init)) {
+            depth_of_.emplace(induction->induction_var, depth + 1);
+          }
+        }
+      }
+    }
+    for (const Block& child : block.child_scopes) {
+      RecordDepths(child, depth + 1);
+    }
+  }
+
+  // Adds what the block `id` nested in the walked one does: each of its
+  // statements, and the value it yields.
+  void AddBlock(const Walk& at, BlockId id, UsesOfLocals& uses) {
+    const auto found = at.yielded->find(id);
+    for (const UsesOfLocals& step : UsesOf(
+             at.block->child_scopes.Get(id), at.depth + 1,
+             found == at.yielded->end() ? std::nullopt
+                                        : std::optional{found->second})) {
+      AddUses(uses, step);
+    }
+  }
+
+  void Statement(const Walk& at, const Stmt& stmt, UsesOfLocals& uses) {
+    if (const auto* decl = std::get_if<LocalDeclStmt>(&stmt.data);
+        decl != nullptr &&
+        HoldsAnAddress(*types_, code_->locals.Get(decl->target).type)) {
+      AddressesIn(*at.block, decl->init, decl->init, at.depth, uses);
+    }
+    ForEachExpr(stmt.data, [&](ExprId id) { Node(at, id, uses); });
+    ForEachBlockRun(stmt.data, [&](BlockId id) { AddBlock(at, id, uses); });
+  }
+
+  void Node(const Walk& at, ExprId id, UsesOfLocals& uses) {
+    std::vector<std::size_t>& stamp = *at.stamp;
+    if (stamp.at(id.value) == at.walk) {
       return;
     }
-    seen.at(id.value) = true;
+    stamp.at(id.value) = at.walk;
+    const Block& block = *at.block;
     const ExprData& data = block.exprs.Get(id).data;
     if (const auto* move = std::get_if<MoveExpr>(&data)) {
       if (const std::optional<LocalId> local =
               ReferencedLocal(block.exprs.Get(move->operand).data)) {
         ++uses[*local].moves;
-        seen.at(move->operand.value) = true;
+        stamp.at(move->operand.value) = at.walk;
         return;
       }
     }
@@ -2996,22 +3111,17 @@ class UseCollector {
         HoldsAnAddress(*types_, block.exprs.Get(write->target).type)) {
       const std::optional<LocalId> holder =
           LocalLyingUnder(block, write->target);
-      if (!holder.has_value() || holders_->contains(*holder)) {
-        AddressesIn(block, write->value, write->value, uses);
-      }
+      AddressesIn(
+          block, write->value, write->value,
+          holder.has_value() ? DepthOf(*holder) : 0, uses);
     }
     // A block expression runs its statements and then yields its value, a
     // node of its own block.
     if (const auto* steps = std::get_if<BlockExpr>(&data)) {
-      const Block& inner = block.child_scopes.Get(steps->scope);
-      for (const StmtId run : inner.root_stmts) {
-        Statement(inner, inner.stmts.Get(run), uses);
-      }
-      std::vector<bool> inner_seen(inner.exprs.size());
-      Node(inner, steps->value, inner_seen, uses);
+      AddBlock(at, steps->scope, uses);
     }
     ForEachOperand(data, [&](const ExprId& operand, OperandUse) {
-      Node(block, operand, seen, uses);
+      Node(at, operand, uses);
     });
   }
 
@@ -3027,21 +3137,26 @@ class UseCollector {
     return ReferencedLocal(data);
   }
 
-  // The locals the value `id` holds an address of the own storage of: one
-  // taken of a place lying in a local, and one a call answers into what it is
-  // entered on where that is such an address of a value laying its parts in
-  // its own storage. A library container keeps its elements in storage of
-  // their own, which a move hands on with the value, and what any other call
-  // answers is its own, whatever it was handed.
-  // `stored` is the value holding it.
+  // The locals the value `id` holds an address of the own storage of, kept
+  // in a holder declared `holder_depth` blocks deep: one taken of a place
+  // lying in a local, and one a call answers into what it is entered on where
+  // that is such an address of a value laying its parts in its own storage. A
+  // library container keeps its elements in storage of their own, which a
+  // move hands on with the value, and what any other call answers is its own,
+  // whatever it was handed. `stored` is the value holding it.
   void AddressesIn(
-      const Block& block, ExprId stored, ExprId id, UsesOfLocals& uses) {
+      const Block& block, ExprId stored, ExprId id, int holder_depth,
+      UsesOfLocals& uses) {
     const ExprData& data = block.exprs.Get(id).data;
     const auto taken = [&](ExprId place) {
       if (const std::optional<LocalId> local = LocalLyingUnder(block, place)) {
-        uses[*local].stored_as_an_address = std::format(
-            "{} within {} (expression {} of its block)", Describe(data),
-            Describe(block.exprs.Get(stored).data), stored.value);
+        AddStored(
+            uses[*local],
+            StoredAddress{
+                .holder_depth = holder_depth,
+                .what = std::format(
+                    "{} within {} (expression {} of its block)", Describe(data),
+                    Describe(block.exprs.Get(stored).data), stored.value)});
       }
     };
     if (const auto* address = std::get_if<AddressOfExpr>(&data)) {
@@ -3056,14 +3171,14 @@ class UseCollector {
       if (const std::optional<ExprId> receiver = CalleeReceiver(call->callee);
           receiver.has_value() && AnswersReferenceIntoReceiver(*call) &&
           !EnteredOnAContainer(block, *receiver)) {
-        AddressesIn(block, stored, *receiver, uses);
+        AddressesIn(block, stored, *receiver, holder_depth, uses);
       }
       return;
     }
     if (const auto* steps = std::get_if<BlockExpr>(&data)) {
       AddressesIn(
           block.child_scopes.Get(steps->scope), steps->value, steps->value,
-          uses);
+          holder_depth, uses);
       return;
     }
     // A read answers what the storage holds, and a dereference names the
@@ -3075,7 +3190,7 @@ class UseCollector {
       return;
     }
     ForEachOperand(data, [&](const ExprId& operand, OperandUse) {
-      AddressesIn(block, stored, operand, uses);
+      AddressesIn(block, stored, operand, holder_depth, uses);
     });
   }
 
@@ -3095,90 +3210,82 @@ class UseCollector {
 
   const TypePool* types_;
   const CallableCode* code_;
-  const std::set<LocalId>* holders_;
+  std::map<LocalId, int> depth_of_;
+  std::map<const Block*, BlockUses> made_;
 };
 
 // A move is the last use of a local, as in Rust: what names the local before
 // it in the order its block runs is fine, and nothing names it in the
-// statement that moves it or after -- the block declaring it, or the body for
-// a parameter. An address of its storage kept in a local still living at the
-// move could reach it after, so a local any statement keeps so is not moved at
-// all. `inherited` is the locals the block sees beside its own declarations:
-// a body's parameters, and an enclosing block's locals, which a move within
-// the block is checked against as well. `yields` is the value a block
-// expression's block yields after its statements, which is the last thing it
-// does.
+// statement that moves it or after -- the statements of the block declaring
+// it, or of the body for a parameter. An address of its storage kept in a
+// local still living at the move could reach it after, so a local any
+// statement keeps so is not moved at all. Each block nested in that one is
+// checked the same way, its own statements standing in for the local's
+// block's, so an address kept in a local it declares counts there. `depth` is
+// how many blocks enclose `block`, and `yields` the value a block expression's
+// block yields after its statements, which is the last thing it does.
 void VerifyNothingFollowsAMove(
-    const TypePool& types, const CallableCode& code, const Block& block,
-    std::span<const LocalId> inherited, std::optional<ExprId> yields,
-    const auto& describe) {
-  std::vector<LocalId> declared_here(inherited.begin(), inherited.end());
-  for (const StmtId id : block.root_stmts) {
-    if (const auto* decl =
-            std::get_if<LocalDeclStmt>(&block.stmts.Get(id).data)) {
-      declared_here.push_back(decl->target);
-    }
-  }
-  const std::set<LocalId> holders(declared_here.begin(), declared_here.end());
-  UseCollector collect(types, code, holders);
-  std::vector<UsesOfLocals> by_statement;
-  for (const StmtId id : block.root_stmts) {
-    collect.Statement(block, block.stmts.Get(id), by_statement.emplace_back());
-  }
-  if (yields.has_value()) {
-    collect.Value(block, *yields, by_statement.emplace_back());
-  }
-  for (const LocalId local : declared_here) {
-    const auto uses_at = [&](std::size_t at) -> LocalUses {
-      const auto found = by_statement[at].find(local);
-      return found == by_statement[at].end() ? LocalUses{} : found->second;
-    };
-    std::optional<std::size_t> moved_at;
+    UseCollector& collect, const Block& block, int depth,
+    std::optional<ExprId> yields, const auto& describe) {
+  const BlockUses& by_statement = collect.UsesOf(block, depth, yields);
+  // For each local this block's statements reach, where this block or one
+  // around it declares it: the first statement moving it, and the first
+  // address of it kept in a holder living as long as this block.
+  struct Moved {
+    std::optional<std::size_t> at;
     std::optional<std::string> stored;
-    for (std::size_t at = 0; at < by_statement.size(); ++at) {
-      if (!stored.has_value()) {
-        stored = uses_at(at).stored_as_an_address;
+  };
+  std::map<LocalId, Moved> moved;
+  for (std::size_t at = 0; at < by_statement.size(); ++at) {
+    for (const auto& [local, use] : by_statement[at]) {
+      if (collect.DepthOf(local) > depth) {
+        continue;
       }
-      if (!moved_at.has_value() && uses_at(at).moves > 0) {
-        moved_at = at;
+      Moved& state = moved[local];
+      if (!state.stored.has_value() && use.stored.has_value() &&
+          use.stored->holder_depth <= depth) {
+        state.stored = use.stored->what;
+      }
+      if (!state.at.has_value() && use.moves > 0) {
+        state.at = at;
       }
     }
-    if (!moved_at.has_value()) {
-      continue;
-    }
-    const auto refuse = [&](std::string_view what) {
-      throw InternalError(
-          std::format(
-              "mir verify: {} moves local {} and {}; a move is the last use of "
-              "a local",
-              describe(), local.value, what));
-    };
-    if (stored.has_value()) {
+  }
+  const auto refuse = [&](LocalId local, std::string_view what) {
+    throw InternalError(
+        std::format(
+            "mir verify: {} moves local {} and {}; a move is the last use of "
+            "a local",
+            describe(), local.value, what));
+  };
+  for (const auto& [local, state] : moved) {
+    if (state.at.has_value() && state.stored.has_value()) {
       refuse(
-          std::format(
-              "stores an address of its storage in a value, {}", *stored));
+          local, std::format(
+                     "stores an address of its storage in a value, {}",
+                     *state.stored));
     }
-    const LocalUses moving = uses_at(*moved_at);
-    if (moving.names > 0 || moving.moves > 1) {
-      refuse("names it again in the statement that moves it");
-    }
-    for (std::size_t after = *moved_at + 1; after < by_statement.size();
-         ++after) {
-      if (uses_at(after).names > 0 || uses_at(after).moves > 0) {
-        refuse("names it again after the move");
+  }
+  for (std::size_t at = 0; at < by_statement.size(); ++at) {
+    for (const auto& [local, use] : by_statement[at]) {
+      const auto found = moved.find(local);
+      if (found == moved.end() || !found->second.at.has_value() ||
+          at < *found->second.at) {
+        continue;
+      }
+      if (at == *found->second.at && (use.names > 0 || use.moves > 1)) {
+        refuse(local, "names it again in the statement that moves it");
+      }
+      if (at > *found->second.at && (use.names > 0 || use.moves > 0)) {
+        refuse(local, "names it again after the move");
       }
     }
   }
-  std::map<BlockId, ExprId> yielded;
-  for (const ExprId id : block.exprs.Ids()) {
-    if (const auto* steps = std::get_if<BlockExpr>(&block.exprs.Get(id).data)) {
-      yielded.emplace(steps->scope, steps->value);
-    }
-  }
+  const std::map<BlockId, ExprId> yielded = UseCollector::YieldsOf(block);
   for (const BlockId id : block.child_scopes.Ids()) {
     const auto found = yielded.find(id);
     VerifyNothingFollowsAMove(
-        types, code, block.child_scopes.Get(id), declared_here,
+        collect, block.child_scopes.Get(id), depth + 1,
         found == yielded.end() ? std::nullopt : std::optional{found->second},
         describe);
   }
@@ -3346,7 +3453,7 @@ void VerifyMovesRunOnce(
     const std::optional<LocalId> local =
         ReferencedLocal(block.exprs.Get(move->operand).data);
     if (!local.has_value()) {
-      refuse("a move of part of a value", id);
+      continue;
     }
     if (not_once.at(id.value) || !movable.contains(*local)) {
       refuse("a move not run exactly once through its local's block", id);
@@ -3368,6 +3475,28 @@ void VerifyMovesRunOnce(
     VerifyMovesRunOnce(
         block.child_scopes.Get(id),
         entered_whole.contains(id) ? movable : std::set<LocalId>{}, describe);
+  }
+}
+
+// A move hands a local's value on together with the local's end, so what it
+// moves is a whole local: a part of one has no end of its own to hand on.
+void VerifyMovesTakeWholeLocals(const Block& block, const auto& describe) {
+  for (const ExprId id : block.exprs.Ids()) {
+    const auto* move = std::get_if<MoveExpr>(&block.exprs.Get(id).data);
+    // A move of what names no place is refused where a place is asked for.
+    if (move == nullptr || !IsPlace(block.exprs.Get(move->operand).data) ||
+        ReferencedLocal(block.exprs.Get(move->operand).data).has_value()) {
+      continue;
+    }
+    throw InternalError(
+        std::format(
+            "mir verify: {} holds a move of part of a value (expression {} of "
+            "its block); a move is the last use of a whole local on every way "
+            "that reaches its end",
+            describe(), id.value));
+  }
+  for (const Block& child : block.child_scopes) {
+    VerifyMovesTakeWholeLocals(child, describe);
   }
 }
 
@@ -3440,10 +3569,40 @@ void VerifyCallerLocationsStated(
   }
 }
 
-// `describe` names the body, and is asked only once there is something to
-// report: the check runs over every body of every unit, and composing a name
-// for each one costs more than the check itself.
-void VerifyCode(
+// What holds across the whole of a body rather than at one node or statement:
+// each is a property a rewrite or the lowering established for the body, which
+// a check has to work out again over all of it -- the order a target runs
+// operands in, a computation reached once, a move as a local's last use, the
+// bytes a frame keeps together, what a block expression yields outliving it.
+void VerifyAcrossTheBody(
+    const CompilationUnit& unit, Phase phase, const CallableCode& code,
+    const auto& describe) {
+  switch (phase) {
+    case Phase::kBuilt:
+      break;
+    case Phase::kLegalized:
+      VerifyFramesHoldNoMoreThanTheBudget(unit, code, describe);
+      if (code.body.has_value()) {
+        EvaluationOrder order(unit.types, *code.body);
+        VerifyOrderIsExplicit(*code.body, order, describe);
+      }
+      break;
+  }
+  if (!code.body.has_value()) {
+    return;
+  }
+  VerifyNoRunEvaluatesTwice(unit, *code.body, {}, describe);
+  VerifyYieldsOutliveTheirBlocks(unit, *code.body, describe);
+  VerifyMovesRunOnce(
+      *code.body, std::set<LocalId>(code.params.begin(), code.params.end()),
+      describe);
+  UseCollector collect(unit.types, code);
+  VerifyNothingFollowsAMove(collect, *code.body, 0, std::nullopt, describe);
+}
+
+// What one node or one statement of a body states, which every build checks,
+// at a cost that follows the body's size.
+void VerifyEachNode(
     const CompilationUnit& unit, Phase phase, const CallableCode& code,
     const auto& describe) {
   switch (phase) {
@@ -3454,8 +3613,6 @@ void VerifyCode(
       if (code.body.has_value()) {
         VerifyHandlesOpenedByTheLibrary(unit, *code.body, describe);
         VerifyCallerLocationsStated(unit, code, *code.body, describe);
-        EvaluationOrder order(unit.types, *code.body);
-        VerifyOrderIsExplicit(*code.body, order, describe);
       }
       break;
   }
@@ -3463,13 +3620,8 @@ void VerifyCode(
     return;
   }
   VerifyCleanupsLeaveOnlyAtTheirEnd(*code.body, describe);
-  VerifyNoRunEvaluatesTwice(unit, *code.body, {}, describe);
   VerifyPlacesAreRead(unit, *code.body, {}, describe);
-  VerifyMovesRunOnce(
-      *code.body, std::set<LocalId>(code.params.begin(), code.params.end()),
-      describe);
-  VerifyNothingFollowsAMove(
-      unit.types, code, *code.body, code.params, std::nullopt, describe);
+  VerifyMovesTakeWholeLocals(*code.body, describe);
   if (!code.can_unwind) {
     VerifyCannotUnwind(unit, *code.body, describe);
   }
@@ -3478,7 +3630,6 @@ void VerifyCode(
   VerifyStorageWithoutAnAddress(unit, *code.body, describe);
   VerifyMemberReceivers(unit, *code.body, describe);
   VerifyReferenceBindings(unit, *code.body, describe);
-  VerifyYieldsOutliveTheirBlocks(unit, *code.body, describe);
   VerifyTypeArguments(unit, *code.body, describe);
   VerifyTypeOperationCalls(unit, *code.body, describe);
   VerifyUnionValues(unit, *code.body, describe);
@@ -3499,6 +3650,23 @@ void VerifyCode(
           "mir verify: {} suspends, but its result type is not a coroutine, "
           "so nothing could resume it",
           describe()));
+}
+
+// `describe` names the body, and is asked only once there is something to
+// report: the check runs over every body of every unit, and composing a name
+// for each one costs more than the check itself. What holds across the body is
+// checked after what each node states, which it reads as given.
+void VerifyCode(
+    const CompilationUnit& unit, Phase phase, const CallableCode& code,
+    Checks checks, const auto& describe) {
+  VerifyEachNode(unit, phase, code, describe);
+  switch (checks) {
+    case Checks::kEveryBuild:
+      break;
+    case Checks::kAll:
+      VerifyAcrossTheBody(unit, phase, code, describe);
+      break;
+  }
 }
 
 // The closure a value of `type` hands over where it is a pointer owning nothing
@@ -4546,13 +4714,13 @@ void RequireLegalized(const CompilationUnit& unit, std::string_view reader) {
 
 void VerifyBody(
     const CompilationUnit& unit, Phase phase, const CodeSource& at,
-    const CallableCode& code, std::string_view when) {
-  VerifyCode(unit, phase, code, [&unit, &at, when] {
+    const CallableCode& code, std::string_view when, Checks checks) {
+  VerifyCode(unit, phase, code, checks, [&unit, &at, when] {
     return std::format("{}, {}", Describe(unit, at), when);
   });
 }
 
-void Verify(const CompilationUnit& unit, std::string_view when) {
+void Verify(const CompilationUnit& unit, std::string_view when, Checks checks) {
   VerifyMembers(unit, when);
   VerifyLibraryTypes(unit, when);
   VerifyDeclaredEntries(unit, when);
@@ -4563,11 +4731,17 @@ void Verify(const CompilationUnit& unit, std::string_view when) {
     };
   };
   ForEachCode(unit, [&](const CodeSource& at, const CallableCode& code) {
-    VerifyCode(unit, unit.phase, code, describer(at));
+    VerifyCode(unit, unit.phase, code, checks, describer(at));
   });
   VerifyConstantsMeetTheirTypes(unit, when);
+  switch (checks) {
+    case Checks::kEveryBuild:
+      return;
+    case Checks::kAll:
+      break;
+  }
   // Every body is checked on its own first, since a closure handed over in one
-  // is followed into the bodies that made what it captured.
+  // is followed into the bodies that made what it captured, across the unit.
   HandedClosures handed(unit);
   ForEachCode(unit, [&](const CodeSource& at, const CallableCode& code) {
     handed.Check(code, describer(at));
