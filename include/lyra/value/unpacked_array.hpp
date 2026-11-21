@@ -14,7 +14,9 @@
 #include "lyra/value/formation.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/position.hpp"
+#include "lyra/value/value_type.hpp"
 #include "lyra/value/value_type_kind.hpp"
+#include "lyra/value/value_witnesses_of.hpp"
 
 namespace lyra::value {
 
@@ -122,6 +124,15 @@ class UnpackedArray {
   }
   [[nodiscard]] auto GetUnchecked(std::size_t i) -> T& {
     return items_[i];
+  }
+
+  // The element a path's step names where it lies, with its type (LRM 7.4);
+  // no place past the last.
+  [[nodiscard]] auto PartAtStep(std::uint32_t step) const -> ValuePart {
+    if (step >= N) {
+      return {.at = nullptr, .type = nullptr};
+    }
+    return {.at = &items_[step], .type = &TypeOfPart<T>()};
   }
 
   // LRM 7.4.5: an invalid-index write lands where no read reaches, which is no

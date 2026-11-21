@@ -2644,26 +2644,96 @@ auto DeclaredCellOf(
 
 }  // namespace
 
+auto TakeScopeBody(mir::CompilationUnit& unit, DescribingBodies bodies)
+    -> mir::CallableId {
+  return std::visit(
+      Overloaded{
+          [&](const ScopeClassBodies& of_class) {
+            return unit.TakeClassCallable(of_class.id);
+          },
+          [&](const NamespaceBodies&) { return unit.TakeNamespaceCallable(); }},
+      bodies);
+}
+
 auto TakeDataObjectBodies(mir::CompilationUnit& unit, DescribingBodies bodies)
     -> mir::DataObjectBodies {
-  const auto take = [&] {
-    return std::visit(
-        Overloaded{
-            [&](const ScopeClassBodies& of_class) {
-              return unit.TakeClassCallable(of_class.id);
-            },
-            [&](const NamespaceBodies&) {
-              return unit.TakeNamespaceCallable();
-            }},
-        bodies);
-  };
   return mir::DataObjectBodies{
-      .settle = take(),
-      .read = take(),
-      .write = take(),
-      .force = take(),
-      .release = take(),
-      .subscribe = take()};
+      .settle = TakeScopeBody(unit, bodies),
+      .read = TakeScopeBody(unit, bodies),
+      .write = TakeScopeBody(unit, bodies),
+      .force = TakeScopeBody(unit, bodies),
+      .release = TakeScopeBody(unit, bodies),
+      .subscribe = TakeScopeBody(unit, bodies)};
+}
+
+namespace {
+
+// The parameter a body reaching what a scope describes takes the object by,
+// declared in `bindings`: the class's own receiver, or the object's root where
+// a namespace holds the body, which has no class of its own.
+auto DeclareDescribingObject(
+    mir::CompilationUnit& unit, CallableBindings& bindings,
+    const DescribingBodies& bodies) -> mir::LocalId {
+  return std::visit(
+      Overloaded{
+          [&](const ScopeClassBodies& of_class) {
+            return bindings.Declare(ReceiverOrigin{}, of_class.self_type);
+          },
+          [&](const NamespaceBodies&) {
+            return bindings.DeclareAnonymous(
+                mir::ObjectRootPointer(unit.types));
+          }},
+      bodies);
+}
+
+}  // namespace
+
+void StateDisableTargets(
+    mir::CompilationUnit& unit, const ScopeTable& scopes,
+    DescribingBodies bodies, const mir::ScopeDeclarations& declarations,
+    const WalkFrame& scope_frame, const DeclaredScopes& declared) {
+  mir::CallableCode code = mir::CallableCode::Defined(diag::SourceSpan{});
+  CallableBindings bindings(unit, code);
+  const mir::LocalId object = DeclareDescribingObject(unit, bindings, bodies);
+  const mir::LocalId position =
+      bindings.DeclareAnonymous(unit.builtins.machine_int64);
+  const mir::TypeId target_type =
+      mir::LibraryTypeOf(unit.types, support::LibraryDecl::kCancellationTarget);
+  const mir::TypeId target_pointer = unit.types.Intern(
+      mir::Type{mir::PointerType{
+          .pointee = target_type,
+          .ownership = mir::PointerOwnership::kBorrowed}});
+  mir::Builder block(code.Body(), scope_frame.span);
+  mir::SwitchStmt chosen{
+      .discriminant = block.ReadLocal(position, unit.builtins.machine_int64),
+      .cases = {},
+      .default_body = std::nullopt};
+  for (const hir::ProceduralScopeId scope : declared.Ids()) {
+    const std::optional<StaticStorageHome>& home =
+        declared.Get(scope).disable_target;
+    if (!home.has_value()) continue;
+    mir::Block taken;
+    const WalkFrame frame =
+        scope_frame.WithBlock(&taken).WithBindings(&bindings);
+    mir::Builder in_case = frame.Builder();
+    in_case.AppendStmt(
+        mir::ReturnStmt{
+            .value = in_case.Add(BuildStaticStorageAddress(
+                unit, in_case, frame, *home, target_type))});
+    chosen.cases.push_back(
+        mir::SwitchCase{
+            .values = {static_cast<std::int64_t>(
+                scopes.procedural_scopes.at(scope).position)},
+            .body = block.AddScope(std::move(taken))});
+  }
+  block.AppendStmt(std::move(chosen));
+  block.AppendStmt(
+      mir::ReturnStmt{
+          .value = block.Add(
+              mir::Expr{.data = mir::NullLiteral{}, .type = target_pointer})});
+  code.params = {object, position};
+  code.result_type = target_pointer;
+  unit.StateCallable(declarations.disable_target, std::move(code));
 }
 
 auto DescribeDataObjects(
@@ -2689,7 +2759,7 @@ auto DescribeDataObjects(
             .ports = object.ports,
             .enclosing = declared.lexical_scope.transform(
                 [&](hir::ProceduralScopeId lexical_scope) {
-                  return scopes.procedural_scopes.at(lexical_scope);
+                  return scopes.procedural_scopes.at(lexical_scope).record;
                 })});
   }
   // The body `id`, taking the object, the position of the data object it is
@@ -2703,16 +2773,7 @@ auto DescribeDataObjects(
                          const auto& statement) -> diag::Result<void> {
     mir::CallableCode code = mir::CallableCode::Defined(diag::SourceSpan{});
     CallableBindings bindings(unit, code);
-    const mir::LocalId object = std::visit(
-        Overloaded{
-            [&](const ScopeClassBodies& of_class) {
-              return bindings.Declare(ReceiverOrigin{}, of_class.self_type);
-            },
-            [&](const NamespaceBodies&) {
-              return bindings.DeclareAnonymous(
-                  mir::ObjectRootPointer(unit.types));
-            }},
-        bodies);
+    const mir::LocalId object = DeclareDescribingObject(unit, bindings, bodies);
     const mir::LocalId position =
         bindings.DeclareAnonymous(unit.builtins.machine_int64);
     std::vector<Handed> given;
@@ -3266,6 +3327,9 @@ auto StructuralScopeLowerer::DeclareShape() -> diag::Result<mir::ClassId> {
       .lexical = declared_scope_records_.lexical,
       .data_objects = {},
       .bodies = TakeDataObjectBodies(
+          unit_lowerer.Unit(),
+          ScopeClassBodies{.id = class_id_, .self_type = self_pointer_type}),
+      .disable_target = TakeScopeBody(
           unit_lowerer.Unit(),
           ScopeClassBodies{.id = class_id_, .self_type = self_pointer_type})};
 
@@ -4549,6 +4613,10 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
       ScopeClassBodies{.id = class_id_, .self_type = self_ptr_type},
       *mir_class.scope_declarations, scope_frame, hir_scope.described);
   if (!described) return std::unexpected(std::move(described.error()));
+  StateDisableTargets(
+      unit, DeclaredScopeRecords(),
+      ScopeClassBodies{.id = class_id_, .self_type = self_ptr_type},
+      *mir_class.scope_declarations, scope_frame, scopes_);
 
   unit_lowerer.Unit().AddClassConstructor(class_id_, std::move(ctor_code));
 

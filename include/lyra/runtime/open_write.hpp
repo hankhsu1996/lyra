@@ -7,7 +7,6 @@
 
 #include "lyra/runtime/value_handle.hpp"
 #include "lyra/runtime/var.hpp"
-#include "lyra/value/formation.hpp"
 #include "lyra/value/kept_copy.hpp"
 #include "lyra/value/value_type.hpp"
 #include "lyra/value/wide.hpp"
@@ -63,7 +62,8 @@ class OpenWrite {
         .write = this, .part = bracket_of_->storage(bracket_.data())};
   }
 
-  void Formed(value::Formation formed) {
+  // A step formed the part it reaches as `formed` says.
+  void Formed(const StepFormed& formed) {
     bracket_of_->formed(bracket_.data(), formed);
   }
 
@@ -187,7 +187,7 @@ class OpenWrite {
     void* (*storage)(void* room);
     bool (*undecided)(void* room);
     bool (*announces)(void* room);
-    void (*formed)(void* room, value::Formation formed);
+    void (*formed)(void* room, const StepFormed& formed);
     void (*stepped)(void* room, const PartPath& step);
     void (*moved)(void* room, std::int64_t begin, std::int64_t end);
     void (*landed)(void* room, const Change& change);
@@ -217,7 +217,7 @@ class OpenWrite {
         return Bracket<Sink>(room)->Announces();
       },
       .formed =
-          [](void* room, value::Formation formed) {
+          [](void* room, const StepFormed& formed) {
             Bracket<Sink>(room)->Formed(formed);
           },
       .stepped =
@@ -300,8 +300,9 @@ class OpenWrite {
   static constexpr ResolveBitRange kLaidOutLandingOf{
       .end = [](void* room, const BracketOf& bracket_of, void* bracket) {
         auto* landing = Landing<LaidOutLanding>(room);
-        if (!landing->kept.IsBitIdenticalTo(landing->part)) {
-          bracket_of.landed(bracket, Change::Whole());
+        if (const std::optional<Change> change = Change::Between(
+                landing->kept.Type(), landing->kept.Bytes(), landing->part)) {
+          bracket_of.landed(bracket, *change);
         }
         std::destroy_at(landing);
       }};

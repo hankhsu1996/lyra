@@ -60,6 +60,8 @@ class Design;
 class Observable;
 class RuntimeProcess;
 class Scope;
+class SignalWatcher;
+class VpiCallbacks;
 
 struct RuntimeOptions {
   // The command line the program was started with, its own name first.
@@ -226,18 +228,64 @@ class Runtime final : public RuntimeEffects {
   [[nodiscard]] auto RunningContext() const -> const ExecutionContext&;
 
   // Where the run stands, which decides where work made now can still run:
-  // before the regions have begun, it starts with the processes; once the
-  // slot has reached its Postponed region no earlier region of the slot runs
-  // again (LRM 4.4.2.9, 4.5); and once the simulation is over no region runs
-  // at all (LRM 9.2.3).
+  // before the regions have begun, it starts with the processes; the Pre-Active
+  // region runs once as a slot begins and not again (LRM 4.5); once the slot
+  // has reached its Postponed region no earlier region of the slot runs again
+  // (LRM 4.4.2.9, 4.5); and once the simulation is over no region runs at all
+  // (LRM 9.2.3).
   enum class Phase : std::uint8_t {
     kBringingUp,
+    kInPreActive,
     kRunningRegions,
     kInPostponed,
     kOver,
   };
   [[nodiscard]] auto CurrentPhase() const -> Phase {
     return phase_;
+  }
+
+  // Whether work placed in `region` of the slot at `at` is placed where the run
+  // still goes (LRM 4.4, Table 4-1): a later slot, where one runs at all, which
+  // none does once the run has been asked to end; the slot under way, where
+  // that region still comes after what is running now. This is the one answer
+  // every placement asks; placing work is no promise it runs, since the run may
+  // still be ended before it is reached.
+  [[nodiscard]] auto CanSchedule(SimTime at, support::Region region) const
+      -> bool;
+
+  // Whether storage may be written now: not once the slot has reached its
+  // read-only Postponed region (LRM 4.4.2.9, 4.4.3.10), nor in a slot given up
+  // on, which runs nothing a write could wake.
+  [[nodiscard]] auto MayWriteNow() const -> bool {
+    return phase_ != Phase::kInPostponed && !slot_given_up_;
+  }
+
+  // Places `timer` in the Pre-Active region of the slot time next moves to,
+  // whichever that is (LRM 38.36.2 cbNextSimTime, Table 4-1). It makes no slot
+  // of its own, so a run that has nothing later ends without it firing.
+  void ScheduleAtNextSlot(Timer& timer);
+
+  // The times of the slots that hold events, earliest first (LRM 37.81): the
+  // current one where it holds any ahead of its read-only Postponed region,
+  // then each later one.
+  [[nodiscard]] auto TimeQueues() const -> std::vector<SimTime>;
+
+  // Whether the simulation's time-zero cycle has begun (LRM 38.36.3).
+  [[nodiscard]] auto SimulationStarted() const -> bool {
+    return simulation_started_;
+  }
+
+  // What owns the process's signals while the run stands, none where nothing
+  // does.
+  [[nodiscard]] auto Signals() -> SignalWatcher* {
+    return signals_;
+  }
+
+  // The callbacks foreign code registered (LRM 38.36), made with the first.
+  [[nodiscard]] auto Callbacks() -> VpiCallbacks&;
+  // The same, none where no callback was ever registered.
+  [[nodiscard]] auto CallbacksIfMade() -> VpiCallbacks* {
+    return callbacks_.get();
   }
 
   // The procedure what is running belongs to: the running process's or that
@@ -266,7 +314,7 @@ class Runtime final : public RuntimeEffects {
   friend class RuntimeEffects;
   friend class CurrentRuntimeGuard;
   friend class RunnerGuard;
-  friend class InterruptReport;
+  friend class SignalWatcher;
   friend void HandOverExpiry(IntrusiveList<WaitMembership>& expiry) noexcept;
 
   struct Running {};
@@ -275,6 +323,15 @@ class Runtime final : public RuntimeEffects {
   struct SimulationEnded {};
   struct ToolStopped {};
   using RunState = std::variant<Running, SimulationEnded, ToolStopped>;
+
+  // Whether `region` of the current slot runs after what is running now, so
+  // that what is placed there is run in this slot; and whether a later slot may
+  // run, which none does once the run has been asked to end, as it has by the
+  // time it is over.
+  [[nodiscard]] auto RunsLaterInThisSlot(support::Region region) const -> bool;
+  [[nodiscard]] auto TimeMovesOn() const -> bool {
+    return std::holds_alternative<Running>(state_);
+  }
 
   // How many times one slot may re-enter its regions before the design is
   // declared unable to settle. A design that keeps scheduling work at the
@@ -418,9 +475,13 @@ class Runtime final : public RuntimeEffects {
   // asked for it and run once the final procedures have.
   std::vector<OwedAtRunEnd> at_run_end_;
   // What an occurrence woke to run at it, held while the waits it reached are
-  // still being asked, and how deep that asking is.
-  std::vector<Activation*> woken_at_the_occurrence_;
+  // still being asked, and how deep that asking is: an execution, or the
+  // callbacks of foreign code an occurrence made due (LRM 38.36.1).
+  std::vector<std::variant<Activation*, VpiCallbacks*>>
+      woken_at_the_occurrence_;
   int occurrences_being_told_ = 0;
+  // The timers due as the slot time next moves to begins (LRM 38.36.2).
+  IntrusiveList<TimerPlace> due_at_next_slot_;
   // The design's processes start in the active region set, and a program's in
   // the reactive one once the design's have settled (LRM 24.3.1).
   StartingTurns design_starting_{.regions = kActiveRegionSet, .turns = {}};
@@ -428,6 +489,12 @@ class Runtime final : public RuntimeEffects {
   // Every concurrent assertion the design activated, so an attempt no tick
   // settled can be answered before the finals run.
   std::vector<EvaluationAttempts*> concurrent_assertions_;
+  // The callbacks foreign code registered, which are enrolled on the design's
+  // places and linked into the slots' queues, so released before both.
+  std::unique_ptr<VpiCallbacks> callbacks_;
+  // What owns the process's signals while the run stands, which hands a
+  // signal a callback traps to the run at its next safe point (LRM 38.36.3).
+  SignalWatcher* signals_ = nullptr;
   // What a region pass is working through, held apart from the region it came
   // out of, which meanwhile collects the next pass's work (LRM 9.3.2).
   RegionQueue draining_{effect_storage_};
@@ -451,7 +518,9 @@ class Runtime final : public RuntimeEffects {
   // 18.14), what a DPI-C foreign call reports its scope through (LRM 35.5.3),
   // and what a stop parks. Atomic, as the current time is, because a run
   // stopped from outside is asked where it is from a signal handler, which may
-  // read nothing else.
+  // read nothing else. Each is stored with release and read with acquire, so
+  // what a handler reads through one was whole before it was published there,
+  // and lives until the one storing it is put back.
   std::atomic<Runner*> running_ = nullptr;
   // The procedure in force while nothing runs: that of whoever made the effect
   // or bound the timer a region is running. Atomic for the same reader.
@@ -467,6 +536,9 @@ class Runtime final : public RuntimeEffects {
   // stack. A deque because the pointer above stays valid across a push.
   std::deque<NoThreadRun> no_thread_runs_;
   Phase phase_ = Phase::kBringingUp;
+  // Whether the slot under way was given up on, for a failure of the design
+  // that leaves it unable to settle; nothing more of it runs, and the run ends.
+  bool slot_given_up_ = false;
   // The initialization RNG of each namespace, by its name (LRM 18.14.1), held
   // for the run as an instance holds its own. A namespace is here once its one
   // bring-up has been taken: it reaches its initializers through whichever of
@@ -485,6 +557,7 @@ class Runtime final : public RuntimeEffects {
   std::uint64_t end_requests_ = 0;
   bool bound_ = false;
   bool ran_ = false;
+  bool simulation_started_ = false;
   bool tool_failed_ = false;
 };
 
@@ -585,12 +658,12 @@ void RegisterNamespace(
 class RunnerGuard {
  public:
   RunnerGuard(RuntimeEffects& effects, Runner& runner)
-      : runtime_(&static_cast<Runtime&>(effects)),
+      : runtime_(&AsRuntime(effects)),
         previous_(
-            runtime_->running_.exchange(&runner, std::memory_order_relaxed)) {
+            runtime_->running_.exchange(&runner, std::memory_order_acq_rel)) {
   }
   ~RunnerGuard() {
-    runtime_->running_.store(previous_, std::memory_order_relaxed);
+    runtime_->running_.store(previous_, std::memory_order_release);
   }
 
   RunnerGuard(const RunnerGuard&) = delete;

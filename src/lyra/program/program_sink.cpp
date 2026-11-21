@@ -276,7 +276,7 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_shortreal_value_serializer_real",
       &lyra_rt_shortreal_value_serializer_real);
   add("lyra_rt_value_serializer_text", &lyra_rt_value_serializer_text);
-  add("lyra_rt_value_serializer_event", &lyra_rt_value_serializer_event);
+  add("lyra_rt_value_serializer_object", &lyra_rt_value_serializer_object);
   add("lyra_rt_value_serializer_size", &lyra_rt_value_serializer_size);
   add("lyra_rt_value_serializer_key", &lyra_rt_value_serializer_key);
   add("lyra_rt_subscriber_subscribe", &lyra_rt_subscriber_subscribe);
@@ -289,6 +289,10 @@ void BindEngineEntries(const auto& add) {
       &lyra_rt_selection_settler_settle_positions);
   add("lyra_rt_selection_settler_settle_unfixed",
       &lyra_rt_selection_settler_settle_unfixed);
+  add("lyra_rt_selection_settler_settle_watched_step",
+      &lyra_rt_selection_settler_settle_watched_step);
+  add("lyra_rt_selection_settler_settle_unwatched",
+      &lyra_rt_selection_settler_settle_unwatched);
   add("lyra_rt_selection_settler_fixed", &lyra_rt_selection_settler_fixed);
   add("lyra_rt_selection_settler_positions",
       &lyra_rt_selection_settler_positions);

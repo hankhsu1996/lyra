@@ -1,4 +1,4 @@
-#include "lyra/runtime/interrupt_report.hpp"
+#include "lyra/runtime/signal_watcher.hpp"
 
 #include <array>
 #include <atomic>
@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <string_view>
 #include <unistd.h>
+#include <vector>
 
 #include "lyra/base/source_location.hpp"
 #include "lyra/base/write_all.hpp"
@@ -23,6 +24,13 @@ namespace {
 auto ReportedRun() noexcept -> std::atomic<const Runtime*>& {
   static constinit std::atomic<const Runtime*> run = nullptr;
   return run;
+}
+
+// The trapped signals that arrived and have not been called back yet, one bit
+// each by number.
+auto Noted() noexcept -> std::atomic<std::uint64_t>& {
+  static constinit std::atomic<std::uint64_t> noted = 0;
+  return noted;
 }
 
 // Everything below runs inside a signal handler, where only what POSIX lists
@@ -46,10 +54,18 @@ void WriteDecimal(std::uint64_t value) noexcept {
   Write(std::string_view{digits.data(), digits.size()}.substr(first));
 }
 
+// A signal reporting a fault of the instruction that raised it: returning from
+// its handler raises it again, so no program carries on past one.
+auto ReportsAFault(int signal) -> bool {
+  return signal == SIGSEGV || signal == SIGBUS || signal == SIGFPE ||
+         signal == SIGILL;
+}
+
 }  // namespace
 
-InterruptReport::InterruptReport(const Runtime& run) : run_(&run) {
+SignalWatcher::SignalWatcher(Runtime& run) : run_(&run) {
   ReportedRun().store(&run);
+  run.signals_ = this;
   for (std::size_t i = 0; i < kStopSignals.size(); ++i) {
     struct sigaction standing{};
     if (sigaction(kStopSignals.at(i), nullptr, &standing) != 0 ||
@@ -59,7 +75,7 @@ InterruptReport::InterruptReport(const Runtime& run) : run_(&run) {
     // The handler stands for one delivery: what it raises once it has spoken
     // then meets the signal's own action.
     struct sigaction report{};
-    report.sa_handler = &InterruptReport::SayWhereTheRunWas;
+    report.sa_handler = &SignalWatcher::SayWhereTheRunWas;
     report.sa_flags = SA_RESETHAND;
     sigemptyset(&report.sa_mask);
     if (sigaction(kStopSignals.at(i), &report, nullptr) == 0) {
@@ -68,19 +84,71 @@ InterruptReport::InterruptReport(const Runtime& run) : run_(&run) {
   }
 }
 
-InterruptReport::~InterruptReport() {
+SignalWatcher::~SignalWatcher() {
+  for (std::size_t signal = 0; signal < kTrappable; ++signal) {
+    if (trapping_.at(signal) > 0 && before_trapped_.at(signal)) {
+      sigaction(
+          static_cast<int>(signal), &*before_trapped_.at(signal), nullptr);
+    }
+  }
   for (std::size_t i = 0; i < kStopSignals.size(); ++i) {
     if (displaced_.at(i)) {
       sigaction(kStopSignals.at(i), &*displaced_.at(i), nullptr);
     }
   }
+  run_->signals_ = nullptr;
   // A second run constructed in the same process before this one ended has
   // taken the handler's attention; it keeps it.
   const Runtime* expected = run_;
   ReportedRun().compare_exchange_strong(expected, nullptr);
 }
 
-void InterruptReport::SayWhereTheRunWas(int signal) {
+auto SignalWatcher::Watch(int signal) -> bool {
+  if (signal <= 0 || static_cast<std::size_t>(signal) >= kTrappable ||
+      ReportsAFault(signal)) {
+    return false;
+  }
+  int& trapping = trapping_.at(static_cast<std::size_t>(signal));
+  if (trapping == 0) {
+    struct sigaction note{};
+    note.sa_handler = &SignalWatcher::Note;
+    note.sa_flags = SA_RESTART;
+    sigemptyset(&note.sa_mask);
+    struct sigaction before{};
+    if (sigaction(signal, &note, &before) != 0) {
+      return false;
+    }
+    before_trapped_.at(static_cast<std::size_t>(signal)) = before;
+  }
+  ++trapping;
+  return true;
+}
+
+void SignalWatcher::Unwatch(int signal) {
+  int& trapping = trapping_.at(static_cast<std::size_t>(signal));
+  if (--trapping > 0) return;
+  std::optional<struct sigaction>& before =
+      before_trapped_.at(static_cast<std::size_t>(signal));
+  if (before) sigaction(signal, &*before, nullptr);
+  before.reset();
+}
+
+auto SignalWatcher::TakeNoted() -> std::vector<int> {
+  std::vector<int> signals;
+  const std::uint64_t noted = Noted().exchange(0);
+  for (std::size_t signal = 0; signal < kTrappable; ++signal) {
+    if ((noted & (std::uint64_t{1} << signal)) != 0) {
+      signals.push_back(static_cast<int>(signal));
+    }
+  }
+  return signals;
+}
+
+void SignalWatcher::Note(int signal) {
+  Noted().fetch_or(std::uint64_t{1} << static_cast<unsigned>(signal));
+}
+
+void SignalWatcher::SayWhereTheRunWas(int signal) {
   DeliverFinishedOutput();
   if (const Runtime* run = ReportedRun().load(); run != nullptr) {
     Write("note: interrupted at time ");

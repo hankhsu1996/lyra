@@ -107,8 +107,9 @@ class CaptureSerializer final : public ValueSerializer {
       : into_(&into), code_(code) {
   }
 
-  // A dump records no string and no array (LRM 21.7.2.1), and reads each
-  // object whole, so no object it reads hands it either.
+  // A dump records no string, no array and no class variable (LRM 21.7.2.1),
+  // and reads each object whole, so no object it reads hands it any of those,
+  // and the only object it is handed is the one an event variable names.
   void Receive(const Serialized& handed) override {
     std::visit(
         Overloaded{
@@ -162,25 +163,12 @@ class CaptureSerializer final : public ValueSerializer {
   value::ObjectRef referent_;
 };
 
-// Keeps the trigger a data object's watching code hands it.
-class TriggerSubscriber final : public Subscriber {
- public:
-  void Subscribe(const Trigger& handed) override {
-    trigger = handed;
-  }
-
-  Trigger trigger;
-};
-
 // The trigger a wait for a change of the thing would enrol (LRM 9.4.2), which
 // a dump enrols on too, so it learns of a change where the design's own wait
 // does.
 auto WatchedTriggerOf(const DumpedObject& dumped) -> Trigger {
-  TriggerSubscriber subscriber;
-  dumped.declarations->subscribe(
-      dumped.instance, dumped.position, subscriber,
-      base::SourceLocation{base::kNoSourceLocation});
-  return subscriber.trigger;
+  return TriggerOfDataObject(
+      *dumped.declarations, dumped.instance, dumped.position);
 }
 
 }  // namespace

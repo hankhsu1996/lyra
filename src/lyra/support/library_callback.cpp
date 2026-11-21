@@ -26,6 +26,8 @@ auto LibraryCallbackName(LibraryCallback callback) -> std::string_view {
       return "sv_release_data_object";
     case LibraryCallback::kScopeSubscribeDataObject:
       return "sv_subscribe_data_object";
+    case LibraryCallback::kScopeDisableTarget:
+      return "sv_disable_target";
     case LibraryCallback::kClassRandVariables:
       return "sv_rand_variables";
     case LibraryCallback::kClassConstrain:

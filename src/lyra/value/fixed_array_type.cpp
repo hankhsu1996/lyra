@@ -1,5 +1,6 @@
 #include "lyra/value/fixed_array_type.hpp"
 
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -100,6 +101,22 @@ void FixedArrayType::Building::Advance() {
 
 void FixedArrayType::Building::Finish() {
   finished_ = true;
+}
+
+extern "C" {
+constinit const StepWitnessTable lyra_rt_fixed_array_step_witness_table{
+    .part = [](const ValueType& type, const void* value,
+               std::uint32_t step) -> ValuePart {
+      // Only a fixed-size array type's table names this, so the type it is
+      // handed opens that record.
+      const auto& array = *std::bit_cast<const FixedArrayType*>(&type);
+      if (step >= array.Count()) {
+        return {.at = nullptr, .type = nullptr};
+      }
+      return {
+          .at = array.GetUnchecked(value, step),
+          .type = &array.ElementType().Type()};
+    }};
 }
 
 auto ByteStringOf(const FixedArrayView& array) -> String {

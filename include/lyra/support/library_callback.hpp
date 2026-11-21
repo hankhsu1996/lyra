@@ -12,7 +12,9 @@ namespace lyra::support {
 // gives it (LRM 10.5), then every process is created (LRM 9.2); those a
 // reader reaching the design by name reads, writes, forces, releases and
 // subscribes to a data object of the scope through (LRM 21.7.1.2, 38.15,
-// 38.34), which a package and the compilation unit's scope answer too; and
+// 38.34), and finds what a disable of a block or a task the scope declares
+// ends through (LRM 9.6.2, 38.36.1), which a package and the compilation
+// unit's scope answer too; and
 // what `randomize()` asks of every source class (LRM 18.6): the random
 // variables it declares, the constraints it states, the random objects its
 // handles reach, and the hooks before and after (LRM 18.6.2).
@@ -26,6 +28,7 @@ enum class LibraryCallback : std::uint8_t {
   kScopeForceDataObject,
   kScopeReleaseDataObject,
   kScopeSubscribeDataObject,
+  kScopeDisableTarget,
   kClassRandVariables,
   kClassConstrain,
   kClassRandObjects,

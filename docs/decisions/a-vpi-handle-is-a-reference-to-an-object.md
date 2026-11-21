@@ -1,7 +1,7 @@
 # A VPI handle is a reference to an object
 
 Date: 2026-11-09 Status: accepted; D1 and D6 revised and D7 to D10 added 2026-11-16, when VPI came
-to reach variables
+to reach variables; D11 added 2026-11-19, when callbacks came to be registered
 
 ## Why this decision matters
 
@@ -159,6 +159,18 @@ D10. Where the standard leaves the answer to the tool: an array variable states 
     not yet supported, as are listing the entries of an associative array with a wildcard index,
     whose keys no operation of the language lists (LRM 7.9), and the name of an entry keyed by a
     class handle or a `chandle`, which has no literal to be written with.
+
+D11. A callback and a time queue are objects too, of the simulation rather than of the design (LRM
+    36.10, 37.80, 37.81). A callback is named by its identity among those the run registered, so
+    a handle to it is released like any other and two registrations of the same data are two
+    callbacks; one removed or ended names none, and a handle to it then answers that. A time
+    queue is named by its time, answers it through `vpi_get_time`, and is listed in increasing
+    time, the current slot only while it holds events ahead of its Postponed region, and only
+    slots the run will still run. An object relates to the callbacks placed on it, a time queue
+    to those waiting in it, and no object to those related to none of the diagram's objects --
+    one for a simulator action, on a signal, on a task or a function, or due when time next
+    moves. From an object of a kind the diagram does not name, the relation is refused as one
+    the object does not have.
 ```
 
 ## Rejected alternatives

@@ -69,22 +69,29 @@ struct DataObjectBodies {
 // the record of the definition it comes from, the record of each scope it
 // declares that the run builds and of each it builds nothing for, each a
 // constant of the unit, each data object it declares, in the order it lists
-// them, and the bodies reaching those.
+// them, the bodies reaching those, and the body answering, by the position of
+// a block or a task among the scopes it builds nothing for, the target a
+// disable of that one in the object ends (LRM 9.6.2), none for one that owns
+// no target there.
 struct ScopeDeclarations {
   ConstantId definition;
   std::vector<ConstantId> elaborated;
   std::vector<ConstantId> lexical;
   std::vector<DescribedDataObject> data_objects;
   DataObjectBodies bodies;
+  CallableId disable_target;
 
   auto operator==(const ScopeDeclarations&) const -> bool = default;
 };
 
 // The callback of the runtime library the body `body` answers among those
 // reaching what `declarations` describes, none where it is none of them.
-[[nodiscard]] inline auto DataObjectCallbackOf(
+[[nodiscard]] inline auto ScopeDeclarationsCallbackOf(
     const ScopeDeclarations& declarations, CallableId body)
     -> std::optional<support::LibraryCallback> {
+  if (body == declarations.disable_target) {
+    return support::LibraryCallback::kScopeDisableTarget;
+  }
   const DataObjectBodies& bodies = declarations.bodies;
   if (body == bodies.settle) {
     return support::LibraryCallback::kScopeSettleDataObject;

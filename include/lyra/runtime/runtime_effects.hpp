@@ -42,6 +42,7 @@ class RuntimeProcess;
 class Scope;
 class Timer;
 class ValueDumps;
+class VpiCallbacks;
 class RandomizeSettings;
 class RuntimeEffects;
 
@@ -88,6 +89,10 @@ class RuntimeEffects {
   // suspend in the woken-but-not-yet-resumed window then saves a runnable
   // disposition rather than a blocked one.
   void Wake(Activation* activation);
+
+  // `callbacks` holds callbacks of foreign code an occurrence made due, which
+  // run at the occurrence as an execution woken there does (LRM 38.36.1).
+  void RunCallbacksAtTheOccurrence(VpiCallbacks& callbacks);
 
   // Something has happened where the waits enrolled on `members` watch -- a
   // cell took a new value, a named event was triggered, a process terminated.

@@ -164,12 +164,13 @@ it lands, a per-interval observer's included.
 - **An original points only where a variable's fixed steps lead.** A member, an element of a
   fixed-size array and a packed value lie where they are for as long as the variable does, so they
   are kept with a pointer to where they lie; an array whose size changes lies where it is itself.
-- **A kept part is compared whole.** A part the interval left changed is told so, by the bits that
-  moved where it is a packed value; a wait on a part inside it is told only that it was reached, so
-  a structure or an array written whole and left changed anywhere wakes every procedure reading any
-  of it. That costs a run of such a procedure with its inputs as they were, which changes nothing it
-  writes and so wakes nothing further; a write of one member or element keeps only that part, and
-  wakes only its readers.
+- **A kept part is compared with what it holds when the interval ends.** A part the interval left
+  changed is told so, by the bits that moved where it is a packed value, and otherwise by its
+  original and what it holds now, so a wait on a part inside it is told whether that part changed
+  ([a-write-compares-what-it-reached](a-write-compares-what-it-reached.md), revised 2026-11-20): a
+  structure or an array written whole wakes only the procedures reading a part of it that moved.
+  This revises the rule that such a wait was told only that the part around it was reached, which
+  ran a procedure with its inputs as they were.
 - **Only these two procedures.** They are the constructs the standard gives for combinational logic
   and latches (LRM 9.2.2.2, 9.2.2.3), whose outputs are a function of what they read. An event
   control keeps the standard's reading in a design built either way, an `@*` among them, since a

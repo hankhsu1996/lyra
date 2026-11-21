@@ -18,9 +18,9 @@
 #include "lyra/base/overloaded.hpp"
 #include "lyra/base/source_location.hpp"
 #include "lyra/runtime/ambient_run_context.hpp"
+#include "lyra/runtime/application_routine_calls.hpp"
 #include "lyra/runtime/cancellation.hpp"
 #include "lyra/runtime/hierarchical_name.hpp"
-#include "lyra/runtime/import_call_chain.hpp"
 #include "lyra/runtime/reflection.hpp"
 #include "lyra/runtime/running_state.hpp"
 #include "lyra/runtime/runtime.hpp"
@@ -257,16 +257,6 @@ auto RecordOf(const VariableObject& object) -> const abi::DataObjectRecord& {
   return *ScopeDeclarationsOf(object.holder).data_objects.Entries()[object.row];
 }
 
-// The object whose storage a holder's data objects are: the scope, none for a
-// namespace, whose unit holds them.
-auto InstanceOf(const ScopeHolder& holder) -> GcObject* {
-  return std::visit(
-      Overloaded{
-          [](Scope* scope) -> GcObject* { return scope; },
-          [](const NamespaceObject&) -> GcObject* { return nullptr; }},
-      holder);
-}
-
 // The key foreign code names an entry by before the code settling the
 // selection converts it into the key the array keeps it by: the number it
 // wrote, as a run of bits read signed, or the text it wrote.
@@ -472,14 +462,38 @@ auto TypespecOfPart(const VariableObject& object) -> const abi::Typespec* {
   return PackedPartOf(object).typespec;
 }
 
+// The typespec each step of `object`'s selection is taken from, in order.
+auto SteppedFrom(const VariableObject& object)
+    -> std::vector<const abi::Typespec*> {
+  std::vector<const abi::Typespec*> from;
+  const abi::Typespec* at = RecordOf(object).typespec;
+  for (const Selection::Step& step : object.selection.Steps()) {
+    from.push_back(at);
+    at = &SelectedFrom(*at, step);
+  }
+  return from;
+}
+
 // Whether each of `object`'s steps, in order -- the selection's and then the
 // packed ones -- steps to a member, as against to an index.
 auto StepsToMembers(const VariableObject& object) -> std::vector<bool> {
   std::vector<bool> members;
-  const abi::Typespec* at = RecordOf(object).typespec;
-  for (const Selection::Step& step : object.selection.Steps()) {
-    members.push_back(FactsOf(*at).shape == Shape::kUnpackedAggregate);
-    at = &SelectedFrom(*at, step);
+  for (const abi::Typespec* at : SteppedFrom(object)) {
+    switch (FactsOf(*at).shape) {
+      case Shape::kUnpackedAggregate:
+        members.push_back(true);
+        break;
+      case Shape::kFixedArray:
+      case Shape::kSizedArray:
+      case Shape::kAssociative:
+      case Shape::kIntegral:
+      case Shape::kReal:
+      case Shape::kText:
+      case Shape::kHandle:
+      case Shape::kEvent:
+        members.push_back(false);
+        break;
+    }
   }
   for (const PackedStep& step : object.packed) {
     members.push_back(std::holds_alternative<PackedMemberStep>(step));
@@ -505,8 +519,7 @@ auto Prefix(const VariableObject& object) -> std::optional<VariableObject> {
 // whose element then lives in storage the run allocated (LRM 37.3.7, 37.17
 // detail 27).
 auto ReachesSizedElement(const VariableObject& object) -> bool {
-  const abi::Typespec* at = RecordOf(object).typespec;
-  for (const Selection::Step& step : object.selection.Steps()) {
+  for (const abi::Typespec* at : SteppedFrom(object)) {
     switch (FactsOf(*at).shape) {
       case Shape::kSizedArray:
       case Shape::kAssociative:
@@ -520,7 +533,6 @@ auto ReachesSizedElement(const VariableObject& object) -> bool {
       case Shape::kFixedArray:
         break;
     }
-    at = &SelectedFrom(*at, step);
   }
   return false;
 }
@@ -531,10 +543,10 @@ auto ReachesSizedElement(const VariableObject& object) -> bool {
 auto ForeignCallSite() -> base::SourceLocation {
   const RunningState* running =
       AmbientRunContext::Current().Effects().TryRunning();
-  if (running == nullptr || !running->import_calls.InsideACall()) {
+  if (running == nullptr || !running->application_calls.InsideAnImportCall()) {
     return base::SourceLocation{base::kNoSourceLocation};
   }
-  return running->import_calls.WrittenAt();
+  return running->application_calls.WrittenAt();
 }
 
 // The bodies of the scope `object` lies in, through which a call reaching the
@@ -565,10 +577,10 @@ auto ReadInto(const VariableObject& object, ValueSerializer& serializer)
   return {};
 }
 
-// What a read hands back: the value of a part holding one, and where the
-// selection ends at an array whose size the run sets, how many elements it
-// holds and, for a read asking for them, the keys of an associative array's
-// entries, each as the array keeps it.
+// What a read hands back: the value of a part holding one, the object a class
+// variable names, and where the selection ends at an array whose size the run
+// sets, how many elements it holds and, for a read asking for them, the keys of
+// an associative array's entries, each as the array keeps it.
 class CapturedRead final : public ValueSerializer {
  public:
   // A read of a value or a size, and one of an associative array's keys.
@@ -583,7 +595,6 @@ class CapturedRead final : public ValueSerializer {
     return wants_keys_;
   }
 
-  // A named event has no value (LRM 37.27), so no variable read hands one.
   void Receive(const Serialized& handed) override {
     std::visit(
         Overloaded{
@@ -592,11 +603,7 @@ class CapturedRead final : public ValueSerializer {
             },
             [&](double real) { held_ = real; },
             [&](const value::String* text) { held_ = *text; },
-            [](const value::ObjectRef*) {
-              throw InternalError(
-                  "vpi: a variable read as an event -- please report this as "
-                  "a bug");
-            },
+            [&](const value::ObjectRef* named) { object_ = *named; },
             [&](const SerializedSize& size) { size_ = size.count; },
             [&](const SerializedKey& key) {
               keys_.push_back(value::AnyValue::CopyOf(*key.type, key.bytes));
@@ -613,6 +620,9 @@ class CapturedRead final : public ValueSerializer {
   [[nodiscard]] auto Keys() -> std::vector<value::AnyValue>& {
     return keys_;
   }
+  [[nodiscard]] auto Object() const -> const std::optional<value::ObjectRef>& {
+    return object_;
+  }
 
  private:
   explicit CapturedRead(bool wants_keys) : wants_keys_(wants_keys) {
@@ -622,6 +632,7 @@ class CapturedRead final : public ValueSerializer {
   std::optional<HeldValue> held_;
   std::optional<std::int64_t> size_;
   std::vector<value::AnyValue> keys_;
+  std::optional<value::ObjectRef> object_;
 };
 
 // How many elements the array `object` reaches holds now.
@@ -747,8 +758,11 @@ auto IsMemory(const abi::Typespec& array) -> bool {
          !IsUnpackedArray(FactsOf(*array.element).shape);
 }
 
-auto VariableType(const VariableObject& object, VpiMode mode) -> PLI_INT32 {
-  if (RecordOf(object).Reference()) return vpiRefObj;
+// The type of the variable `object` names, which for a reference is the one it
+// is bound to: a reference and its actual are of equivalent types (LRM
+// 23.3.3.2, 13.5.2).
+auto ActualVariableType(const VariableObject& object, VpiMode mode)
+    -> PLI_INT32 {
   if (!object.packed.empty()) {
     if (IsVarBit(object)) return vpiVarBit;
     return FactsOf(*PackedPartOf(object).typespec).variable_type;
@@ -766,6 +780,11 @@ auto VariableType(const VariableObject& object, VpiMode mode) -> PLI_INT32 {
     }
   }
   return FactsOf(reached).variable_type;
+}
+
+auto VariableType(const VariableObject& object, VpiMode mode) -> PLI_INT32 {
+  if (RecordOf(object).Reference()) return vpiRefObj;
+  return ActualVariableType(object, mode);
 }
 
 // The names a part of a variable answers (LRM 37.17 detail 28): the last
@@ -806,20 +825,10 @@ auto IndexText(const Selection::Step& step) -> std::optional<std::string> {
 }
 
 // The constant a step selects by, as `vpiIndex` answers it (LRM 37.18 detail
-// 6, 37.19): a number, or an integral key of 64 bits or fewer by the number it
-// is at its type's signedness.
+// 6, 37.19).
 auto IndexObjectOf(const Selection::Step& step) -> VpiAnswer<VpiObject> {
-  if (const auto* number = std::get_if<std::int64_t>(&step)) {
-    return VpiObject{ConstantObject{.value = *number}};
-  }
-  if (const auto* selected = std::get_if<SelectedKey>(&step)) {
-    const value::IntegralValueType* integral =
-        selected->key.Type().AsIntegral();
-    if (integral != nullptr && integral->Shape().width <= 64) {
-      return VpiObject{ConstantObject{
-          .value =
-              value::ToInt64(integral->Load(selected->key.Bytes()).View())}};
-    }
+  if (const std::optional<std::int64_t> index = IndexOfStep(step)) {
+    return VpiObject{ConstantObject{.value = *index}};
   }
   return VpiNotYet(
       "the index of an entry of an associative array indexed by a string, a "
@@ -1556,6 +1565,13 @@ auto TypeOfVariablePart(const VpiObject& object, VpiMode mode) -> PLI_INT32 {
   throw InternalError("TypeOfVariablePart: no part of a variable");
 }
 
+auto TypeOfActual(const VpiObject& object, VpiMode mode) -> PLI_INT32 {
+  if (const auto* variable = std::get_if<VariableObject>(&object)) {
+    return ActualVariableType(*variable, mode);
+  }
+  return TypeOfVariablePart(object, mode);
+}
+
 auto RelatedToVariablePart(
     PLI_INT32 relation, const VpiObject& from, VpiMode mode)
     -> VpiAnswer<std::vector<VpiObject>> {
@@ -1768,6 +1784,23 @@ auto OneRelatedToVariablePart(
     }
   }
   return VpiNotYet("this relation from this object");
+}
+
+auto IndexOfStep(const Selection::Step& step) -> std::optional<std::int64_t> {
+  return std::visit(
+      Overloaded{
+          [](std::int64_t index) -> std::optional<std::int64_t> {
+            return index;
+          },
+          [](const SelectedKey& selected) -> std::optional<std::int64_t> {
+            const value::IntegralValueType* integral =
+                selected.key.Type().AsIntegral();
+            if (integral == nullptr || integral->Shape().width > 64) {
+              return std::nullopt;
+            }
+            return value::ToInt64(integral->Load(selected.key.Bytes()).View());
+          }},
+      step);
 }
 
 auto VariablePartIntegerProperty(
@@ -2035,6 +2068,23 @@ auto ValueShapeOf(const VpiObject& object) -> VpiAnswer<ValueShape> {
   return std::unexpected<std::string>("the object has no value");
 }
 
+auto WatchOfVariablePart(const VariableObject& object) -> Trigger {
+  const abi::ScopeDeclarations& declarations =
+      ScopeDeclarationsOf(object.holder);
+  Trigger watched =
+      TriggerOfDataObject(declarations, InstanceOf(object.holder), object.row);
+  SelectionSettler settler;
+  declarations.settle(
+      InstanceOf(object.holder), object.row, object.selection, settler,
+      ForeignCallSite());
+  watched.part = watched.part.Join(settler.WatchedPath());
+  if (!watched.part.IsInexact() && !object.packed.empty()) {
+    const PackedPart bits = PackedPartOf(object);
+    watched.reads = {.lsb = bits.lsb, .width = bits.width};
+  }
+  return watched;
+}
+
 auto ReadVariablePart(const VpiObject& object) -> VpiAnswer<HeldValue> {
   if (const auto* variable = std::get_if<VariableObject>(&object)) {
     return ReadVariable(*variable);
@@ -2052,6 +2102,23 @@ auto ReadVariablePart(const VpiObject& object) -> VpiAnswer<HeldValue> {
         enumeration.enumeration->MemberAt(constant->position))};
   }
   return std::unexpected<std::string>("the object has no value");
+}
+
+auto ObjectNamedByVariablePart(const VpiObject& object)
+    -> VpiAnswer<value::ObjectRef> {
+  const auto* variable = std::get_if<VariableObject>(&object);
+  if (variable == nullptr) {
+    return std::unexpected<std::string>("the object is no class variable");
+  }
+  CapturedRead captured = CapturedRead::OfValue();
+  VpiAnswer<void> read = ReadInto(*variable, captured);
+  if (!read.has_value()) return std::unexpected(std::move(read.error()));
+  if (!captured.Object().has_value()) {
+    throw InternalError(
+        "vpi: a class variable's read handed no object -- please report this "
+        "as a bug");
+  }
+  return *captured.Object();
 }
 
 namespace {

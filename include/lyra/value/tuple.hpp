@@ -1,11 +1,15 @@
 #pragma once
 
+#include <array>
 #include <concepts>
 #include <cstddef>
+#include <cstdint>
 #include <type_traits>
 #include <utility>
 
 #include "lyra/value/pack_element.hpp"
+#include "lyra/value/value_type.hpp"
+#include "lyra/value/value_witnesses_of.hpp"
 
 namespace lyra::value {
 
@@ -102,6 +106,25 @@ class Tuple {
   template <std::size_t I>
   [[nodiscard]] auto Component() && -> Element<I>&& {
     return std::move(static_cast<Stored<I>&>(data_).value);
+  }
+
+  // Component `step` where it lies, with its type, as a path stepping into the
+  // product names it (LRM 7.2); no place past the last.
+  [[nodiscard]] auto PartAtStep(std::uint32_t step) const -> ValuePart {
+    using Locate = ValuePart (*)(const Tuple&);
+    static constexpr auto kLocates =
+        []<std::size_t... Is>(std::index_sequence<Is...>) {
+          return std::array<Locate, sizeof...(Is)>{
+              +[](const Tuple& product) -> ValuePart {
+                return {
+                    .at = &product.template Component<Is>(),
+                    .type = &TypeOfPart<Element<Is>>()};
+              }...};
+        }(std::index_sequence_for<Ts...>{});
+    if (step >= kLocates.size()) {
+      return {.at = nullptr, .type = nullptr};
+    }
+    return kLocates.at(step)(*this);
   }
 
  private:

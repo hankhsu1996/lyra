@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <type_traits>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/support/layout.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/integral_words.hpp"
@@ -19,6 +20,27 @@ class FixedArrayType;
 class IntegralValueType;
 class QueueType;
 class ValueType;
+
+// One part of a value: where it lies and its type, no place where the value
+// holds no such part.
+struct ValuePart {
+  const void* at;
+  const ValueType* type;
+};
+
+// What a value answers about the part one step of a path into it names (LRM
+// 7.2, 7.4) -- an element of a fixed-size array by its position, a component
+// of a product by its index -- handed the value's type first, as Swift's
+// generic code reaches a field through the offsets its type's metadata lists.
+// A write asks it of the value it replaced and of the one it left, so a wait
+// on a part below the one written is told whether that part changed. A type
+// that states none is answered as a whole: an array whose size the run sets,
+// whose elements a whole write moves and ends; a tagged union, whose member
+// holds a value only under its tag; a string.
+struct StepWitnessTable {
+  ValuePart (*part)(
+      const ValueType& type, const void* value, std::uint32_t step);
+};
 
 // Where a type states one of its numbers: how far into the record the number
 // lies, and how many bytes it takes.
@@ -124,6 +146,10 @@ struct ValueWitnessTable {
   void (*assign)(const ValueType& type, void* storage, const void* value);
   bool (*bit_identical)(
       const ValueType& type, const void* lhs, const void* rhs);
+
+  // What a value of the type answers about the part a step of a path names,
+  // and nothing for a type whose value is answered as a whole.
+  const StepWitnessTable* steps;
 };
 
 // What every witness of an operation the language does not define for its type
@@ -163,7 +189,8 @@ using TakePositionsWitness = void (*)(
     const std::int64_t* first, const std::int64_t* count, void* out);
 
 // The tables of the witnesses `W` states: a static member for each entry, a
-// function or a lambda taking and answering what the entry does. Every such
+// function or a lambda taking and answering what the entry does, and, for a
+// type's table, `W::kSteps` for the parts a path's steps name. Every such
 // table the library states for its own kinds is made this way, so a witness
 // is written once and a table only lists them.
 template <typename W>
@@ -182,7 +209,8 @@ inline constexpr ValueWitnessTable kValueWitnessTableFor{
     .relocate = W::Relocate,
     .destroy = W::Destroy,
     .assign = W::Assign,
-    .bit_identical = W::BitIdentical};
+    .bit_identical = W::BitIdentical,
+    .steps = W::kSteps};
 
 // A type as code compiled before any design existed is handed it: how much
 // storage a value of it takes, its table, and which record it opens. A library
@@ -239,6 +267,21 @@ class ValueType {
   [[nodiscard]] auto BitIdentical(const void* lhs, const void* rhs) const
       -> bool {
     return witnesses_->bit_identical(*this, lhs, rhs);
+  }
+
+  // Whether the type answers the part a step of a path names, and the part
+  // step `step` names in the value at `value`, no place where it holds none.
+  [[nodiscard]] auto HasSteps() const -> bool {
+    return witnesses_->steps != nullptr;
+  }
+  [[nodiscard]] auto PartAtStep(const void* value, std::uint32_t step) const
+      -> ValuePart {
+    if (witnesses_->steps == nullptr) {
+      throw InternalError(
+          "a path steps into a value whose type states no part a path steps "
+          "to -- please report this as a bug");
+    }
+    return witnesses_->steps->part(*this, value, step);
   }
 
   // Which record this type opens; and this type as an integral one, as a

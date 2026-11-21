@@ -94,7 +94,8 @@ constexpr ValueWitnessTable kCountedWitnesses{
         [](const ValueType&, const void* lhs, const void* rhs) {
           return static_cast<const Counted*>(lhs)->value ==
                  static_cast<const Counted*>(rhs)->value;
-        }};
+        },
+    .steps = nullptr};
 
 auto ValueAt(const void* slot) -> int {
   return static_cast<const Counted*>(slot)->value;

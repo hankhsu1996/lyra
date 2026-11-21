@@ -57,4 +57,11 @@ class TupleType {
 
 static_assert(std::is_standard_layout_v<TupleType>);
 
+// Any tuple's components answered by index, for a path stepping to one, each
+// answer read off the tuple type it is handed. The table of every tuple type
+// names this one.
+extern "C" {
+extern const StepWitnessTable lyra_rt_tuple_step_witness_table;
+}
+
 }  // namespace lyra::value

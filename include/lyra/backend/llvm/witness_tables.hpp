@@ -138,10 +138,11 @@ inline auto ValueWitnesses() {
   });
 }
 
-// The table is its witnesses, one address each.
+// The table is its witnesses, then the parts a path's steps name, one address
+// each.
 static_assert(
     sizeof(value::ValueWitnessTable) ==
-    std::tuple_size_v<decltype(ValueWitnesses())> * sizeof(void*));
+    (std::tuple_size_v<decltype(ValueWitnesses())> + 1) * sizeof(void*));
 
 // Whether `type` implements the library's trait `trait`, as the unit
 // states its implementation.

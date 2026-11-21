@@ -1026,9 +1026,9 @@ void lyra_rt_dump_ports_limit(
 void lyra_rt_dump_ports_flush(void* runtime, const void* name);
 
 // What the code reading a data object hands the reader that asked for it --
-// an integral value's planes, a real, a string, the object an event variable
-// names -- and what the code watching one hands it: the trigger a wait for a
-// change of the object would enrol (LRM 38.15, 21.7.2.3, 9.4.2).
+// an integral value's planes, a real, a string, the object an event or class
+// variable names -- and what the code watching one hands it: the trigger a wait
+// for a change of the object would enrol (LRM 38.15, 21.7.2.3, 9.4.2).
 void lyra_rt_value_serializer_bits(
     void* serializer, const void* bits, std::int64_t bits_width,
     bool bits_are_four_state);
@@ -1036,7 +1036,7 @@ void lyra_rt_real_value_serializer_real(void* serializer, const void* value);
 void lyra_rt_shortreal_value_serializer_real(
     void* serializer, const void* value);
 void lyra_rt_value_serializer_text(void* serializer, const void* text);
-void lyra_rt_value_serializer_event(void* serializer, const void* event);
+void lyra_rt_value_serializer_object(void* serializer, const void* object);
 auto lyra_rt_value_serializer_size(void* serializer, std::int64_t size) -> bool;
 void lyra_rt_value_serializer_key(
     void* serializer, const void* key, const void* key_type);
@@ -1056,6 +1056,9 @@ void lyra_rt_selection_settler_settle_key(
 void lyra_rt_selection_settler_settle_positions(
     void* settler, std::int64_t before);
 void lyra_rt_selection_settler_settle_unfixed(void* settler);
+void lyra_rt_selection_settler_settle_watched_step(
+    void* settler, std::int64_t step);
+void lyra_rt_selection_settler_settle_unwatched(void* settler);
 auto lyra_rt_selection_settler_fixed(void* settler) -> bool;
 auto lyra_rt_selection_settler_positions(void* settler) -> std::int64_t;
 auto lyra_rt_value_deserializer_bits(void* deserializer, void* out) -> void*;

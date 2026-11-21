@@ -184,6 +184,24 @@ class EnclosingTargets {
     return nullptr;
   }
 
+  // `target` and every target entered within it, outermost first, which a
+  // `disable` of `target` ends with it (LRM 9.6.2); none where this is not
+  // inside `target`. What an earlier disable already ended is no activity a
+  // later one ends, though it has not left yet: from the first target disabled
+  // since this entered it, nothing is ended again.
+  [[nodiscard]] auto EndedByDisabling(const CancellationTarget& target) const
+      -> std::vector<CancellationTarget*> {
+    std::vector<CancellationTarget*> ended;
+    for (const Entry& enclosing : entries_) {
+      if (!enclosing.captured.Holds()) break;
+      if (ended.empty() && enclosing.captured.target != &target) {
+        continue;
+      }
+      ended.push_back(enclosing.captured.target);
+    }
+    return ended;
+  }
+
   // The targets a deferred report queued now records (LRM 16.4.4). Two of
   // them can withdraw it and no other can: the innermost, which is how a
   // `disable` names one assertion, since a statement label is a named block

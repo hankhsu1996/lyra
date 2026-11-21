@@ -11,6 +11,7 @@
 #include <format>
 #include <memory>
 #include <optional>
+#include <ranges>
 #include <span>
 #include <string>
 #include <string_view>
@@ -659,7 +660,9 @@ void WideRefSet(void* reference, std::int64_t width, const void* value) {
                   into, held);
             });
       },
-      [&] { return ReplaceWhole(held, assign); });
+      [&](const auto& tell) {
+        ReplaceWhole(held, lent.WatchedInside(), assign, tell);
+      });
 }
 
 // A value lying after what holds it, lent by reference or by its holder as a
@@ -958,9 +961,8 @@ void WriteLaidOutThrough(
               return NewOriginal<LaidOutOriginal>(into, type, lent.storage);
             });
       },
-      [&] {
-        assign();
-        return Change::Whole();
+      [&](const auto& tell) {
+        ReplaceLaidOut(type, lent.storage, lent.WatchedInside(), assign, tell);
       });
 }
 
@@ -1108,7 +1110,7 @@ auto DesignationAt(const void* designation) -> const ErasedDesignation& {
 auto ElementDesignation(
     const ErasedDesignation& within, void* element, value::Formation formed,
     const PartPath& step, void* out) -> void* {
-  within.write->Formed(formed);
+  within.write->Formed(StepFormedAt(formed, step));
   if (within.write->Tells()) {
     within.write->Stepped(step);
   }
@@ -1145,6 +1147,13 @@ auto LandLaidOutDesignation(
   const ErasedDesignation& landed = DesignationAt(designation);
   landed.write->LandLaidOut(type, landed.part);
   return landed.part;
+}
+
+// The step a write or a reference takes to the element the position at
+// `position` points at.
+auto ElementStepAt(const void* position) -> PartPath {
+  return PartPath::Written(
+      support::PartStep::kElement, PositionNamedAt(position));
 }
 
 // What a write through a position finds, as the formation a write in progress
@@ -1184,12 +1193,11 @@ auto DesignateFixedArrayElement(
     const void* designation, const value::FixedArrayType& type,
     const void* position, void* out) -> void* {
   const ErasedDesignation& within = DesignationAt(designation);
-  const std::optional<std::int64_t> at = PositionNamedAt(position);
   value::Formation formed{};
-  void* element = type.ElementMut(within.part, at, formed);
+  void* element =
+      type.ElementMut(within.part, PositionNamedAt(position), formed);
   return ElementDesignation(
-      within, element, formed,
-      PartPath::Written(support::PartStep::kElement, at), out);
+      within, element, formed, ElementStepAt(position), out);
 }
 // A dynamic array or a queue moves and ends its elements as it grows and
 // shrinks (LRM 7.5, 7.10), so it is kept whole, as its type copies it, before
@@ -1203,9 +1211,7 @@ auto DesignateFoundElement(
   value::Formation formed{};
   void* element = FoundElementMut(type, within.part, position, formed);
   return ElementDesignation(
-      within, element, formed,
-      PartPath::Written(support::PartStep::kElement, PositionNamedAt(position)),
-      out);
+      within, element, formed, ElementStepAt(position), out);
 }
 // The same into an associative array, the entry an index names having no
 // position, so the path the write reports stops there (LRM 7.8).
@@ -1240,7 +1246,7 @@ auto ReferToProperty(void* object, void* storage, void* out) -> void* {
 // on belongs to.
 struct SteppedElement {
   void* element = nullptr;
-  value::Formation formed{};
+  StepFormed formed;
   ErasedReference part;
 };
 
@@ -1259,8 +1265,9 @@ auto StepIntoAssociativeArrayElement(
       PartPath{}, [&](EffectStorage& into) {
         return NewOriginal<LaidOutOriginal>(into, type.Type(), from.storage);
       });
-  value::Formation formed{};
-  void* element = FoundElementMut(type, from.storage, index, formed);
+  value::Formation formation{};
+  void* element = FoundElementMut(type, from.storage, index, formation);
+  const StepFormed formed = StepFormedAt(formation, PartPath::Inexact());
   return {
       .element = element,
       .formed = formed,
@@ -1285,7 +1292,7 @@ auto ReferAssociativeArrayElementLeased(
   const SteppedElement stepped =
       StepIntoAssociativeArrayElement(from, type, index, at);
   auto* leased = static_cast<LeasedReference*>(out);
-  if (stepped.formed == value::Formation::kNowhere) {
+  if (std::holds_alternative<ElementNowhere>(stepped.formed)) {
     return std::construct_at(leased, StorageLease{}, stepped.part);
   }
   return std::construct_at(
@@ -1308,15 +1315,13 @@ auto ReferFixedArrayElement(
   const base::SourceLocationScope bound(at);
   const ErasedReference& from = ErasedAt(reference);
   from.AdmitStep();
-  const std::optional<std::int64_t> named = PositionNamedAt(position);
+  const PartPath step = ElementStepAt(position);
   value::Formation formed{};
-  void* element = type.ElementMut(from.storage, named, formed);
+  void* element =
+      type.ElementMut(from.storage, PositionNamedAt(position), formed);
   const bool accumulated = false;
   return BuildReference(
-      out,
-      from.Part(
-          element, formed,
-          PartPath::Written(support::PartStep::kElement, named), accumulated));
+      out, from.Part(element, StepFormedAt(formed, step), step, accumulated));
 }
 auto ReferDynamicArrayElement(
     const void* reference, const value::DynamicArrayType& type,
@@ -1328,7 +1333,9 @@ auto ReferDynamicArrayElement(
   void* element = FoundElementMut(type, from.storage, position, formed);
   const bool accumulated = false;
   return BuildReference(
-      out, from.Part(element, formed, PartPath::Inexact(), accumulated));
+      out, from.Part(
+               element, StepFormedAt(formed, ElementStepAt(position)),
+               PartPath::Inexact(), accumulated));
 }
 // The queue a reference names kept whole, as its type copies it, before a
 // step into it at `position` that appends an element, and whether the open
@@ -1354,7 +1361,9 @@ auto ReferQueueElement(
   value::Formation formed{};
   void* element = FoundElementMut(type, from.storage, position, formed);
   return BuildReference(
-      out, from.Part(element, formed, PartPath::Inexact(), accumulated));
+      out, from.Part(
+               element, StepFormedAt(formed, ElementStepAt(position)),
+               PartPath::Inexact(), accumulated));
 }
 
 // The same, leased: a call's binding to an element of a dynamic array or a
@@ -1371,8 +1380,9 @@ auto ReferDynamicArrayElementLeased(
   value::Formation formed{};
   void* element = FoundElementMut(type, from.storage, position, formed);
   const bool accumulated = false;
-  const ErasedReference part =
-      from.Part(element, formed, PartPath::Inexact(), accumulated);
+  const ErasedReference part = from.Part(
+      element, StepFormedAt(formed, ElementStepAt(position)),
+      PartPath::Inexact(), accumulated);
   auto* leased = static_cast<LeasedReference*>(out);
   if (formed == value::Formation::kNowhere) {
     return std::construct_at(leased, StorageLease{}, part);
@@ -1394,8 +1404,9 @@ auto ReferQueueElementLeased(
   const bool accumulated = KeepQueueBeforeAppend(from, type, position);
   value::Formation formed{};
   void* element = FoundElementMut(type, from.storage, position, formed);
-  const ErasedReference part =
-      from.Part(element, formed, PartPath::Inexact(), accumulated);
+  const ErasedReference part = from.Part(
+      element, StepFormedAt(formed, ElementStepAt(position)),
+      PartPath::Inexact(), accumulated);
   auto* leased = static_cast<LeasedReference*>(out);
   if (formed == value::Formation::kNowhere) {
     return std::construct_at(leased, StorageLease{}, part);
@@ -3472,9 +3483,9 @@ void lyra_rt_value_serializer_text(void* serializer, const void* text) {
       ->SerializeText(Read<String>(text));
 }
 
-void lyra_rt_value_serializer_event(void* serializer, const void* event) {
+void lyra_rt_value_serializer_object(void* serializer, const void* object) {
   static_cast<lyra::runtime::ValueSerializer*>(serializer)
-      ->SerializeEvent(Read<ObjectRef>(event));
+      ->SerializeObject(Read<ObjectRef>(object));
 }
 
 auto lyra_rt_value_serializer_size(void* serializer, std::int64_t size)
@@ -3522,6 +3533,16 @@ void lyra_rt_selection_settler_settle_positions(
 
 void lyra_rt_selection_settler_settle_unfixed(void* settler) {
   static_cast<lyra::runtime::SelectionSettler*>(settler)->SettleUnfixed();
+}
+
+void lyra_rt_selection_settler_settle_watched_step(
+    void* settler, std::int64_t step) {
+  static_cast<lyra::runtime::SelectionSettler*>(settler)->SettleWatchedStep(
+      step);
+}
+
+void lyra_rt_selection_settler_settle_unwatched(void* settler) {
+  static_cast<lyra::runtime::SelectionSettler*>(settler)->SettleUnwatched();
 }
 
 auto lyra_rt_selection_settler_fixed(void* settler) -> bool {
@@ -4124,7 +4145,7 @@ auto lyra_rt_laidout_refer_component(
       out, from.Part(
                lyra::runtime::TupleTypeAt(tuple_type)
                    .ComponentAt(from.storage, static_cast<std::size_t>(index)),
-               lyra::value::Formation::kExisting,
+               lyra::runtime::ElementThere{},
                lyra::runtime::PartPath::Written(
                    lyra::support::PartStep::kComponent, index),
                accumulated));

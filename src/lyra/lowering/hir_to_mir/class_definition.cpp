@@ -369,6 +369,11 @@ auto ScopeDeclarationsRecord(
   record.Set(
       &ScopeDeclarations::subscribe,
       entry(bodies.subscribe, &ScopeDeclarations::subscribe));
+  record.Set(
+      &ScopeDeclarations::disable_target,
+      entry(
+          scope_declarations.disable_target,
+          &ScopeDeclarations::disable_target));
   return record;
 }
 
@@ -1410,6 +1415,7 @@ struct EntryPrototypes {
       case support::LibraryCallback::kScopeForceDataObject:
       case support::LibraryCallback::kScopeReleaseDataObject:
       case support::LibraryCallback::kScopeSubscribeDataObject:
+      case support::LibraryCallback::kScopeDisableTarget:
         break;
     }
     throw InternalError(
@@ -1507,17 +1513,17 @@ auto FactsOf(
 // Gives each body of `cls`, class `id`, that something reaches without knowing
 // the object's class its entry: every one taking part in dispatch, answering
 // a callback the library makes on an object, answering the instance the object
-// keeps, or reading or subscribing to the data objects a reader by name finds,
-// that the class defines. One answering a callback is entered at that
-// callback's prototype, the one answering the instance at its own, and the
-// rest at their own, handed the object as the root.
+// keeps, or answering, for a reader by name, the data objects it finds and the
+// blocks a disable ends, that the class defines. One answering a callback is
+// entered at that callback's prototype, the one answering the instance at its
+// own, and the rest at their own, handed the object as the root.
 void AddEntries(
     mir::CompilationUnit& unit, mir::ClassId id, mir::Class& cls,
     const EntryPrototypes& prototypes) {
   const mir::TypeId root = mir::ObjectRootPointer(unit.types);
-  const auto reads_or_subscribes = [&](mir::CallableId callable) {
+  const auto answers_a_reader_by_name = [&](mir::CallableId callable) {
     return cls.scope_declarations.has_value() &&
-           mir::DataObjectCallbackOf(*cls.scope_declarations, callable)
+           mir::ScopeDeclarationsCallbackOf(*cls.scope_declarations, callable)
                .has_value();
   };
   std::vector<mir::CallableId> entered;
@@ -1526,7 +1532,8 @@ void AddEntries(
     const bool reached_by_definition =
         mir::VirtualDispatchOf(decl).has_value() ||
         cls.CallbackAnsweredBy(callable).has_value() ||
-        cls.declaring_instance == callable || reads_or_subscribes(callable);
+        cls.declaring_instance == callable ||
+        answers_a_reader_by_name(callable);
     if (reached_by_definition && mir::IsDefinedHere(decl)) {
       entered.push_back(callable);
     }

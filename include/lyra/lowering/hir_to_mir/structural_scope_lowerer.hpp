@@ -41,7 +41,6 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/field.hpp"
 #include "lyra/mir/type_id.hpp"
-#include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -534,20 +533,36 @@ struct ScopeClassBodies {
 struct NamespaceBodies {};
 using DescribingBodies = std::variant<ScopeClassBodies, NamespaceBodies>;
 
-// The two bodies reaching the data objects a scope describes, taken where
-// `bodies` says, their code stated once the objects are known.
+// A body reaching what a scope describes, taken where `bodies` says, its code
+// stated once what it reaches is known.
+[[nodiscard]] auto TakeScopeBody(
+    mir::CompilationUnit& unit, DescribingBodies bodies) -> mir::CallableId;
+
+// The bodies reaching the data objects a scope describes, taken where `bodies`
+// says, their code stated once the objects are known.
 [[nodiscard]] auto TakeDataObjectBodies(
     mir::CompilationUnit& unit, DescribingBodies bodies)
     -> mir::DataObjectBodies;
 
+// The code of the body `declarations` names for a scope's disable targets,
+// which `bodies` says the kind of: handed the object and the position of a
+// block or a task among the scopes `scopes` records the run builds nothing
+// for, it answers the address in the object of the target `declared` gives
+// that one (LRM 9.6.2), and null for one given none.
+void StateDisableTargets(
+    mir::CompilationUnit& unit, const ScopeTable& scopes,
+    DescribingBodies bodies, const mir::ScopeDeclarations& declarations,
+    const WalkFrame& scope_frame, const DeclaredScopes& declared);
+
 // Each data object the scope `lowerer` lowers describes (LRM 21.7.1.2, 37.17),
 // as its declaration states it, stated in `declarations`, and the code of the
-// two bodies `declarations` names, which `bodies` says the kind of. Each
-// switches on the position of the data object it is asked for, and in the
-// case for each: one reads the object's cell as the scope's own code reads it
-// and hands the value to the serializer the reader gave; the other builds the
-// trigger a wait for a change of it enrols and hands it to the subscriber the
-// reader gave. Each case is compiled where the object's type is known, so a
+// bodies reaching them `declarations` names, which `bodies` says the kind of.
+// Each switches on the position of the data object it is asked for, and in
+// the case for each reaches the object's cell as the scope's own code does:
+// one reads it and hands the value to the serializer the reader gave, another
+// builds the trigger a wait for a change of it enrols and hands it to the
+// subscriber the reader gave, and the rest settle, write, force and release a
+// part of it. Each case is compiled where the object's type is known, so a
 // reader reads no storage itself. `scopes` holds the records of the
 // procedural scopes an object lies in.
 auto DescribeDataObjects(

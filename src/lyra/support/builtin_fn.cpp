@@ -1601,10 +1601,10 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .name = "value_serializer_text",
           .declaration = Method{"SerializeText"},
           .takes_the_location = false};
-    case BuiltinFn::kSerializeEvent:
+    case BuiltinFn::kSerializeObject:
       return {
-          .name = "value_serializer_event",
-          .declaration = Method{"SerializeEvent"},
+          .name = "value_serializer_object",
+          .declaration = Method{"SerializeObject"},
           .takes_the_location = false};
     case BuiltinFn::kSerializeSize:
       return {
@@ -1649,6 +1649,16 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "selection_settler_settle_unfixed",
           .declaration = Method{"SettleUnfixed"},
+          .takes_the_location = false};
+    case BuiltinFn::kSettleWatchedStep:
+      return {
+          .name = "selection_settler_settle_watched_step",
+          .declaration = Method{"SettleWatchedStep"},
+          .takes_the_location = false};
+    case BuiltinFn::kSettleUnwatched:
+      return {
+          .name = "selection_settler_settle_unwatched",
+          .declaration = Method{"SettleUnwatched"},
           .takes_the_location = false};
     case BuiltinFn::kSettledFixed:
       return {

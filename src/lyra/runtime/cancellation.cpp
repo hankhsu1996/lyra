@@ -1,5 +1,6 @@
 #include "lyra/runtime/cancellation.hpp"
 
+#include <algorithm>
 #include <exception>
 #include <memory>
 #include <utility>
@@ -7,8 +8,10 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/runtime/running_state.hpp"
+#include "lyra/runtime/runtime.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/runtime_process.hpp"
+#include "lyra/runtime/vpi_callbacks.hpp"
 
 namespace lyra::runtime {
 
@@ -170,8 +173,49 @@ Unwound::~Unwound() = default;
 CancellationTarget::CancellationTarget() = default;
 CancellationTarget::~CancellationTarget() = default;
 
+namespace {
+
+// The targets a `disable` of `target` ends (LRM 9.6.2): `target` and every one
+// entered within it by an execution still active inside it -- what is running,
+// and each execution enrolled there -- a task down a chain of enables among
+// them, each once; none where nothing active is inside `target`, which a
+// `disable` of it then ends nothing of. An execution an earlier disable or a
+// kill already ended is not active, though it has not left yet. Gathered
+// before the disable takes anything off its targets.
+auto EndedByDisabling(CancellationTarget& target, RuntimeEffects& effects)
+    -> std::vector<CancellationTarget*> {
+  std::vector<CancellationTarget*> ended;
+  const auto add = [&](const EnclosingTargets& targets) {
+    for (CancellationTarget* each : targets.EndedByDisabling(target)) {
+      if (std::ranges::find(ended, each) == ended.end()) ended.push_back(each);
+    }
+  };
+  if (const RunningState* running = effects.TryRunning(); running != nullptr) {
+    add(running->targets);
+  }
+  target.Members().ForEach([&](TargetMembership& member) {
+    // One already ending runs nothing a disable could end.
+    if (member.process->TerminationIsDue()) return;
+    if (const RunningState* held = member.process->HeldState()) {
+      add(held->targets);
+    }
+  });
+  return ended;
+}
+
+}  // namespace
+
 void Disable(CancellationTarget* target, RuntimeEffects& effects) {
+  // LRM 38.36.1 cbDisable: foreign code is called back for each named block
+  // and task the disable ended, once they have been disabled and before the
+  // execution that disabled them goes on, which it may be about to leave.
+  VpiCallbacks* callbacks = AsRuntime(effects).CallbacksIfMade();
+  const bool watched = callbacks != nullptr && callbacks->WatchesDisables();
+  const std::vector<CancellationTarget*> ended =
+      watched ? EndedByDisabling(*target, effects)
+              : std::vector<CancellationTarget*>{};
   target->Invalidate(effects);
+  if (watched) callbacks->Disabled(ended);
   TakeDepartureIfDue(effects);
 }
 

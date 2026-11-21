@@ -32,7 +32,9 @@
 #include "lyra/runtime/program_threads.hpp"
 #include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/scope.hpp"
+#include "lyra/runtime/signal_watcher.hpp"
 #include "lyra/runtime/timer.hpp"
+#include "lyra/runtime/vpi_callbacks.hpp"
 #include "lyra/support/combinational_updates.hpp"
 #include "lyra/support/file_descriptor.hpp"
 #include "lyra/support/scope_execution.hpp"
@@ -61,10 +63,10 @@ class RunningAnEffect {
       std::atomic<const ProcedureContext*>& in_force,
       const ProcedureContext& made_by)
       : in_force_(&in_force), outer_(in_force.load(std::memory_order_relaxed)) {
-    in_force.store(&made_by, std::memory_order_relaxed);
+    in_force.store(&made_by, std::memory_order_release);
   }
   ~RunningAnEffect() {
-    in_force_->store(outer_, std::memory_order_relaxed);
+    in_force_->store(outer_, std::memory_order_release);
   }
 
   RunningAnEffect(const RunningAnEffect&) = delete;
@@ -219,6 +221,13 @@ void Runtime::RunSimulation() {
     // reported and ends the run.
     RunAsLanding(*this, [this] { WalkInitialize(design_->Root()); });
     RunAsLanding(*this, [this] { WalkActivate(design_->Root()); });
+    // LRM 38.36.3: the beginning of the time-zero cycle, before any process
+    // runs a statement.
+    simulation_started_ = true;
+    if (callbacks_ != nullptr) {
+      callbacks_->ActionOccurred(
+          SimulatorAction::kSimulationStarted, Occurrence{});
+    }
     StartFrom(design_starting_, 0);
     StartFrom(program_starting_, 0);
     phase_ = Phase::kRunningRegions;
@@ -261,6 +270,13 @@ void Runtime::RunSimulation() {
         const RunningAnEffect running(procedure_in_force_, owed.procedure);
         RunAsLanding(*this, owed.call);
       }
+      // LRM 38.36.3: the simulation has ended, by running out of work or by
+      // being asked to, and everything the design asked for at its end has
+      // run.
+      if (callbacks_ != nullptr) {
+        callbacks_->ActionOccurred(
+            SimulatorAction::kSimulationEnded, Occurrence{});
+      }
     }
   } catch (const std::exception&) {
     // A control effect is not derived from this hierarchy (LRM 9.6.2), so one
@@ -268,6 +284,9 @@ void Runtime::RunSimulation() {
     // surfaces rather than being reported as something the design did.
     ReportRaisedError(*this, std::current_exception());
   }
+  // No callback outlives the run that foreign code registered it with, and a
+  // signal one trapped is handled as it was before, from here on.
+  callbacks_.reset();
 }
 
 void Runtime::RequestSimulationEnd() {
@@ -289,6 +308,11 @@ void Runtime::ReportDesignError(
     base::SourceLocation at, const base::DiagMessage& message) {
   diagnostic_.ReportAt(at, Severity::kFatal, message);
   RequestSimulationEnd();
+  // LRM 38.36.3 cbError: foreign code is called back with the error, which
+  // `vpi_chk_error` then reports, once the run is ending by it.
+  if (callbacks_ != nullptr) {
+    callbacks_->ErrorReported(at, message);
+  }
 }
 
 void Runtime::ReportToolFailure(std::string_view message) {
@@ -327,6 +351,7 @@ auto Runtime::ReportContext() const -> DiagnosticDispatcher::Context {
 }
 
 void Runtime::ReportUnsettledSlot(const SlotPasses& passes) {
+  slot_given_up_ = true;
   ReportDesignFailure(
       base::kNoSourceLocation,
       base::DiagMessage(
@@ -555,7 +580,7 @@ void Runtime::InstallNoThreadRun(
   no_thread_runs_.emplace_back(
       taken.generator, objects_from, taken.context,
       running_.load(std::memory_order_relaxed));
-  running_.store(&no_thread_runs_.back(), std::memory_order_relaxed);
+  running_.store(&no_thread_runs_.back(), std::memory_order_release);
 }
 
 auto Runtime::RunningContext() const -> const ExecutionContext& {
@@ -569,14 +594,14 @@ auto Runtime::RunningContext() const -> const ExecutionContext& {
 }
 
 auto Runtime::RunningProcedure() const noexcept -> const ProcedureContext& {
-  const Runner* const running = running_.load(std::memory_order_relaxed);
+  const Runner* const running = running_.load(std::memory_order_acquire);
   return running == nullptr
-             ? *procedure_in_force_.load(std::memory_order_relaxed)
+             ? *procedure_in_force_.load(std::memory_order_acquire)
              : running->Context().procedure;
 }
 
 void Runtime::LeaveNoThread() {
-  running_.store(no_thread_runs_.back().Displaced(), std::memory_order_relaxed);
+  running_.store(no_thread_runs_.back().Displaced(), std::memory_order_release);
   no_thread_runs_.pop_back();
 }
 
@@ -598,24 +623,96 @@ auto Runtime::AdvanceToNextSlot() -> bool {
     if (!next.mapped().Empty()) {
       now_ = next.key();
       current_slot_.Append(next.mapped());
+      current_slot_[support::Region::kPreActive].timers.Append(
+          due_at_next_slot_);
       return true;
     }
   }
   return false;
 }
 
+auto Runtime::RunsLaterInThisSlot(support::Region region) const -> bool {
+  if (slot_given_up_) return false;
+  switch (phase_) {
+    // The time-zero slot runs only where nothing asked the run to end first.
+    case Phase::kBringingUp:
+      return std::holds_alternative<Running>(state_);
+    case Phase::kInPreActive:
+      return region != support::Region::kPreponed;
+    case Phase::kRunningRegions:
+      return region != support::Region::kPreponed &&
+             region != support::Region::kPreActive;
+    case Phase::kInPostponed:
+      return region == support::Region::kPostponed;
+    case Phase::kOver:
+      return false;
+  }
+  throw InternalError("Runtime::RunsLaterInThisSlot: unknown phase");
+}
+
+auto Runtime::CanSchedule(SimTime at, support::Region region) const -> bool {
+  return at > now_ ? TimeMovesOn() : RunsLaterInThisSlot(region);
+}
+
+// Only the slots the run will still run: no later one once it has been asked
+// to end, and not the one under way once that was given up.
+auto Runtime::TimeQueues() const -> std::vector<SimTime> {
+  std::vector<SimTime> times;
+  if (!slot_given_up_ &&
+      current_slot_.FirstPending(
+          support::Region::kPreponed, support::Region::kPrePostponed)) {
+    times.push_back(now_);
+  }
+  if (!TimeMovesOn()) return times;
+  for (const auto& [at, slot] : future_slots_) {
+    if (!slot.Empty()) times.push_back(at);
+  }
+  return times;
+}
+
+void Runtime::ScheduleAtNextSlot(Timer& timer) {
+  timer.Place().Unlink();
+  due_at_next_slot_.PushBack(timer.Place());
+}
+
+auto Runtime::Callbacks() -> VpiCallbacks& {
+  if (callbacks_ == nullptr) {
+    callbacks_ = std::make_unique<VpiCallbacks>(*this);
+  }
+  return *callbacks_;
+}
+
 void Runtime::ExecuteTimeSlot() {
   RunRegion(support::Region::kPreponed);
   SlotPasses passes;
+  // LRM 4.5: the Pre-Active region runs once, before the regions that are run
+  // again, and what is placed in it while it runs runs there too (LRM 38.36.2).
+  phase_ = Phase::kInPreActive;
+  const bool pre_active_settled = DrainRegions(
+      support::Region::kPreActive, support::Region::kPreActive, passes);
+  phase_ = Phase::kRunningRegions;
+  if (!pre_active_settled) {
+    return;
+  }
   // LRM 4.5: the active region set is run until it is empty, then the reactive
   // one, and the two again while either holds anything -- so what the reactive
-  // set schedules into the active one waits until the reactive set is empty.
-  while (current_slot_.FirstPending(
-      support::Region::kActive, support::Region::kReNba)) {
-    if (!DrainRegions(
-            support::Region::kActive, support::Region::kObserved, passes) ||
-        !DrainRegions(
-            support::Region::kReactive, support::Region::kReNba, passes)) {
+  // set schedules into the active one waits until the reactive set is empty --
+  // and the Pre-Postponed region once both are, where what it places is run
+  // in the slot as well.
+  while (const std::optional<support::Region> pending =
+             current_slot_.FirstPending(
+                 support::Region::kActive, support::Region::kPrePostponed)) {
+    const bool settled = *pending == support::Region::kPrePostponed
+                             ? DrainRegions(
+                                   support::Region::kPrePostponed,
+                                   support::Region::kPrePostponed, passes)
+                             : DrainRegions(
+                                   support::Region::kActive,
+                                   support::Region::kObserved, passes) &&
+                                   DrainRegions(
+                                       support::Region::kReactive,
+                                       support::Region::kReNba, passes);
+    if (!settled) {
       return;
     }
   }
@@ -630,6 +727,7 @@ void Runtime::ExecuteTimeSlot() {
   }
   if (std::holds_alternative<Running>(state_) && !current_slot_.Empty()) {
     // LRM 4.4.2.9.
+    slot_given_up_ = true;
     ReportDesignFailure(
         base::kNoSourceLocation,
         base::DiagMessage(
@@ -641,9 +739,19 @@ void Runtime::ExecuteTimeSlot() {
 auto Runtime::DrainRegions(
     support::Region first, support::Region last, SlotPasses& passes) -> bool {
   // What a region produces lands back in the slot, so the earliest one holding
-  // anything is looked for again after each.
-  while (const std::optional<support::Region> region =
-             current_slot_.FirstPending(first, last)) {
+  // anything is looked for again after each. Between two passes nothing of the
+  // design is running, which is where a signal a callback traps is called back
+  // (LRM 38.36.3), before the next region is chosen, since what the callback
+  // writes may fill an earlier one.
+  while (true) {
+    if (callbacks_ != nullptr) {
+      for (const int signal : SignalWatcher::TakeNoted()) {
+        callbacks_->Signalled(signal);
+      }
+    }
+    const std::optional<support::Region> region =
+        current_slot_.FirstPending(first, last);
+    if (!region.has_value()) break;
     if (++passes.count > kMaxRegionPassesPerSlot) {
       ReportUnsettledSlot(passes);
       return false;
@@ -693,9 +801,11 @@ void Runtime::RunRegion(support::Region region) {
   // A timer comes off its queue as it fires, so arming it again from what the
   // firing wakes queues a new event rather than moving this one. What it does
   // runs with no activation holding it, as a deferred effect does, so it is a
-  // landing of its own too.
+  // landing of its own too. One its owners share is kept until it has fired,
+  // whatever it lets go of.
   while (TimerPlace* fired = draining_.timers.PopFront()) {
     {
+      const std::shared_ptr<Timer> kept = fired->timer->KeepWhileFiring();
       const RunningAnEffect running(
           procedure_in_force_, fired->timer->BoundBy());
       RunAsLanding(*this, [fired] { fired->timer->Fire(); });

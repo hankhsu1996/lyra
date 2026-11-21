@@ -15,7 +15,13 @@
 #include "lyra/value/string.hpp"
 #include "lyra/value/value_type.hpp"
 
+namespace lyra::abi {
+struct ScopeDeclarations;
+}  // namespace lyra::abi
+
 namespace lyra::runtime {
+
+class GcObject;
 
 // The key an entry of an associative array is kept by (LRM 7.8): a value of
 // the array's index type, with that type. Two keys are one where they are of
@@ -79,11 +85,14 @@ class Selection {
 // Where the code settling a selection hands what its steps come to by the
 // types alone, before any storage is reached: the key each entry of an
 // associative array the selection names is kept by, converted from what
-// foreign code named it with as the design converts an index (LRM 7.8.4), and
-// how many positions a takeover of the variable counts before the part named
-// (LRM 10.6.2), none where a step reaches a part no takeover holds at a fixed
-// position. Defined in the library, which every unit describing a data object
-// reaches.
+// foreign code named it with as the design converts an index (LRM 7.8.4); how
+// many positions a takeover of the variable counts before the part named (LRM
+// 10.6.2), none where a step reaches a part no takeover holds at a fixed
+// position; and the path a wait on the part watches it by, as the design's own
+// wait on that select does (LRM 9.4.2), which stops at a part no step of a
+// path names -- an entry of an associative array, a member of an untagged
+// union, whose storage is the union's. Defined in the library, which every
+// unit describing a data object reaches.
 class SelectionSettler {
  public:
   template <class K>
@@ -94,6 +103,8 @@ class SelectionSettler {
       std::int64_t depth, const void* key, const value::ValueType& type);
   void SettlePositions(std::int64_t before);
   void SettleUnfixed();
+  void SettleWatchedStep(std::int64_t step);
+  void SettleUnwatched();
 
   // `named` with each entry it names by what foreign code wrote named by the
   // key the array keeps it by.
@@ -102,11 +113,16 @@ class SelectionSettler {
   // lie before it there.
   [[nodiscard]] auto Fixed() const -> bool;
   [[nodiscard]] auto Positions() const -> std::int64_t;
+  // The path from the data object to the part a wait on the selection watches,
+  // inexact where that is a part holding the one named.
+  [[nodiscard]] auto WatchedPath() const -> PartPath;
 
  private:
   std::vector<std::pair<std::int64_t, SelectedKey>> keys_;
   std::int64_t positions_ = 0;
   bool fixed_ = true;
+  std::vector<std::int64_t> steps_;
+  bool unwatched_ = false;
 };
 
 // How many elements an array whose size the run sets holds now.
@@ -121,22 +137,22 @@ struct SerializedKey {
 };
 
 // One thing the code reading a data object hands a reader: the bits of an
-// integral value, a real, a string, the object an event variable names, an
-// array's size, or a key of one of its entries.
+// integral value, a real, a string, the object an event or class variable
+// names, an array's size, or a key of one of its entries.
 using Serialized = std::variant<
     value::ConstIntegralView, double, const value::String*,
     const value::ObjectRef*, SerializedSize, SerializedKey>;
 
 // Where the code reading a data object for a reader reaching the design by
 // name hands the value it read (LRM 38.15, 21.7.2.3): the bits of an integral
-// value, a real, a string, or the object an event variable names. Where the
-// selection ends at an array whose size the run sets -- a dynamic array, a
-// queue, an associative array -- it hands how many elements it holds now (LRM
-// 37.17 detail 9), and an associative array then hands the key of each entry it
-// holds, in the order it keeps them (LRM 7.9.4), where the reader asks for
-// them. That code is a method of the class declaring the object, compiled where
-// the object's type is known, so the reader is handed a value and never reads
-// storage itself.
+// value, a real, a string, or the object an event or class variable names.
+// Where the selection ends at an array whose size the run sets -- a dynamic
+// array, a queue, an associative array -- it hands how many elements it holds
+// now (LRM 37.17 detail 9), and an associative array then hands the key of each
+// entry it holds, in the order it keeps them (LRM 7.9.4), where the reader asks
+// for them. That code is a method of the class declaring the object, compiled
+// where the object's type is known, so the reader is handed a value and never
+// reads storage itself.
 class ValueSerializer {
  public:
   template <class I>
@@ -156,7 +172,7 @@ class ValueSerializer {
   void SerializeBits(const value::ConstIntegralView& value);
   void SerializeReal(double value);
   void SerializeText(const value::String& value);
-  void SerializeEvent(const value::ObjectRef& event);
+  void SerializeObject(const value::ObjectRef& object);
   // Answers whether the reader asks for an associative array's keys too.
   auto SerializeSize(std::int64_t size) -> bool;
   void SerializeKey(const void* key, const value::ValueType& type);
@@ -213,5 +229,13 @@ class Subscriber {
   auto operator=(Subscriber&&) -> Subscriber& = default;
   ~Subscriber() = default;
 };
+
+// The trigger a wait for a change of the data object at `row` among those
+// `declarations` describes would enrol, the object `instance` holding it --
+// none for a namespace's -- which whatever else learns of its changes enrols
+// on: a value dump (LRM 21.7.1.4), a callback (LRM 38.36.1).
+[[nodiscard]] auto TriggerOfDataObject(
+    const abi::ScopeDeclarations& declarations, GcObject* instance,
+    std::int64_t row) -> Trigger;
 
 }  // namespace lyra::runtime

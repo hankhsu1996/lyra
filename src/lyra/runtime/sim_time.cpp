@@ -75,15 +75,22 @@ auto STimeInUnit(RuntimeEffects& runtime, std::int64_t unit_power)
       static_cast<std::int64_t>(static_cast<std::uint32_t>(scaled)));
 }
 
+auto TicksToRealSteps(
+    SimTime ticks, std::int8_t unit_power, std::int8_t global_power) noexcept
+    -> double {
+  const int coarser_by = unit_power - global_power;
+  const auto amount = static_cast<double>(ticks);
+  return coarser_by >= 0
+             ? amount / static_cast<double>(MultiplyByPowerOfTen(1, coarser_by))
+             : amount *
+                   static_cast<double>(MultiplyByPowerOfTen(1, -coarser_by));
+}
+
 auto RealTimeInUnit(RuntimeEffects& runtime, std::int64_t unit_power)
     -> value::Real {
-  const int coarser_by =
-      static_cast<int>(unit_power) - runtime.GlobalPrecisionPower();
-  const auto now = static_cast<double>(runtime.Now());
-  return value::Real{
-      coarser_by >= 0
-          ? now / static_cast<double>(MultiplyByPowerOfTen(1, coarser_by))
-          : now * static_cast<double>(MultiplyByPowerOfTen(1, -coarser_by))};
+  return value::Real{TicksToRealSteps(
+      runtime.Now(), static_cast<std::int8_t>(unit_power),
+      runtime.GlobalPrecisionPower())};
 }
 
 }  // namespace lyra::runtime

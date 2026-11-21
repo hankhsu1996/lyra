@@ -1,7 +1,9 @@
 # The DPI and VPI routines are defined against the standard's own headers
 
 Date: 2026-11-07 Status: accepted. Revised 2026-11-09: the DPI routines too. Revised 2026-11-18: the
-header of the TF routines, and a null string handed back.
+header of the TF routines, and a null string handed back. Revised 2026-11-19: D5 had the context
+import as the only application routine, written before foreign code could be called back; a
+callback's call is one too.
 
 ## Why this decision matters
 
@@ -39,15 +41,19 @@ D4. The routines whose prototype is variadic -- the printing routines and `vpi_c
     it as the application's own code is built; the runtime's C++ never sees a `va_list`.
 
 D5. `vpi_control(vpiFinish)` and `vpi_control(vpiStop)` are carried out upon return of the
-    application routine (LRM 38.4), which is the context import that called them, innermost where
-    imports nest through an export. The request is recorded on that call and done where the call
-    returns, as the design's own `$finish` would be done where the call is written; nothing is
-    raised among the foreign frames, and the execution leaves at the import's boundary
-    (`a-departure-stops-at-a-foreign-frame.md` D5). A request where no context import's call is
-    running -- from a plain import called from SystemVerilog, or with no import at all -- has no
-    call to be done upon, and answers 0 with an error. A plain import called from inside a context
-    import's call is uninstrumented (LRM 35.5.3), so its request is recorded on that call and done
-    where it returns; LRM 35.5 leaves what VPI does from a non-context import unpredictable.
+    application routine (LRM 38.4): the context import that called them, innermost where imports
+    nest through an export, or the callback the run called (LRM 38.36), innermost where a callback
+    is called from inside a foreign call. The request is recorded on that call and done where the
+    call returns, as the design's own `$finish` would be done where the call is written, and a
+    callback's, which no statement wrote, at no place; nothing is raised among the foreign frames,
+    and an import's execution leaves at its boundary (`a-departure-stops-at-a-foreign-frame.md`
+    D5). A callback's call is no import's: no DPI scope is current in it and no export may be
+    called from it (LRM Annex H.9), even where it runs on the stack of an import whose write it
+    was called for. A request where no such call is running -- from a plain import called from
+    SystemVerilog, or with no foreign call at all -- has no call to be done upon, and answers 0 with
+    an error. A plain import called from inside a context import's call is uninstrumented (LRM
+    35.5.3), so its request is recorded on that call and done where it returns; LRM 35.5 leaves
+    what VPI does from a non-context import unpredictable.
 
 D6. Every version-bound name Annex L gives a routine Lyra defines is defined beside the routine,
     so an application compiled for any compatibility mode (LRM 36.12.2.1) links unmodified. Where

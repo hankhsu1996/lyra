@@ -60,8 +60,7 @@ class LaidOutStorage : public TailValue<LaidOutStorage> {
     return ValueLayoutFor(*held_);
   }
 
-  // The value where it lies, which a write replacing the whole of it reads as
-  // nothing more than that it changed.
+  // The value where it lies.
   [[nodiscard]] auto Get() const -> const void* {
     return this->Bytes();
   }

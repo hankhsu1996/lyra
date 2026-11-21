@@ -120,6 +120,12 @@ class FixedArrayType {
 
 static_assert(std::is_standard_layout_v<FixedArrayType>);
 
+// Any fixed-size array's element a path's step names, read off the array type
+// it is handed. The table of every such type names it.
+extern "C" {
+extern const StepWitnessTable lyra_rt_fixed_array_step_witness_table;
+}
+
 // A fixed-size unpacked array lying in something else, read where it lies. It
 // owns nothing, so the array has to outlive it.
 struct FixedArrayView {

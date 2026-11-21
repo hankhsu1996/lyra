@@ -49,8 +49,14 @@ class Observable {
   // asks it and the library's own writes fold it. The price is that a unit
   // writing a cell of a type its design shaped carries a copy of it.
   [[nodiscard]] auto HasMembers() const noexcept -> bool {
-    return !members_.Empty() || children_ != nullptr;
+    return !root_.members.Empty() || root_.children != nullptr;
   }
+
+  // Whether a wait has been enrolled at a part inside the part at `at`, or at
+  // that part reading some of its positions rather than all of it -- a slice of
+  // an array (LRM 7.4.5) -- which a write replacing that part keeps what it
+  // replaced for, so each such wait is told whether what it reads changed.
+  [[nodiscard]] auto WatchedInside(const PartPath& at) const -> bool;
 
   // Enrols `membership` at the part `path` leads to, the whole of this place
   // where the path is empty, for its awaiter's whole life. The node is made if
@@ -63,10 +69,11 @@ class Observable {
   // what the write did to that part. The waits on the part itself are told the
   // change. The waits on each part holding it are told which of that part's
   // elements or members the write went into, so one watching only others is
-  // passed over. The waits on the parts inside it are told they were reached,
-  // those inside elements the change shows untouched excepted. No other wait
-  // of the place is visited. Where the path is inexact the write was at or
-  // inside the part, so every wait on it and inside it is told only that.
+  // passed over. The waits on each part inside it are told what the change
+  // says became of that part, and a part it shows unchanged is passed over with
+  // everything inside it. No other wait of the place is visited. Where the path
+  // is inexact the write was at or inside the part, so every wait on it and
+  // inside it is told only that it may have changed.
   // `accumulated` says whether the open interval holds the original of
   // what the write modified, so that a per-interval observer is told the write
   // only by the interval's net change when it ends.
@@ -121,12 +128,22 @@ class Observable {
   [[nodiscard]] auto EveryEnrolled() -> std::vector<Enrolled>;
 
  private:
-  struct Node;
   struct Children;
+  // One part some wait is enrolled at or under, the whole place at the root:
+  // the waits on it, the nodes of the parts inside it, none until a wait is
+  // enrolled on one, and whether a wait on it reads some of its positions
+  // rather than all of it, so a write replacing it keeps what it held for that
+  // wait.
+  struct Node {
+    IntrusiveList<WaitMembership> members;
+    std::unique_ptr<Children> children;
+    bool positions_read = false;
+  };
 
   // The memberships at the part `path` leads to, the node made if no wait has
-  // needed it yet.
-  [[nodiscard]] auto MembersAt(const PartPath& path)
+  // needed it yet, noted from then on as one some of whose positions a wait
+  // reads where `reads_positions` says so.
+  [[nodiscard]] auto MembersAt(const PartPath& path, bool reads_positions)
       -> IntrusiveList<WaitMembership>&;
 
   template <class Tell>
@@ -134,10 +151,8 @@ class Observable {
 
   [[nodiscard]] auto Accumulate(const PartPath& at, CopyOriginal copy) -> bool;
 
-  // The waits on the whole place: the root of the tree.
-  IntrusiveList<WaitMembership> members_;
-  // The nodes one step down, none until a wait is enrolled on a part.
-  std::unique_ptr<Children> children_;
+  // The whole place: the root of the tree.
+  Node root_;
   // None until a per-interval observer enrols here.
   std::unique_ptr<IntervalAccumulator> accumulator_;
 };

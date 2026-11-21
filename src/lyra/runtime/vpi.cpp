@@ -35,7 +35,9 @@
 #include "lyra/runtime/command_line.hpp"
 #include "lyra/runtime/dpi_context.hpp"
 #include "lyra/runtime/file_table.hpp"
+#include "lyra/runtime/runtime.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
+#include "lyra/runtime/vpi_callbacks.hpp"
 #include "lyra/runtime/vpi_object.hpp"
 #include "lyra/runtime/vpi_routines.hpp"
 #include "lyra/runtime/vpi_status.hpp"
@@ -105,6 +107,29 @@ auto ObjectOf(
   if (const auto* object = std::get_if<VpiObject>(&*referent)) return *object;
   ReportVpiError(routine, "the handle is no object");
   return std::nullopt;
+}
+
+// The callback `handle` refers to; none where it refers to anything else, or to
+// a callback removed or ended, which is reported as the routine's error.
+auto CallbackOf(
+    AmbientRunContext& context, vpiHandle handle, std::string_view routine)
+    -> lyra::runtime::VpiCallback* {
+  const std::optional<VpiObject> object =
+      ObjectOf(context.ObjectHandles(), handle, routine);
+  if (!object.has_value()) return nullptr;
+  const auto* named = std::get_if<lyra::runtime::CallbackObject>(&*object);
+  if (named == nullptr) {
+    ReportVpiError(routine, "the handle is no callback");
+    return nullptr;
+  }
+  lyra::runtime::VpiCallbacks* callbacks =
+      lyra::runtime::AsRuntime(context.Effects()).CallbacksIfMade();
+  lyra::runtime::VpiCallback* callback =
+      callbacks == nullptr ? nullptr : callbacks->Find(*named);
+  if (callback == nullptr) {
+    ReportVpiError(routine, "the callback was removed or has ended");
+  }
+  return callback;
 }
 
 // What `compute`, a routine's answer, comes to, where nothing it raises
@@ -642,7 +667,8 @@ void vpi_get_value(vpiHandle expr, p_vpi_value value_p) {
         const lyra::runtime::VpiAnswer<lyra::runtime::HeldValue> held =
             lyra::runtime::ReadVariablePart(*object);
         if (!held.has_value()) return std::unexpected(held.error());
-        return lyra::runtime::FillValue(*shape, *held, *value_p);
+        return lyra::runtime::FillValue(
+            *shape, *held, *value_p, lyra::runtime::ReadValueStore());
       });
 }
 
@@ -660,6 +686,13 @@ auto vpi_put_value(
   const std::optional<VpiObject> target =
       ObjectOf(context->ObjectHandles(), object, "vpi_put_value");
   if (!target.has_value()) return nullptr;
+  // LRM 4.4.2.9, 4.4.3.10: nothing is written in the Postponed region.
+  if (!lyra::runtime::AsRuntime(context->Effects()).MayWriteNow()) {
+    ReportVpiError(
+        "vpi_put_value",
+        "no value may be written in the read-only Postponed region");
+    return nullptr;
+  }
   ReportFailure(
       *context, "vpi_put_value", [&]() -> lyra::runtime::VpiAnswer<void> {
         // The flags name one delay mode, beside the bits asking for an event
@@ -673,7 +706,7 @@ auto vpi_put_value(
               "the object is no scheduled event");
         }
         if (std::holds_alternative<lyra::runtime::VariableObject>(*target) &&
-            lyra::runtime::TypeOfVariablePart(*target, DefaultMode()) ==
+            lyra::runtime::TypeOfActual(*target, DefaultMode()) ==
                 vpiNamedEvent) {
           return lyra::runtime::VpiNotYet("a toggle of a named event");
         }
@@ -687,7 +720,8 @@ auto vpi_put_value(
           const lyra::runtime::VpiAnswer<lyra::runtime::HeldValue> after =
               lyra::runtime::ReleaseVariablePart(*target);
           if (!after.has_value()) return std::unexpected(after.error());
-          return lyra::runtime::FillValue(*shape, *after, *value_p);
+          return lyra::runtime::FillValue(
+              *shape, *after, *value_p, lyra::runtime::ReadValueStore());
         }
         const lyra::runtime::VpiAnswer<lyra::runtime::HeldValue> written =
             lyra::runtime::ValueToWrite(*shape, *value_p);
@@ -748,8 +782,69 @@ auto vpi_release_handle(vpiHandle object) -> PLI_INT32 {
   return 1;
 }
 
+// The callback `cb_data_p` describes (LRM 38.36), a handle to it answered;
+// none where it is refused, which says why through `vpi_chk_error`.
+auto vpi_register_cb(p_cb_data cb_data_p) -> vpiHandle {
+  ClearVpiError();
+  AmbientRunContext* context = RunningContext("vpi_register_cb");
+  if (context == nullptr) return nullptr;
+  if (cb_data_p == nullptr) {
+    ReportVpiError("vpi_register_cb", "no callback data was given");
+    return nullptr;
+  }
+  std::optional<VpiObject> object;
+  if (cb_data_p->obj != nullptr) {
+    object =
+        ObjectOf(context->ObjectHandles(), cb_data_p->obj, "vpi_register_cb");
+    if (!object.has_value()) return nullptr;
+  }
+  return HandOut(
+      *context, "vpi_register_cb",
+      [&]() -> lyra::runtime::VpiAnswer<std::optional<VpiObject>> {
+        const lyra::runtime::VpiAnswer<lyra::runtime::CallbackObject>
+            registered = lyra::runtime::AsRuntime(context->Effects())
+                             .Callbacks()
+                             .Register(*cb_data_p, object);
+        if (!registered.has_value()) {
+          return std::unexpected(registered.error());
+        }
+        return std::optional<VpiObject>{*registered};
+      });
+}
+
+// A removed callback is not called again, and the handle it was removed by is
+// no longer valid (LRM 38.39).
+auto vpi_remove_cb(vpiHandle cb_obj) -> PLI_INT32 {
+  ClearVpiError();
+  AmbientRunContext* context = RunningContext("vpi_remove_cb");
+  if (context == nullptr) return 0;
+  lyra::runtime::VpiCallback* callback =
+      CallbackOf(*context, cb_obj, "vpi_remove_cb");
+  if (callback == nullptr) return 0;
+  lyra::runtime::AsRuntime(context->Effects()).Callbacks().Remove(*callback);
+  context->ObjectHandles().Release(cb_obj);
+  return 1;
+}
+
+// What a callback was registered with (LRM 38.8), in structures the run keeps
+// for as long as the callback stands.
+void vpi_get_cb_info(vpiHandle object, p_cb_data cb_data_p) {
+  ClearVpiError();
+  AmbientRunContext* context = RunningContext("vpi_get_cb_info");
+  if (context == nullptr) return;
+  if (cb_data_p == nullptr) {
+    ReportVpiError("vpi_get_cb_info", "no callback data structure was given");
+    return;
+  }
+  lyra::runtime::VpiCallback* callback =
+      CallbackOf(*context, object, "vpi_get_cb_info");
+  if (callback == nullptr) return;
+  callback->Info(*cb_data_p);
+}
+
 // The time now in the unit of the object named, the simulation's where none
-// is, as two words or as a real (LRM 38.13).
+// is, as two words or as a real (LRM 38.13); of a time queue, the time it is
+// at (LRM 37.81).
 void vpi_get_time(vpiHandle object, p_vpi_time time_p) {
   ClearVpiError();
   AmbientRunContext* context = RunningContext("vpi_get_time");
@@ -767,7 +862,13 @@ void vpi_get_time(vpiHandle object, p_vpi_time time_p) {
         const lyra::runtime::VpiAnswer<std::int8_t> unit =
             lyra::runtime::TimeUnitOf(run, *of);
         if (!unit.has_value()) return std::unexpected(unit.error());
-        if (!lyra::runtime::FillTime(run, *unit, *time_p)) {
+        const auto* object = std::get_if<VpiObject>(&*of);
+        const auto* queue =
+            object == nullptr
+                ? nullptr
+                : std::get_if<lyra::runtime::TimeQueueObject>(object);
+        const lyra::SimTime at = queue == nullptr ? run.Now() : queue->at;
+        if (!lyra::runtime::FillTimeAt(run, *unit, at, *time_p)) {
           return std::unexpected<std::string>(
               "the time structure names no format");
         }

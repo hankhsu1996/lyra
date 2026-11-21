@@ -32,6 +32,7 @@
 #include "lyra/runtime/value_storage_core.hpp"
 #include "lyra/runtime/words_storage.hpp"
 #include "lyra/support/region.hpp"
+#include "lyra/value/any_value.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/container_class.hpp"
 #include "lyra/value/container_lease.hpp"
@@ -40,6 +41,7 @@
 #include "lyra/value/kept_copy.hpp"
 #include "lyra/value/small_box.hpp"
 #include "lyra/value/value_type.hpp"
+#include "lyra/value/value_witnesses_of.hpp"
 #include "lyra/value/wide.hpp"
 
 namespace lyra::runtime {
@@ -69,8 +71,8 @@ concept ResizableArray = detail::ChangesSizeByKind<T>;
 
 // A value a wait reads by bit position (LRM 9.4.2): an integral value, of a
 // type known where it is compiled or one held as its words at a width it was
-// told. A write into one says which of its bits it reached; a write into any
-// other value says only that it changed it.
+// told. A write into one says which of its bits it reached and what they held
+// before and after.
 template <class T>
 concept BitAddressed = value::IntegralValue<T> || value::HeldAsWords<T>;
 
@@ -238,6 +240,31 @@ template <typename Container, typename Key>
   }
 }
 
+// What a step did to an array whose size changes where forming the element it
+// names made it (LRM 7.8.7, 7.10.1): the new element is the only one that
+// changed -- the one at `element`, or none in particular where it has no
+// position.
+struct ElementMade {
+  value::BitPositions element;
+
+  [[nodiscard]] auto ChangeMade() const -> Change {
+    return Change::Elements(element);
+  }
+};
+
+// What a step into an element did, which a write through it tells: the element
+// was there already; the step names none, so what it reaches belongs to
+// nothing (LRM 7.4.5); or forming the element made it.
+struct ElementThere {};
+struct ElementNowhere {};
+using StepFormed = std::variant<ElementThere, ElementNowhere, ElementMade>;
+
+// What the step `step` into an element did, which `formed` is the array's own
+// account of: an element it made is the one `step` names, or none in
+// particular where the step names no position (LRM 7.8.7).
+[[nodiscard]] auto StepFormedAt(value::Formation formed, const PartPath& step)
+    -> StepFormed;
+
 template <class Sink>
 class ScopedMutation;
 
@@ -387,21 +414,65 @@ template <class HeldAs>
 CellRareState<HeldAs>::~CellRareState() = default;
 
 // Replaces the whole of `storage` by `overwrite`, a write already known to
-// change it, and answers what its waits are told. Of a bit-addressed value the
-// change keeps its words from before, so a wait reading bits the new value
-// leaves as they were is passed over; of any other value nothing but that it
-// changed can be shown, so nothing is kept.
-template <class T, class Overwrite>
-auto ReplaceWhole(const T& storage, Overwrite overwrite) -> Change {
+// change it, and has `tell` tell its waits what changed (LRM 4.3). Of a
+// bit-addressed value the change keeps its words from before, so a wait reading
+// bits the new value leaves as they were is passed over. Of any other value,
+// where `inside_watched` says a wait watches a part inside it, the value
+// replaced is kept aside, a large one never in this frame, until the waits are
+// told, so each is told whether its own part changed; the write costs the
+// value's size whatever it keeps. Where no such wait is enrolled nothing is
+// kept.
+template <class T, class Overwrite, class Tell>
+void ReplaceWhole(
+    const T& storage, bool inside_watched, Overwrite overwrite, Tell tell) {
   if constexpr (BitAddressed<T>) {
     Change change = KeptBefore(storage);
     overwrite();
     KeepAfter(change, storage);
-    return change;
+    tell(change);
   } else {
+    if (!inside_watched) {
+      overwrite();
+      tell(Change::Whole());
+      return;
+    }
+    const value::KeptCopy before(value::TypeOfPart<T>(), &storage);
     overwrite();
-    return Change::Whole();
+    tell(Change::Replacing(before.Type(), before.Bytes(), &storage));
   }
+}
+
+// The same of a value of `type` laid out at `at`, whose type is handed rather
+// than known where this is compiled.
+template <class Overwrite, class Tell>
+void ReplaceLaidOut(
+    const value::ValueType& type, const void* at, bool inside_watched,
+    Overwrite overwrite, Tell tell) {
+  if (!inside_watched) {
+    overwrite();
+    tell(Change::Whole());
+    return;
+  }
+  const value::KeptCopy before(type, at);
+  overwrite();
+  if (const std::optional<Change> change =
+          Change::Between(type, before.Bytes(), at)) {
+    tell(*change);
+  }
+}
+
+// The same of what a cell's storage holds: a value of a type known where it is
+// compiled, or one laid out by the type the storage is told.
+template <class HeldAs, class Overwrite, class Tell>
+void ReplaceHeld(
+    const HeldAs& held, bool inside_watched, Overwrite overwrite, Tell tell) {
+  ReplaceWhole(held.Get(), inside_watched, overwrite, tell);
+}
+template <class Overwrite, class Tell>
+void ReplaceHeld(
+    const LaidOutStorage& held, bool inside_watched, Overwrite overwrite,
+    Tell tell) {
+  ReplaceLaidOut(held.Type(), held.Get(), inside_watched, overwrite, tell);
 }
 
 // A variable (LRM 6.8) as the library keeps one: what every variable is,
@@ -583,7 +654,8 @@ class Cell : public VariableCell {
   // The one path a whole value reaches the cell's storage by, whoever sent it.
   // The value arriving is compared with the one it would replace before
   // anything is written, so telling whoever waits keeps no copy of the old
-  // value, except the old words a packed value's waits are passed over by.
+  // value, except the old words a packed value's waits are passed over by and
+  // the old value where a wait watches a part inside it.
   void Store(const Owned& new_val) {
     StoreBy(
         [&] { return storage_.IsBitIdentical(new_val); },
@@ -615,8 +687,11 @@ class Cell : public VariableCell {
     const bool accumulated = this->BeforeModify(
         PartPath{},
         [&](EffectStorage& into) { return NewOriginalOf(into, storage_); });
-    AfterModify(
-        PartPath{}, ReplaceWhole(storage_.Get(), overwrite), accumulated);
+    ReplaceHeld(
+        storage_, this->WatchedInside(PartPath{}), overwrite,
+        [&](const Change& change) {
+          AfterModify(PartPath{}, change, accumulated);
+        });
   }
 
   // Shows what a release reestablished, as its reevaluation (LRM 10.6.2).
@@ -750,7 +825,9 @@ auto MakeTailCell(const Told& told) -> std::shared_ptr<TailCell<HeldAs>> {
 
 // What became of a part between `before` and `now`: the bits that moved where
 // it is a packed value, so a wait reading only bits that moved back is passed
-// over, the whole of it otherwise, and none where it is as it was.
+// over, the two values otherwise, so a wait on a part inside it is told what
+// became of that part, and none where it is as it was. Both have to stay where
+// they are until the change has been told.
 template <class Part>
   requires value::LyraValue<Part> || BitAddressed<Part>
 [[nodiscard]] auto ChangeBetween(const Part& before, const Part& now)
@@ -763,22 +840,14 @@ template <class Part>
     }
     return change;
   } else {
-    if (before.IsBitIdentical(now)) {
-      return std::nullopt;
-    }
-    return Change::Whole();
+    return Change::Between(value::TypeOfPart<Part>(), &before, &now);
   }
 }
-// The same of a value laid out by `type` at `before` and at `now`, an integral
-// one compared by its bits, read as its type lays them out, however narrow.
-[[nodiscard]] auto ChangeBetween(
-    const value::ValueType& type, const void* before, const void* now)
-    -> std::optional<Change>;
 
 // What a write keeps of the part it lands on, to tell afterwards what it did
-// to it: a copy, of which nothing but whether it moved can be shown. The write
-// lies in the frame of whatever writes, so the copy is kept as a frame keeps a
-// value aside.
+// to it: a copy, compared with what the part holds once the write lands. The
+// write lies in the frame of whatever writes, so the copy is kept as a frame
+// keeps a value aside.
 template <class Part>
 class WriteOriginal {
  public:
@@ -895,7 +964,7 @@ class LaidOutOriginal final : public IntervalOriginal {
   }
 
   [[nodiscard]] auto Changed() -> std::optional<Change> override {
-    return ChangeBetween(*type_, before_.Bytes(), live_);
+    return Change::Between(*type_, before_.Bytes(), live_);
   }
 
   void Exchange() override {
@@ -1043,6 +1112,11 @@ struct ErasedReference {
   void AfterModify(
       const PartPath& within, const Change& change, bool accumulated) const;
 
+  // Whether a wait on the variable watches a part inside the part the
+  // reference names, which a write replacing that part keeps what it replaced
+  // for. Only a variable's waits are told which part a write changed.
+  [[nodiscard]] auto WatchedInside() const -> bool;
+
   // A step can form what it reaches, which is a write into the variable, so
   // the variable admits it first.
   void AdmitStep() const;
@@ -1066,18 +1140,18 @@ struct ErasedReference {
 
   // The reference to a part of what this one names, at `storage`, reached by
   // the further steps `within` and which forming did `formed` to. The part has
-  // the same holder, which is told at once where forming it changed the
-  // storage -- an associative entry made by being bound (LRM 7.8.7) -- with
-  // `accumulated` saying whether the open interval accumulated that. An
-  // index naming no element names storage that belongs to nothing (LRM 7.4.5).
+  // the same holder, which is told at once where forming it made it -- an
+  // associative entry made by being bound (LRM 7.8.7) -- `accumulated` saying
+  // whether the open interval accumulated that. A step naming no element names
+  // storage that belongs to nothing (LRM 7.4.5).
   [[nodiscard]] auto Part(
-      void* storage, value::Formation formed, const PartPath& within,
+      void* storage, const StepFormed& formed, const PartPath& within,
       bool accumulated) const -> ErasedReference;
 };
 
 // Where a write announces each modification it makes, immediately before it
 // (LRM 9.2.2.2): the place that is told of the write, and the path of what the
-// write names within that place. No place where the write modifies nothing a
+// write names within that place. No place where the write modifies nothing an
 // interval keeps an original of.
 struct WrittenPart {
   Observable* place = nullptr;
@@ -1088,6 +1162,13 @@ struct WrittenPart {
   // opens.
   [[nodiscard]] auto WatchedPerInterval() const -> bool {
     return place != nullptr && place->WatchedPerInterval();
+  }
+
+  // Whether a wait watches a part inside the part `within` of what the write
+  // names, which a write landing on several parts of it keeps each of, so that
+  // each wait is told whether its own changed.
+  [[nodiscard]] auto WatchedInside(const PartPath& within) const -> bool {
+    return place != nullptr && place->WatchedInside(at.Join(within));
   }
 
   // Announces that the part `within` of what the write names, which `copy`
@@ -1158,9 +1239,9 @@ class LeasedReference {
 // overrides is handed to it as `overridden` hands it, one nobody waits on is
 // written as `assign` writes it, and one that leaves the bits as `identical`
 // finds them is no change. Otherwise `announce` announces the modification,
-// answering whether the open interval accumulated it, and `replace`
-// writes it and answers the change, which whoever waits through `lent` is
-// told.
+// answering whether the open interval accumulated it, and `replace` writes it,
+// handing the change to the function it is given, which tells whoever waits
+// through `lent`.
 template <
     class Overridden, class Assign, class Identical, class Announce,
     class Replace>
@@ -1179,7 +1260,9 @@ void SetThrough(
     return;
   }
   const bool accumulated = announce();
-  lent.AfterModify(PartPath{}, replace(), accumulated);
+  replace([&](const Change& change) {
+    lent.AfterModify(PartPath{}, change, accumulated);
+  });
 }
 
 // A write of a whole value laid out by `type` -- the bytes of an integral
@@ -1277,7 +1360,9 @@ class VariableRef {
         erased_, [&] { ApplyOverriddenWrite(new_val); }, assign,
         [&] { return Storage().IsBitIdentical(new_val); },
         [&] { return BeforeModifyWhole(); },
-        [&] { return ReplaceWhole(Storage(), assign); });
+        [&](const auto& tell) {
+          ReplaceWhole(Storage(), erased_.WatchedInside(), assign, tell);
+        });
   }
 
   // Opens a write into the referenced storage, as an observable cell itself
@@ -1311,8 +1396,9 @@ class VariableRef {
         StepCanReshape(Storage(), key) && BeforeModifyWhole();
     value::Formation formed{};
     auto& element = value::ElementMut(Storage(), key, formed);
-    return VariableRef<std::remove_reference_t<decltype(element)>>{
-        erased_.Part(&element, formed, RetainedStepTo<T>(key), accumulated)};
+    return VariableRef<std::remove_reference_t<decltype(element)>>{erased_.Part(
+        &element, StepFormedAt(formed, StepTo<T>(key)), RetainedStepTo<T>(key),
+        accumulated)};
   }
 
   // The same, bound by a call, with a lease on the element the array keeps,
@@ -1324,11 +1410,12 @@ class VariableRef {
     erased_.AdmitStep();
     const bool accumulated =
         StepCanReshape(Storage(), key) && BeforeModifyWhole();
-    value::Formation formed{};
-    auto& element = value::ElementMut(Storage(), key, formed);
+    value::Formation formation{};
+    auto& element = value::ElementMut(Storage(), key, formation);
+    const StepFormed formed = StepFormedAt(formation, StepTo<T>(key));
     const ErasedReference part =
         erased_.Part(&element, formed, RetainedStepTo<T>(key), accumulated);
-    if (formed == value::Formation::kNowhere) {
+    if (std::holds_alternative<ElementNowhere>(formed)) {
       return {StorageLease{}, part};
     }
     return {StorageLease(value::ElementLease(Storage(), element)), part};
@@ -1340,7 +1427,7 @@ class VariableRef {
     const bool accumulated = false;
     return VariableRef<std::remove_reference_t<decltype(component)>>{
         erased_.Part(
-            &component, value::Formation::kExisting,
+            &component, ElementThere{},
             PartPath::Written(
                 support::PartStep::kComponent, static_cast<std::int64_t>(I)),
             accumulated)};
@@ -1765,21 +1852,22 @@ class WriteBracket {
     return watched_per_interval_ && Open();
   }
 
-  void Formed(value::Formation formed) {
+  // A step formed the part it reaches as `formed` says. Where forming made the
+  // part, what that did to the part the step was taken from is what the write
+  // tells, whatever it goes on to write there.
+  void Formed(const StepFormed& formed) {
     if (!Open()) {
       return;
     }
-    switch (formed) {
-      case value::Formation::kExisting:
-        return;
-      case value::Formation::kMade:
-        outcome_ = Outcome::kChanged;
-        return;
-      case value::Formation::kNowhere:
-        outcome_ = Outcome::kSettled;
-        return;
-    }
-    throw InternalError("WriteBracket: unknown formation");
+    std::visit(
+        Overloaded{
+            [](const ElementThere&) {},
+            [&](const ElementNowhere&) { outcome_ = Outcome::kSettled; },
+            [&](const ElementMade& made) {
+              outcome_ = Outcome::kChanged;
+              moved_ = made.element;
+            }},
+        formed);
   }
 
   // A write of a run of elements of the part reached (LRM 7.6) changed those
@@ -1884,8 +1972,8 @@ class WriteBracket {
   Outcome outcome_ = Outcome::kUndecided;
   // The part of the storage the steps taken so far reached.
   PartPath reached_;
-  // The elements of that part a slice write moved, none in particular where
-  // the write changed the part by forming one.
+  // The elements of that part a step or a slice write changed before the write
+  // landed anything -- the one a step made, or the run a slice moved.
   value::BitPositions moved_{};
   // A copy of the storage for an overridden write to land in, where the sink
   // keeps none, held as a frame keeps a value aside, since the write lies in
@@ -1934,9 +2022,10 @@ class Designation {
     }
     value::Formation formed{};
     auto& element = value::ElementMut(*part_, key, formed);
-    write_->Formed(formed);
+    const PartPath step = StepTo<Part>(key);
+    write_->Formed(StepFormedAt(formed, step));
     if (write_->Tells()) {
-      write_->Stepped(StepTo<Part>(key));
+      write_->Stepped(step);
     }
     return Designation<Sink, std::remove_reference_t<decltype(element)>>{
         *write_, element};

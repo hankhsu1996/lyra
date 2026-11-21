@@ -31,6 +31,7 @@
 // is handed over whole.
 
 namespace lyra::runtime {
+class CancellationTarget;
 class GcObject;
 class Scope;
 class Selection;
@@ -282,7 +283,10 @@ struct DescribedPort {
 // 10.6.2), each answering what it came to as the build reads the
 // standard, and one hands the subscriber the trigger a wait for a change of it
 // would enrol. Each is handed last where the reader's own call was made, where
-// what fails in it is reported. A class of the hierarchy states it of its
+// what fails in it is reported. One more body answers, handed the object and
+// the position of a block or a task among the scopes the run builds nothing
+// for, the target a disable of that one ends in the object (LRM 9.6.2), none
+// for one that owns none there. A class of the hierarchy states it of its
 // instances, and its bodies are entered on the instance; a package and the
 // compilation unit's scope, each one object of the run, state it once, as a
 // constant handed to the library as its storage is installed, have no ports,
@@ -313,6 +317,8 @@ struct ScopeDeclarations {
   void (*subscribe)(
       runtime::GcObject*, std::int64_t, runtime::Subscriber&,
       base::SourceLocation) = nullptr;
+  runtime::CancellationTarget* (*disable_target)(
+      runtime::GcObject*, std::int64_t) = nullptr;
 };
 
 // What a class of the design hierarchy tells the library about its instances:
@@ -540,7 +546,7 @@ constexpr void ForEachField(
 template <typename Visit>
 constexpr void ForEachField(
     const ScopeDeclarations& record, const Visit& visit) {
-  const auto& [definition, elaborated, lexical, data_objects, ports, settle, read, write, force, release, subscribe] =
+  const auto& [definition, elaborated, lexical, data_objects, ports, settle, read, write, force, release, subscribe, disable_target] =
       record;
   visit(definition);
   visit(elaborated);
@@ -553,6 +559,7 @@ constexpr void ForEachField(
   visit(force);
   visit(release);
   visit(subscribe);
+  visit(disable_target);
 }
 
 template <typename Visit>

@@ -6,6 +6,8 @@
 #include "lyra/runtime/value_handle.hpp"
 #include "lyra/value/concepts.hpp"
 #include "lyra/value/small_box.hpp"
+#include "lyra/value/value_type.hpp"
+#include "lyra/value/value_witnesses_of.hpp"
 
 namespace lyra::runtime {
 
@@ -49,6 +51,12 @@ class ValueStorageCore {
 
   [[nodiscard]] auto Get() const noexcept -> const T& {
     return *held_;
+  }
+
+  // The type of the value held, as a storage of a value laid out by its type
+  // answers the type it is told.
+  [[nodiscard]] static auto Type() -> const value::ValueType& {
+    return value::TypeOfPart<T>();
   }
 
   // The contents as storage a caller descends into, for a write that reaches
