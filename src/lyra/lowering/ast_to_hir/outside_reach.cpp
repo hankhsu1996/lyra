@@ -145,7 +145,7 @@ struct ReachedOutside
     NoteType(*e.type);
     if (const auto* const* subroutine =
             std::get_if<const slang::ast::SubroutineSymbol*>(&e.subroutine)) {
-      Note(**subroutine, e.lookupInfo.hierRef);
+      Note(**subroutine, e.hierRef);
     }
     visitDefault(e);
   }

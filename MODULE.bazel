@@ -18,10 +18,10 @@ bazel_dep(name = "platforms", version = "1.1.0")
 # tag spells it, which only ever grows, so every commit Lyra has named stays
 # fetchable; this commit is on the branch of the release `version` names, and
 # moving to a new release starts a new branch rather than rewriting this one.
-bazel_dep(name = "slang", version = "12.1")
+bazel_dep(name = "slang", version = "12.2")
 git_override(
     module_name = "slang",
-    commit = "5301a00ab14de2513e78ee33956ccc1608cbb0fb",
+    commit = "767c3e066281fcda21a8b6513eb8c71b5223ebfa",
     remote = "https://github.com/hankhsu1996/slang.git",
 )
 

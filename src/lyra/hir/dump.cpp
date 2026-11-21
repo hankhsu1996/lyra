@@ -2804,9 +2804,8 @@ class HirDumper {
             "{}[{}] {} \"{}\" : Type[{}]{}", label, index,
             SubroutineKindName(d.kind), d.name, d.result_type.value, flags));
     Indent();
-    for (std::size_t i = 0; i < d.params.size(); ++i) {
-      const auto& param = d.params[i];
-      const std::string variable = std::visit(
+    const auto format_variable = [](const SubroutineVariable& variable) {
+      return std::visit(
           Overloaded{
               [](ProceduralVarId var) {
                 return std::format("ProceduralVar[{}]", var.value);
@@ -2817,14 +2816,17 @@ class HirDumper {
               [](const NamespaceValueRef& kept) {
                 return FormatNamespaceValue(kept);
               }},
-          param.variable);
+          variable);
+    };
+    for (std::size_t i = 0; i < d.params.size(); ++i) {
+      const auto& param = d.params[i];
       Line(
           std::format(
               "Param[{}] {} var={}", i, FormatParamDirection(param.direction),
-              variable));
+              format_variable(param.variable)));
     }
     if (d.result_var.has_value()) {
-      Line(std::format("Result var=ProceduralVar[{}]", d.result_var->value));
+      Line(std::format("Result var={}", format_variable(*d.result_var)));
     }
     Line(FormatReads(d.reads));
     // A pure virtual method is a prototype with no implementation (LRM 8.21):

@@ -576,7 +576,7 @@ auto ReachImportScope(
     return hir::ImportDeclaringScope{std::move(space)};
   }
   const bool observes = sym.flags.has(slang::ast::MethodFlags::DPIContext);
-  RouteOrigin start = unit_lowerer.StartOf(frame, sym, call.lookupInfo.hierRef);
+  RouteOrigin start = unit_lowerer.StartOf(frame, sym, call.hierRef);
   const auto declaring_frame = NamesOwnDeclaration(start)
                                    ? unit_lowerer.LookupForeignImportScope(sym)
                                    : std::nullopt;
@@ -1296,8 +1296,7 @@ auto LowerSubroutineCall(
   // the block its object built (LRM 27.4, 27.5), whatever declaration the
   // front end resolved it to in the elaboration being lowered. Only a name
   // that does neither may enable a subroutine this unit declares as its own.
-  RouteOrigin start =
-      unit_lowerer.StartOf(frame, *sym, call.lookupInfo.hierRef);
+  RouteOrigin start = unit_lowerer.StartOf(frame, *sym, call.hierRef);
   const auto binding = NamesOwnDeclaration(start)
                            ? unit_lowerer.LookupSubroutineBinding(*sym)
                            : std::nullopt;

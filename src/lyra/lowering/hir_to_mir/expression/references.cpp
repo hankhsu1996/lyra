@@ -218,9 +218,9 @@ auto LowerNamespaceValueRefExpr(
       .type = unit_lowerer.NamespaceCellType(r)};
 }
 
-auto LowerFormalVariableExpr(
+auto LowerSubroutineVariableExpr(
     ProcessLowerer& process, const WalkFrame& frame,
-    const hir::FormalVariable& variable) -> mir::Expr {
+    const hir::SubroutineVariable& variable) -> mir::Expr {
   return std::visit(
       Overloaded{
           [&](hir::ProceduralVarId var) {

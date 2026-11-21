@@ -5,8 +5,18 @@
 // the first. The first and the last element are the ones closest to the
 // leftmost and the rightmost index (LRM 7.12.1), a map's result has the
 // source's range (LRM 7.12.5), and a sort keyed on the index orders the
-// elements by it (LRM 7.12.2).
+// elements by it (LRM 7.12.2). A constant function calling a locator answers
+// the declared index too, at elaboration as at run time (LRM 13.4.3).
 module Top;
+  function automatic int first_twenty();
+    int from_three [3:5] = '{10, 20, 30};
+    int found [$];
+    found = from_three.find_first_index(x) with (x == 20);
+    return found[0];
+  endfunction
+
+  localparam int FirstTwentyAtElaboration = first_twenty();
+
   int up [1:3];
   int down [3:0];
   int turned [3:0];
@@ -99,6 +109,10 @@ module Top;
     if (turned[3] !== 70 || turned[2] !== 60 || turned[1] !== 50 ||
         turned[0] !== 40)
       $fatal(1, "turned was %p, expected '{70, 60, 50, 40}", turned);
+
+    if (FirstTwentyAtElaboration !== 4 || first_twenty() !== 4)
+      $fatal(1, "a constant function's locator gave %0d and %0d, expected 4 twice",
+             FirstTwentyAtElaboration, first_twenty());
     $display("All checks passed");
   end
 endmodule
