@@ -1,6 +1,8 @@
 # A packed value is its words
 
-Date: 2026-10-10 Status: accepted. Carries out D1 to D5 of
+Date: 2026-10-10 Status: accepted; D5 revised 2026-11-19: where the line between instructions and a
+call lies. D2, D3 and D5 revised 2026-11-20: past two machine words an operator is its type's own
+body, which MIR states and both backends compile. Carries out D1 to D5 of
 [a-value-is-its-machine-data](a-value-is-its-machine-data.md) for packed values and revises its D2
 above 64 bits. Supersedes invariant 4 of
 [packed-array-representation](packed-array-representation.md), and the rejection of a per-type
@@ -63,7 +65,7 @@ What the answer rests on:
 | --------------- | -------------------- | --------------------------------------------------- | ------------------------ | ---------------------------------------------------- |
 | clang `_BitInt` | Sema                 | CodeGen (`iN`, a storage unit in memory)            | native                   | the type legalizer per word; an IR pass for division |
 | Verilator       | `V3Width`            | emit, from the width                                | C operators              | `V3Expand` per word; calls for add, multiply, divide |
-| Lyra            | HIR-to-MIR           | the library header (C++); the code generator (LLVM) | native or plane formulas | header loops (C++); plane formulas in place (LLVM)   |
+| Lyra            | HIR-to-MIR           | the library header (C++); the code generator (LLVM) | native or plane formulas | plane formulas to two words; then the type's body    |
 
 Sources, read in each project's tree: clang `lib/CodeGen/CodeGenTypes.cpp` (`ConvertTypeForMem`) and
 LLVM `lib/CodeGen/SelectionDAG/LegalizeIntegerTypes.cpp`, `lib/CodeGen/ExpandIRInsts.cpp`;
@@ -171,9 +173,10 @@ widths.
 
 **D2. MIR states an integral type as exactly its width, signedness and state domain, and an
 operation as the language's operator on that type.** It states no words, planes, masks or storage
-units, and no description of a type as a run-time value. Packed dimensions do not reach it:
-HIR-to-MIR reduces a packed type to those three facts and every select to a position, reading the
-declared ranges from the source type where the select is lowered. An index into anything that
+units, and no description of a type as a run-time value, except in the body of an integral type's
+own operation, which states the words its type is laid out as (D5). Packed dimensions do not reach
+it: HIR-to-MIR reduces a packed type to those three facts and every select to a position, reading
+the declared ranges from the source type where the select is lowered. An index into anything that
 numbers its parts -- a queue, a dynamic array, a string -- is converted to a position the same way,
 where the index is written. A constant an expression names is its bits at its type, held once by the
 unit and named at each use, and an operation or a conversion over constants -- including reading one
@@ -200,6 +203,14 @@ applies them to its own words. Applied to values whose width is given at run tim
 prebuilt entries the execution backend calls where it does not state the operation itself (D5). And
 they are the compiler's own constant folding. A folded operation, an inlined one and a called one
 therefore cannot disagree.
+
+Past two words an operator is not this statement but its type's own body (D5), a second statement of
+the operation, in MIR. What holds the two together is a conformance case that applies every operator
+to values variables hold and compares the answer, bit for bit, with the same operator applied to the
+same values in a constant expression, which the front end evaluates at elaboration and so shares no
+code with either statement: two-state and four-state, signed and unsigned, with and without x and z,
+at widths that fill no word, two words and many, against a carry rippling through every word and the
+most negative value against -1.
 
 An operation takes a value in one of two ways. A value read is the words of its planes where they
 lie, how many bits it is, and the signedness its bits are read as. A value written is the words of
@@ -274,26 +285,93 @@ first is a test that evaluates each generated form and the function of D3 on the
 widths on both sides of a machine word, and compares both planes of their answers. The conformance
 corpus, which runs every case on both backends, stands beside it.
 
-**D5. The execution backend states an operation itself wherever every value it takes and answers is
-within the size a frame keeps (D1) and its work is linear in the width, and calls otherwise.** A
-value's planes are bytes an integer of its width is loaded from, so each formula of D4 is written
-once for every width, on two such integers, and LLVM's type legalization turns it into operations on
-the words that width has. A product, a quotient and a remainder are stated that way up to 64 bits
-and are calls past it, because their work grows with the square of the width. A power, a count of
-bits, a logarithm, and whatever reads text or a foreign buffer are calls at every width. An
-operation over a value past the size a frame keeps (D1) is a call.
+**D5. An operator over a value of at most two machine words is instructions where it is compiled;
+over a wider value it is a call of its type's own operation, a body MIR states over the value's
+words, which both backends compile; and the library is called only for what no such body states.**
+Every width is known where an operation is compiled, so the choice is never forced by what is known;
+it is drawn by what each form costs. A call into the library costs a fixed few hundred instructions
+-- its arguments arranged, each operand loaded, the answer cleared and stored -- and runs a body
+compiled for every width, which reads the width as it runs. So:
+
+- **Up to two words** every operator is instructions: two words is the widest integer the target
+  carries out every operation of in a few instructions or a call of its own runtime. The execution
+  backend states each one on the value's planes (D4), a product, a quotient, a count of bits and a
+  logarithm included, where the library's call would cost ten to thirty times the work; the C++
+  backend's value type does the same in its own operators.
+- **Past two words** each operator is an item of its type's interface (`architecture/mir.md`): a
+  body built below MIR, at the type's width, over the words the value lies in, a loop over them with
+  the carry, borrow or partial product a machine word holds, as compiler-rt states a 128-bit product
+  over 64-bit halves (`__multi3`) and Rust's `compiler_builtins` states what a machine lacks in
+  Rust. The conversion into the legalized phase makes every such operator a call of that body, so no
+  backend is handed an operator over a wide value. A unit builds one body per type and operator it
+  uses, and a body's size follows no width, since it loops; so what a unit's code holds follows the
+  operations and types it states, and the code of one site is a call, which an optimizing build
+  inlines where it pays, the widths constant.
+- **A part of a value** -- a select read, or bits written into a place -- is the one operation whose
+  work follows the part and not the value. A part a frame keeps is reached by the words of each
+  plane it spans, addressed where the value lies, at every width of the value, so the code of one
+  site follows the part; a part past that is a call that touches only its words (D3). This is how
+  `std::bitset` reaches a bit (`_M_getword` in libstdc++'s `<bitset>`), how Verilator reads a part
+  of a wide value (`VL_SEL_IWII` in `verilated_funcs.h`), and how clang reads a bit-field
+  (`EmitLoadOfBitfieldLValue` in `lib/CodeGen/CGExpr.cpp`): the word is addressed and the bits are
+  shifted out of it. Each word of the part is the two words of the value it lies across funneled by
+  where the part starts in a word, so nothing wider than a word is shifted by a position the program
+  computes, which legalization would put through a stack slot twice its width. Bits lying wholly
+  inside the value, and inside every part they are reached through, are written with the masks their
+  start and width give, as a bit-field is; bits partly outside are written word by word, each word
+  asked whether the value has it, since a part-select reaches only the positions inside (LRM
+  11.5.1). A concatenation is built by writing each operand as a part, so its operands follow this
+  too.
+- **The library** is called for what no type's body states at every width: an operator handed a
+  value made elsewhere -- text, a foreign buffer, a net's resolved positions -- and a string's bits,
+  which the library answers once for every width; a power, a reversal of blocks and a selection of
+  positions over a value of at most two words, whose work is long at every width; and a shift or a
+  power of a value of at most two words by an amount wider than that, whose wide operand only says
+  how far. Its table of entries holds those operators and no other.
+
+Measured over a probe of 25 operations at 128, 1,024, 4,096 and 8,192 four-state bits, `-O2 --lto`,
+instructions an operation with the loop subtracted, on the execution backend: a 128-bit product went
+from 628 to 26, a 128-bit `$countones` from 557 to 14, a 128-bit quotient from 7,883 to 93, and a
+concatenation of two 1,024-bit operands from 4,248 to 171, against 21, 38, 1,705 and 115 on the C++
+backend. On a loop moving the 1,600 bits of a 5x5 array of 64-bit lanes into a flat vector one at a
+time, the execution backend ran 1.67 M instructions a call where it ran 3.12 M when a part was a
+call.
+
+Why not more of it as instructions, read in LLVM 23.1 and probed with the pinned clang: LLVM
+legalizes a wide `iN` by unrolling every operation at every use, after rounding the width up to a
+power of two (`TargetLoweringBase::getTypeConversion`); a shift by a variable amount takes a stack
+slot twice the width per shift (`DAGTypeLegalizer::ExpandIntRes_ShiftThroughStack`); a product past
+128 bits is a recursive schoolbook split (`TargetLowering::forceExpandMultiply`), 312 KB and 34 s
+for one at 8,192 bits; a quotient past 128 bits is an inlined bit-serial loop (`ExpandIRInsts.cpp`),
+which at 131,072 bits does not compile in two minutes; and no library call exists past 128 bits.
+Clang's `_BitInt` emits nothing but `iN`, so clang has these costs too.
+
+Why not the library's bodies inlined: measured with the pinned clang at `-O2` on a 1,024-bit
+four-state `$countbits`, the library's entry costs 1,450 instructions a call through the table and
+1,446 called directly with its body in the same translation unit, which the inliner leaves a call;
+the same operation over views of the words in place, called through a pointer, costs 633, inlined
+with its widths constant 468, and at a fixed extent, as the C++ backend compiles it, 325. The body
+being visible buys a quarter of a lean call, against linking the library's bitcode into every
+module, and nothing for the entry as it is.
+
+This paragraph first made every operation on a value past one word that its formulas reach a call,
+reading a part as the formula over the whole value; a part reached by its words follows the part. It
+then left a product of two words a call on the ground that its work grows with the square of the
+width, which holds past two words and not at them, and read the bound on a part as one word, which
+is the bound on the shift a part of one word needs, not on the work. It then stated a linear
+operation on the value's planes up to the size a frame keeps and made every other operation past two
+words a call: the first put a whole width's code at every site, and the second paid a few hundred
+instructions for a few words of work, which a body compiled at the type's width does not.
 
 The line is drawn by two requirements together. An operation costs the bits it touches: measured on
 a concatenation of 32 bytes into 256 bits, optimized, a call into the library for each step ran
 411,000 times a second and the operation stated in place 22,000,000, against 20,000,000 on the C++
 backend. And what a unit's code holds for one operation is bounded: a formula stated in place is
 straight-line code that follows the width, about a byte a bit a plane unoptimized, so it is stated
-only up to a fixed size. That size is the size a frame keeps, so one figure bounds both things a
-declared width could otherwise be followed by, a frame and the code of one site; Verilator uses one
-figure for the same two questions, whether a wide operation is expanded per word and whether a value
-may be a function's local. Measured with clang 20 on one plane at 8,192 bits, unoptimized: an and,
-an add and an equality are each about 8.5 KB and compile in under 40 ms, where a product is 717 KB
-and takes 7.4 s and a quotient is 145 KB. A dozen operations on a four-state value of 4,096 bits add
+only where it is a few instructions, up to two words, and past them the operation is a body whose
+code follows no width. Measured with clang 20 on one plane at 8,192 bits, unoptimized: an and, an
+add and an equality are each about 8.5 KB and compile in under 40 ms, where a product is 717 KB and
+takes 7.4 s and a quotient is 145 KB. A dozen operations on a four-state value of 4,096 bits add
 about 130 KB to an unoptimized program and a quarter of a second to its build.
 
 This entry first drew the line at 64 bits, on the ground that legalization's code follows the width
@@ -394,12 +472,12 @@ D3 an operation costs the bits it touches.
 
 Where the execution backend's four-state formula could live:
 
-| Alternative                                                                                    | The requirement it fails                                                                                                                                                                  |
-| ---------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| The runtime's own implementation compiled to bitcode and inlined into each module              | Only a build asked for `--lto` reads the runtime's bitcode, at its link, so a default build would make a call for every operation; an operation costs the bits it touches in every build. |
-| HIR-to-MIR synthesizes one MIR function per operation and type, compiled by both backends      | Emitted text per unit must not grow with the operations and types a unit uses.                                                                                                            |
-| Prebuilt word routines called for every operation                                              | An operation costs the bits it touches: a call per 32-bit add is the cost being removed.                                                                                                  |
-| The layer below MIR restates each four-state operation on exact-width integers and their pairs | Correct, and the first design. It adds a level only the code generator reads, where the operand type already decides the operation as it does for rustc.                                  |
+| Alternative                                                                                    | The requirement it fails                                                                                                                                                                                                                |
+| ---------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The runtime's own implementation compiled to bitcode and inlined into each module              | An operation costs the bits it touches in every build, and a default build inlines nothing. Where it does, the entry as it is stays a call, and a lean one inlined buys a quarter of its call (D5).                                     |
+| HIR-to-MIR synthesizes one MIR function per operation and type, compiled by both backends      | Taken past two words (D5), built below MIR where a call needs it. It was rejected as emitted text growing with the operations and types a unit uses, which is what a unit states; a body loops over the words, so none follows a width. |
+| Prebuilt word routines called for every operation                                              | An operation costs the bits it touches: a call per 32-bit add is the cost being removed.                                                                                                                                                |
+| The layer below MIR restates each four-state operation on exact-width integers and their pairs | Correct, and the first design. It adds a level only the code generator reads, where the operand type already decides the operation as it does for rustc.                                                                                |
 
 And beside them:
 
@@ -410,6 +488,12 @@ And beside them:
   bound on what a unit's code holds for one operation; see D5.
 - **A call for every operation past 64 bits.** Fails the requirement that an operation costs the
   bits it touches; see D5.
+- **A call into the library for every operator past two words**, the library's one body for every
+  width reading the width as it runs. Fails the requirement that an operation costs the bits it
+  touches: measured on a benchmark multiplying, comparing, shifting and reducing 256-bit four-state
+  values and adding 1,024-bit ones, `-O2 --lto`, under callgrind, an iteration ran 5,286
+  instructions on the execution backend and 2,366 on the C++ backend that way, and 931 and 809 with
+  each operator its type's body (D5).
 - **Keeping packed dimensions on the MIR type.** Fails MIR's rule that a source language's
   coordinate system does not reach it. Their readers were a position computation, a memory-image
   range and a cast deciding it was a no-op, and each reads the source type where it is lowered.

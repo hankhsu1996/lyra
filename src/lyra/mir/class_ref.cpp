@@ -93,7 +93,6 @@ auto ClassOfObject(const TypePool& types, TypeId object) -> ClassId {
           [&](const DriverType&) { return not_an_object(); },
           [&](const OpenWriteType&) { return not_an_object(); },
           [&](const DesignationType&) { return not_an_object(); },
-          [&](const BitsReferenceType&) { return not_an_object(); },
           [&](const ObjectWriteType&) { return not_an_object(); },
           [&](const RecordType&) { return not_an_object(); },
           [&](const ClosureType&) { return not_an_object(); },

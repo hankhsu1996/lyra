@@ -331,7 +331,8 @@ class OperationBodies {
 
   // The body answering `answers`, built by `answer`, which takes the item of
   // each trait and each operation the type is called by. A step of a value's
-  // life and a bound-free conversion are never one of these types' own.
+  // life, a bound-free conversion and an integral operator are never one of
+  // these types' own.
   template <typename Answer>
   static auto Dispatched(support::ValueOperation answers, Answer answer)
       -> mir::CallableCode {
@@ -353,7 +354,8 @@ class OperationBodies {
               throw InternalError(
                   "hir_to_mir: a step of a value's life is asked of a type "
                   "whose steps are its parts' -- please report this as a bug");
-            }},
+            },
+            [](support::IntegralOp) -> mir::CallableCode { NoBodyBuilt(); }},
         answers);
   }
 
@@ -380,6 +382,13 @@ class OperationBodies {
       std::vector<mir::ExprId> operands, mir::TypeId result) -> mir::ExprId {
     return OwnOperationCall(
         Unit(), block, whole_, own_(answers), answers, receiver,
+        std::move(operands), result);
+  }
+  auto Own(
+      mir::Builder block, support::ValueOperation answers,
+      std::vector<mir::ExprId> operands, mir::TypeId result) -> mir::ExprId {
+    return OwnOperationCall(
+        Unit(), block, whole_, own_(answers), answers, std::nullopt,
         std::move(operands), result);
   }
 

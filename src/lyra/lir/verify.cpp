@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <format>
 #include <optional>
+#include <ranges>
 #include <span>
 #include <string>
 #include <string_view>
@@ -53,33 +54,57 @@ void RequireHandleSequence(
   }
 }
 
-// Bits are written within an integral value, through parts that are each bits
-// of one too and each start at a value of an integral type, and what is
-// written is a value of the last part's type.
-void RequireBitsStoreWellFormed(
-    const CompilationUnit& unit, const Function& fn, TypeId whole,
-    std::span<const BitsPart> parts, const Operand& bits) {
+// A place reached through a write in progress -- bits of the value it
+// designates -- is the target of a store and of nothing else: the store is a
+// call on the designation, which hears which bits move, and nothing lies there
+// to read or to take the address of.
+void RequireDesignatedBitsOnlyStored(
+    const CompilationUnit& unit, const Function& fn, const Place& place,
+    bool stored) {
+  if (!unit.types.Get(OperandType(fn, place.base)).Is<DesignationType>()) {
+    return;
+  }
+  const bool bits_through_it =
+      place.chain.size() > 1 &&
+      std::holds_alternative<DerefProjection>(place.chain.front()) &&
+      std::ranges::all_of(
+          place.chain | std::views::drop(1), [](const Projection& step) {
+            return std::holds_alternative<SliceProjection>(step);
+          });
+  if (!stored || !bits_through_it) {
+    throw InternalError(
+        "lir verify: a place reached through a write in progress is other "
+        "than bits of its value stored through it");
+  }
+}
+
+// A step selecting bits is taken within an integral value, starts at a value
+// of an integral type and is stated at an integral type, and only another such
+// step follows it, since bits have no parts but bits.
+void RequireSlicesWellFormed(
+    const CompilationUnit& unit, const Function& fn, const Place& place) {
   const auto is_integral = [&](TypeId type) {
     return unit.types.Get(type).Is<IntegralType>();
   };
-  if (!is_integral(whole)) {
-    throw InternalError(
-        "lir verify: bits are written into a value that is not integral");
-  }
-  if (parts.empty()) {
-    throw InternalError("lir verify: a write of bits names no part to write");
-  }
-  for (const BitsPart& part : parts) {
-    if (!is_integral(part.type) || !is_integral(OperandType(fn, part.start))) {
-      throw InternalError(
-          "lir verify: a part of an integral value is stated at a type, or "
-          "starts at a value, that is not integral");
+  bool within_bits = false;
+  for (std::size_t at = 0; at < place.chain.size(); ++at) {
+    const auto* slice = std::get_if<SliceProjection>(&place.chain[at]);
+    if (slice == nullptr) {
+      if (within_bits) {
+        throw InternalError(
+            "lir verify: a step other than one selecting bits follows bits");
+      }
+      continue;
     }
-  }
-  if (OperandType(fn, bits) != parts.back().type) {
-    throw InternalError(
-        "lir verify: the bits written are not a value of the type the part "
-        "written is stated at");
+    within_bits = true;
+    if (!is_integral(PlaceTypeBefore(
+            unit, fn, place, static_cast<std::ptrdiff_t>(at))) ||
+        !is_integral(slice->part) ||
+        !is_integral(OperandType(fn, slice->start))) {
+      throw InternalError(
+          "lir verify: bits are selected within a value, stated at a type, or "
+          "started at a value that is not integral");
+    }
   }
 }
 
@@ -136,8 +161,7 @@ void RequireCallMeetsFunction(
 }
 
 // What a call's target requires of the operands the call states and of the
-// answer it takes. A write of designated bits takes the designation and the
-// bits.
+// answer it takes.
 void RequireCallWellFormed(
     const CompilationUnit& unit, const Function& fn, const CallTarget& target,
     std::span<const Operand> args, TypeId result_type) {
@@ -147,16 +171,6 @@ void RequireCallWellFormed(
         result_type);
     return;
   }
-  const auto* bits = std::get_if<DesignatedBitsTarget>(&target);
-  if (bits == nullptr) {
-    return;
-  }
-  if (args.size() != 2) {
-    throw InternalError(
-        "lir verify: a write of designated bits takes the designation and "
-        "the bits");
-  }
-  RequireBitsStoreWellFormed(unit, fn, bits->value, bits->parts, args.back());
 }
 
 // Whether a call of `target` answers storage holding no value yet: the heap's,
@@ -233,7 +247,10 @@ auto HoldsNothingYet(
               // Storage reached through what the answer holds is somebody
               // else's, which holds a value of its own.
               [](const DerefProjection&) { return false; },
-              [](const MemberProjection&) { return false; }},
+              [](const MemberProjection&) { return false; },
+              // Bits are written into the value already there.
+              [](const SliceProjection&) { return false; },
+              [](const IndexProjection&) { return true; }},
           step);
     });
   }
@@ -301,6 +318,8 @@ void VerifyInstr(
           // A store puts a value of the place's type into storage that can
           // hold one.
           [&](const StoreInstr& store) {
+            RequireDesignatedBitsOnlyStored(unit, fn, store.place, true);
+            RequireSlicesWellFormed(unit, fn, store.place);
             const TypeId place_type = PlaceType(unit, fn, store.place);
             if (unit.types.Get(place_type).IsAddressOnly()) {
               throw InternalError(
@@ -315,11 +334,6 @@ void VerifyInstr(
                       "type (value Type[{}], place Type[{}])",
                       value_type.value, place_type.value));
             }
-          },
-          [&](const BitsStoreInstr& store) {
-            RequireBitsStoreWellFormed(
-                unit, fn, PlaceType(unit, fn, store.place), store.parts,
-                store.bits);
           },
           [&](const StorageInstr& storage) {
             // A made value's bytes come into use with the instruction that
@@ -377,6 +391,8 @@ void VerifyRvalue(
   // A read answers a value of the type its place holds, and storage reached
   // only through its address holds none.
   const auto verify_read = [&](const Place& place) {
+    RequireDesignatedBitsOnlyStored(unit, fn, place, false);
+    RequireSlicesWellFormed(unit, fn, place);
     const TypeId place_type = PlaceType(unit, fn, place);
     if (unit.types.Get(place_type).IsAddressOnly()) {
       throw InternalError(
@@ -395,6 +411,14 @@ void VerifyRvalue(
       Overloaded{
           [&](const LoadInstr& load) { verify_read(load.place); },
           [&](const AddrOfInstr& addr) {
+            RequireDesignatedBitsOnlyStored(unit, fn, addr.place, false);
+            if (std::ranges::any_of(addr.place.chain, [](const auto& step) {
+                  return std::holds_alternative<SliceProjection>(step);
+                })) {
+              throw InternalError(
+                  "lir verify: an address is taken of bits, which lie at no "
+                  "address of their own");
+            }
             const TypeId place_type = PlaceType(unit, fn, addr.place);
             const Type& result = unit.types.Get(result_type);
             const std::optional<TypeId> pointee = result.Pointee();

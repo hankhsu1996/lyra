@@ -188,6 +188,8 @@ auto EvaluationOrder::EffectsOf(const Block& block, ExprId id)
             [](const DerefExpr&) {},
             [](const DiscriminantExpr&) {},
             [](const FieldAccessExpr&) {},
+            [](const SliceExpr&) {},
+            [](const IndexExpr&) {},
             [](const StringLiteral&) {},
             [](const NullLiteral&) {},
             [](const MachineBoolLiteral&) {},

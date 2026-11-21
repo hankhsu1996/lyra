@@ -203,10 +203,6 @@ void Write(const CompilationUnit& unit, TypeId type, std::string& out) {
             kind('q');
             of(t.value);
           },
-          [&](const BitsReferenceType& t) {
-            kind('B');
-            of(t.bits);
-          },
           [&](const ObjectWriteType& t) {
             kind('w');
             of(t.object);

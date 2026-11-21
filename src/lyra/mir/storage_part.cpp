@@ -143,6 +143,12 @@ auto CompleteObjectOf(const Block& block, ExprId id) -> ExprId {
   if (const auto* field = std::get_if<FieldAccessExpr>(&data)) {
     return CompleteObjectOf(block, field->receiver);
   }
+  if (const auto* slice = std::get_if<SliceExpr>(&data)) {
+    return CompleteObjectOf(block, slice->receiver);
+  }
+  if (const auto* element = std::get_if<IndexExpr>(&data)) {
+    return CompleteObjectOf(block, element->receiver);
+  }
   if (const auto* deref = std::get_if<DerefExpr>(&data)) {
     if (const std::optional<ExprId> whole = WholeAnsweredInto(block, *deref)) {
       return CompleteObjectOf(block, *whole);
@@ -156,6 +162,14 @@ auto CompleteObjectOf(const Block& block, ExprId id) -> ExprId {
 auto KindOfPlace(const CompilationUnit& unit, const Block& block, ExprId place)
     -> PlaceKind {
   const ExprData& data = block.exprs.Get(place).data;
+  // Bits of a value lie at no address of their own: a run of them starts
+  // wherever its start says, inside the storage the value lies in.
+  if (std::holds_alternative<SliceExpr>(data)) {
+    return PlaceKind::kNoAddress;
+  }
+  if (const auto* element = std::get_if<IndexExpr>(&data)) {
+    return KindOfPlace(unit, block, element->receiver);
+  }
   if (const auto* field = std::get_if<FieldAccessExpr>(&data)) {
     const PlaceKind receiver = KindOfPlace(unit, block, field->receiver);
     return Wider(
@@ -177,8 +191,11 @@ auto KindOfPlace(const CompilationUnit& unit, const Block& block, ExprId place)
 auto Borrow(const CompilationUnit& unit, Builder block, ExprId operand)
     -> ExprId {
   ExprId object = operand;
-  if (const auto* read = std::get_if<CopyExpr>(&block.Get(operand).data)) {
+  if (const auto* read = std::get_if<CopyExpr>(&block.Get(operand).data);
+      read != nullptr && ValueLiesInStorage(block.Body(), operand)) {
     object = read->place;
+  } else if (std::holds_alternative<SliceExpr>(block.Get(operand).data)) {
+    object = block.Read(operand);
   }
   return block.Add(
       Expr{
@@ -192,6 +209,12 @@ auto Borrow(const CompilationUnit& unit, Builder block, ExprId operand)
 auto BaseOfPlace(const TypePool& types, const Block& block, ExprId place)
     -> std::optional<PlaceBase> {
   const ExprData& data = block.exprs.Get(place).data;
+  if (const auto* slice = std::get_if<SliceExpr>(&data)) {
+    return BaseOfPlace(types, block, slice->receiver);
+  }
+  if (const auto* element = std::get_if<IndexExpr>(&data)) {
+    return BaseOfPlace(types, block, element->receiver);
+  }
   if (const auto* field = std::get_if<FieldAccessExpr>(&data)) {
     if (std::optional<PlaceBase> base =
             BaseOfPlace(types, block, field->receiver)) {
@@ -231,9 +254,18 @@ auto BaseOfPlace(const TypePool& types, const Block& block, ExprId place)
   return std::nullopt;
 }
 
+auto NamesAConstant(const ExprData& data) -> bool {
+  const auto* named = std::get_if<ReferenceExpr>(&data);
+  return named != nullptr && std::holds_alternative<ConstantRef>(named->target);
+}
+
 auto ValueLiesInStorage(const Block& block, ExprId id) -> bool {
   const ExprData& data = block.exprs.Get(id).data;
-  return std::holds_alternative<CopyExpr>(data) || IsPlace(data) ||
+  if (const auto* read = std::get_if<CopyExpr>(&data)) {
+    return !std::holds_alternative<SliceExpr>(
+        block.exprs.Get(read->place).data);
+  }
+  return IsPlace(data) || NamesAConstant(data) ||
          std::holds_alternative<AwaitExpr>(data);
 }
 

@@ -52,17 +52,22 @@ below LIR, at LIR-to-LLVM.
   projection, return, and call argument. Each is translated from a generic-PL type at MIR-to-LIR and
   carries no live reference back to MIR.
 - The place vocabulary: a place is a base local plus a projection chain of member, dereference,
-  element, and component steps, spelled inside the instruction that consumes it and never held.
-  Every load, store, and address-of names a place by logical identity, and address-of is the one
-  operation that turns the path into a value the program can retain. An element or component step
-  reaches a part of storage -- an array's element, a structure's member, an untagged union's one
-  storage, a tagged union's member, which lies at the union's own start. A tagged union's member has
+  element, index, component and slice steps, spelled inside the instruction that consumes it and
+  never held. Every load, store, and address-of names a place by logical identity, and address-of is
+  the one operation that turns the path into a value the program can retain. An element or component
+  step reaches a part of storage -- an array's element, a structure's member, an untagged union's
+  one storage, a tagged union's member, which lies at the union's own start. An index step reaches
+  the entry of a machine aggregate at a machine integer the program computes, as rustc's
+  `ProjectionElem::Index` does, and the aggregate's own bound holds it. A tagged union's member has
   no identity of its own, so nothing the program keeps is the address of one; MIR states that, and
   an address taken here for a transient access through the step is the union's own. A packed value's
-  bits are no step of a place: they are read by the integral's own operation on the value read, and
-  bits lying at a place are written by a store that names the place and the bits. A string's
-  character is no step either; the string's own operations read and write it. There is no slice
-  step, because a window is several elements rather than one storage, and storage behind an
+  bits are a slice step, which only another slice step follows: a load of a place ending in it reads
+  the bits where the value lies and a store writes them there, each step bounding the next, and
+  since bits lie at no address of their own, no address is taken of such a place. Bits of the value
+  a write in progress designates are stored through the designation's dereference, which names
+  nothing else, so the write hears which bits move and wakes only what waits on them. A string's
+  character is no step; the string's own operations read and write it. A window of several elements
+  is no step either, because it is several elements rather than one storage, and storage behind an
   indirection is reached by a dereference step.
 - When the bytes a frame keeps for a value are in use: from where a slot or a value is made, to a
   point stated on every way out of the extent it belongs to but unwinding out of the body, which
@@ -422,13 +427,13 @@ step does to the write -- an element step tells it what forming the element did 
 as it is in the C++ rendering of the same MIR. Where the write lands is a call on a designation,
 stated before anything is written there, that answers with the part's address; the part is then
 storage like any other. A run of elements written within a write is a call on the container's
-designation. Bits written within one are one call on the designation of the value they lie in,
-naming the same parts and bits a store at a place names; the write keeps what those bits held and
-hears which of them moved. That is how the variable learns whether the write changed it (LRM 4.3).
-Which library entry realizes a step, and whether it is an instruction or a call at all, is a
-realization question answered below LIR; it never decides which node the step is expressed as. A
-mutating method on a receiver -- a container's `delete`, a queue's `push` -- changes the storage the
-receiver names in place.
+designation. Bits written within one are a store through the dereference of the designation of the
+value they lie in, naming the same parts and bits a store at a place names; the write keeps what
+those bits held and hears which of them moved. That is how the variable learns whether the write
+changed it (LRM 4.3). Which library entry realizes a step, and whether it is an instruction or a
+call at all, is a realization question answered below LIR; it never decides which node the step is
+expressed as. A mutating method on a receiver -- a container's `delete`, a queue's `push` -- changes
+the storage the receiver names in place.
 
 LIR states an integral type as MIR does: its width, its signedness, and whether it is two-state or
 four-state. It names an operation on one by the language's operator and carries a constant of one as

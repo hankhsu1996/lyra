@@ -176,16 +176,21 @@ what the construct means.
   have an interface too, stated from the type alone: the operations on a whole value its parts
   decide, as a generic impl exists where its type arguments meet its bounds, and a fixed-size
   array's own methods and the items of its language traits; a record's methods are its
-  declaration's, each declared the same way. An operation takes and answers the same at every type
-  that has it, as one trait method's signature is every implementation's, and an array's operation
-  is one program over its elements whatever kind of array it is, asking the array how many it holds.
-  A type is named by what it is, the same in every unit that names it, as clang's canonical type
-  names a type rather than a translation unit's spelling of it, so two types are never one. A unit
-  holds no such body, as a call in rustc's THIR holds no instance: a body is built when something
-  below this layer finds the unit needs it, as a generic impl is instantiated where it is used, from
-  the unit's types and nothing of the source, then legalized and verified alone and lowered with the
-  unit. What needs one is a call naming it, a record of the library that a value of the type is
-  handed over with, which only the target realizing the record can state, or an item of the type's
+  declaration's, each declared the same way. An integral type wider than the widest integer a
+  machine operates on at once has one as well: each operator of the language over a value of it, a
+  body over the words the value lies in, as compiler-rt and Rust's `compiler_builtins` state in the
+  language itself, over the machine's words, what a machine lacks for a wide integer. Those words
+  are the one layout every backend gives the type, so such a body states them as a view of the
+  value's storage, and nothing else does. An operation takes and answers the same at every type that
+  has it, as one trait method's signature is every implementation's, and an array's operation is one
+  program over its elements whatever kind of array it is, asking the array how many it holds. A type
+  is named by what it is, the same in every unit that names it, as clang's canonical type names a
+  type rather than a translation unit's spelling of it, so two types are never one. A unit holds no
+  such body, as a call in rustc's THIR holds no instance: a body is built when something below this
+  layer finds the unit needs it, as a generic impl is instantiated where it is used, from the unit's
+  types and nothing of the source, then legalized and verified alone and lowered with the unit. What
+  needs one is a call naming it, a record of the library that a value of the type is handed over
+  with, which only the target realizing the record can state, or an item of the type's
   implementation of the library's traits that a target's library asks of a value of the type
   wherever its own code holds one. A type the unit only names has none, and a call is well formed
   without one.
@@ -246,24 +251,28 @@ what the construct means.
   steps declare and what its value makes end there and what it yields refers to none of it -- member
   access through an explicit receiver expression, the field step that names a component of a
   product, a member of a union or a member of a sum on the place holding it, the dereference, the
-  read of a place, value-build primitives for the literals that spell an aggregate, and the
-  new-expression, which allocates storage a pointer or a class handle owns and evaluates its
-  initializer into that storage rather than handing it over as an argument -- for an object, its
-  construction, which first creates the object whole and then enters its constructor on it, so the
-  object is of its own class while every constructor runs, or the creation alone, where something is
-  evaluated on the object first and the code then enters its constructor by name -- and in its
-  placement form evaluates its initializer into storage an allocation function hands out and answers
-  a pointer owning nothing, as C++'s `new (p) T(x)` does, and the borrow, which binds a reference to
-  a place, or to a value it holds to the end of the full-expression as a C++ reference bound to a
-  temporary does. An element of an array is no node. It is a call answering a reference, a read form
-  or a write form, because the language gives a read and a write of an element different outcomes,
-  and the dereference of what it answers is the place. Bits of a packed value are no node either:
-  they are read by the value's `slice` and written through the reference to them its `slice_mut`
-  answers, as a C++ library's `bitset::operator[]` answers a reference to a bit. A node's operands
-  run in the order it lists them, an assignment's value before its target and a call's arguments
-  before its callee and the object it is entered on, and a read takes what its storage holds when it
-  runs. The set is closed under what a generic programming-language AST needs to express; it does
-  not grow to model a particular backend's storage realization or runtime library shape.
+  entry of a machine aggregate at a position the program computes, which is a step of the place
+  holding the aggregate as rustc's `ProjectionElem::Index` is, the read of a place, value-build
+  primitives for the literals that spell an aggregate, and the new-expression, which allocates
+  storage a pointer or a class handle owns and evaluates its initializer into that storage rather
+  than handing it over as an argument -- for an object, its construction, which first creates the
+  object whole and then enters its constructor on it, so the object is of its own class while every
+  constructor runs, or the creation alone, where something is evaluated on the object first and the
+  code then enters its constructor by name -- and in its placement form evaluates its initializer
+  into storage an allocation function hands out and answers a pointer owning nothing, as C++'s
+  `new (p) T(x)` does, and the borrow, which binds a reference to a place, or to a value it holds to
+  the end of the full-expression as a C++ reference bound to a temporary does. An element of the
+  source language's arrays is no node. It is a call answering a reference, a read form or a write
+  form, because the language gives a read and a write of an element different outcomes, and the
+  dereference of what it answers is the place. Bits of a packed value are a step of the place the
+  value lies in, as a field is, and a step taken on bits is a step further along the same place, so
+  nested selects are read or written once; bits lie at no address of their own, so a reference bound
+  to them binds the value a read of them makes, as a C++ reference to a bit-field binds a temporary.
+  A node's operands run in the order it lists them, an assignment's value before its target and a
+  call's arguments before its callee and the object it is entered on, and a read takes what its
+  storage holds when it runs. The set is closed under what a generic programming-language AST needs
+  to express; it does not grow to model a particular backend's storage realization or runtime
+  library shape.
 - Which values are held through a uniquely owning pointer because a value of their type is too large
   for a frame -- a local, a parameter taken by value wherever its signature is stated, a made value
   and a capture -- or because the values a body keeps before them already take what a frame may keep
@@ -351,11 +360,12 @@ what the construct means.
 ## Does Not Own
 
 - Control-flow graphs, basic blocks, branches, or phi nodes.
-- Storage offsets or memory layout on a node -- where within storage a value lies. Whose storage a
-  value is made in -- a box's, or the storage a placement's allocation function hands out -- is
-  MIR's. A rewrite of the stage asks how large a value of a type is, to decide which values are held
-  through a box, as rustc's passes ask a type's layout; no node carries the answer, and how the box
-  and its target are laid out stays each backend's.
+- Storage offsets or memory layout on a node -- where within storage a value lies -- except an
+  integral type's words, which every backend lays out alike and which only the bodies of that type's
+  own operations read. Whose storage a value is made in -- a box's, or the storage a placement's
+  allocation function hands out -- is MIR's. A rewrite of the stage asks how large a value of a type
+  is, to decide which values are held through a box, as rustc's passes ask a type's layout; no node
+  carries the answer, and how the box and its target are laid out stays each backend's.
 - A source language's coordinate system: a declared range, its direction, which part-select form the
   source wrote. HIR-to-MIR reads it, and a select states where it lands in the selected value's own
   numbering -- a bit from a packed value's least significant end, an element from an unpacked
@@ -517,12 +527,12 @@ suspect, not the analysis (`lowering_organization.md` states this discipline in 
     several later expressions, and the structured form of a definition dominating its uses._
 
 16. Whether an expression names storage or makes a value is the kind of its node, settled where the
-    node is built. A reference to a variable, a dereference and a field step on a place are places,
-    and nothing else is. A place states what kind of storage it is -- ordinary, with an address of
-    its own; or with none of its own, at or below a member of a tagged union, which nothing binds
-    (LRM 13.5.2) -- and each node's kind follows from its operand's. A member of an untagged union
-    is no place: it is a value made from the union's storage, and a write to it or below it is a
-    write of the storage's positions it takes. Storage is read by a read node, written by an
+    node is built. A reference to a variable, a dereference, and a field, element or slice step are
+    places, and nothing else is. A place states what kind of storage it is -- ordinary, with an
+    address of its own; or with none of its own, at or below a member of a tagged union, which
+    nothing binds (LRM 13.5.2) -- and each node's kind follows from its operand's. A member of an
+    untagged union is a slice step of the union's storage, the positions it takes, so a write to it
+    or below it is a write of those positions. Storage is read by a read node, written by an
     assignment whose target is a place, and referred to by a borrow, and each is realized by the
     place's kind. _Programming-language consequence: this is value category -- a THIR expression's
     place-or-value category in rustc, a value kind and an object kind on every clang expression --
@@ -540,31 +550,32 @@ suspect, not the analysis (`lowering_organization.md` states this discipline in 
 - Rewritten into MIR before anything reads it below. Between HIR-to-MIR and every consumer, a unit
   passes through rewrites, each of which keeps what the program does and says what it changes in
   MIR's own vocabulary. The unit is in one of two phases, which it records: built, as HIR-to-MIR
-  states it, and legalized, with every class handle opened by the library's call, every callee that
-  reports at its caller handed its location, no node leaving two of its operands a target could run
-  in the other order to another answer and no frame holding a value too large for one or more than a
-  frame keeps together, which is the only phase a consumer takes. A body built after the unit left
-  its rewrites goes through the same rewrites alone before anything reads it, as rustc runs its
-  passes over a shim built on demand, so a consumer reads no body that is not of the unit's phase. A
-  conversion -- the rewrites that bring the unit from one phase into the next -- is what a correct
-  program needs, so no build skips one; every other rewrite runs inside a phase, leaves the same
-  program at another cost, and a build may skip it. The conversions are this layer's rather than
-  each consumer's because one consumer writes MIR out as C++, whose own rules would otherwise decide
-  the order operands run in and where a value lies; rustc keeps its required conversions at the
-  layer below, which has no such consumer. The verification asks of a unit what its phase requires;
-  it is verified once, as it leaves the rewrites, since that is the form every consumer reads, and
-  on reaching each phase and after each optional rewrite where a build asks; a dump, which a person
-  reads rather than a consumer, shows it unchecked. Every build checks what one node or statement
-  states, at a cost that follows the unit's size; what holds only across a whole body or the unit --
-  the order operands run in, a computation reached once, a move as a local's last use, the bytes a
-  frame keeps together, a closure kept past its frame -- has to be worked out again over all of it,
-  so it is checked where a build asks for every check, as rustc's validator makes its costly checks,
-  and its lint pass its dataflow analyses, only where a build asks, and LLVM builds its expensive
-  checks only where asked. A rewrite builds a node through the same builders as the lowering,
-  folding included. A consumer cannot tell a node a rewrite built from one the lowering built, so a
-  cost the program's meaning does not decide -- how a process that stops only at the head of its
-  loop is compiled -- is taken out once for both backends, and HIR-to-MIR still states the meaning
-  one way.
+  states it, and legalized, with every operator over an integral value wider than a machine operates
+  on at once a call of its type's operation, every class handle opened by the library's call, every
+  callee that reports at its caller handed its location, no node leaving two of its operands a
+  target could run in the other order to another answer and no frame holding a value too large for
+  one or more than a frame keeps together, which is the only phase a consumer takes. A body built
+  after the unit left its rewrites goes through the same rewrites alone before anything reads it, as
+  rustc runs its passes over a shim built on demand, so a consumer reads no body that is not of the
+  unit's phase. A conversion -- the rewrites that bring the unit from one phase into the next -- is
+  what a correct program needs, so no build skips one; every other rewrite runs inside a phase,
+  leaves the same program at another cost, and a build may skip it. The conversions are this layer's
+  rather than each consumer's because one consumer writes MIR out as C++, whose own rules would
+  otherwise decide the order operands run in and where a value lies; rustc keeps its required
+  conversions at the layer below, which has no such consumer. The verification asks of a unit what
+  its phase requires; it is verified once, as it leaves the rewrites, since that is the form every
+  consumer reads, and on reaching each phase and after each optional rewrite where a build asks; a
+  dump, which a person reads rather than a consumer, shows it unchecked. Every build checks what one
+  node or statement states, at a cost that follows the unit's size; what holds only across a whole
+  body or the unit -- the order operands run in, a computation reached once, a move as a local's
+  last use, the bytes a frame keeps together, a closure kept past its frame -- has to be worked out
+  again over all of it, so it is checked where a build asks for every check, as rustc's validator
+  makes its costly checks, and its lint pass its dataflow analyses, only where a build asks, and
+  LLVM builds its expensive checks only where asked. A rewrite builds a node through the same
+  builders as the lowering, folding included. A consumer cannot tell a node a rewrite built from one
+  the lowering built, so a cost the program's meaning does not decide -- how a process that stops
+  only at the head of its loop is compiled -- is taken out once for both backends, and HIR-to-MIR
+  still states the meaning one way.
 - `binding_and_capture.md` owns the lexical reference contract MIR's value references obey: a
   reference names a binding materialized in its own callable body, and a binding crosses a closure
   boundary only as a captured environment field. MIR carries no navigation distance to a
@@ -849,36 +860,37 @@ member, a fixed-width range -- states an abstract update of the owning value: wh
 levels the descent reaches through, how many times each evaluates, the value written and its
 coercion, and that the owning value is the value updated. The owner is a place; the descent is a run
 of steps on it -- a field step where the part means the same for reading and writing, the write form
-of an element where it does not -- and what it ends in may be no place: bits are written through the
-reference to them the packed value's `slice_mut` answers, taken once for each part they are reached
-through, and a window by its array's own `assign_element_slice` or a queue's own slice write between
-the two positions it clamps (LRM 7.10.1), each taken on the place the value lies in. Where the owner
-is a capability wrapper, the write is opened on it, the whole of the wrapper's contents is
-designated within it, and each step into a part a write lands on (an element, or a component, a
-tagged union's member among them) is taken within the write in progress rather than on the storage.
-So the write hears what forming each part did -- an element made by being written, an index naming
-none -- and keeps only what it lands on. It lands where what those steps designate is dereferenced,
-or, where the descent ends in bits or a window, the reference to the bits or the window's write is
-taken on the last designation. A union's member is no storage of its own, so the change the write
-reports is to the union, whose bits every member reads. The write and a place designated within it
-are two types: the write is held by the writer, ended with the full-expression, which is when it
-reports, and names no place itself, while a designation borrows the write and ends with nothing to
-do. The variable learns whether the write changed it from what it heard and from the part it landed
-on (LRM 4.3). Whether a part is storage of its own is the language's fact about the type it is part
-of (`storage.md`), and the place states it as its kind (invariant 16), so no layer below works it
-out. A construct that binds the designated part rather than writing it -- an output pack component,
-a nonblocking update -- binds the same statement of owner and descent; it is owner-relative, so it
-names no interior pointer and aliases nothing the owner does not already own. A reference actual
-binds the part for as long as the callee holds it, and each write through it is a write of the owner
-at the moment it lands (LRM 13.5.2, 4.3), which no write ended with the caller's full-expression can
-be; so a reference is formed over the owner and each step into a part is taken on the reference
-(`refer_element`, `refer_component`), answering a reference to that part that belongs to the same
-owner. What such a reference reaches through that the program can let go of while the callee runs --
-the object a property lies in, an element of a queue or an associative array, a dynamic array's
-elements -- the binding leases, by a call answering the reference together with the lease; that
-answer is a value the call's full-expression makes, so it is held to that full-expression's end, or
-by a local of the frame where a closure built before the call captures the reference, and the callee
-is handed the reference it carries, which owns nothing (LRM 13.5.2, 8.29).
+of an element where it does not, a slice step for bits of a packed value, one for each part they are
+reached through -- and what it ends in may be no place: a window is written by its array's own
+`assign_element_slice` or a queue's own slice write between the two positions it clamps (LRM
+7.10.1), each taken on the place the value lies in. Where the owner is a capability wrapper, the
+write is opened on it, the whole of the wrapper's contents is designated within it, and each step
+into a part a write lands on (an element, or a component, a tagged union's member among them) is
+taken within the write in progress rather than on the storage. So the write hears what forming each
+part did -- an element made by being written, an index naming none -- and keeps only what it lands
+on. It lands where what those steps designate is dereferenced; where the descent ends in bits, they
+are a slice step of the last designation, so storing them tells the write which bits moved; and
+where it ends in a window, the window's write is taken on the last designation. A union's member is
+no storage of its own, so the change the write reports is to the union, whose bits every member
+reads. The write and a place designated within it are two types: the write is held by the writer,
+ended with the full-expression, which is when it reports, and names no place itself, while a
+designation borrows the write and ends with nothing to do. The variable learns whether the write
+changed it from what it heard and from the part it landed on (LRM 4.3). Whether a part is storage of
+its own is the language's fact about the type it is part of (`storage.md`), and the place states it
+as its kind (invariant 16), so no layer below works it out. A construct that binds the designated
+part rather than writing it -- an output pack component, a nonblocking update -- binds the same
+statement of owner and descent; it is owner-relative, so it names no interior pointer and aliases
+nothing the owner does not already own. A reference actual binds the part for as long as the callee
+holds it, and each write through it is a write of the owner at the moment it lands (LRM 13.5.2,
+4.3), which no write ended with the caller's full-expression can be; so a reference is formed over
+the owner and each step into a part is taken on the reference (`refer_element`, `refer_component`),
+answering a reference to that part that belongs to the same owner. What such a reference reaches
+through that the program can let go of while the callee runs -- the object a property lies in, an
+element of a queue or an associative array, a dynamic array's elements -- the binding leases, by a
+call answering the reference together with the lease; that answer is a value the call's
+full-expression makes, so it is held to that full-expression's end, or by a local of the frame where
+a closure built before the call captures the reference, and the callee is handed the reference it
+carries, which owns nothing (LRM 13.5.2, 8.29).
 
 Where the owner is a property of an object (LRM 8.4), the object is what hears the write (LRM
 9.4.2), and it is reached once, as the source reaches it once. A write is a write-in-progress value

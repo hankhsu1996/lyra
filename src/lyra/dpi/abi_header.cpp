@@ -50,6 +50,11 @@ auto RenderTypeAsC(const mir::TypePool& types, mir::TypeId id) -> std::string {
                 return is_signed ? "int32_t" : "uint32_t";
               case mir::MachineIntWidth::k64:
                 return is_signed ? "int64_t" : "uint64_t";
+              // No foreign signature names a two-word integer (LRM 35.5.6).
+              case mir::MachineIntWidth::k128:
+                throw InternalError(
+                    "RenderTypeAsC: a two-word integer does not cross the "
+                    "DPI-C boundary -- please report this as a bug");
             }
             throw InternalError("RenderTypeAsC: unknown MachineIntWidth");
           },
@@ -113,7 +118,6 @@ auto RenderTypeAsC(const mir::TypePool& types, mir::TypeId id) -> std::string {
           [&](const mir::DriverType&) { return crosses_no_boundary(); },
           [&](const mir::OpenWriteType&) { return crosses_no_boundary(); },
           [&](const mir::DesignationType&) { return crosses_no_boundary(); },
-          [&](const mir::BitsReferenceType&) { return crosses_no_boundary(); },
           [&](const mir::ObjectWriteType&) { return crosses_no_boundary(); },
           [&](const mir::RecordType&) { return crosses_no_boundary(); },
           [&](const mir::ClosureType&) { return crosses_no_boundary(); },

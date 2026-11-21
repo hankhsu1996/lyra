@@ -34,8 +34,8 @@ SV:   opcode = int'(val[2:0]);        // logic [31:0] val
       d = a[k];                       // int a[1:8]
       acc = val + 1;
 
-MIR:  slice(val, 0, 3)                // position 0, three bits
-      slice(w, 28 - to_position(i), 4)
+MIR:  read(val.bits<3>(0))            // three bits from position 0
+      read(w.bits<4>(28 - to_position(i)))
       element(a, to_position(k) - 1)
       val + 1'(logic [31:0])          // one constant of the unit
 ```

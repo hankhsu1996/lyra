@@ -79,6 +79,8 @@ auto RuntimeOpName(RuntimeOp op) -> std::string_view {
       return "run_build";
     case RuntimeOp::kPositionsWrite:
       return "positions_write";
+    case RuntimeOp::kExtractBits:
+      return "extract_bits";
     case RuntimeOp::kInsertBits:
       return "insert_bits";
     case RuntimeOp::kInsertDesignatedBits:
@@ -296,8 +298,9 @@ auto OperandReadingsOf(RuntimeOp op) -> support::OperandReadings {
     // The function answering a value's run of bits, then that value.
     case RuntimeOp::kRunWrite:
       return {kMachine, kMachine};
-    // The value written into, the parts the bits lie in, where the bits
-    // start, and the bits.
+    // The value read or written, the parts the bits lie in, where the bits
+    // start, and the bits: read into, or written.
+    case RuntimeOp::kExtractBits:
     case RuntimeOp::kInsertBits:
       return {kBits, kMachine, kPosition, kBits};
     // The designation, the parts the bits lie in, where the bits start, and
@@ -364,6 +367,7 @@ auto AnswerToldOf(RuntimeOp op) -> support::AnswerTold {
     case RuntimeOp::kRunWrite:
     case RuntimeOp::kRunBuild:
     case RuntimeOp::kPositionsWrite:
+    case RuntimeOp::kExtractBits:
     case RuntimeOp::kInsertBits:
     case RuntimeOp::kInsertDesignatedBits:
     case RuntimeOp::kFromElements:

@@ -104,21 +104,42 @@ the element or the element default, and a write form, answering the element, a d
 entry. HIR-to-MIR takes the write form where the place is an assignment target, a `ref` actual, a
 mutating receiver, a read-modify-write or a nonblocking target, and the read form otherwise.
 
-### D4. Bits, a window and a character are no places
+### D4. Bits are a step of a place; a window and a character are no places
 
-Bits of a packed value are reached through the value's own operations, as every generic language
-reaches them. A read is `slice<T>(v, start)` on the value, named where it lies. A write is a store
-through the reference to the bits that `slice_mut<T>(v, start)` answers, taken on the place the
-value lies in, as `bitset::operator[]` answers a reference to a bit and `b[i] = x` assigns through
-it. A packed value's parts nest, each with bounds of its own (LRM 7.2.1, 7.4.1) -- `v[i][j]`,
-`s.f[3]` -- so a part of a part is `slice_mut` taken on the reference to the outer part. Within a
-write in progress the reference is taken on the designation of the value, so the write hears which
-bits moved. An invalid start reads x and writes nothing (LRM 11.5.1), which is how the operations
-behave. A window of several elements is not one storage, and a partly invalid one writes only its
-valid elements, which no reference can carry: it is read by a step answering it as a value of its
-own and written by the array's own operation on the place the array lies in, as rustc copies into
+A select of a packed value -- a bit-select, a part-select, an element of a packed array, a packed
+structure's member -- names bits of the place the value lies in (LRM 7.4.1, 11.5.1), so it is a step
+of that place, as a field is: one node, `SliceExpr`, holding the place it is taken on and the
+position its bits start at. What takes the node gives its value category, as for every place: a read
+is the node under a read, a write is the node as an assignment's target. A packed value's parts
+nest, each with bounds of its own (LRM 7.2.1, 7.4.1) -- `v[i][j]`, `s.f[3]` -- so a part of a part
+is a step taken on the step, and the chain is one place, read or written once. Each step bounds the
+next: a position outside the step it is taken in reads x and is not written, and a start naming no
+position reads x and writes nothing (LRM 11.5.1, 11.5.2), whatever the vector holds there. Bits lie
+at no address of their own, so nothing takes their address: a read of them makes the value it
+answers, and a reference bound to them binds that value, as a C++ `const T&` binds a bit-field's
+value in a temporary. Within a write in progress the step is taken on the dereference of the
+designation of the value, so the write hears which bits moved.
+
+clang states a bit-field as a kind of lvalue (`LValue::MakeBitfield` in
+`clang/lib/CodeGen/CGValue.h`) that its loads and stores read and write by their own path
+(`EmitLoadOfBitfieldLValue`, `EmitStoreThroughBitfieldLValue` in `clang/lib/CodeGen/CGExpr.cpp`),
+and rustc names a nested place as a base and a list of projections read once (`Place` and
+`ProjectionElem` in `compiler/rustc_middle/src/mir/syntax.rs`). Lyra's condition differs in one
+thing: where the bits start is a value the program computes, which clang's offset, fixed by the
+record type, never is; that is carried by the step's start operand and by each step's bound.
+
+A window of several elements is not one storage, and a partly invalid one writes only its valid
+elements, which no step can carry: it is read by a step answering it as a value of its own and
+written by the array's own operation on the place the array lies in, as rustc copies into
 `*index_mut(&mut a, range)` by a method. A string's character has no identity of its own either: a
 read is a call on the string read, a write a mutating call on the string's place.
+
+This decision first had bits reached through the packed value's own operations -- a `slice` read on
+the value and a store through the reference `slice_mut` answered, as `bitset::operator[]` answers a
+reference to a bit. That followed library types, whose bits have no place in the language; a select
+of a packed value is the language's own place. The call shape read each level of a nested select
+whole before taking the next -- `v[x][y]` read the whole row `v[x]` -- and wrote through a reference
+type of its own that every layer had to special-case.
 
 ### D5. A place carries what kind of storage it is
 
@@ -203,11 +224,11 @@ holds a value, as rustc's `Operand::Copy` and `Operand::Move` do.
   reached is held where it can be, so no update rebuilds a value around a part; an extract remains
   only for an element of a sequence of handles.
 - The verifier gains a rule: an assignment's target is a place.
-- Bits are written through a reference type of their own over the bits' type, which no backend names
-  as a type: it lives only as the receiver of `slice_mut` and of `set`, and each target realizes the
-  store by following the `slice_mut` steps to what the first was taken on. `designate_slice` and
-  `designate_element_slice` go: designated bits are `slice_mut` on the designation, and a window
-  within a write is the array's `assign_element_slice` on it.
+- Bits are a step of a place, and LIR's place carries the step as a projection, so a load or a store
+  of a place ending in bits reads or writes them where the value lies, composing every step's start
+  and bound. `designate_slice` and `designate_element_slice` go: designated bits are a step on the
+  designation's dereference, and a window within a write is the array's `assign_element_slice` on
+  it.
 - An operation over an operand settles how it takes it once it is known which operation it is, as
   clang's Sema settles an operand's conversion after overload resolution: a struct's method borrows
   a place where it lies, a library entry takes its value.

@@ -216,12 +216,20 @@ class CodeGenFunction {
     lir::TypeId type;
   };
   // `bits` written over the bits `parts` name, outermost first, in the value
-  // of type `whole` lying at `at`, as instructions on planes. Emits nothing
-  // and answers false where the value, a part or the bits is not stated on
-  // planes.
-  auto StoreBitsOnPlanes(
+  // of type `whole` lying at `at`, as instructions: on planes within one word,
+  // and into the words the bits span past it. Emits nothing and answers false
+  // where the bits are more than a frame keeps in a value wider than a word.
+  auto StoreBitsInPlace(
       llvm::Value* at, lir::TypeId whole, std::span<const BitsPartRef> parts,
       OperandRef bits) -> bool;
+  // The bits `parts` name, outermost first, of the value of type `whole` lying
+  // at `at`, written into `out` as a value of `answer_type`, as instructions:
+  // on planes within one word, and from the words the bits span past it.
+  // Emits nothing and answers false where the bits are more than a frame keeps
+  // in a value wider than a word.
+  auto ReadBitsInPlace(
+      llvm::Value* at, lir::TypeId whole, std::span<const BitsPartRef> parts,
+      lir::TypeId answer_type, llvm::Value* out) -> bool;
   // Each operand a call states, with the type it is a value of.
   auto LowerOperandRefs(std::span<const lir::Operand> operands)
       -> diag::Result<std::vector<OperandRef>>;
@@ -335,18 +343,23 @@ class CodeGenFunction {
   auto LowerStore(const lir::StoreInstr& store) -> diag::Result<llvm::Value*>;
   auto LowerUse(const lir::UseInstr& use, const DestinationRef& destination)
       -> diag::Result<llvm::Value*>;
-  // Bits written into the integral value at a place, where it lies: the
-  // insertion as instructions where the value, every part and the bits are
-  // each stated on planes, and a call on the library's insertion otherwise.
-  auto LowerBitsStore(const lir::BitsStoreInstr& store)
+  // What a place ending in steps selecting bits holds: the bits, read from the
+  // value they lie in where it lies into `out`, as instructions where they are
+  // stated on planes or reached by words, and by the library's selection
+  // otherwise. Bits lie at no address of their own, so a read of them makes a
+  // value, as a binary operation's does, rather than naming one.
+  auto LoadBits(
+      const lir::Place& place, lir::TypeId result_type, llvm::Value* out)
       -> diag::Result<llvm::Value*>;
-  // Bits written into the integral value a write in progress designates, by
-  // that value's own entry, which hears which of them moved.
-  auto LowerDesignatedBitsWrite(
-      const lir::DesignatedBitsTarget& bits, const lir::CallInstr& call,
-      lir::TypeId result_type) -> diag::Result<llvm::Value*>;
-  // The parts a statement of bits names, each with where it starts lowered.
-  auto LowerBitsParts(std::span<const lir::BitsPart> parts)
+  // A store into a place ending in steps selecting bits: written where the
+  // value lies, as instructions where they are stated on planes or reached by
+  // words and by the library's insertion otherwise, or, into the value a write
+  // in progress designates, by that value's own entry, which hears which of
+  // them moved.
+  auto StoreBits(const lir::StoreInstr& store) -> diag::Result<llvm::Value*>;
+  // The steps of a place selecting bits, outermost first, each with where it
+  // starts lowered.
+  auto LowerBitsParts(std::span<const lir::Projection> slices)
       -> diag::Result<std::vector<BitsPartRef>>;
   // The parts some bits lie in, outermost first, as an entry writing the bits
   // takes them: a span over where each starts and how many bits it has.

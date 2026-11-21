@@ -212,6 +212,8 @@ auto TargetLowering::OperatorFormOf(const lir::BinaryInstr& binary) const
       case lir::BinaryOp::kGreaterEqual:
       case lir::BinaryOp::kLogicalAnd:
       case lir::BinaryOp::kLogicalOr:
+      case lir::BinaryOp::kShl:
+      case lir::BinaryOp::kShr:
         break;
     }
   }
@@ -300,18 +302,58 @@ auto TargetLowering::StoreFormOf(const lir::StoreInstr& store) const
               MachineOperand{.kind = MachineOperandKind::kAddress})}};
 }
 
-auto TargetLowering::BitsStoreCallOf(
-    const lir::BitsStoreInstr& store, lir::TypeId whole) const -> EntryCall {
+namespace {
+
+// The value read or written, the parts the bits lie in as one span, where the
+// last part starts, and the bits, whatever number of parts reach them.
+auto BitsCallOf(
+    const lir::TypePool& types, RuntimeOp op, lir::TypeId whole,
+    lir::TypeId start, lir::TypeId bits) -> EntryCall {
   const std::array<StatedOperand, 4> stated{
       ValueOperand{.type = whole},
       MachineOperand{.kind = MachineOperandKind::kSpan},
-      ValueOperand{.type = OperandType(store.parts.back().start)},
-      ValueOperand{.type = OperandType(store.bits)}};
+      ValueOperand{.type = start}, ValueOperand{.type = bits}};
   return EntryCall{
-      .symbol = RuntimeSymbol(RuntimeOp::kInsertBits),
-      .abi = ArrangeEntryCall(
-          unit_->types, RuntimeOp::kInsertBits, stated, std::nullopt,
-          std::nullopt)};
+      .symbol = RuntimeSymbol(op),
+      .abi = ArrangeEntryCall(types, op, stated, std::nullopt, std::nullopt)};
+}
+
+}  // namespace
+
+auto TargetLowering::BitsLoadCallOf(
+    lir::TypeId whole, lir::TypeId start, lir::TypeId bits) const -> EntryCall {
+  return BitsCallOf(unit_->types, RuntimeOp::kExtractBits, whole, start, bits);
+}
+
+auto TargetLowering::BitsStoreCallOf(
+    lir::TypeId whole, lir::TypeId start, lir::TypeId bits) const -> EntryCall {
+  return BitsCallOf(unit_->types, RuntimeOp::kInsertBits, whole, start, bits);
+}
+
+// The entry takes the designation, the parts the bits lie in as one span,
+// where the bits start, and the bits, whatever number of parts the write
+// reaches them through; it is told how wide the value designated is, which no
+// operand is.
+auto TargetLowering::DesignatedBitsCallOf(
+    lir::TypeId designation, lir::TypeId value, lir::TypeId start,
+    lir::TypeId bits) const -> diag::Result<EntryCall> {
+  auto domain = RealizedDomainOf(*unit_, value);
+  if (!domain) {
+    return std::unexpected(std::move(domain.error()));
+  }
+  const std::array<StatedOperand, 4> stated{
+      ValueOperand{.type = designation},
+      MachineOperand{.kind = MachineOperandKind::kSpan},
+      ValueOperand{.type = start}, ValueOperand{.type = bits}};
+  return EntryCall{
+      .symbol = RuntimeSymbol(*domain, RuntimeOp::kInsertDesignatedBits),
+      .abi = ArrangeCall(
+          unit_->types, OperandReadingsOf(RuntimeOp::kInsertDesignatedBits),
+          stated,
+          Realization{
+              .told = ToldOf(*domain, RuntimeOp::kInsertDesignatedBits),
+              .of = value},
+          std::nullopt, {})};
 }
 
 auto TargetLowering::ElementStepOf(
@@ -914,30 +956,6 @@ auto TargetLowering::FnAbiOf(
           },
           [&](const lir::OpenWriteTarget& t) -> Arranged {
             return on_storage_of(t.value, t.op);
-          },
-          // The entry takes the designation, the parts the bits lie in as
-          // one span, where the bits start, and the bits, whatever number of
-          // parts the write reaches them through; it is told how wide the
-          // value designated is.
-          [&](const lir::DesignatedBitsTarget& t) -> Arranged {
-            auto domain = RealizedDomainOf(*unit_, t.value);
-            if (!domain) {
-              return std::unexpected(std::move(domain.error()));
-            }
-            // What the realization is told is of the value designated, which
-            // no operand is.
-            const std::array<StatedOperand, 4> stated{
-                ValueOperand{.type = OperandType(call.args.front())},
-                MachineOperand{.kind = MachineOperandKind::kSpan},
-                ValueOperand{.type = OperandType(t.parts.back().start)},
-                ValueOperand{.type = t.parts.back().type}};
-            return ArrangeCall(
-                types, OperandReadingsOf(RuntimeOp::kInsertDesignatedBits),
-                stated,
-                Realization{
-                    .told = ToldOf(*domain, RuntimeOp::kInsertDesignatedBits),
-                    .of = t.value},
-                std::nullopt, {});
           },
           [&](const lir::EndValueTarget&) { return as_stated(); },
           [&](const lir::CopyValueTarget&) { return as_stated(); },

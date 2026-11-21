@@ -71,8 +71,7 @@ render, which `mir.md` requires to be a stated call.
      the order the source lists them: `t = 0; t[55:48] = a; t[47:32] = b; t[31:0] = c`. Each part's
      width is its type's (LRM 11.4.12 bans unsized constants "because the size of each operand is
      needed"), so where it lands is a constant of the program and nothing about it reaches the run.
-     A write into bits is the existing write through the reference a packed value's `slice_mut`
-     answers.
+     A write into bits is an assignment to a slice step of the local.
    - **Strings** are one call over one list of strings, sized once and each part copied once. Every
      part is of one type and its length is known only at run time, which is the condition every
      peer's list-taking join has.
@@ -172,8 +171,8 @@ reaches "and the packed one is a node".
 ## Cross-references
 
 - `architecture/mir.md` -- the Purpose paragraph (MIR's peers are C++, Rust and Python, and the
-  source language does not shape its vocabulary); bits of a packed value are written through the
-  reference its `slice_mut` answers.
+  source language does not shape its vocabulary); bits of a packed value are a slice step of the
+  place they lie in, written as an assignment's target.
 - `architecture/backend_contract.md` -- invariant 2 (decision logic in a value-emission entry is a
   MIR design failure) and invariant 7 (no contract entry is specialized for one backend).
 - [queue-operators](queue-operators.md) -- decision 3, which this replaces.

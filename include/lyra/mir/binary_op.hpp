@@ -7,10 +7,13 @@ namespace lyra::mir {
 // The operators a node carries: those a target applies to two values of one
 // type, and an address moved by a machine integer's count of what it points at,
 // which adding and subtracting state as C's pointer arithmetic does
-// ([expr.add]). Any other operator whose operands are not that -- a shift,
-// whose amount is sized on its own -- or whose meaning is over a value's
-// representation rather than over the value -- the case and wildcard equalities
-// -- is a call against the entry that performs it, and reaches no node here.
+// ([expr.add]). A machine integer shifted by a count of its own type is C's
+// `<<` and `>>` ([expr.shift]), logical for an unsigned one, which a body built
+// over a value's words shifts each word by. Any other operator whose operands
+// are not that -- a shift of an integral value, whose amount is sized on its
+// own -- or whose meaning is over a value's representation rather than over
+// the value -- the case and wildcard equalities -- is a call against the
+// operation that performs it, and reaches no node here.
 // That holds wherever an operator is written, an assignment applying one
 // included: which entry applies it to what a place holds is settled where the
 // assignment is built.
@@ -35,6 +38,8 @@ enum class BinaryOp {
   kLessThan,
   kLogicalAnd,
   kLogicalOr,
+  kShl,
+  kShr,
 };
 
 // Whether the operator moves an address by a count of what it points at.
@@ -57,6 +62,8 @@ constexpr auto MovesAnAddress(BinaryOp op) -> bool {
     case BinaryOp::kLessThan:
     case BinaryOp::kLogicalAnd:
     case BinaryOp::kLogicalOr:
+    case BinaryOp::kShl:
+    case BinaryOp::kShr:
       return false;
   }
   throw InternalError("mir: unknown binary operator");

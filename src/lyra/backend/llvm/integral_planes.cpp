@@ -1,20 +1,26 @@
 #include "lyra/backend/llvm/integral_planes.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <format>
 #include <functional>
 #include <optional>
+#include <span>
 #include <utility>
+#include <vector>
 
 #include <llvm/ADT/APInt.h>
+#include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Constants.h>
 #include <llvm/IR/DerivedTypes.h>
+#include <llvm/IR/Function.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/InstrTypes.h>
 #include <llvm/IR/Instruction.h>
 #include <llvm/IR/Intrinsics.h>
+#include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Type.h>
 #include <llvm/IR/Value.h>
 #include <llvm/Support/Casting.h>
@@ -676,6 +682,196 @@ class PlaneArithmetic {
   llvm::IRBuilderBase* b_;
 };
 
+// The low `count` positions of an integer of `type` set, for a `count` below
+// the type's width, so a run of positions is two of these apart.
+auto LowPositions(
+    llvm::IRBuilderBase& builder, llvm::Value* count, llvm::Type* type)
+    -> llvm::Value* {
+  llvm::Value* const one = llvm::ConstantInt::get(type, 1);
+  return builder.CreateSub(
+      builder.CreateShl(one, builder.CreateZExt(count, type)), one);
+}
+
+// How many words a part of `width` bits can span: those its width fills, and
+// one more where it does not start at a word's first position.
+[[nodiscard]] auto WordsSpannedBy(std::uint64_t width) -> std::uint64_t {
+  return value::WordCountForBits(width) + 1;
+}
+
+// The first `count` 64-bit words of `bits`, an integer of any width, low
+// first, those past its width clear.
+auto WordsOf(
+    llvm::IRBuilderBase& builder, llvm::Value* bits, std::uint64_t count)
+    -> std::vector<llvm::Value*> {
+  const std::uint64_t width = bits->getType()->getIntegerBitWidth();
+  llvm::Type* const word = builder.getInt64Ty();
+  std::vector<llvm::Value*> words;
+  words.reserve(count);
+  for (std::uint64_t k = 0; k < count; ++k) {
+    words.push_back(
+        64 * k >= width ? Clear(word)
+                        : builder.CreateZExtOrTrunc(
+                              builder.CreateLShr(bits, 64 * k), word));
+  }
+  return words;
+}
+
+// The integer of `type` whose 64-bit words, low first, are `words`.
+auto Joined(
+    llvm::IRBuilderBase& builder, std::span<llvm::Value* const> words,
+    llvm::Type* type) -> llvm::Value* {
+  const std::uint64_t width = type->getIntegerBitWidth();
+  llvm::Value* joined = Clear(type);
+  for (std::uint64_t k = 0; k < words.size() && 64 * k < width; ++k) {
+    llvm::Value* const piece = builder.CreateZExtOrTrunc(words[k], type);
+    joined = builder.CreateOr(
+        joined, k == 0 ? piece : builder.CreateShl(piece, 64 * k));
+  }
+  return joined;
+}
+
+// `number` held between `lowest` and `highest`, both included.
+auto Clamped(
+    llvm::IRBuilderBase& builder, llvm::Value* number, std::int64_t lowest,
+    std::int64_t highest) -> llvm::Value* {
+  llvm::Value* const low = builder.getInt64(lowest);
+  llvm::Value* const high = builder.getInt64(highest);
+  llvm::Value* const raised =
+      builder.CreateSelect(builder.CreateICmpSLT(number, low), low, number);
+  return builder.CreateSelect(
+      builder.CreateICmpSGT(raised, high), high, raised);
+}
+
+// The positions of word `index` -- those from 64 times it on -- that lie in
+// [from, to), as a word.
+auto PositionsOfWordIn(
+    llvm::IRBuilderBase& builder, llvm::Value* index, llvm::Value* from,
+    llvm::Value* to) -> llvm::Value* {
+  llvm::Value* const first = builder.CreateShl(index, 6);
+  llvm::Value* const below =
+      Clamped(builder, builder.CreateSub(from, first), 0, 64);
+  llvm::Value* const until =
+      Clamped(builder, builder.CreateSub(to, first), 0, 64);
+  llvm::Type* const pair = builder.getInt128Ty();
+  return builder.CreateTrunc(
+      builder.CreateAnd(
+          LowPositions(builder, until, pair),
+          builder.CreateNot(LowPositions(builder, below, pair))),
+      builder.getInt64Ty());
+}
+
+// Where bits reached through `parts`, outermost first, start in the value of
+// `whole`, and the positions of the value they may reach: inside the value,
+// and inside every part they are reached through (LRM 11.5.1). Each part's
+// start is a position in what it is a part of; one naming no position names
+// nothing.
+struct ReachedBits {
+  llvm::Value* start;
+  llvm::Value* from;
+  llvm::Value* to;
+  llvm::Value* named;
+};
+
+auto ReachOfParts(
+    llvm::IRBuilderBase& builder, const value::IntegralShape& whole,
+    std::span<const PartOfValue> parts) -> ReachedBits {
+  const PlaneArithmetic arithmetic(builder);
+  ReachedBits reach{
+      .start = builder.getInt64(0),
+      .from = builder.getInt64(0),
+      .to = builder.getInt64(static_cast<std::int64_t>(whole.width)),
+      .named = builder.getTrue()};
+  for (const PartOfValue& part : parts) {
+    const NamedPosition position =
+        arithmetic.PositionNamed(part.start, part.start_shape);
+    reach.named = builder.CreateAnd(reach.named, position.named);
+    reach.start = builder.CreateAdd(reach.start, position.at);
+    llvm::Value* const end = builder.CreateAdd(
+        reach.start, builder.getInt64(static_cast<std::int64_t>(part.width)));
+    reach.from = builder.CreateSelect(
+        builder.CreateICmpSGT(reach.start, reach.from), reach.start,
+        reach.from);
+    reach.to = builder.CreateSelect(
+        builder.CreateICmpSLT(end, reach.to), end, reach.to);
+  }
+  return reach;
+}
+
+}  // namespace
+
+// LRM 11.5.1: as many bits as `answer` is wide of the value of `whole` whose
+// words are `words`, reached through `parts`, outermost first, the last of
+// which is as wide as `answer`. Only the words the bits span are read, and
+// each word of the answer is the two words it lies across funneled by where
+// the bits start in a word, so no integer wider than a word is shifted. A
+// position outside the value or outside a part the bits are reached through
+// reads x, or 0 in a two-state answer, and so does every bit where a part
+// names no position.
+auto ReadPartOfWords(
+    llvm::IRBuilderBase& builder, const ValueWords& words,
+    const value::IntegralShape& whole, std::span<const PartOfValue> parts,
+    const value::IntegralShape& answer) -> Planes {
+  const ReachedBits reach = ReachOfParts(builder, whole, parts);
+  const std::uint64_t answer_words = value::WordCountForBits(answer.width);
+  llvm::Type* const word = builder.getInt64Ty();
+  llvm::Type* const type =
+      builder.getIntNTy(static_cast<unsigned>(answer.width));
+  const auto count = static_cast<std::int64_t>(answer.width);
+  llvm::Value* const low = builder.CreateAShr(reach.start, 6);
+  llvm::Value* const shift = builder.CreateAnd(reach.start, 63);
+  // Each word the bits can span, read once.
+  const auto read = [&](Plane plane) {
+    std::vector<llvm::Value*> spanned;
+    for (std::uint64_t k = 0; k <= answer_words; ++k) {
+      spanned.push_back(words.Read(
+          plane, builder.CreateAdd(
+                     low, builder.getInt64(static_cast<std::int64_t>(k)))));
+    }
+    return spanned;
+  };
+  const std::vector<llvm::Value*> value_words = read(Plane::kValue);
+  const std::vector<llvm::Value*> unknown_words = read(Plane::kUnknown);
+  const auto taken = [&](const std::vector<llvm::Value*>& spanned,
+                         std::uint64_t k) -> llvm::Value* {
+    return builder.CreateIntrinsic(
+        llvm::Intrinsic::fshr, {word}, {spanned[k + 1], spanned[k], shift});
+  };
+  // The answer's positions the bits may reach, counted from the answer's own
+  // least significant bit.
+  llvm::Value* const below =
+      Clamped(builder, builder.CreateSub(reach.from, reach.start), 0, count);
+  llvm::Value* const until =
+      Clamped(builder, builder.CreateSub(reach.to, reach.start), 0, count);
+  std::vector<llvm::Value*> value_answer;
+  std::vector<llvm::Value*> unknown_answer;
+  for (std::uint64_t k = 0; k < answer_words; ++k) {
+    llvm::Value* const inside = builder.CreateSelect(
+        reach.named,
+        PositionsOfWordIn(
+            builder, builder.getInt64(static_cast<std::int64_t>(k)), below,
+            until),
+        Clear(word));
+    llvm::Value* const v = taken(value_words, k);
+    llvm::Value* const u = taken(unknown_words, k);
+    if (!answer.IsFourState()) {
+      value_answer.push_back(builder.CreateAnd(
+          builder.CreateAnd(v, builder.CreateNot(u)), inside));
+      continue;
+    }
+    llvm::Value* const outside = builder.CreateNot(inside);
+    value_answer.push_back(builder.CreateOr(v, outside));
+    unknown_answer.push_back(builder.CreateOr(u, outside));
+  }
+  if (!answer.IsFourState()) {
+    return Known(Joined(builder, value_answer, type));
+  }
+  return Planes{
+      .value = Joined(builder, value_answer, type),
+      .unknown = Joined(builder, unknown_answer, type)};
+}
+
+namespace {
+
 // Where the unknown plane of a one-bit value at `at` lies: after its value
 // plane.
 auto UnknownPlaneOfOneBit(llvm::IRBuilderBase& builder, llvm::Value* at)
@@ -744,8 +940,7 @@ auto LowerOnPlanes(
     };
     return std::ranges::all_of(shapes.operands, held) && held(shapes.answer);
   };
-  if (!every_value(IsStatedOnPlanes) ||
-      (IsOnOneWordOnly(op) && !every_value(IsSingleWord))) {
+  if (!every_value(IsAtMostTwoWords)) {
     return std::nullopt;
   }
   const PlaneArithmetic words(builder);
@@ -915,6 +1110,14 @@ auto LowerOnPlanes(
           operand, operand_width, replicated_width, holds_unknown);
     }
     case IntegralOp::kSlice: {
+      if (!IsSingleWord(shape(0))) {
+        const std::array parts{PartOfValue{
+            .start = load(1),
+            .start_shape = shape(1),
+            .width = shapes.answer->width}};
+        return ReadPartOfWords(
+            builder, operands.words(0), shape(0), parts, *shapes.answer);
+      }
       const Planes source = load(0);
       const std::uint64_t source_width = width(0);
       const Planes index = load(1);
@@ -981,8 +1184,72 @@ auto LowerOnPlanes(
       const bool holds_unknown = answers_unknown();
       return words.MergeConditional(lhs, rhs, holds_unknown);
     }
+    // LRM 20.9 `$countbits`: the positions of the first operand holding one of
+    // the scalars some position of the control names, each scalar counted
+    // once however many positions name it.
+    case IntegralOp::kCountBits: {
+      const Planes a = load(0);
+      const Planes control = load(1);
+      const auto names = [&](llvm::Value* positions) {
+        return builder.CreateICmpNE(positions, Clear(positions->getType()));
+      };
+      const auto counted_where = [&](llvm::Value* control_positions,
+                                     llvm::Value* positions) {
+        return builder.CreateSelect(
+            names(control_positions), positions, Clear(positions->getType()));
+      };
+      llvm::Value* const v = a.value;
+      llvm::Value* const u = a.unknown;
+      llvm::Value* const cv = control.value;
+      llvm::Value* const cu = control.unknown;
+      llvm::Value* const not_v = builder.CreateNot(v);
+      llvm::Value* const not_u = builder.CreateNot(u);
+      llvm::Value* const not_cv = builder.CreateNot(cv);
+      llvm::Value* const not_cu = builder.CreateNot(cu);
+      llvm::Value* const counted = builder.CreateOr(
+          builder.CreateOr(
+              counted_where(
+                  builder.CreateAnd(not_cv, not_cu),
+                  builder.CreateAnd(not_v, not_u)),
+              counted_where(
+                  builder.CreateAnd(cv, not_cu), builder.CreateAnd(v, not_u))),
+          builder.CreateOr(
+              counted_where(
+                  builder.CreateAnd(not_cv, cu), builder.CreateAnd(not_v, u)),
+              counted_where(
+                  builder.CreateAnd(cv, cu), builder.CreateAnd(v, u))));
+      llvm::Value* const count =
+          builder.CreateUnaryIntrinsic(llvm::Intrinsic::ctpop, counted);
+      llvm::Type* const type = exact();
+      return Known(builder.CreateZExtOrTrunc(count, type));
+    }
+    // LRM 20.8.1 `$clog2`: the operand read as unsigned, an x or z bit read as
+    // 0, and 0 answering 0.
+    case IntegralOp::kCeilLog2: {
+      const Planes a = load(0);
+      llvm::Value* const known =
+          builder.CreateAnd(a.value, builder.CreateNot(a.unknown));
+      llvm::Type* const number = builder.getInt64Ty();
+      llvm::Value* const leading = builder.CreateZExtOrTrunc(
+          builder.CreateBinaryIntrinsic(
+              llvm::Intrinsic::ctlz, known, builder.getFalse()),
+          number);
+      llvm::Value* const set = builder.CreateZExtOrTrunc(
+          builder.CreateUnaryIntrinsic(llvm::Intrinsic::ctpop, known), number);
+      llvm::Value* const highest = builder.CreateSub(
+          builder.getInt64(static_cast<std::int64_t>(width(0)) - 1), leading);
+      llvm::Value* const rounded_up = builder.CreateAdd(
+          highest,
+          builder.CreateZExt(
+              builder.CreateICmpUGT(set, builder.getInt64(1)), number));
+      llvm::Value* const answer = builder.CreateSelect(
+          builder.CreateICmpEQ(set, builder.getInt64(0)), builder.getInt64(0),
+          rounded_up);
+      llvm::Type* const type = exact();
+      return Known(builder.CreateTrunc(answer, type));
+    }
     // Long work at every width, which the library carries out: a power, a
-    // count of bits, a logarithm, a reversal of blocks, and a value read out
+    // reversal of blocks of a size the program computes, and a value read out
     // of text or of what a foreign call left. The positions a procedural
     // continuous assignment shows are the library's too, since only a write it
     // overrides asks for them, and so are the positions a net resolved, which
@@ -990,8 +1257,6 @@ auto LowerOnPlanes(
     case IntegralOp::kTakePositions:
     case IntegralOp::kWithPositions:
     case IntegralOp::kPower:
-    case IntegralOp::kCountBits:
-    case IntegralOp::kCeilLog2:
     case IntegralOp::kReverseBlocks:
     case IntegralOp::kFromText:
     case IntegralOp::kReadCanonicalBits:
@@ -1000,6 +1265,182 @@ auto LowerOnPlanes(
       return std::nullopt;
   }
   throw InternalError("llvm codegen: unknown integral operation");
+}
+
+WordsLyingAt::WordsLyingAt(
+    llvm::IRBuilderBase& builder, llvm::Value* at,
+    const value::IntegralShape& shape)
+    : builder_(&builder), at_(at), shape_(shape) {
+}
+
+auto WordsLyingAt::Holds(llvm::Value* index) const -> llvm::Value* {
+  return builder_->CreateICmpULT(
+      index, builder_->getInt64(value::WordCountForBits(shape_.width)));
+}
+
+auto WordsLyingAt::PlaneAt(Plane plane) const -> llvm::Value* {
+  switch (plane) {
+    case Plane::kValue:
+      return at_;
+    case Plane::kUnknown:
+      return shape_.IsFourState() ? builder_->CreateConstInBoundsGEP1_64(
+                                        builder_->getInt8Ty(), at_,
+                                        value::PlaneBytesFor(shape_.width))
+                                  : nullptr;
+  }
+  throw InternalError("llvm codegen: unknown plane");
+}
+
+// Where the word `index` names lies, or the first word where it names none,
+// which is read and written back unchanged.
+auto WordsLyingAt::WordAt(Plane plane, llvm::Value* index) const
+    -> llvm::Value* {
+  llvm::Value* const within =
+      builder_->CreateSelect(Holds(index), index, builder_->getInt64(0));
+  return builder_->CreateInBoundsGEP(
+      builder_->getInt64Ty(), PlaneAt(plane), within);
+}
+
+auto WordsLyingAt::Read(Plane plane, llvm::Value* index) const -> llvm::Value* {
+  llvm::Type* const word = builder_->getInt64Ty();
+  if (PlaneAt(plane) == nullptr) {
+    return Clear(word);
+  }
+  llvm::Value* const loaded = builder_->CreateAlignedLoad(
+      word, WordAt(plane, index),
+      llvm::Align(value::IntegralAlignFor(shape_.width)));
+  return builder_->CreateSelect(Holds(index), loaded, Clear(word));
+}
+
+void WordsLyingAt::Replace(
+    Plane plane, llvm::Value* index, llvm::Value* bits,
+    llvm::Value* mask) const {
+  if (PlaneAt(plane) == nullptr) {
+    return;
+  }
+  llvm::Type* const word = builder_->getInt64Ty();
+  llvm::Value* const reached =
+      builder_->CreateAnd(mask, builder_->CreateSExt(Holds(index), word));
+  ReplaceAt(WordAt(plane, index), bits, reached);
+}
+
+void WordsLyingAt::ReplaceHeld(
+    Plane plane, llvm::Value* index, llvm::Value* bits,
+    llvm::Value* mask) const {
+  if (PlaneAt(plane) == nullptr) {
+    return;
+  }
+  ReplaceAt(
+      builder_->CreateInBoundsGEP(
+          builder_->getInt64Ty(), PlaneAt(plane), index),
+      bits, mask);
+}
+
+void WordsLyingAt::ReplaceAt(
+    llvm::Value* at, llvm::Value* bits, llvm::Value* mask) const {
+  llvm::Type* const word = builder_->getInt64Ty();
+  const llvm::Align align(value::IntegralAlignFor(shape_.width));
+  llvm::Value* const kept = builder_->CreateAnd(
+      builder_->CreateAlignedLoad(word, at, align), builder_->CreateNot(mask));
+  builder_->CreateAlignedStore(
+      builder_->CreateOr(kept, builder_->CreateAnd(bits, mask)), at, align);
+}
+
+void WritePartOfWords(
+    llvm::IRBuilderBase& builder, const MutableValueWords& words,
+    const value::IntegralShape& whole, std::span<const PartOfValue> parts,
+    Planes bits, const value::IntegralShape& bits_shape) {
+  const std::uint64_t spanned = WordsSpannedBy(bits_shape.width);
+  const std::uint64_t source_words = value::WordCountForBits(bits_shape.width);
+  llvm::Type* const word = builder.getInt64Ty();
+  const ReachedBits reached = ReachOfParts(builder, whole, parts);
+  llvm::Value* const start = reached.start;
+  llvm::Value* const from = reached.from;
+  llvm::Value* const to = reached.to;
+  llvm::Value* const named = reached.named;
+  // The bits as the words of the value they land in, each the two words of
+  // the bits it lies across funneled by where they start in a word, so no
+  // integer wider than a word is shifted.
+  llvm::Value* const shift = builder.CreateAnd(start, 63);
+  const auto placed = [&](llvm::Value* plane) {
+    const std::vector<llvm::Value*> source =
+        WordsOf(builder, plane, source_words);
+    std::vector<llvm::Value*> landed;
+    for (std::uint64_t k = 0; k < spanned; ++k) {
+      llvm::Value* const high = k < source_words ? source[k] : Clear(word);
+      llvm::Value* const below = k > 0 ? source[k - 1] : Clear(word);
+      landed.push_back(builder.CreateIntrinsic(
+          llvm::Intrinsic::fshl, {word}, {high, below, shift}));
+    }
+    return landed;
+  };
+  const std::vector<llvm::Value*> reach = placed(
+      llvm::ConstantInt::get(
+          builder.getIntNTy(static_cast<unsigned>(bits_shape.width)),
+          llvm::APInt::getAllOnes(static_cast<unsigned>(bits_shape.width))));
+  // Bits with no x settle where they land; a two-state value takes an x or z
+  // as 0.
+  const std::vector<llvm::Value*> value_landed = placed(
+      whole.IsFourState()
+          ? bits.value
+          : builder.CreateAnd(bits.value, builder.CreateNot(bits.unknown)));
+  const std::vector<llvm::Value*> unknown_landed = placed(bits.unknown);
+  llvm::Value* const low = builder.CreateAShr(start, 6);
+  const auto index_at = [&](std::int64_t offset) {
+    return builder.CreateAdd(low, builder.getInt64(offset));
+  };
+  const auto replace = [&](std::int64_t offset, llvm::Value* mask,
+                           const auto& replacing) {
+    llvm::Value* const index = index_at(offset);
+    const auto at = static_cast<std::size_t>(offset);
+    (words.*replacing)(Plane::kValue, index, value_landed[at], mask);
+    (words.*replacing)(Plane::kUnknown, index, unknown_landed[at], mask);
+  };
+  // Bits lying wholly inside the value and every part they are reached
+  // through are written by the masks their width and start give, as a
+  // bit-field is: every word they span is one the value has, and so is the
+  // last word of the run where they reach it. Bits partly outside are written
+  // word by word, each word asked whether the value has it and which of its
+  // positions the bits may land on.
+  llvm::Value* const end = builder.CreateAdd(
+      start, builder.getInt64(static_cast<std::int64_t>(bits_shape.width)));
+  llvm::Value* const inside = builder.CreateAnd(
+      named,
+      builder.CreateAnd(
+          builder.CreateICmpSGE(start, from), builder.CreateICmpSLE(end, to)));
+  llvm::Function* const function = builder.GetInsertBlock()->getParent();
+  llvm::LLVMContext& context = builder.getContext();
+  llvm::BasicBlock* const held =
+      llvm::BasicBlock::Create(context, "", function);
+  llvm::BasicBlock* const clipped =
+      llvm::BasicBlock::Create(context, "", function);
+  llvm::BasicBlock* const written =
+      llvm::BasicBlock::Create(context, "", function);
+  builder.CreateCondBr(inside, held, clipped);
+  const auto last = static_cast<std::int64_t>(spanned) - 1;
+  builder.SetInsertPoint(held);
+  for (std::int64_t offset = 0; offset < last; ++offset) {
+    replace(
+        offset, reach[static_cast<std::size_t>(offset)],
+        &MutableValueWords::ReplaceHeld);
+  }
+  replace(
+      last, reach[static_cast<std::size_t>(last)], &MutableValueWords::Replace);
+  builder.CreateBr(written);
+  builder.SetInsertPoint(clipped);
+  for (std::int64_t offset = 0; offset <= last; ++offset) {
+    replace(
+        offset,
+        builder.CreateSelect(
+            named,
+            builder.CreateAnd(
+                reach[static_cast<std::size_t>(offset)],
+                PositionsOfWordIn(builder, index_at(offset), from, to)),
+            builder.getInt64(0)),
+        &MutableValueWords::Replace);
+  }
+  builder.CreateBr(written);
+  builder.SetInsertPoint(written);
 }
 
 auto LoadPlanes(

@@ -560,9 +560,9 @@ struct NamedPart {
 // a capability wrapper holds acts on the wrapper, a call taking the wrapper as
 // its destination; a write through a character of a string is the string's
 // own put; a run of elements is written by its container's own slice write,
-// and bits by `set` through the reference `slice_mut` answers, each taken on
-// the place the value lies in or on its designation within a write; every
-// other write is a store into the place the path designates.
+// taken on the place the array lies in or on its designation within a write;
+// every other write, bits of a value included, is a store into the place the
+// path designates.
 [[nodiscard]] auto BuildStoreExpr(
     const mir::CompilationUnit& unit, mir::Builder block,
     const AccessPath& path, mir::ExprId rhs_id) -> mir::Expr;

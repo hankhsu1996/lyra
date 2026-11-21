@@ -3,7 +3,6 @@
 #include <optional>
 
 #include "lyra/mir/callable_code.hpp"
-#include "lyra/mir/code_source.hpp"
 #include "lyra/mir_transform/pass.hpp"
 
 namespace lyra::mir_transform {
@@ -17,7 +16,7 @@ namespace lyra::mir_transform {
 // is handed where it was written by the rewrite that follows; every target then
 // dereferences only pointers.
 auto ElaborateHandleDerefsOnBody(
-    const PassContext& context, const mir::CodeSource& at,
-    const mir::CallableCode& code) -> std::optional<mir::CallableCode>;
+    const PassContext& context, const mir::CallableCode& code)
+    -> std::optional<mir::CallableCode>;
 
 }  // namespace lyra::mir_transform

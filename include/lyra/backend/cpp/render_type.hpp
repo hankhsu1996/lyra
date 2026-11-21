@@ -71,7 +71,9 @@ struct CppConstQualifier {
 void WriteOne(TargetText& out, const CppConstQualifier& qualifier);
 
 // A value of the integral type `type`, written as the value its words are: the
-// value plane's words and then the unknown plane's, least significant first.
+// value plane's words and then the unknown plane's, least significant first,
+// and a value every bit of which is 0 as the type's own zero, `T::Zero()`,
+// which is that value without a word of it written out.
 struct CppIntegralLiteral {
   CppType type;
   std::span<const std::uint64_t> value_words;
@@ -112,6 +114,25 @@ struct CppTaggedUnionMemberTag {
 };
 
 void WriteOne(TargetText& out, const CppTaggedUnionMemberTag& tag);
+
+// The view of the bits of type `part` a select names in what it is taken on,
+// ahead of the argument list naming that and where the bits start:
+// `lyra::value::SliceOf<P>`, a proxy for bits that lie at no address of their
+// own, as `std::bitset::reference` is for one bit, which an assignment writes
+// through and a further select is taken on.
+struct CppBitsView {
+  CppType part;
+};
+
+void WriteOne(TargetText& out, const CppBitsView& view);
+
+// The read of the same bits, ahead of the same argument list:
+// `lyra::value::Slice<P>`, answering their value.
+struct CppBitsRead {
+  CppType part;
+};
+
+void WriteOne(TargetText& out, const CppBitsRead& read);
 
 // What takes ownership of the storage a `new` allocated for a value, applied
 // to the pointer `new` yields: `std::unique_ptr<T>(new T(init))`.

@@ -89,10 +89,11 @@ enum class RuntimeOp : std::uint8_t {
   // The positions a type's function answers of a value a net resolves,
   // written into the view the net hands it.
   kPositionsWrite,
-  // Bits written into an integral value where they lie (LRM 11.5.1): into the
-  // words of a value held at a place, and into the value a write in progress
-  // designates, which hears which of them moved and is named by the domain
-  // that value is held in.
+  // Bits read out of an integral value where they lie (LRM 11.5.1), and bits
+  // written into one: into the words of a value held at a place, and into the
+  // value a write in progress designates, which hears which of them moved and
+  // is named by the domain that value is held in.
+  kExtractBits,
   kInsertBits,
   kInsertDesignatedBits,
   // What a position of a fixed-size unpacked array naming no element reaches

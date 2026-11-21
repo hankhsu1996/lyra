@@ -114,15 +114,14 @@ auto LowerAndAddNamed(Lowerer& lowerer, const WalkFrame& frame, hir::ExprId id)
   return frame.Builder().Add(*std::move(lowered));
 }
 
-// An operand as what a logical operation of the target or of a library takes:
-// such an operation reads an integral operand's truth for itself, whatever its
-// width, so only a value of another kind is read for it first.
+// An operand as a logical operator takes it: its truth, 1, 0 or x (LRM
+// 11.4.7), read as clang's Sema reads a scalar as a boolean
+// (`CK_IntegralToBoolean`), so the operator reads one bit whatever the
+// operand's type and width.
 auto BuildLogicalOperand(
     const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId operand)
     -> mir::ExprId {
-  return unit.types.Get(block.Get(operand).type).IsIntegral()
-             ? operand
-             : BuildTruth(unit, block, operand);
+  return BuildTruth(unit, block, operand);
 }
 
 // `tests` folded by a logical operator that evaluates both of its operands,

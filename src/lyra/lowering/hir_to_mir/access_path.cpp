@@ -90,12 +90,19 @@ struct RunRead {
   std::vector<mir::ExprId> positions;
 };
 
-// How one step is taken: as a field of what it is taken on, by a call
-// answering a reference to the part, by a call answering the part, by the
-// operation the type of what it is taken on has for it, or as a view of a
+// A run of bits of the value a step is taken on, starting at `start`, as wide
+// as the part's type (LRM 7.4.1, 11.5.1).
+struct SliceStep {
+  mir::ExprId start;
+};
+
+// How one step is taken: as a field of what it is taken on, as bits of it, by
+// a call answering a reference to the part, by a call answering the part, by
+// the operation the type of what it is taken on has for it, or as a view of a
 // union's storage.
 using StepTaken = std::variant<
-    mir::ComponentFieldTarget, ReferenceStep, StepCall, RunRead, MemberView>;
+    mir::ComponentFieldTarget, SliceStep, ReferenceStep, StepCall, RunRead,
+    MemberView>;
 
 // An element is reached by a read form and a write form, each answering a
 // reference, since reading a position that names no element answers the
@@ -233,24 +240,20 @@ auto RunStepTaken(StepUse use, RunRead read) -> StepTaken {
   throw InternalError("access path: unknown step use");
 }
 
-// Bits of a packed value are read by the value's own operation on it (LRM
-// 11.5.1), and written through a reference to them the store takes, as
-// `std::bitset` answers a reference to one bit; no reference the program
-// holds ends on them (LRM 13.5.2).
-auto BitsStepTaken(StepUse use, const DescentStep& step, mir::ExprId start)
-    -> StepTaken {
+// Bits of a packed value are a step of the place the value is, read or written
+// as that place is (LRM 7.4.1, 11.5.1), as a field is; no reference the
+// program holds ends on them (LRM 13.5.2). A write lands on bits only at the
+// end of a path, where the store takes them on the place it reaches, so no
+// step a write designates within itself is one.
+auto BitsStepTaken(StepUse use, mir::ExprId start) -> StepTaken {
   switch (use) {
     case StepUse::kRead:
-      return StepCall{
-          .entry = support::BuiltinFn::kSlice,
-          .type_arguments = {step.part_type},
-          .arguments = {start}};
+      return SliceStep{.start = start};
     case StepUse::kWrite:
     case StepUse::kDesignate:
       throw InternalError(
-          "access path: bits are written through a reference to them, which "
-          "the store takes, and this descent takes a step into them for a "
-          "write");
+          "access path: bits are written as a step of the place the store "
+          "reaches, and this descent takes a step into them for a write");
     case StepUse::kLend:
       RefuseReference();
   }
@@ -265,7 +268,7 @@ auto StepTakenFor(const DescentStep& step, StepUse use) -> StepTaken {
   return std::visit(
       Overloaded{
           [&](const StepToBits& bits) {
-            return BitsStepTaken(use, step, bits.start);
+            return BitsStepTaken(use, bits.start);
           },
           [&](const StepToElementRun& run) -> StepTaken {
             return RunStepTaken(
@@ -611,10 +614,8 @@ auto MemberRead(
   const mir::ExprId storage = UnionStorage(unit, block, receiver);
   const mir::TypeId bits =
       StorageBitsFor(unit, block.Get(storage).type, member);
-  const mir::ExprId held = block.Add(
-      mir::MakeBuiltinCall(
-          unit, block.Body(), support::BuiltinFn::kSlice, storage, std::nullopt,
-          {bits}, {BuildConstantPosition(unit, block, 0)}, bits));
+  const mir::ExprId held = block.Read(
+      block.Slice(storage, BuildConstantPosition(unit, block, 0), bits));
   return BuildFromPositions(unit, block, held, member);
 }
 
@@ -657,6 +658,9 @@ auto StepExpr(
       Overloaded{
           [&](const mir::ComponentFieldTarget& field) {
             return mir::MakeFieldAccessExpr(receiver, field, type);
+          },
+          [&](const SliceStep& bits) {
+            return block.SliceOf(receiver, bits.start, type);
           },
           [&](ReferenceStep reference) {
             return ReferencedPart(
@@ -760,6 +764,14 @@ auto NamedAgain(
           [&](const mir::FieldAccessExpr& e) -> mir::ExprData {
             return mir::FieldAccessExpr{
                 .receiver = again(e.receiver), .field = e.field};
+          },
+          [&](const mir::SliceExpr& e) -> mir::ExprData {
+            return mir::SliceExpr{
+                .receiver = again(e.receiver), .start = again(e.start)};
+          },
+          [&](const mir::IndexExpr& e) -> mir::ExprData {
+            return mir::IndexExpr{
+                .receiver = again(e.receiver), .index = again(e.index)};
           },
           [&](const mir::UnaryExpr&) { return computes(); },
           [&](const mir::BinaryExpr&) { return computes(); },
@@ -1323,6 +1335,20 @@ auto SettledPlace(
                     SettledPlace(unit, frame, field.receiver), field.field,
                     node.type));
           },
+          // Where the bits start is a value, held once as any operand a
+          // place named again reaches through.
+          [&](const mir::SliceExpr& slice) -> mir::ExprId {
+            return block.Add(
+                mir::MakeSliceExpr(
+                    SettledPlace(unit, frame, slice.receiver),
+                    EvaluatedOnce(frame, slice.start), node.type));
+          },
+          [&](const mir::IndexExpr& element) -> mir::ExprId {
+            return block.Add(
+                mir::MakeIndexExpr(
+                    SettledPlace(unit, frame, element.receiver),
+                    EvaluatedOnce(frame, element.index), node.type));
+          },
           [&](const mir::DerefExpr& deref) -> mir::ExprId {
             const mir::TypeId reached_through = block.Get(deref.pointer).type;
             // A capability wrapper is storage, so what it is reached through
@@ -1788,41 +1814,23 @@ auto TrailingBitsAt(const AccessPath& path) -> std::optional<std::size_t> {
   return at;
 }
 
-// `value` written through `reference`, a reference to bits, as `std::bitset`'s
-// reference assigns (LRM 11.5.1).
-auto SetThrough(
-    const mir::CompilationUnit& unit, mir::ExprId reference, mir::ExprId value)
-    -> mir::Expr {
-  return mir::Expr{
-      .data =
-          mir::CallExpr{
-              .callee =
-                  mir::Direct{
-                      .target = support::BuiltinFn::kSet,
-                      .receiver = reference},
-              .arguments = {value}},
-      .type = unit.builtins.void_type};
-}
-
-// A write of `value` into the bits `path` ends in, from the step `at`: a
-// reference to them taken on the value they lie in, one part at a time, and
-// the reference's `set` (LRM 11.5.1), as `std::bitset`'s `b[i] = x` assigns
-// through the reference `operator[]` answers.
+// A write of `value` into the bits `path` ends in, from the step `at`: each
+// a slice of what is before it -- the place the value lies in, or a write in
+// progress designating it, of which the bits are a step as an element
+// designated within the write is, so the write hears which of them move --
+// and an assignment to the last (LRM 11.5.1), as a part-select on the left of
+// an assignment is one place.
 auto StoreBitsExpr(
     const mir::CompilationUnit& unit, mir::Builder block,
     const AccessPath& path, std::size_t at, mir::ExprId value) -> mir::Expr {
-  mir::ExprId reference = WriteOperandOf(unit, block, path, at);
+  mir::ExprId place = WriteOperandOf(unit, block, path, at);
   for (std::size_t i = at; i < path.descent.size(); ++i) {
     const DescentStep& step = path.descent[i];
-    reference = block.Add(
-        mir::MakeBuiltinCall(
-            unit, block.Body(), support::BuiltinFn::kSliceMut, reference,
-            std::nullopt, {step.part_type},
-            {std::get<StepToBits>(step.to).start},
-            unit.types.Intern(
-                mir::Type{mir::BitsReferenceType{.bits = step.part_type}})));
+    place = block.Add(
+        mir::MakeSliceExpr(
+            place, std::get<StepToBits>(step.to).start, step.part_type));
   }
-  return SetThrough(unit, reference, value);
+  return mir::MakeAssignExpr(unit.builtins, place, value);
 }
 
 // Where among a union's storage a write landing below the member `path` steps
@@ -1883,9 +1891,9 @@ auto StorageReachedBelow(
 
 // A write of `value` landing on the member of an untagged union `path` steps
 // into at `at`, or below it: the member is a view of the union's storage, so
-// the write replaces the storage's positions the part it lands on takes,
-// through a reference to them, and a write of bits of that part, or of a run
-// of its elements, narrows the reference to them (LRM 7.3, 11.5.1). A run
+// the write replaces the storage's positions the part it lands on takes, a
+// slice of the storage, and a write of bits of that part, or of a run of its
+// elements, is a slice of that slice (LRM 7.3, 11.5.1). A run
 // lying partly outside its array then writes the elements it names that are
 // there, as a run of an array lying anywhere does, and one at an unknown
 // index writes none. What a write in progress hears is the union's change.
@@ -1904,12 +1912,7 @@ auto StoreIntoUnionStorage(
       mir::MakeBuiltinCall(
           unit, block.Body(), support::BuiltinFn::kIntegralFromInt,
           std::nullopt, {reached.first}, mir::PositionType(unit.types)));
-  mir::ExprId reference = block.Add(
-      mir::MakeBuiltinCall(
-          unit, block.Body(), support::BuiltinFn::kSliceMut, storage,
-          std::nullopt, {part_bits}, {start},
-          unit.types.Intern(
-              mir::Type{mir::BitsReferenceType{.bits = part_bits}})));
+  mir::ExprId place = block.Add(mir::MakeSliceExpr(storage, start, part_bits));
   mir::TypeId landed_bits = part_bits;
   bool lands_on_bits = false;
   for (std::size_t i = reached.bits_from; i < path.descent.size(); ++i) {
@@ -1934,18 +1937,13 @@ auto StoreIntoUnionStorage(
     const mir::TypeId bits =
         run == nullptr ? step.part_type
                        : StorageBitsFor(unit, storage_type, step.part_type);
-    reference = block.Add(
-        mir::MakeBuiltinCall(
-            unit, block.Body(), support::BuiltinFn::kSliceMut, reference,
-            std::nullopt, {bits}, {start},
-            unit.types.Intern(
-                mir::Type{mir::BitsReferenceType{.bits = bits}})));
+    place = block.Add(mir::MakeSliceExpr(place, start, bits));
     landed_bits = bits;
     lands_on_bits = run == nullptr;
   }
   const mir::ExprId written =
       lands_on_bits ? value : BuildToPositions(unit, block, value, landed_bits);
-  return SetThrough(unit, reference, written);
+  return mir::MakeAssignExpr(unit.builtins, place, written);
 }
 
 }  // namespace

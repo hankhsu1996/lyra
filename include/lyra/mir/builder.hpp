@@ -1,6 +1,7 @@
 #pragma once
 
 #include <utility>
+#include <variant>
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
@@ -62,6 +63,21 @@ class Builder {
   // The value the place `place` holds, read where it stands.
   auto Read(ExprId place) -> ExprId {
     return Add(MakeCopyExpr(place, Get(place).type));
+  }
+
+  // The bits of type `part` from `start` of what `receiver` is: of the place it
+  // reads where it is a read, since the bits of a value read are the bits of
+  // what it reads, read once -- as clang reaches a bit-field of the object an
+  // lvalue names and converts to an rvalue only after the member access -- and
+  // of the value itself, held for the full-expression, where a computation
+  // makes it.
+  [[nodiscard]] auto SliceOf(ExprId receiver, ExprId start, TypeId part) const
+      -> Expr {
+    const auto* read = std::get_if<CopyExpr>(&Get(receiver).data);
+    return MakeSliceExpr(read != nullptr ? read->place : receiver, start, part);
+  }
+  auto Slice(ExprId receiver, ExprId start, TypeId part) -> ExprId {
+    return Add(SliceOf(receiver, start, part));
   }
 
   // `id` where a value is wanted: read, where it names storage that holds a

@@ -1,5 +1,6 @@
 #include "lyra/runtime/integral_abi.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -36,6 +37,19 @@ struct ToldType {
 // One operand as an entry received it, in the member of the machine type the
 // operation's declaration has it cross as.
 struct HandedOperand {
+  void Hold(const void* held) {
+    address = held;
+  }
+  void Hold(std::int64_t held) {
+    number = held;
+  }
+  void Hold(bool held) {
+    predicate = held;
+  }
+  void Hold(std::uint8_t held) {
+    scalar = held;
+  }
+
   const void* address = nullptr;
   std::int64_t number = 0;
   bool predicate = false;
@@ -52,19 +66,6 @@ struct Handed {
   void* return_slot = nullptr;
   ToldType answer_told;
 };
-
-void Hand(HandedOperand& operand, const void* address) {
-  operand.address = address;
-}
-void Hand(HandedOperand& operand, std::int64_t number) {
-  operand.number = number;
-}
-void Hand(HandedOperand& operand, bool predicate) {
-  operand.predicate = predicate;
-}
-void Hand(HandedOperand& operand, std::uint8_t scalar) {
-  operand.scalar = scalar;
-}
 
 [[noreturn]] void ToldAsAnotherMachineType() {
   throw InternalError(
@@ -222,8 +223,7 @@ struct ReturnCppTypeOf<support::IntegralAnswer::kMachineInt> {
 // generated per row, by the row's position, which is the position its code
 // address takes in the table.
 template <std::size_t row>
-inline constexpr IntegralOp kOperationAt =
-    support::IntegralOperations()[row].op;
+inline constexpr IntegralOp kOperationAt = kOperationsWithAnEntry.at(row);
 
 template <std::size_t row>
 inline constexpr IntegralEntryArguments kArgumentsAt =
@@ -234,8 +234,8 @@ using ArgumentCppType = typename CppTypeOf<MachineTypeOf(
     kOperationAt<row>, kArgumentsAt<row>.All()[at])>::Type;
 
 template <std::size_t row>
-using ReturnCppType =
-    typename ReturnCppTypeOf<support::IntegralOperations()[row].answer>::Type;
+using ReturnCppType = typename ReturnCppTypeOf<
+    support::IntegralOperationOf(kOperationAt<row>).answer>::Type;
 
 template <std::size_t row, std::size_t at>
 inline constexpr IntegralEntryArgument kArgumentAt =
@@ -248,7 +248,7 @@ void Take(Handed& handed, ArgumentCppType<row, at> argument) {
   if constexpr (constexpr const auto* operand =
                     std::get_if<OperandArgument>(&kArgumentAt<row, at>);
                 operand != nullptr) {
-    Hand(handed.operands.at(operand->operand), argument);
+    handed.operands.at(operand->operand).Hold(argument);
   } else if constexpr (constexpr const auto* operand_type =
                            std::get_if<OperandTypeArgument>(
                                &kArgumentAt<row, at>);
@@ -266,10 +266,11 @@ void Take(Handed& handed, ArgumentCppType<row, at> argument) {
   }
 }
 
-// What laying the integral operands of one call out leaves: the words each
-// one's bytes hold, and their extents in operand order.
+// What laying the integral operands of one call out leaves: the words of each
+// one narrower than a word, made of its bytes, and their extents in operand
+// order. An operand laid out as words is read where it lies.
 struct LoadedOperands {
-  std::array<std::optional<value::LoadedWords>, kMostOperands> words{};
+  std::array<std::optional<value::LoadedWords>, kMostOperands> narrow{};
   std::array<value::IntegralExtent, kMostOperands> extents{};
   std::size_t count = 0;
 };
@@ -281,12 +282,19 @@ void Load(
     LoadedOperands& loaded, EntryOperands& operands) {
   const auto load = [&](const ToldType& type) {
     loaded.extents.at(loaded.count++) = type.extent;
-    loaded.words.at(at) = value::LoadedWords::Load(
-        handed.operands.at(at).address, value::IntegralShape{
-                                            .width = type.extent.width,
-                                            .signedness = type.signedness,
-                                            .domain = type.extent.domain});
-    operands.View(at, loaded.words.at(at)->View());
+    const void* const bytes = handed.operands.at(at).address;
+    const value::IntegralShape shape{
+        .width = type.extent.width,
+        .signedness = type.signedness,
+        .domain = type.extent.domain};
+    if (value::IsLaidOutAsWords(shape)) {
+      operands.View(
+          at,
+          value::ViewOfWords(static_cast<const std::uint64_t*>(bytes), shape));
+      return;
+    }
+    loaded.narrow.at(at) = value::LoadedWords::Load(bytes, shape);
+    operands.View(at, loaded.narrow.at(at)->View());
   };
   switch (kind) {
     case IntegralOperandKind::kBits:
@@ -313,7 +321,7 @@ void Load(
 template <std::size_t row>
 auto CarryOut(const Handed& handed) -> value::MachineAnswer {
   const std::span<const IntegralOperandKind> kinds =
-      support::IntegralOperations()[row].operands.Kinds();
+      support::IntegralOperationOf(kOperationAt<row>).operands.Kinds();
   LoadedOperands loaded;
   EntryOperands operands(handed);
   for (std::size_t at = 0; at < kinds.size(); ++at) {
@@ -342,9 +350,18 @@ auto CarryOut(const Handed& handed) -> value::MachineAnswer {
     return value::ApplyIntegralOperation<kOperationAt<row>>(
         operands, value::IntegralView{});
   }
-  value::WrittenWords answer = value::WrittenWords::ZeroedAt(
-      handed.return_slot,
-      value::IntegralShape{.width = extent->width, .domain = extent->domain});
+  // An answer laid out as words is written where it lies, which nothing it is
+  // made from does; a narrower one is made as words and then laid out.
+  const value::IntegralShape shape{
+      .width = extent->width, .domain = extent->domain};
+  if (value::IsLaidOutAsWords(shape)) {
+    const value::IntegralView answer = value::ViewOfWords(
+        static_cast<std::uint64_t*>(handed.return_slot), shape);
+    std::ranges::fill(answer.value, std::uint64_t{0});
+    std::ranges::fill(answer.unknown, std::uint64_t{0});
+    return value::ApplyIntegralOperation<kOperationAt<row>>(operands, answer);
+  }
+  value::WrittenWords answer(shape);
   value::MachineAnswer machine =
       value::ApplyIntegralOperation<kOperationAt<row>>(
           operands, answer.MutableView());
@@ -417,12 +434,12 @@ struct IntegralEntryTableOver<std::index_sequence<row...>> {
   }
 };
 
-using IntegralEntryTableOfEveryOperation = IntegralEntryTableOver<
-    std::make_index_sequence<support::IntegralOperations().size()>>;
-using IntegralEntries = IntegralEntryTableOfEveryOperation::Table;
+using IntegralEntryTableOfEveryEntry = IntegralEntryTableOver<
+    std::make_index_sequence<kOperationsWithAnEntry.size()>>;
+using IntegralEntries = IntegralEntryTableOfEveryEntry::Table;
 static_assert(
     sizeof(IntegralEntries) ==
-    support::IntegralOperations().size() * sizeof(void (*)()));
+    kOperationsWithAnEntry.size() * sizeof(void (*)()));
 
 }  // namespace lyra::runtime
 
@@ -431,5 +448,5 @@ extern "C" {
 extern constinit const lyra::runtime::IntegralEntries
     lyra_rt_integral_operations;
 constinit const lyra::runtime::IntegralEntries lyra_rt_integral_operations =
-    lyra::runtime::IntegralEntryTableOfEveryOperation::Make();
+    lyra::runtime::IntegralEntryTableOfEveryEntry::Make();
 }

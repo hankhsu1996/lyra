@@ -9,7 +9,6 @@
 #include <vector>
 
 #include "lyra/mir/callable_code.hpp"
-#include "lyra/mir/code_source.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/constant_value.hpp"
 #include "lyra/mir/expr.hpp"
@@ -76,10 +75,6 @@ auto RunTypeOf(const mir::CallExpr& call) -> mir::TypeId {
       .arguments.front();
 }
 
-auto TypeArgumentOf(const mir::CallExpr& call) -> mir::TypeId {
-  return std::get<mir::Direct>(call.callee).type_arguments.front();
-}
-
 // Whether the position `id` names is the first, which every select's numbering
 // starts from: the constant 0, with no unknown bit, as LLVM's `m_Zero()`
 // matches an operand.
@@ -108,19 +103,22 @@ auto BitsSpanTheWhole(
          part_ty.Integral().state_kind == whole_ty.Integral().state_kind;
 }
 
-// The value a write reaching through a place of type `type` lands on: what a
-// designation designates within a write in progress, the bits a reference to
-// bits reaches, or what the place itself holds.
-auto WrittenValueType(const mir::CompilationUnit& unit, mir::TypeId type)
-    -> mir::TypeId {
-  const mir::Type& ty = unit.types.Get(type);
-  if (const auto* designation = ty.As<mir::DesignationType>()) {
-    return designation->value;
+// The node `id` of `block` as a slice naming every bit of what it is taken
+// on, from its first, where it is one.
+auto WholeSliceAt(
+    const mir::CompilationUnit& unit, const mir::Block& block, mir::ExprId id)
+    -> const mir::SliceExpr* {
+  const mir::Expr& expr = block.exprs.Get(id);
+  const auto* slice = std::get_if<mir::SliceExpr>(&expr.data);
+  if (slice == nullptr || !IsFirstPosition(unit, block, slice->start)) {
+    return nullptr;
   }
-  if (const auto* bits = ty.As<mir::BitsReferenceType>()) {
-    return bits->bits;
+  mir::TypeId taken_on = block.exprs.Get(slice->receiver).type;
+  if (const auto* designated =
+          unit.types.Get(taken_on).As<mir::DesignationType>()) {
+    taken_on = designated->value;
   }
-  return type;
+  return BitsSpanTheWhole(unit, expr.type, taken_on) ? slice : nullptr;
 }
 
 // The wrapper a write in progress was opened on, where `designation` is the
@@ -167,11 +165,11 @@ class Simplifier {
   // taken on, in any of the positions one stands in.
   [[nodiscard]] auto Fires(const mir::Block& block, const mir::Expr& expr) const
       -> bool {
-    if (const mir::CallExpr* read = CallOf(expr, support::BuiltinFn::kSlice)) {
-      return IsFirstPosition(*unit_, block, read->arguments[0]) &&
-             BitsSpanTheWhole(
-                 *unit_, TypeArgumentOf(*read),
-                 block.exprs.Get(ReceiverOf(*read)).type);
+    if (const auto* read = std::get_if<mir::CopyExpr>(&expr.data)) {
+      const mir::SliceExpr* whole = WholeSliceAt(*unit_, block, read->place);
+      return whole != nullptr &&
+             !unit_->types.Get(block.exprs.Get(whole->receiver).type)
+                  .Is<mir::DesignationType>();
     }
     if (const mir::CallExpr* read =
             RunCallOf(expr, support::BuiltinFn::kElementSlice)) {
@@ -180,15 +178,8 @@ class Simplifier {
              RunTypeOf(*read) ==
                  block.exprs.Get(Handed(block, ReceiverOf(*read))).type;
     }
-    if (const mir::CallExpr* set = CallOf(expr, support::BuiltinFn::kSet)) {
-      const mir::CallExpr* bits = CallOf(
-          block.exprs.Get(ReceiverOf(*set)), support::BuiltinFn::kSliceMut);
-      return bits != nullptr &&
-             IsFirstPosition(*unit_, block, bits->arguments[0]) &&
-             BitsSpanTheWhole(
-                 *unit_, TypeArgumentOf(*bits),
-                 WrittenValueType(
-                     *unit_, block.exprs.Get(ReceiverOf(*bits)).type));
+    if (const auto* write = std::get_if<mir::AssignExpr>(&expr.data)) {
+      return WholeSliceAt(*unit_, block, write->target) != nullptr;
     }
     return false;
   }
@@ -219,6 +210,12 @@ class Simplifier {
     if (mir::IsPlace(block.exprs.Get(*whole).data) != taken_as_storage) {
       return std::nullopt;
     }
+    // Bits are no storage, so a read taken as storage stands for its whole
+    // only where that whole lies at an address of its own.
+    if (taken_as_storage &&
+        std::holds_alternative<mir::SliceExpr>(block.exprs.Get(*whole).data)) {
+      return std::nullopt;
+    }
     return whole;
   }
 
@@ -241,10 +238,10 @@ class Simplifier {
       }
       return Read(rebuild, *whole, expr.type);
     }
-    const mir::CallExpr& set = *CallOf(expr, support::BuiltinFn::kSet);
-    const mir::CallExpr& bits =
-        *CallOf(from.exprs.Get(ReceiverOf(set)), support::BuiltinFn::kSliceMut);
-    return WholeWrite(rebuild, ReceiverOf(bits), set.arguments[0]);
+    const auto& write = std::get<mir::AssignExpr>(expr.data);
+    return WholeWrite(
+        rebuild, WholeSliceAt(*unit_, from, write.target)->receiver,
+        write.value);
   }
 
  private:
@@ -258,11 +255,11 @@ class Simplifier {
         run != nullptr && Fires(block, expr)) {
       return Handed(block, ReceiverOf(*run));
     }
-    const mir::CallExpr* read = CallOf(expr, support::BuiltinFn::kSlice);
+    const auto* read = std::get_if<mir::CopyExpr>(&expr.data);
     if (read == nullptr || !Fires(block, expr)) {
       return std::nullopt;
     }
-    return ReceiverOf(*read);
+    return WholeSliceAt(*unit_, block, read->place)->receiver;
   }
 
   // The whole of what `whole` names, at the select's type: read where it lies
@@ -283,16 +280,18 @@ class Simplifier {
     return mir::MakeIntegralConversion(*unit_, rebuild.To(), value, type);
   }
 
-  // The write of `value` into the whole of what `destination` reaches: the
-  // wrapper's own whole write where the destination is all of what a write
-  // opened on it holds, an assignment where it lands, and the reference's own
-  // write where it is a reference to bits.
+  // The write of `value` into the whole of the place `destination`: the
+  // wrapper's own whole write where the place is all of what a write opened on
+  // it holds, and an assignment to the place otherwise.
   auto WholeWrite(
       BlockRebuild& rebuild, mir::ExprId destination, mir::ExprId value) const
       -> mir::Expr {
     const mir::Block& from = rebuild.From();
-    const mir::TypeId destination_type = from.exprs.Get(destination).type;
-    const mir::TypeId landed = WrittenValueType(*unit_, destination_type);
+    const auto* designated = unit_->types.Get(from.exprs.Get(destination).type)
+                                 .As<mir::DesignationType>();
+    const mir::TypeId landed = designated != nullptr
+                                   ? designated->value
+                                   : from.exprs.Get(destination).type;
     // What is written is held at the select's type, which a signed whole
     // differs from in its signedness alone.
     mir::ExprId written = rebuild.Expr(value);
@@ -311,22 +310,20 @@ class Simplifier {
                   .arguments = {written}},
           .type = unit_->builtins.void_type};
     };
-    const mir::Type& reached = unit_->types.Get(destination_type);
-    if (reached.Is<mir::DesignationType>()) {
-      if (const std::optional<mir::ExprId> wrapper =
-              WrapperWrittenWhole(from, destination)) {
-        return set_on(rebuild.Expr(*wrapper));
-      }
+    if (designated == nullptr) {
       return mir::MakeAssignExpr(
-          unit_->builtins,
-          rebuild.Add(mir::MakeDerefExpr(rebuild.Expr(destination), landed)),
-          written);
+          unit_->builtins, rebuild.Expr(destination), written);
     }
-    if (reached.Is<mir::BitsReferenceType>()) {
-      return set_on(rebuild.Expr(destination));
+    // The whole a write in progress designates is landed on, or set on the
+    // wrapper the write was opened on where it designates all of it.
+    if (const std::optional<mir::ExprId> wrapper =
+            WrapperWrittenWhole(from, destination)) {
+      return set_on(rebuild.Expr(*wrapper));
     }
     return mir::MakeAssignExpr(
-        unit_->builtins, rebuild.Expr(destination), written);
+        unit_->builtins,
+        rebuild.Add(mir::MakeDerefExpr(rebuild.Expr(destination), landed)),
+        written);
   }
 
   const mir::CompilationUnit* unit_;
@@ -335,8 +332,8 @@ class Simplifier {
 }  // namespace
 
 auto InstSimplifyOnBody(
-    const PassContext& context, const mir::CodeSource&,
-    const mir::CallableCode& code) -> std::optional<mir::CallableCode> {
+    const PassContext& context, const mir::CallableCode& code)
+    -> std::optional<mir::CallableCode> {
   const mir::CompilationUnit& unit = *context.unit;
   const Simplifier simplifier(unit);
   if (!code.body.has_value() || !simplifier.FiresIn(*code.body)) {

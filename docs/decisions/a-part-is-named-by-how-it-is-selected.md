@@ -14,7 +14,10 @@ written by its array's `assign_element_slice`, on the place or on the designatio
 `element_slice_ref` and `designate_element_slice`. Revised again for the component: a structure's
 component and a union's member are a field step on the place holding the aggregate, so `component`,
 `component_ref` and `with_component`, and the C++ `Component<I>` / `ComponentRef<I>` pair, are gone;
-`designate_component` and `refer_component` stand.
+`designate_component` and `refer_component` stand. Revised again for bits (2026-11-20): a select of
+a packed value is a slice step of the place, read under a read and written as an assignment's
+target, so `slice` and `slice_mut` are gone, and the C++ backend spells the step as the view
+`lyra::value::SliceOf<Part>(v, start)`, read by `Get` and written by assignment.
 
 ## Context
 
@@ -36,15 +39,15 @@ one name meant two operations. And "part" was at the same time the general word 
 **"Part" is the general word; each kind of part is named for how it is selected, and every operation
 on one is that name plus a fixed suffix, in every layer.**
 
-| Operation                 | Element                  | Component               | Slice                |
-| ------------------------- | ------------------------ | ----------------------- | -------------------- |
-| Read the value            | `element`                | `component`             | `slice`              |
-| Reach it for a write      | `element_ref`            | `component_ref`         | `slice_ref`          |
-| Reach it within a write   | `designate_element`      | `designate_component`   | `designate_slice`    |
-| Refer to it by reference  | `refer_element`          | `refer_component`       | --                   |
-| Build the whole, replaced | `with_element`           | `with_component`        | `with_slice`         |
-| C++ method, read / write  | `Element` / `ElementMut` | `Component<I>`          | `Slice` / `SliceMut` |
-| C++ step within a write   | `DesignateElement`       | `DesignateComponent<I>` | --                   |
+| Operation                 | Element                  | Component               | Slice             |
+| ------------------------- | ------------------------ | ----------------------- | ----------------- |
+| Read the value            | `element`                | `component`             | `slice`           |
+| Reach it for a write      | `element_ref`            | `component_ref`         | `slice_ref`       |
+| Reach it within a write   | `designate_element`      | `designate_component`   | `designate_slice` |
+| Refer to it by reference  | `refer_element`          | `refer_component`       | --                |
+| Build the whole, replaced | `with_element`           | `with_component`        | `with_slice`      |
+| C++ method, read / write  | `Element` / `ElementMut` | `Component<I>`          | `SliceOf` view    |
+| C++ step within a write   | `DesignateElement`       | `DesignateComponent<I>` | --                |
 
 The selector below MIR, the place step, the library containers' methods and the runtime entries use
 the same word. "Component" is the word the position type and the selection kind already used, and
