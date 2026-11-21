@@ -1,13 +1,11 @@
 #pragma once
 
 #include <concepts>
-#include <cstddef>
 #include <cstdint>
 #include <memory>
 
 #include "lyra/base/source_location.hpp"
 #include "lyra/value/concepts.hpp"
-#include "lyra/value/element_type.hpp"
 #include "lyra/value/integral.hpp"
 #include "lyra/value/integral_value_type.hpp"
 #include "lyra/value/integral_words.hpp"
