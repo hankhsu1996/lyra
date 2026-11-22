@@ -16,8 +16,9 @@
 // loop builds and whether an arm is built, and one task declared in a loop's
 // block is a task of each block it built. An iterator answers the object it
 // was made on (37.84), and two handles to one object compare equal while each
-// is released on its own (37.2, 38.3, 38.38). The foreign half states what it
-// expects and counts what differs.
+// is released on its own (37.2, 38.3, 38.38), by `vpi_release_handle` or by
+// the name it had before it was renamed, `vpi_free_object` (C.2.4). The
+// foreign half states what it expects and counts what differs.
 package P;
   task automatic pt();
   endtask

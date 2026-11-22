@@ -367,37 +367,7 @@ auto DescribedSuiteCases(
     const bazel::tools::cpp::runfiles::Runfiles& runfiles,
     const std::string& suite, const YAML::Node& described,
     std::vector<std::string>& problems) -> std::vector<DesignCase> {
-  const std::string sources_in = LastOf({described}, "sources_in").value_or("");
   const std::string cases_in = LastOf({described}, "cases_in").value_or("");
-  std::vector<std::string> sources;
-  std::optional<std::filesystem::path> sources_root;
-  for (const std::string& source : ListOf({described}, "sources")) {
-    const auto located = Locate(runfiles, sources_in, source);
-    if (!located) {
-      problems.push_back(
-          std::format(
-              "'{}' names the source '{}/{}', which is not among this run's "
-              "inputs",
-              suite, sources_in, source));
-      return {};
-    }
-    sources.push_back(located->path.string());
-    sources_root = located->root;
-  }
-  // A suite's include directories are under its sources, which are what says
-  // where those are.
-  const std::vector<std::string> suite_dirs = ListOf({described}, "incdir");
-  if (!suite_dirs.empty() && !sources_root) {
-    problems.push_back(
-        std::format(
-            "'{}' names include directories under '{}' and no source there",
-            suite, sources_in));
-    return {};
-  }
-  std::vector<std::string> suite_incdir;
-  for (const std::string& dir : suite_dirs) {
-    suite_incdir.push_back((*sources_root / dir).lexically_normal().string());
-  }
   std::string dependencies;
   if (const YAML::Node supported = Section(described, "dependencies");
       supported.IsMap()) {
@@ -435,12 +405,11 @@ auto DescribedSuiteCases(
       continue;
     }
     const std::filesystem::path dir = first->root / dir_name;
-    std::vector<std::string> files = sources;
+    std::vector<std::string> files;
     for (const std::string& file : own) {
       files.push_back((dir / file).lexically_normal().string());
     }
-    std::vector<std::string> incdir = suite_incdir;
-    incdir.push_back(dir.string());
+    std::vector<std::string> incdir = {dir.string()};
     for (const std::string& path : ListOf({entry}, "incdir")) {
       incdir.push_back((dir / path).lexically_normal().string());
     }

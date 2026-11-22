@@ -1,0 +1,14 @@
+load("//tools/bazel:ports.bzl", "port")
+
+# uvm-core 2020.3.1, port version 1. Published: its content is the digest
+# below, and a change to what this directory or the release it names holds is a
+# new port version beside it, never an edit here.
+port(
+    name = "port",
+    digest = "sha256:0a1d41d8e67223812019f743c300bd3491183352a7a77287386e63a2804ee451",
+    manifest = "lyra.toml",
+    tree = "@uvm_2020_3_1_port_1//:library",
+    visibility = ["//:__pkg__"],
+)
+
+exports_files(["patches/hdl_access_through_vpi.patch"])

@@ -248,6 +248,19 @@ void ReportFailure(
   Guarded(context, routine, access);
 }
 
+// Releases `object` (LRM 38.38), answering 1, or 0 where it is nothing this
+// run handed out, reported as the error of the routine `routine`.
+auto ReleaseHandle(vpiHandle object, std::string_view routine) -> PLI_INT32 {
+  ClearVpiError();
+  AmbientRunContext* context = RunningContext(routine);
+  if (context == nullptr) return 0;
+  if (!context->ObjectHandles().Release(object)) {
+    ReportVpiError(routine, "the handle is none this simulation handed out");
+    return 0;
+  }
+  return 1;
+}
+
 // Channel 1 of a multichannel descriptor is the tool's output (LRM 38.27),
 // which foreign code writes through the C library's stream, as it writes
 // everything else it prints, so what it prints stays in the order it printed
@@ -551,11 +564,12 @@ auto vpi_handle_by_name(PLI_BYTE8* name, vpiHandle scope) -> vpiHandle {
     ReportVpiError("vpi_handle_by_name", "no name was given");
     return nullptr;
   }
+  const std::string_view named(name);
   const std::optional<Referent> within =
       Resolve(handles, scope, "vpi_handle_by_name");
   if (!within.has_value()) return nullptr;
   return HandOut(*context, "vpi_handle_by_name", [&] {
-    return lyra::runtime::ObjectNamed(context->Effects(), name, *within);
+    return lyra::runtime::ObjectNamed(context->Effects(), named, *within);
   });
 }
 
@@ -771,15 +785,14 @@ auto vpi_compare_objects(vpiHandle object1, vpiHandle object2) -> PLI_INT32 {
 }
 
 auto vpi_release_handle(vpiHandle object) -> PLI_INT32 {
-  ClearVpiError();
-  AmbientRunContext* context = RunningContext("vpi_release_handle");
-  if (context == nullptr) return 0;
-  if (!context->ObjectHandles().Release(object)) {
-    ReportVpiError(
-        "vpi_release_handle", "the handle is none this simulation handed out");
-    return 0;
-  }
-  return 1;
+  return ReleaseHandle(object, "vpi_release_handle");
+}
+
+// The name `vpi_release_handle` had until IEEE 1800-2009 renamed it and
+// deprecated the old one (LRM C.2.4). The standard's header still declares it,
+// and foreign code still calls it.
+auto vpi_free_object(vpiHandle object) -> PLI_INT32 {
+  return ReleaseHandle(object, "vpi_free_object");
 }
 
 // The callback `cb_data_p` describes (LRM 38.36), a handle to it answered;

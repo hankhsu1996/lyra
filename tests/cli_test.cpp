@@ -774,32 +774,41 @@ TEST(LyraSupportedLibrary, RefusesAPortItCannotTrust) {
       << ReadWholeFile(midway / "lyra.lock");
 }
 
-// UVM 1.2 is taken from the port Lyra ships: a design names it by version and
-// is read against it, its C included, with no store given, under the time
-// scale the design states and the port does not.
+// UVM 1.2 and uvm-core, the library of IEEE 1800.2, are each taken from the
+// port Lyra ships: a design names one by version and is read against it, its C
+// included, with no store given, under the time scale the design states and
+// the port does not.
 TEST(LyraSupportedLibrary, UvmIsTakenFromThePortLyraShips) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
-  auto tmp_or = MakeScratchDir();
-  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
-  WriteFile(
-      *tmp_or / "lyra.toml",
-      "[library]\nname = \"bench\"\nfiles = [\"top.sv\"]\n"
-      "\n[design]\ntop = [\"Top\"]\n"
-      "\n[dependencies]\nuvm = { version = \"1.2\" }\n"
-      "\n[compile]\ntimescale = \"1ns/1ns\"\n");
-  WriteFile(
-      *tmp_or / "top.sv",
-      "`include \"uvm_macros.svh\"\n"
-      "module Top;\n"
-      "  import uvm_pkg::*;\n"
-      "  initial `uvm_info(\"TOP\", \"from the shipped port\", UVM_LOW)\n"
-      "endmodule\n");
-  const auto checked = RunLyraFrom(lyra, *tmp_or, "check");
-  ASSERT_THAT(checked, ExitedWithCode(0)) << checked.stderr_text;
-  const std::string lock = ReadWholeFile(*tmp_or / "lyra.lock");
-  EXPECT_NE(lock.find("name = \"uvm\""), std::string::npos) << lock;
-  EXPECT_NE(lock.find("port_version = 1"), std::string::npos) << lock;
+  for (const std::string_view version : {"1.2", "2020.3.1"}) {
+    auto tmp_or = MakeScratchDir();
+    ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+    WriteFile(
+        *tmp_or / "lyra.toml",
+        std::format(
+            "[library]\nname = \"bench\"\nfiles = [\"top.sv\"]\n"
+            "\n[design]\ntop = [\"Top\"]\n"
+            "\n[dependencies]\nuvm = {{ version = \"{}\" }}\n"
+            "\n[compile]\ntimescale = \"1ns/1ns\"\n",
+            version));
+    WriteFile(
+        *tmp_or / "top.sv",
+        "`include \"uvm_macros.svh\"\n"
+        "module Top;\n"
+        "  import uvm_pkg::*;\n"
+        "  initial `uvm_info(\"TOP\", \"from the shipped port\", UVM_LOW)\n"
+        "endmodule\n");
+    const auto checked = RunLyraFrom(lyra, *tmp_or, "check");
+    ASSERT_THAT(checked, ExitedWithCode(0))
+        << "UVM " << version << ": " << checked.stderr_text;
+    const std::string lock = ReadWholeFile(*tmp_or / "lyra.lock");
+    EXPECT_NE(lock.find("name = \"uvm\""), std::string::npos) << lock;
+    EXPECT_NE(
+        lock.find(std::format("version = \"{}\"", version)), std::string::npos)
+        << lock;
+    EXPECT_NE(lock.find("port_version = 1"), std::string::npos) << lock;
+  }
 }
 
 // One build is read under one language version and one default time scale,
@@ -5291,6 +5300,8 @@ TEST(LyraCommandLine, NamesWhichOptionalRewritesOfMirRun) {
       std::string::npos)
       << not_lowered.stderr_text;
 
+  const std::string disabled =
+      "--mir-enable-passes=-InstSimplify,-LoopIdiomRecognize,-SplitReactions";
   for (const char* backend : {"cpp", "llvm"}) {
     const auto every = RunChildProcess(
         lyra, std::vector<std::string>{
@@ -5302,9 +5313,7 @@ TEST(LyraCommandLine, NamesWhichOptionalRewritesOfMirRun) {
     const auto skipped = RunChildProcess(
         lyra, std::vector<std::string>{
                   "run", "--backend", backend, store, "--mir-verify-each",
-                  "--mir-enable-passes=-InstSimplify,-LoopIdiomRecognize,"
-                  "-SplitReactions",
-                  src.string()});
+                  disabled, src.string()});
     EXPECT_THAT(skipped, ExitedWithCode(0)) << skipped.stderr_text;
     EXPECT_EQ(skipped.stdout_text, every.stdout_text);
   }
