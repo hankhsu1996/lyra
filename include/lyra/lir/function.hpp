@@ -300,30 +300,6 @@ struct OpenWriteTarget {
   TypeId value;
 };
 
-// One part of an integral value: where it starts within what it is a part of,
-// counted from the least significant bit, and the type it is written at,
-// which fixes how many bits it has. A start naming no position names no
-// part (LRM 11.5.1).
-struct BitsPart {
-  Operand start;
-  TypeId type;
-};
-
-// Writes bits of the integral value a write in progress designates (LRM
-// 11.5.1), where they lie in that value, keeping what they held and telling
-// the variable which of them moved (LRM 4.3); what it costs is the bits and
-// never the value they lie in. The call's operands are the designation and the
-// bits written. `value` is the type of the value designated, and `parts` names
-// the bits as a store of bits at a place names them: outermost first, the
-// first a part of the value, each one after it a part of the one before, and
-// the last the part written, whose type is the type of the bits.
-// A LIR-only target with no MIR twin: MIR states the write as `set` through
-// the reference `slice_mut` answers on the designation.
-struct DesignatedBitsTarget {
-  TypeId value;
-  std::vector<BitsPart> parts;
-};
-
 // The end of an owned value, a second owned value equal to one the body only
 // reads, and a value relocated out of one, whose storage is owed nothing
 // afterwards.
@@ -430,9 +406,9 @@ auto CoroutineOpName(CoroutineTarget::Op op) -> std::string_view;
 using CallTarget = std::variant<
     BuiltinTarget, FunctionTarget, DispatchTarget, InterfaceDispatchTarget,
     IndirectTarget, ConstructTarget, CreationTarget, SymbolTarget,
-    ForeignTarget, ValueCellTarget, OpenWriteTarget, DesignatedBitsTarget,
-    EndValueTarget, CopyValueTarget, RelocateValueTarget, DynamicStorageTarget,
-    BuildCellTarget, ControlEffectTarget, CoroutineTarget>;
+    ForeignTarget, ValueCellTarget, OpenWriteTarget, EndValueTarget,
+    CopyValueTarget, RelocateValueTarget, DynamicStorageTarget, BuildCellTarget,
+    ControlEffectTarget, CoroutineTarget>;
 
 // Whether a call to `target` comes back to the point after it, which is a
 // property of the callee, as rustc's call terminator states where it returns
@@ -561,10 +537,31 @@ struct ComponentProjection {
   base::ComponentIndex index;
 };
 
+// Selects the run of bits of the integral value the projection has reached that
+// starts at `start`, counted from its least significant bit, and is as wide as
+// `part` (LRM 7.4.1, 11.5.1). A position of the run outside the value reads x,
+// or 0 where `part` has no unknown plane, and takes no write, and a start
+// naming no position names no bits; a run within a run is held to both. Bits
+// lie at no address of their own, so no address is taken of a place ending
+// in one.
+struct SliceProjection {
+  Operand start;
+  TypeId part;
+};
+
+// Selects the element at the machine integer `index` of the machine array the
+// projection has reached, as rustc's `ProjectionElem::Index` does: the words a
+// body built for a type reads a value laid out as words through, an index
+// that lies within the array by that body's construction.
+struct IndexProjection {
+  Operand index;
+};
+
 // One step of a place's projection chain: each names storage reached from the
 // storage the chain has arrived at, never a byte offset from it.
 using Projection = std::variant<
-    DerefProjection, MemberProjection, ElementProjection, ComponentProjection>;
+    DerefProjection, MemberProjection, ElementProjection, ComponentProjection,
+    SliceProjection, IndexProjection>;
 
 // Storage named by logical identity: a base plus a projection chain. The base
 // is either a place local, whose storage the chain starts at, or a
@@ -607,23 +604,6 @@ struct StoreInstr {
 // -- it initializes that storage, and is ended where that storage's value is.
 struct UseInstr {
   Operand operand;
-};
-
-// Writes `bits` over some bits of the integral value held at `place`, where
-// they lie, leaving every other bit of that value as it stands (LRM 11.5.1);
-// what it costs is the bits and never the value they lie in. `parts` names the
-// bits, outermost first: the first is a part of the value, each one after it a
-// part of the one before, and the last is the part written, whose type is the
-// type of `bits`. A part reaches nothing outside the part it is taken in, and
-// one that names no position is not written.
-//
-// The bits ride on the statement rather than on the place, because a place is
-// storage a load, a store and an address-of can each name, and some bits of a
-// value are none of those alone.
-struct BitsStoreInstr {
-  Place place;
-  std::vector<BitsPart> parts;
-  Operand bits;
 };
 
 // Where the bytes a frame keeps for the value `of` come into use and go out of
@@ -792,9 +772,8 @@ struct EndAndReplaceInstr {
 // of use, a variable ending, the storage at a place beginning or ending, an
 // object being given its class, or a value ended and built anew where it lies.
 using InstrData = std::variant<
-    AssignInstr, StoreInstr, BitsStoreInstr, StorageInstr, EndVariableInstr,
-    BeginStorageInstr, EndStorageInstr, SetObjectClassInstr,
-    EndAndReplaceInstr>;
+    AssignInstr, StoreInstr, StorageInstr, EndVariableInstr, BeginStorageInstr,
+    EndStorageInstr, SetObjectClassInstr, EndAndReplaceInstr>;
 
 // `span` is the piece of source the instruction was lowered from, or no place
 // where it was lowered from none, as rustc's MIR statements carry a span; only

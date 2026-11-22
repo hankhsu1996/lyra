@@ -1,5 +1,6 @@
 #include "lyra/value/integral.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -64,9 +65,8 @@ auto FromPlanes(std::uint64_t value, std::uint64_t unknown) -> T {
 // type that holds no x or z takes the value plane alone.
 template <IntegralValue T>
 auto TruncatedTo(std::uint64_t value, std::uint64_t unknown) -> T {
-  const std::uint64_t mask = T::kWidth >= 64
-                                 ? ~std::uint64_t{0}
-                                 : (std::uint64_t{1} << T::kWidth) - 1U;
+  const std::uint64_t mask =
+      ~std::uint64_t{0} >> (64U - std::min<std::uint64_t>(T::kWidth, 64U));
   if constexpr (T::kFourState) {
     return FromPlanes<T>(value & mask, unknown & mask);
   }
@@ -810,16 +810,17 @@ TEST(IntegralTest, AWriteLandsAcrossWords) {
 // positions bound what the inner one reaches.
 TEST(IntegralTest, AWriteThroughAPartStaysInsideIt) {
   Logic8 written = Logic8::FromInt(0);
-  const auto inside = InsertBitsWithin(
-      written, 2, Bits4::FromInt(0xf), BitPositions{.lsb = 0, .width = 4});
+  const auto inside = InsertWithin(
+      written.MutableView(), Bits4::FromInt(0xf).View(), 2,
+      BitPositions{.lsb = 0, .width = 4});
   EXPECT_EQ(written.ToInt64(), 0x0c);
   ASSERT_TRUE(inside.has_value());
   EXPECT_EQ(inside->lsb, 2U);
   EXPECT_EQ(inside->width, 2U);
-  EXPECT_FALSE(
-      InsertBitsWithin(
-          written, 6, Bits4::FromInt(0xf), BitPositions{.lsb = 0, .width = 4})
-          .has_value());
+  EXPECT_FALSE(InsertWithin(
+                   written.MutableView(), Bits4::FromInt(0xf).View(), 6,
+                   BitPositions{.lsb = 0, .width = 4})
+                   .has_value());
   EXPECT_EQ(written.ToInt64(), 0x0c);
 }
 

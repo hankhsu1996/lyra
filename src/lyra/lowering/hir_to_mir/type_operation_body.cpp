@@ -10,6 +10,7 @@
 #include "lyra/lowering/hir_to_mir/bound_free_conversion.hpp"
 #include "lyra/lowering/hir_to_mir/container_bodies.hpp"
 #include "lyra/lowering/hir_to_mir/default_value.hpp"
+#include "lyra/lowering/hir_to_mir/integral_bodies.hpp"
 #include "lyra/lowering/hir_to_mir/value_operations.hpp"
 #include "lyra/mir/builder.hpp"
 #include "lyra/mir/callable_code.hpp"
@@ -75,6 +76,10 @@ auto MakeTypeOperationBody(
         return BuildAssociativeOperationBody(unit, source);
       }
       return BuildArrayOperationBody(unit, source);
+    // An integral type laid out as words answers its operators a word at a
+    // time.
+    case mir::TypeOperationKind::kExpandedIntegral:
+      return BuildIntegralOperationBody(unit, source);
   }
   throw InternalError("hir_to_mir: unknown kind of type operation");
 }

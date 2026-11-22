@@ -5,8 +5,9 @@
 // 4-state result carries those x bits; a 2-state one reads them as 0. A
 // part-select may be wider than the vector it is taken in, and then stores
 // the bits of what is assigned that fall on positions that exist. A select
-// whose position is constant does the same as one known only at run time
-// (LRM 11.5.1, 11.3.4).
+// whose position is constant does the same as one known only at run time,
+// and a part a hundred bits wide of a vector three hundred bits long does the
+// same as a narrow one (LRM 11.5.1, 11.3.4).
 module Top;
   bit [7:0] two_state_source;
   logic [7:0] four_state_source;
@@ -31,6 +32,12 @@ module Top;
   logic [3:0] constant_outside_read;
   logic [7:0] constant_high_write;
   logic [7:0] constant_outside_write;
+  logic [299:0] long_source;
+  bit [299:0] long_two_state_source;
+  logic [99:0] long_part;
+  int long_mismatches;
+  logic [99:0] long_read_at_unknown;
+  logic [299:0] long_written_at_unknown;
 
   function automatic logic [7:0] write_wider_to_a_local(
       logic [7:0] start, int at, logic [69:0] bits);
@@ -96,6 +103,45 @@ module Top;
     constant_outside_write = 8'hA5;
     constant_outside_write[34:31] = 4'b1001;
     constant_outside_write[12] = 1'b0;
+
+    long_source = {10{30'h2A5C_3F1E}};
+    long_source[17] = 1'bx;
+    long_source[201] = 1'bz;
+    long_two_state_source = {10{30'h1B3C_5D7E}};
+    long_part = {25{4'b10xz}};
+    long_mismatches = 0;
+    for (int at = -150; at < 330; at += 23) begin
+      logic [99:0] got;
+      bit [99:0] got_two_state;
+      logic [299:0] written;
+      bit [299:0] written_two_state;
+      got = long_source[at +: 100];
+      got_two_state = long_two_state_source[at +: 100];
+      for (int t = 0; t < 100; t++) begin
+        bit exists;
+        exists = at + t >= 0 && at + t < 300;
+        if (got[t] !== (exists ? long_source[at + t] : 1'bx)) long_mismatches++;
+        if (got_two_state[t] !== (exists ? long_two_state_source[at + t] : 1'b0))
+          long_mismatches++;
+      end
+      written = '1;
+      written_two_state = '1;
+      written[at +: 100] = long_part;
+      written_two_state[at +: 100] = long_part;
+      for (int q = 0; q < 300; q++) begin
+        logic placed;
+        placed = (q >= at && q < at + 100) ? long_part[q - at] : 1'b1;
+        if (written[q] !== placed) long_mismatches++;
+        if (written_two_state[q] !== (placed === 1'b1)) long_mismatches++;
+      end
+    end
+    begin
+      integer unknown_at;
+      unknown_at = 'x;
+      long_read_at_unknown = long_source[unknown_at +: 100];
+      long_written_at_unknown = '0;
+      long_written_at_unknown[unknown_at +: 100] = long_part;
+    end
   end
 
   final begin
@@ -152,6 +198,15 @@ module Top;
     if (constant_outside_write !== 8'hA5)
       $fatal(1, "writes of [34:31] and [12] gave %h, expected a5",
              constant_outside_write);
+    if (long_mismatches != 0)
+      $fatal(1, "%0d positions of 100-bit parts of a 300-bit vector were wrong",
+             long_mismatches);
+    if (long_read_at_unknown !== {100{1'bx}})
+      $fatal(1, "a 100-bit read at an unknown index gave %h",
+             long_read_at_unknown);
+    if (long_written_at_unknown !== '0)
+      $fatal(1, "a 100-bit write at an unknown index gave %h",
+             long_written_at_unknown);
     $display("All checks passed");
   end
 endmodule

@@ -21,6 +21,7 @@ enum class Precedence : std::uint8_t {
   kBitwiseAnd,
   kEquality,
   kRelational,
+  kShift,
   kAdditive,
   kMultiplicative,
   kPrefix,
@@ -47,14 +48,16 @@ enum class Precedence : std::uint8_t {
       return 6;
     case Precedence::kRelational:
       return 7;
-    case Precedence::kAdditive:
+    case Precedence::kShift:
       return 8;
-    case Precedence::kMultiplicative:
+    case Precedence::kAdditive:
       return 9;
-    case Precedence::kPrefix:
+    case Precedence::kMultiplicative:
       return 10;
-    case Precedence::kPostfix:
+    case Precedence::kPrefix:
       return 11;
+    case Precedence::kPostfix:
+      return 12;
   }
   throw InternalError("RankOf: unknown precedence level");
 }
@@ -110,6 +113,8 @@ class Enclosure {
     case Precedence::kEquality:
       return Precedence::kRelational;
     case Precedence::kRelational:
+      return Precedence::kShift;
+    case Precedence::kShift:
       return Precedence::kAdditive;
     case Precedence::kAdditive:
       return Precedence::kMultiplicative;

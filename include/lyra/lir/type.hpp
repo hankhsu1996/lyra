@@ -90,8 +90,9 @@ struct MachineBoolType {
 // The widths a machine scalar comes in. Machine data is what crosses to a
 // target on the target's own terms -- a foreign call's by-value argument, a
 // table the runtime reads as raw storage -- so the widths are the ones a C
-// type system names outright.
-enum class MachineIntWidth : std::uint8_t { k8, k16, k32, k64 };
+// type system names outright, and the two-word integer C's `__int128` and
+// Rust's `u128` are.
+enum class MachineIntWidth : std::uint8_t { k8, k16, k32, k64, k128 };
 
 // The width as a number, for a target that parameterizes its integer type by a
 // bit count rather than naming a type per width.
@@ -296,7 +297,9 @@ struct OpenWriteType {
 // A place holding a value of `value`, designated within a write in progress --
 // the whole of what the write was opened on, or a part of it: the write and
 // where the place lies. It borrows the write, so ending it does nothing; a
-// further step is taken on it, and landing it is where the write lands.
+// further step is taken on it, and landing it is where the write lands. Bits
+// of its value are stored through its dereference, which names nothing else,
+// so the write itself hears which bits move.
 struct DesignationType {
   TypeId value;
 

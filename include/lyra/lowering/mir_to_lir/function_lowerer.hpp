@@ -417,9 +417,15 @@ class FunctionLowerer {
   // The step a call reaching a part takes into the value it is taken on.
   auto PartStep(const mir::Block& block, const mir::CallExpr& part)
       -> diag::Result<lir::Projection>;
+  // The place bits of `receiver` are a step of: the value a write in progress
+  // designates, through the designation, which hears which bits a store moves;
+  // and otherwise the place `receiver` names, or holds its value in.
+  auto SliceReceiverPlace(const mir::Block& block, mir::ExprId receiver)
+      -> diag::Result<lir::Place>;
   // The place the value `id` evaluates to is reached in. An expression naming
-  // storage names its place; any other value is held in a slot of this frame
-  // for the rest of the full-expression, which is then its place.
+  // storage names its place, and a constant of the unit the read-only storage
+  // it lies in; any other value is held in a slot of this frame for the rest
+  // of the full-expression, which is then its place.
   auto PlaceHolding(const mir::Block& block, mir::ExprId id)
       -> diag::Result<lir::Place>;
   // A slot of this frame holding `value` for the rest of the full-expression.
@@ -574,18 +580,6 @@ class FunctionLowerer {
   auto LowerMutatingCall(
       const mir::Block& block, const mir::CallExpr& call, support::BuiltinFn fn,
       mir::TypeId type) -> diag::Result<lir::Operand>;
-  // A store of `value` through the reference to bits `reference` (LRM
-  // 11.5.1): the `slice_mut` steps it was taken by, followed back to what the
-  // first was taken on, and the bits written there.
-  auto LowerBitsStore(
-      const mir::Block& block, mir::ExprId reference, mir::ExprId value)
-      -> diag::Result<lir::Operand>;
-  // The parts `steps` name, outermost first: where each starts and the type
-  // it is written at. `steps` are the `slice_mut` calls a reference to bits
-  // was taken by, innermost first.
-  auto LowerBitsParts(
-      const mir::Block& block, std::span<const mir::CallExpr* const> steps)
-      -> diag::Result<std::vector<lir::BitsPart>>;
   auto LowerConditional(
       const mir::Block& block, const mir::ConditionalExpr& cond,
       mir::TypeId type) -> diag::Result<lir::Operand>;

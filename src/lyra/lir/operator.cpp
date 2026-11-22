@@ -40,6 +40,10 @@ auto BinaryOpName(BinaryOp op) -> std::string_view {
       return "logical_and";
     case BinaryOp::kLogicalOr:
       return "logical_or";
+    case BinaryOp::kShl:
+      return "shl";
+    case BinaryOp::kShr:
+      return "shr";
   }
   throw InternalError("lir: unknown binary operator");
 }
@@ -54,6 +58,8 @@ auto BinaryAnswerOf(BinaryOp op) -> BinaryAnswer {
     case BinaryOp::kBitwiseAnd:
     case BinaryOp::kBitwiseOr:
     case BinaryOp::kBitwiseXor:
+    case BinaryOp::kShl:
+    case BinaryOp::kShr:
       return BinaryAnswer::kOperandType;
     case BinaryOp::kEquality:
     case BinaryOp::kInequality:

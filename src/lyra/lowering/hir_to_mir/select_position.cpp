@@ -157,10 +157,7 @@ auto BuildLeastSignificantBit(
   const mir::ExprId lsb = mir::BuildIntegralLiteral(
       unit, block, PositionType(unit),
       mir::IntegralConstant{.value_words = {0}, .state_words = {0}});
-  return block.Add(
-      mir::MakeBuiltinCall(
-          unit, block.Body(), support::BuiltinFn::kSlice, value, {lsb},
-          bit_type));
+  return block.Read(block.Slice(value, lsb, bit_type));
 }
 
 auto WrapIndexAsPosition(

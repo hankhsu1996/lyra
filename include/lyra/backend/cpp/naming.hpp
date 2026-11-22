@@ -1027,6 +1027,14 @@ inline void WriteOne(TargetText& out, const RecordQualifiedName& ref) {
                 "backend::cpp: a step of a value's life is named as a member, "
                 "and it is an item of its type's implementation -- please "
                 "report this as a bug");
+          },
+          // An integral operator a type answers with a body is a function of
+          // its own, named by the type and the operation.
+          [](support::IntegralOp) -> VerbatimName {
+            throw InternalError(
+                "backend::cpp: an integral operator is named as a member, and "
+                "it is a function of its type's own -- please report this as a "
+                "bug");
           }},
       operation);
 }
@@ -1076,6 +1084,12 @@ inline void WriteOne(TargetText& out, const RecordQualifiedName& ref) {
                 "backend::cpp: a relocation is named as an operation of a "
                 "type, and no type states one -- please report this as a "
                 "bug");
+          },
+          [](support::IntegralOp) -> VerbatimName {
+            throw InternalError(
+                "backend::cpp: an integral operator is named as an item of a "
+                "type's implementation of the library's traits, and it is a "
+                "function of its type's own -- please report this as a bug");
           }},
       operation);
 }

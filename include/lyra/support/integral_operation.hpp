@@ -192,6 +192,28 @@ enum class IntegralAnswer : std::uint8_t {
   kMachineInt,
 };
 
+// Whether an operation's operands leave the type it answers at unsettled: an
+// entry that is that operation is generic over it, and a type answering it
+// with a body of its own is the type it makes, as a converting constructor is
+// its class's.
+[[nodiscard]] constexpr auto AnswersAtTheTypeOfTheCall(IntegralAnswer answer)
+    -> bool {
+  switch (answer) {
+    case IntegralAnswer::kOfTheCall:
+      return true;
+    case IntegralAnswer::kOfFirstOperand:
+    case IntegralAnswer::kOneBit:
+    case IntegralAnswer::kTwoStateBit:
+    case IntegralAnswer::kInt:
+    case IntegralAnswer::kInteger:
+    case IntegralAnswer::kPosition:
+    case IntegralAnswer::kMachineBool:
+    case IntegralAnswer::kMachineInt:
+      return false;
+  }
+  std::unreachable();
+}
+
 // The operands an operation takes, in order.
 class IntegralOperands {
  public:
@@ -213,18 +235,50 @@ class IntegralOperands {
   std::size_t count_ = 0;
 };
 
-// One operation: its stable spelling, what it takes and what it answers.
+// How an operation over a value wider than the widest integer a machine
+// operates on at once is carried out, as LLVM's `TargetLoweringBase` states a
+// `LegalizeAction` for each operation on each type: expanded into the body its
+// type states at its width (`Expand`), or carried out by the library once for
+// every width (`LibCall`). An operation whose operands are each a truth (LRM
+// 11.4.7) never has one.
+enum class WideAction : std::uint8_t {
+  kExpand,
+  kLibCall,
+  kNever,
+};
+
+// The same over a value of at most two words, which the machine's own
+// integers hold: instructions the code generator states (`Legal`), or the
+// library where the work is long at every width (`LibCall`).
+enum class PrimitiveAction : std::uint8_t {
+  kLegal,
+  kLibCall,
+};
+
+// One operation: its stable spelling, what it takes and what it answers, and
+// how it is carried out.
 //
 // The spelling names the operation in a dump and in a diagnostic. Everything
 // else about an operation that code handling one needs -- what it is told of
 // each operand's type, which operand it reads as a number, where its answer's
-// type comes from -- is read off these fields, so an operation gains a reader
-// without that reader keeping a list of its own.
+// type comes from, how a target carries it out -- is read off these fields, so
+// an operation gains a reader without that reader keeping a list of its own.
+//
+// `reads_an_amount` is an operation whose second operand only says how far the
+// first moves or how often it multiplies, which may be wider than the first:
+// the library carries such an operation out over a first operand of at most
+// two words. `narrows_to_its_low_part` is one whose answer, where it is
+// narrower than its operand, is that operand's low part, as LLVM's truncation
+// is (`ISD::TRUNCATE`).
 struct IntegralOperation {
   IntegralOp op;
   std::string_view name;
   IntegralOperands operands;
   IntegralAnswer answer;
+  WideAction wide = WideAction::kExpand;
+  PrimitiveAction primitive = PrimitiveAction::kLegal;
+  bool reads_an_amount = false;
+  bool narrows_to_its_low_part = false;
 };
 
 namespace detail {
@@ -266,7 +320,9 @@ inline constexpr std::array kIntegralOperations = {
         .op = IntegralOp::kPower,
         .name = "pow",
         .operands = {kNumber, kNumber},
-        .answer = IntegralAnswer::kOfFirstOperand},
+        .answer = IntegralAnswer::kOfFirstOperand,
+        .primitive = PrimitiveAction::kLibCall,
+        .reads_an_amount = true},
     IntegralOperation{
         .op = IntegralOp::kBitwiseAnd,
         .name = "and",
@@ -346,22 +402,26 @@ inline constexpr std::array kIntegralOperations = {
         .op = IntegralOp::kLogicalAnd,
         .name = "logical_and",
         .operands = {kBits, kBits},
-        .answer = IntegralAnswer::kOneBit},
+        .answer = IntegralAnswer::kOneBit,
+        .wide = WideAction::kNever},
     IntegralOperation{
         .op = IntegralOp::kLogicalOr,
         .name = "logical_or",
         .operands = {kBits, kBits},
-        .answer = IntegralAnswer::kOneBit},
+        .answer = IntegralAnswer::kOneBit,
+        .wide = WideAction::kNever},
     IntegralOperation{
         .op = IntegralOp::kLogicalNot,
         .name = "logical_not",
         .operands = {kBits},
-        .answer = IntegralAnswer::kOneBit},
+        .answer = IntegralAnswer::kOneBit,
+        .wide = WideAction::kNever},
     IntegralOperation{
         .op = IntegralOp::kLogicalEquivalence,
         .name = "logical_equivalence",
         .operands = {kBits, kBits},
-        .answer = IntegralAnswer::kOneBit},
+        .answer = IntegralAnswer::kOneBit,
+        .wide = WideAction::kNever},
     IntegralOperation{
         .op = IntegralOp::kIsTrue,
         .name = "is_true",
@@ -401,17 +461,20 @@ inline constexpr std::array kIntegralOperations = {
         .op = IntegralOp::kShiftLeft,
         .name = "shift_left",
         .operands = {kBits, kBits},
-        .answer = IntegralAnswer::kOfFirstOperand},
+        .answer = IntegralAnswer::kOfFirstOperand,
+        .reads_an_amount = true},
     IntegralOperation{
         .op = IntegralOp::kLogicalShiftRight,
         .name = "logical_shift_right",
         .operands = {kBits, kBits},
-        .answer = IntegralAnswer::kOfFirstOperand},
+        .answer = IntegralAnswer::kOfFirstOperand,
+        .reads_an_amount = true},
     IntegralOperation{
         .op = IntegralOp::kArithmeticShiftRight,
         .name = "arithmetic_shift_right",
         .operands = {kNumber, kBits},
-        .answer = IntegralAnswer::kOfFirstOperand},
+        .answer = IntegralAnswer::kOfFirstOperand,
+        .reads_an_amount = true},
     IntegralOperation{
         .op = IntegralOp::kReplicate,
         .name = "replicate",
@@ -421,27 +484,33 @@ inline constexpr std::array kIntegralOperations = {
         .op = IntegralOp::kSlice,
         .name = "slice",
         .operands = {kBits, kNumber},
-        .answer = IntegralAnswer::kOfTheCall},
+        .answer = IntegralAnswer::kOfTheCall,
+        .wide = WideAction::kLibCall},
     IntegralOperation{
         .op = IntegralOp::kWithSlice,
         .name = "with_slice",
         .operands = {kBits, kNumber, kBits},
-        .answer = IntegralAnswer::kOfFirstOperand},
+        .answer = IntegralAnswer::kOfFirstOperand,
+        .wide = WideAction::kLibCall},
     IntegralOperation{
         .op = IntegralOp::kTakePositions,
         .name = "take_positions",
         .operands = {kBits, kSameType, kMachineInt, kMachineInt},
-        .answer = IntegralAnswer::kOfFirstOperand},
+        .answer = IntegralAnswer::kOfFirstOperand,
+        .primitive = PrimitiveAction::kLibCall},
     IntegralOperation{
         .op = IntegralOp::kWithPositions,
         .name = "with_positions",
         .operands = {kBits, kPositions, kMachineInt},
-        .answer = IntegralAnswer::kOfFirstOperand},
+        .answer = IntegralAnswer::kOfFirstOperand,
+        .wide = WideAction::kLibCall,
+        .primitive = PrimitiveAction::kLibCall},
     IntegralOperation{
         .op = IntegralOp::kConvert,
         .name = "convert",
         .operands = {kNumber},
-        .answer = IntegralAnswer::kOfTheCall},
+        .answer = IntegralAnswer::kOfTheCall,
+        .narrows_to_its_low_part = true},
     IntegralOperation{
         .op = IntegralOp::kFromInt,
         .name = "from_int",
@@ -491,27 +560,36 @@ inline constexpr std::array kIntegralOperations = {
         .op = IntegralOp::kReverseBlocks,
         .name = "reverse_blocks",
         .operands = {kBits, kMachineInt},
-        .answer = IntegralAnswer::kOfFirstOperand},
+        .answer = IntegralAnswer::kOfFirstOperand,
+        .primitive = PrimitiveAction::kLibCall},
     IntegralOperation{
         .op = IntegralOp::kFromText,
         .name = "from_text",
         .operands = {kText},
-        .answer = IntegralAnswer::kOfTheCall},
+        .answer = IntegralAnswer::kOfTheCall,
+        .wide = WideAction::kLibCall,
+        .primitive = PrimitiveAction::kLibCall},
     IntegralOperation{
         .op = IntegralOp::kReadCanonicalBits,
         .name = "read_canonical_bits",
         .operands = {kCanonicalBits},
-        .answer = IntegralAnswer::kOfTheCall},
+        .answer = IntegralAnswer::kOfTheCall,
+        .wide = WideAction::kLibCall,
+        .primitive = PrimitiveAction::kLibCall},
     IntegralOperation{
         .op = IntegralOp::kReadCanonicalLogic,
         .name = "read_canonical_logic",
         .operands = {kCanonicalLogic},
-        .answer = IntegralAnswer::kOfTheCall},
+        .answer = IntegralAnswer::kOfTheCall,
+        .wide = WideAction::kLibCall,
+        .primitive = PrimitiveAction::kLibCall},
     IntegralOperation{
         .op = IntegralOp::kFromSvLogic,
         .name = "from_sv_logic",
         .operands = {kSvLogic},
-        .answer = IntegralAnswer::kOfTheCall},
+        .answer = IntegralAnswer::kOfTheCall,
+        .wide = WideAction::kLibCall,
+        .primitive = PrimitiveAction::kLibCall},
 };
 
 // An operation is found by its position, so the rows stand in the order the
@@ -538,6 +616,19 @@ static_assert(RowsFollowTheEnumeration());
 [[nodiscard]] constexpr auto IntegralOperationOf(IntegralOp op)
     -> const IntegralOperation& {
   return detail::kIntegralOperations.at(std::to_underlying(op));
+}
+
+// Whether a type laid out as more words than a machine operates on at once
+// answers `op` with a body built at its width.
+[[nodiscard]] constexpr auto IsAnsweredAtItsWidth(IntegralOp op) -> bool {
+  switch (IntegralOperationOf(op).wide) {
+    case WideAction::kExpand:
+      return true;
+    case WideAction::kLibCall:
+    case WideAction::kNever:
+      return false;
+  }
+  std::unreachable();
 }
 
 }  // namespace lyra::support

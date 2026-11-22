@@ -223,7 +223,9 @@ auto DeclarationOf(
   // one is it: the reference simulator reads an element stating none at the
   // time scale the rest of the design states, where the standard has a design
   // that states one for some elements and not others be an error (LRM
-  // 3.14.2.3).
+  // 3.14.2.3). Where the sources state none, an element takes the reference
+  // simulator's own default, 1ps/1ps, which the standard leaves to the tool
+  // (LRM 3.14.2.3), so every time the design reports reads as it does there.
   std::string time_scale;
   if (const auto flag = std::ranges::find(options, "--timescale");
       flag != options.end() && std::next(flag) != options.end()) {
@@ -231,6 +233,8 @@ auto DeclarationOf(
   } else if (const std::set<std::string> stated = TimeScalesStatedIn(files);
              stated.size() == 1) {
     time_scale = std::format("timescale = {}\n", TomlString(*stated.begin()));
+  } else if (stated.empty()) {
+    time_scale = std::format("timescale = {}\n", TomlString("1ps/1ps"));
   }
 
   return std::format(

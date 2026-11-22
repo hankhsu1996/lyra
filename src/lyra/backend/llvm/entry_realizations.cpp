@@ -624,6 +624,7 @@ auto RealizationsOf(RuntimeOp op) -> std::span<const RealizedFor> {
     case RuntimeOp::kRunWrite:
     case RuntimeOp::kRunBuild:
     case RuntimeOp::kPositionsWrite:
+    case RuntimeOp::kExtractBits:
     case RuntimeOp::kInsertBits:
     case RuntimeOp::kElementDefault:
     case RuntimeOp::kDiscardedWrite:
@@ -674,9 +675,6 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
   constexpr std::string_view kEmittedForTheType =
       "answers where the record of the type the call is at lies, which this "
       "target emits itself";
-  constexpr std::string_view kWrittenWhereTheBitsLie =
-      "answers a reference to bits, which this target writes through by a "
-      "store of the bits where they lie";
   constexpr std::string_view kTheBodyOfItsType =
       "is an operation of an array whose elements a position or an index "
       "names, which is the body its type has, or a step into one, which this "
@@ -723,7 +721,6 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kLogicalShiftRight:
     case support::BuiltinFn::kArithmeticShiftRight:
     case support::BuiltinFn::kReplicateBits:
-    case support::BuiltinFn::kSlice:
     case support::BuiltinFn::kWithSlice:
     case support::BuiltinFn::kFromBool:
     case support::BuiltinFn::kToPosition:
@@ -1013,13 +1010,6 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     // its own.
     case support::BuiltinFn::kTakeDepartureIfDue:
       return NotRealized{.shape = kLeavesByUnwinding};
-
-    // Bits are no one place, so a reference to them is no value the library
-    // holds: a write through it is a store of those bits where they lie, or
-    // within the write in progress the reference was taken on, which the
-    // lowering reaches in place of this call.
-    case support::BuiltinFn::kSliceMut:
-      return NotRealized{.shape = kWrittenWhereTheBitsLie};
 
     // The lowering reads the value where it lies and leaves the storage owing
     // no end, in place of this call.

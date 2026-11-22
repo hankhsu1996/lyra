@@ -7,7 +7,6 @@
 
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/callable_code.hpp"
-#include "lyra/mir/code_source.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
@@ -79,8 +78,8 @@ auto WithHandlesOpened(
 }  // namespace
 
 auto ElaborateHandleDerefsOnBody(
-    const PassContext& context, const mir::CodeSource&,
-    const mir::CallableCode& code) -> std::optional<mir::CallableCode> {
+    const PassContext& context, const mir::CallableCode& code)
+    -> std::optional<mir::CallableCode> {
   const mir::CompilationUnit& unit = *context.unit;
   if (!code.body.has_value() || !OpensAHandle(unit, *code.body)) {
     return std::nullopt;

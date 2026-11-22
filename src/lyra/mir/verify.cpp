@@ -54,6 +54,7 @@
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/mir/type_interface.hpp"
+#include "lyra/mir/wide_integral_operator.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/callable_bounds.hpp"
 #include "lyra/support/def_path.hpp"
@@ -213,6 +214,8 @@ auto ComputesNothingItself(
           },
           [](const DiscriminantExpr&) { return true; },
           [](const FieldAccessExpr&) { return true; },
+          [](const SliceExpr&) { return true; },
+          [](const IndexExpr&) { return true; },
           [](const UnaryExpr&) { return false; },
           [](const BinaryExpr&) { return false; },
           [](const CastExpr&) { return false; },
@@ -290,6 +293,10 @@ auto Describe(const ExprData& data) -> std::string {
           },
           [](const FieldAccessExpr&) -> std::string {
             return "a field access";
+          },
+          [](const SliceExpr&) -> std::string { return "bits of a place"; },
+          [](const IndexExpr&) -> std::string {
+            return "an element of a machine array";
           },
           [](const ClosureExpr&) -> std::string {
             return "a closure construction";
@@ -435,8 +442,9 @@ void VerifyNoRunEvaluatesTwice(
 
 // A place stands as a value only under a read, and a read reads a place that
 // holds a value. Storage with no value to read stands as itself wherever it is
-// handed on, and what takes the storage itself is never handed a read, which
-// would make it act on a copy.
+// handed on, and what takes the storage itself is never handed a read of
+// storage, which would make it act on a copy. A read of bits is taken as the
+// value it makes, since bits lie at no address of their own.
 //
 // `entered_at` is what the enclosing block's block expressions name as their
 // value among this block's nodes.
@@ -456,7 +464,8 @@ void VerifyPlacesAreRead(
     }
   };
   const auto as_storage = [&](ExprId id, const auto& taker) {
-    if (std::holds_alternative<CopyExpr>(block.exprs.Get(id).data)) {
+    if (std::holds_alternative<CopyExpr>(block.exprs.Get(id).data) &&
+        ValueLiesInStorage(block, id)) {
       throw InternalError(
           std::format(
               "mir verify: in {}, {} takes a read (expression {} of its "
@@ -597,7 +606,7 @@ auto RefersWithoutOwning(const TypePool& types, TypeId type) -> bool {
     return pointer->ownership == PointerOwnership::kBorrowed;
   }
   return t.Is<VariableRefType>() || t.Is<ReferenceWrapperType>() ||
-         t.Is<ReferenceType>() || t.Is<BitsReferenceType>();
+         t.Is<ReferenceType>();
 }
 
 // A reference is bound once, as it is created, and never re-seated; a
@@ -702,6 +711,13 @@ auto PlaceEndsWith(
     return !IsPlace(in.exprs.Get(field->receiver).data) ||
            PlaceEndsWith(unit, scope, in, field->receiver);
   }
+  if (const auto* slice = std::get_if<SliceExpr>(&data)) {
+    return !IsPlace(in.exprs.Get(slice->receiver).data) ||
+           PlaceEndsWith(unit, scope, in, slice->receiver);
+  }
+  if (const auto* element = std::get_if<IndexExpr>(&data)) {
+    return PlaceEndsWith(unit, scope, in, element->receiver);
+  }
   if (const auto* deref = std::get_if<DerefExpr>(&data)) {
     return IsPlace(in.exprs.Get(deref->pointer).data)
                ? PlaceEndsWith(unit, scope, in, deref->pointer)
@@ -803,6 +819,8 @@ auto RefersToStorageEndingWith(
           [](const DerefExpr&) { return false; },
           [](const DiscriminantExpr&) { return false; },
           [](const FieldAccessExpr&) { return false; },
+          [](const SliceExpr&) { return false; },
+          [](const IndexExpr&) { return false; },
           [](const AwaitExpr&) { return false; },
           [](const WaitExpr&) { return false; },
           [](const VectorGetExpr&) { return false; },
@@ -1084,15 +1102,13 @@ auto ReadsAnOrdinal(support::OperandReading reading) -> bool {
 }
 
 // Whether an entry reaching a part names where the part starts by an ordinal:
-// a slice does, of bits and of elements alike (LRM 7.4.6, 11.5.1), which is
-// what its first operand is.
+// a slice of elements does (LRM 7.4.6), which is what its first operand is.
 auto StartsAtAnOrdinal(std::optional<support::PartSelection> selects) -> bool {
   if (!selects.has_value()) {
     return false;
   }
   switch (*selects) {
     case support::PartSelection::kSlice:
-    case support::PartSelection::kBits:
       return true;
     case support::PartSelection::kElement:
     case support::PartSelection::kComponent:
@@ -1109,6 +1125,37 @@ void VerifyOrdinals(
     const CompilationUnit& unit, const Block& block, const auto& describe) {
   for (const ExprId id : block.exprs.Ids()) {
     const Expr& expr = block.exprs.Get(id);
+    // A subscript is a machine integer into a machine array, and names an
+    // element at the array's element type.
+    if (const auto* element = std::get_if<IndexExpr>(&expr.data)) {
+      const auto* array =
+          unit.types.Get(block.exprs.Get(element->receiver).type)
+              .As<MachineArrayType>();
+      if (array == nullptr ||
+          !unit.types.Get(block.exprs.Get(element->index).type)
+               .Is<MachineIntType>() ||
+          array->element != expr.type) {
+        throw InternalError(
+            std::format(
+                "mir verify: {} holds {} (expression {} of its block), which "
+                "is no element of a machine array at a machine integer -- "
+                "please report this as a bug",
+                describe(), Describe(expr.data), id.value));
+      }
+      continue;
+    }
+    // Where bits start is a position, as every ordinal is (LRM 11.5.1).
+    if (const auto* slice = std::get_if<SliceExpr>(&expr.data)) {
+      if (!IsPositionType(unit.types, block.exprs.Get(slice->start).type)) {
+        throw InternalError(
+            std::format(
+                "mir verify: {} holds {} (expression {} of its block), whose "
+                "start is an ordinal stated in a type other than the position "
+                "type -- please report this as a bug",
+                describe(), Describe(expr.data), id.value));
+      }
+      continue;
+    }
     const auto* call = std::get_if<CallExpr>(&expr.data);
     if (call == nullptr) {
       continue;
@@ -1361,8 +1408,8 @@ void VerifyEntryDeclarations(
 }
 
 // An assignment lands on a place. What a write lands on -- an assignment's
-// target, the object an entry changing its receiver acts on, or the value a
-// reference to bits is taken on -- is not reached through a read-only
+// target, bits of one included, or the object an entry changing its receiver
+// acts on -- is not reached through a read-only
 // reference, which an element's read form answers and whose referent may be
 // the element default every read of its type shares (LRM 7.4.5).
 void VerifyWritesLandInWritableStorage(
@@ -1383,8 +1430,7 @@ void VerifyWritesLandInWritableStorage(
     } else if (const auto* call = std::get_if<CallExpr>(&expr.data)) {
       const std::optional<support::BuiltinFn> entry = DirectBuiltinFn(*call);
       if (entry.has_value() &&
-          (support::RuntimeEntryOf(*entry).mutates_receiver ||
-           *entry == support::BuiltinFn::kSliceMut)) {
+          support::RuntimeEntryOf(*entry).mutates_receiver) {
         reached = CalleeReceiver(call->callee);
       }
     }
@@ -1395,6 +1441,10 @@ void VerifyWritesLandInWritableStorage(
       const ExprData& data = block.exprs.Get(*reached).data;
       if (const auto* field = std::get_if<FieldAccessExpr>(&data)) {
         reached = field->receiver;
+      } else if (const auto* slice = std::get_if<SliceExpr>(&data)) {
+        reached = slice->receiver;
+      } else if (const auto* element = std::get_if<IndexExpr>(&data)) {
+        reached = element->receiver;
       } else if (const auto* opened = std::get_if<DerefExpr>(&data)) {
         const Type& through =
             unit.types.Get(block.exprs.Get(opened->pointer).type);
@@ -1749,8 +1799,8 @@ auto PositionsOf(const CompilationUnit& unit, TypeId type)
 
 // Every value an expression of `block` hands to something of a type it states
 // is a value of that type: what an assignment writes and its target, what a
-// whole write through a wrapper or a reference to bits writes and what the
-// wrapper holds or the bits reach, an arm of a choice, the value a block ends
+// whole write through a wrapper writes and what the wrapper holds, an arm of a
+// choice, the value a block ends
 // with, code named as a value, a constant named at its own type, what a
 // capture is built from, a part of a
 // composite, a view and the array it is built from, an argument of a
@@ -1774,11 +1824,9 @@ void VerifyExprsMeetTheirTypes(
           TypeOf(block, write->value));
     }
     if (call != nullptr && DirectBuiltinFn(*call) == support::BuiltinFn::kSet) {
-      const Type& through =
-          unit.types.Get(TypeOf(block, *CalleeReceiver(call->callee)));
-      const auto* bits = through.As<BitsReferenceType>();
       const TypeId held =
-          bits != nullptr ? bits->bits : through.WrappedValueType();
+          unit.types.Get(TypeOf(block, *CalleeReceiver(call->callee)))
+              .WrappedValueType();
       if (TypeOf(block, call->arguments.at(0)) != held) {
         refuse(
             "a whole write's storage", held,
@@ -2188,10 +2236,21 @@ void VerifyConstantsMeetTheirTypes(
 
 // Storage with no address of its own -- a member of a tagged union, and what
 // lies under one -- is never what a reference the program holds ends on (LRM
-// 13.5.2), so nothing takes its address.
+// 13.5.2), so nothing takes its address; and bits, which lie at no address of
+// their own, are bound by what a read of them makes, never where they lie.
 void VerifyStorageWithoutAnAddress(
     const CompilationUnit& unit, const Block& block, const auto& describe) {
   for (const ExprId id : block.exprs.Ids()) {
+    if (const auto* bound = std::get_if<BorrowExpr>(&block.exprs.Get(id).data);
+        bound != nullptr && std::holds_alternative<SliceExpr>(
+                                block.exprs.Get(bound->operand).data)) {
+      throw InternalError(
+          std::format(
+              "mir verify: {} binds a reference where bits lie (expression {} "
+              "of its block), and bits lie at no address of their own -- "
+              "please report this as a bug",
+              describe(), id.value));
+    }
     const auto* address = std::get_if<AddressOfExpr>(&block.exprs.Get(id).data);
     if (address != nullptr && IsPlace(block.exprs.Get(address->operand).data) &&
         KindOfPlace(unit, block, address->operand) != PlaceKind::kOrdinary) {
@@ -2281,7 +2340,8 @@ void VerifyConstantsAreFolded(
             [](const DerefExpr&) {}, [](const AddressOfExpr&) {},
             [](const BorrowExpr&) {}, [](const MoveExpr&) {},
             [](const CopyExpr&) {}, [](const DiscriminantExpr&) {},
-            [](const FieldAccessExpr&) {}, [](const ClosureExpr&) {},
+            [](const FieldAccessExpr&) {}, [](const SliceExpr&) {},
+            [](const IndexExpr&) {}, [](const ClosureExpr&) {},
             [](const CompositeExpr&) {}, [](const TaggedUnionExpr&) {},
             [](const AwaitExpr&) {}, [](const WaitExpr&) {},
             [](const VectorGetExpr&) {}},
@@ -2768,6 +2828,8 @@ auto StatedNotToLeave(const Expr& expr) -> bool {
           [](const FloatingLiteral&) { return true; },
           [](const ReferenceExpr&) { return true; },
           [](const FieldAccessExpr&) { return true; },
+          [](const SliceExpr&) { return true; },
+          [](const IndexExpr&) { return true; },
           [](const DerefExpr&) { return true; },
           [](const AddressOfExpr&) { return true; },
           [](const BorrowExpr&) { return true; },
@@ -3133,6 +3195,12 @@ class UseCollector {
     const ExprData& data = block.exprs.Get(place).data;
     if (const auto* field = std::get_if<FieldAccessExpr>(&data)) {
       return LocalLyingUnder(block, field->receiver);
+    }
+    if (const auto* slice = std::get_if<SliceExpr>(&data)) {
+      return LocalLyingUnder(block, slice->receiver);
+    }
+    if (const auto* element = std::get_if<IndexExpr>(&data)) {
+      return LocalLyingUnder(block, element->receiver);
     }
     return ReferencedLocal(data);
   }
@@ -3600,6 +3668,31 @@ void VerifyAcrossTheBody(
   VerifyNothingFollowsAMove(collect, *code.body, 0, std::nullopt, describe);
 }
 
+// An operator over an integral value wider than a machine operates on at once
+// is stated, once the unit is legalized, by what it expands to, so no node of
+// a legalized body states one the expansion would rewrite.
+void VerifyWideOperatorsExpanded(
+    const CompilationUnit& unit, const Block& block, const auto& describe) {
+  for (const ExprId id : block.exprs.Ids()) {
+    const Expr& expr = block.exprs.Get(id);
+    const std::optional<IntegralOperator> applied =
+        IntegralOperatorOf(unit, block, expr);
+    if (applied.has_value() &&
+        WideOperatorExpansionOf(unit, block, expr, *applied).has_value()) {
+      throw InternalError(
+          std::format(
+              "mir verify: {} holds {} (expression {} of its block) over a "
+              "value wider than a machine operates on at once, which a "
+              "legalized unit states by what it expands to -- please report "
+              "this as a bug",
+              describe(), Describe(expr.data), id.value));
+    }
+  }
+  for (const Block& child : block.child_scopes) {
+    VerifyWideOperatorsExpanded(unit, child, describe);
+  }
+}
+
 // What one node or one statement of a body states, which every build checks,
 // at a cost that follows the body's size.
 void VerifyEachNode(
@@ -3612,6 +3705,7 @@ void VerifyEachNode(
       VerifyFramesHoldNoLargeValue(unit, code, describe);
       if (code.body.has_value()) {
         VerifyHandlesOpenedByTheLibrary(unit, *code.body, describe);
+        VerifyWideOperatorsExpanded(unit, *code.body, describe);
         VerifyCallerLocationsStated(unit, code, *code.body, describe);
       }
       break;
@@ -4110,6 +4204,8 @@ class HandedClosures {
               }
               return from(access.receiver);
             },
+            [&](const SliceExpr& slice) { return from(slice.receiver); },
+            [&](const IndexExpr& element) { return from(element.receiver); },
             [&](const DerefExpr& deref) {
               const std::optional<Reached> lives =
                   ReachThrough(block.exprs.Get(deref.pointer).type);

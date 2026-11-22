@@ -90,13 +90,13 @@ auto WithLocationsStated(
 }  // namespace
 
 auto StateCallerLocationsOnBody(
-    const PassContext& context, const mir::CodeSource& at,
-    const mir::CallableCode& code) -> std::optional<mir::CallableCode> {
+    const PassContext& context, const mir::CallableCode& code)
+    -> std::optional<mir::CallableCode> {
   const mir::CompilationUnit& unit = *context.unit;
   if (!code.body.has_value() || !HandsALocation(unit, *code.body)) {
     return std::nullopt;
   }
-  return WithLocationsStated(unit, *context.sources, at, code);
+  return WithLocationsStated(unit, *context.sources, *context.at, code);
 }
 
 }  // namespace lyra::mir_transform

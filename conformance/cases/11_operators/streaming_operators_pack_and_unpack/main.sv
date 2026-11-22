@@ -46,6 +46,28 @@ module Top;
   bit [15:0] with_constant_range;
   bit [23:0] with_indexed_range;
 
+  // A stream many words long, holding x and z, re-ordered by blocks of a size
+  // its width is a multiple of and of sizes that leave a short last block.
+  logic [299:0] wide_source;
+  logic [299:0] wide_by_bits, wide_by_nibbles, wide_by_bytes, wide_by_threes;
+  logic [295:0] wide_byte_source;
+  logic [295:0] wide_by_whole_bytes;
+
+  // How many positions of `got` differ from `source` with its `block`-wide
+  // blocks reversed, a short last block included.
+  function automatic int ReversalMismatches(
+      input logic [299:0] source, input logic [299:0] got, input int width,
+      input int block);
+    int mismatches = 0;
+    for (int low = 0; low < width; low += block) begin
+      int count = (width - low < block) ? width - low : block;
+      int to = width - low - count;
+      for (int t = 0; t < count; t++)
+        if (got[to + t] !== source[low + t]) mismatches++;
+    end
+    return mismatches;
+  endfunction
+
   initial begin
     int j;
     int a, b, c;
@@ -110,6 +132,17 @@ module Top;
     with_constant_range = {>>{ranged with [1:2]}};
     with_indexed_range = {>>{ranged with [1 +: 3]}};
     {>>{ranged with [2:3]}} = 16'hABCD;
+
+    wide_source = {10{30'h2A5C_3F1E}};
+    wide_source[3] = 1'bx;
+    wide_source[150] = 1'bz;
+    wide_source[298] = 1'bx;
+    wide_by_bits = {<<{wide_source}};
+    wide_by_nibbles = {<<4{wide_source}};
+    wide_by_bytes = {<<8{wide_source}};
+    wide_by_threes = {<<3{wide_source}};
+    wide_byte_source = wide_source[295:0];
+    wide_by_whole_bytes = {<<8{wide_byte_source}};
   end
 
   final begin
@@ -163,6 +196,20 @@ module Top;
     if (with_indexed_range !== 24'h223344)
       $fatal(1, "with_indexed_range was %h, expected 223344",
              with_indexed_range);
+    if (ReversalMismatches(wide_source, wide_by_bits, 300, 1) != 0)
+      $fatal(1, "a 300-bit stream reversed by bits gave %h", wide_by_bits);
+    if (ReversalMismatches(wide_source, wide_by_nibbles, 300, 4) != 0)
+      $fatal(1, "a 300-bit stream reversed by nibbles gave %h",
+             wide_by_nibbles);
+    if (ReversalMismatches(wide_source, wide_by_bytes, 300, 8) != 0)
+      $fatal(1, "a 300-bit stream reversed by bytes gave %h", wide_by_bytes);
+    if (ReversalMismatches(wide_source, wide_by_threes, 300, 3) != 0)
+      $fatal(1, "a 300-bit stream reversed by threes gave %h",
+             wide_by_threes);
+    if (ReversalMismatches(
+            {4'b0, wide_byte_source}, {4'b0, wide_by_whole_bytes}, 296, 8) != 0)
+      $fatal(1, "a 296-bit stream reversed by bytes gave %h",
+             wide_by_whole_bytes);
     if (ranged[0] !== 8'h11 || ranged[1] !== 8'h22 || ranged[2] !== 8'hAB ||
         ranged[3] !== 8'hCD)
       $fatal(1, "ranged was %h %h %h %h, expected 11 22 ab cd",

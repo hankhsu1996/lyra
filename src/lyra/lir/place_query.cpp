@@ -97,10 +97,6 @@ auto CallMakesValue(const CallTarget& target) -> bool {
   if (std::holds_alternative<OpenWriteTarget>(target)) {
     return false;
   }
-  // Writing bits lands them where they lie and answers nothing.
-  if (std::holds_alternative<DesignatedBitsTarget>(target)) {
-    return false;
-  }
   const auto* builtin = std::get_if<BuiltinTarget>(&target);
   if (builtin == nullptr) {
     return true;
@@ -138,8 +134,13 @@ auto MakesValue(const Rvalue& value) -> bool {
           [](const CallInstr& call) { return CallMakesValue(call.target); },
           // A read answers with the storage it reached, which whoever holds
           // that storage owns; only a value the reader keeps is copied, and
-          // keeping it is a step of its own.
-          [](const LoadInstr&) { return false; },
+          // keeping it is a step of its own. Bits lie at no address of their
+          // own, so a read of them makes the value it answers.
+          [](const LoadInstr& load) {
+            return !load.place.chain.empty() &&
+                   std::holds_alternative<SliceProjection>(
+                       load.place.chain.back());
+          },
           [](const CastInstr&) { return false; },
           [](const ProductInstr&) { return true; },
           [](const ClosureInstr&) { return true; },
@@ -207,6 +208,18 @@ auto PlaceType(
                 throw InternalError("lir: component step out of range");
               }
               current = (*components)[projection.index.value];
+            },
+            [&](const SliceProjection& projection) {
+              current = projection.part;
+            },
+            [&](const IndexProjection&) {
+              const auto* array =
+                  unit.types.Get(current).As<MachineArrayType>();
+              if (array == nullptr) {
+                throw InternalError(
+                    "lir: an index step over a type that is no machine array");
+              }
+              current = array->element;
             }},
         step);
   }

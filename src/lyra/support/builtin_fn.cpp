@@ -24,31 +24,11 @@ constexpr auto RuntimeFunction(std::string_view identifier) -> FreeFunction {
   return FreeFunction{.scope = "lyra::runtime", .identifier = identifier};
 }
 
-// Whether an operation's operands leave the type it answers at unsettled, so
-// an entry that is that operation is generic over it.
-auto AnswersAtTheTypeOfTheCall(IntegralAnswer answer) -> bool {
-  switch (answer) {
-    case IntegralAnswer::kOfTheCall:
-      return true;
-    case IntegralAnswer::kOfFirstOperand:
-    case IntegralAnswer::kOneBit:
-    case IntegralAnswer::kTwoStateBit:
-    case IntegralAnswer::kInt:
-    case IntegralAnswer::kInteger:
-    case IntegralAnswer::kPosition:
-    case IntegralAnswer::kMachineBool:
-    case IntegralAnswer::kMachineInt:
-      return false;
-  }
-  throw InternalError("RuntimeEntryOf: unknown integral answer");
-}
-
 // An entry that is the operation `op` over integral values and nothing else,
-// reached as `declaration` says and selecting a part as `selects` says. It is
-// spelled as the operation is, and what it takes is the operation's to say.
-auto IntegralEntry(
-    IntegralOp op, EntryDeclaration declaration,
-    std::optional<PartSelection> selects = std::nullopt) -> RuntimeEntry {
+// reached as `declaration` says. It is spelled as the operation is, and what
+// it takes is the operation's to say.
+auto IntegralEntry(IntegralOp op, EntryDeclaration declaration)
+    -> RuntimeEntry {
   const IntegralOperation& operation = IntegralOperationOf(op);
   // An integral operation answers a value of every operand it is handed,
   // whatever bits they hold, so a call of one cannot unwind.
@@ -58,7 +38,6 @@ auto IntegralEntry(
       .takes_a_type_argument = AnswersAtTheTypeOfTheCall(operation.answer),
       .takes_the_location = false,
       .can_unwind = false,
-      .selects = selects,
       .integral = op};
 }
 
@@ -164,9 +143,6 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .answer = EntryAnswer::kMutableReferenceIntoTheReceiver,
           .selects = PartSelection::kElement,
           .operands = {kMachine, kKey}};
-    case BuiltinFn::kSlice:
-      return IntegralEntry(
-          IntegralOp::kSlice, ValueFunction("Slice"), PartSelection::kBits);
     case BuiltinFn::kWithSlice:
       return IntegralEntry(IntegralOp::kWithSlice, ValueFunction("WithSlice"));
     case BuiltinFn::kElementSlice:
@@ -191,14 +167,6 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .selects = PartSelection::kSlice,
           .operands = {kMachine, kPosition, kPosition},
           .answer_told = AnswerTold::kBuiltArray};
-    case BuiltinFn::kSliceMut:
-      return {
-          .name = "slice_mut",
-          .declaration = Method{"SliceMut"},
-          .takes_a_type_argument = true,
-          .takes_the_location = false,
-          .selects = PartSelection::kBits,
-          .operands = {kMachine, kPosition}};
     // A write of a run is handed where it was written, whatever array it
     // writes, so the designation's own write of one hands it on to whichever
     // the designated array has: a queue's reports a value of another count.

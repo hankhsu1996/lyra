@@ -293,12 +293,12 @@ the detail lives in the entry itself.
   an array's element by the entry below.
 - [an-expression-names-storage-or-makes-a-value](an-expression-names-storage-or-makes-a-value.md) --
   whether an expression is a place is its node kind; a field step names a component or a union
-  member; an array element is a read form and a write form, each answering a reference; bits are no
-  place, read by the value's `slice` and written through the reference its `slice_mut` answers, as
-  `bitset::operator[]` answers one; a place's kind -- whether it has an address -- follows from its
-  nodes; a read is a node, realized by that kind; an assignment's target is a place. Records how
-  part access reached its shape as the value representation changed under it. Implicit reads, a
-  bounds guard before the step, and one element form are rejected.
+  member; an array element is a read form and a write form, each answering a reference; bits are a
+  step of the place the value lies in, as a field is, read once however deeply selects nest, and
+  bound by value where a reference is taken; a place's kind -- whether it has an address -- follows
+  from its nodes; a read is a node, realized by that kind; an assignment's target is a place.
+  Records how part access reached its shape as the value representation changed under it. Implicit
+  reads, a bounds guard before the step, and one element form are rejected.
 - [queue-operators](queue-operators.md) -- queue access operators lower to built-in method calls;
   read and write are distinct methods chosen at lowering. Where it places the receiver is superseded
   by [call-receiver-on-the-callee](call-receiver-on-the-callee.md), and the slice's and the methods'
@@ -1676,6 +1676,14 @@ the detail lives in the entry itself.
   stated once beside the unit, a rewrite builds through MIR's own builders, and a value handed to
   something of a type it states is of that type. Each rewrite walking the unit itself, optional
   rewrites only in an optimized build, and checking every rewrite in every build are rejected.
+- [a-loop-moving-bits-one-at-a-time-moves-the-run](a-loop-moving-bits-one-at-a-time-moves-the-run.md)
+  -- an optional rewrite finds a counted loop whose one write sets a bit of a place to a bit read at
+  positions stepping by one with it, from a constant start to a constant bound, and writes the run
+  ahead of the loop as one assignment of a select as wide as the loop makes passes, which then makes
+  none; where a position would wrap over the run, or the run would read bits it has just written,
+  the loop runs as written. An operation copying a run whose length the program computes while it
+  runs, one reading and writing bit by bit in order, composing a bit-select into its element's
+  position, and moving the run in machine-word pieces are rejected.
 - [an-evaluation-runs-its-operands-first-to-last](an-evaluation-runs-its-operands-first-to-last.md)
   -- a node's operands run as MIR lists them, a write's value before its target and a call's
   arguments before the object it is entered on, and the legalized phase leaves no two operands a

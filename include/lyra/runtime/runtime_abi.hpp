@@ -1157,6 +1157,16 @@ auto lyra_rt_enclosing_scope(void* self, const void* definition) -> void*;
 void lyra_rt_loop_blocks_add(void* blocks, std::int64_t index, void* block);
 auto lyra_rt_loop_blocks_at(const void* blocks, std::int64_t index) -> void*;
 
+// Reads bits of an integral value where it lies (LRM 11.5.1): the
+// `bits_width` bits at the position `start` names within the last of the parts
+// `outer_parts` spans, outermost first, of the value `whole_width` bits wide at
+// `whole`, into `bits`. A position no part reaches reads x, or 0 in a
+// two-state answer, and a start naming no position reads none.
+void lyra_rt_extract_bits(
+    const void* whole, std::int64_t whole_width, bool whole_is_four_state,
+    void* outer_parts, std::uint64_t outer_parts_count, const void* start,
+    void* bits, std::int64_t bits_width, bool bits_are_four_state);
+
 // Writes bits into an integral value where it lies (LRM 11.5.1): the
 // `bits_width` bits at `bits`, at the position `start` names within the last
 // of the parts `outer_parts` spans, outermost first, of the value `whole_width`

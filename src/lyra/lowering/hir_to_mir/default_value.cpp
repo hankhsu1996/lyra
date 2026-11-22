@@ -313,9 +313,6 @@ auto DefaultValueOf(
           [&](const mir::DesignationType&) -> Answer {
             return holds_no_declared_value("a part a write designates");
           },
-          [&](const mir::BitsReferenceType&) -> Answer {
-            return holds_no_declared_value("a reference to bits");
-          },
           [&](const mir::ObjectWriteType&) -> Answer {
             return holds_no_declared_value("a write into an object");
           },

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cmath>
 #include <concepts>
@@ -563,8 +564,100 @@ struct LongDivision {
   bool divisor_negative = false;
 };
 
-// Binary long division of the operands' magnitudes, one quotient bit per
-// position of the dividend from the top. The divisor is not zero.
+// The quotient and remainder of the magnitudes `u` and `v`, `v` not zero, by
+// Knuth's algorithm D (The Art of Computer Programming, vol. 2, 4.3.1) over
+// 64-bit digits: each quotient digit is estimated from the remainder's top two
+// digits and the divisor's top one, which shifting both until the divisor's
+// top bit is set makes at most two too large, and is corrected by adding the
+// divisor back where the estimate overshot. The work is the product of the two
+// operands' digit counts, as a schoolbook product's is.
+constexpr void DivideMagnitudes(
+    std::span<const std::uint64_t> u, std::span<const std::uint64_t> v,
+    std::span<std::uint64_t> quotient, std::span<std::uint64_t> remainder) {
+  using Wide = unsigned __int128;
+  using SignedWide = __int128;
+  Fill(quotient, 0U);
+  Fill(remainder, 0U);
+  std::size_t n = v.size();
+  while (n > 0U && v[n - 1U] == 0U) {
+    --n;
+  }
+  std::size_t m = u.size();
+  while (m > 0U && u[m - 1U] == 0U) {
+    --m;
+  }
+  if (m < n) {
+    Copy(u, remainder);
+    return;
+  }
+  if (n == 1U) {
+    Wide carried = 0;
+    for (std::size_t j = m; j-- > 0U;) {
+      const Wide current = (carried << 64U) | u[j];
+      quotient[j] = static_cast<std::uint64_t>(current / v[0]);
+      carried = current % v[0];
+    }
+    remainder[0] = static_cast<std::uint64_t>(carried);
+    return;
+  }
+  const auto shift = static_cast<unsigned>(std::countl_zero(v[n - 1U]));
+  const auto shifted_in = [&](std::uint64_t below) {
+    return shift == 0U ? std::uint64_t{0} : below >> (64U - shift);
+  };
+  std::vector<std::uint64_t> vn(n);
+  std::vector<std::uint64_t> un(m + 1U);
+  for (std::size_t i = n - 1U; i > 0U; --i) {
+    vn[i] = (v[i] << shift) | shifted_in(v[i - 1U]);
+  }
+  vn[0] = v[0] << shift;
+  un[m] = shifted_in(u[m - 1U]);
+  for (std::size_t i = m - 1U; i > 0U; --i) {
+    un[i] = (u[i] << shift) | shifted_in(u[i - 1U]);
+  }
+  un[0] = u[0] << shift;
+  for (std::size_t j = m - n + 1U; j-- > 0U;) {
+    const Wide top = (Wide{un[j + n]} << 64U) | un[j + n - 1U];
+    Wide estimate = top / vn[n - 1U];
+    Wide rest = top % vn[n - 1U];
+    while ((estimate >> 64U) != 0U ||
+           estimate * vn[n - 2U] > ((rest << 64U) | un[j + n - 2U])) {
+      --estimate;
+      rest += vn[n - 1U];
+      if ((rest >> 64U) != 0U) {
+        break;
+      }
+    }
+    SignedWide borrowed = 0;
+    SignedWide left = 0;
+    for (std::size_t i = 0; i < n; ++i) {
+      const Wide product = estimate * vn[i];
+      left = static_cast<SignedWide>(un[i + j]) - borrowed -
+             static_cast<SignedWide>(static_cast<std::uint64_t>(product));
+      un[i + j] = static_cast<std::uint64_t>(left);
+      borrowed = static_cast<SignedWide>(product >> 64U) - (left >> 64U);
+    }
+    left = static_cast<SignedWide>(un[j + n]) - borrowed;
+    un[j + n] = static_cast<std::uint64_t>(left);
+    quotient[j] = static_cast<std::uint64_t>(estimate);
+    if (left < 0) {
+      --quotient[j];
+      Wide carry = 0;
+      for (std::size_t i = 0; i < n; ++i) {
+        const Wide sum = Wide{un[i + j]} + vn[i] + carry;
+        un[i + j] = static_cast<std::uint64_t>(sum);
+        carry = sum >> 64U;
+      }
+      un[j + n] += static_cast<std::uint64_t>(carry);
+    }
+  }
+  for (std::size_t i = 0; i < n; ++i) {
+    remainder[i] =
+        (un[i] >> shift) |
+        (shift == 0U ? std::uint64_t{0} : un[i + 1U] << (64U - shift));
+  }
+}
+
+// Long division of the operands' magnitudes. The divisor is not zero.
 [[nodiscard]] constexpr auto DivideLong(
     std::span<const std::uint64_t> a, std::span<const std::uint64_t> b,
     std::uint64_t width, Signedness signedness) -> LongDivision {
@@ -590,21 +683,7 @@ struct LongDivision {
   } else {
     Copy(b, divisor);
   }
-  const std::span<std::uint64_t> remainder = division.remainder;
-  for (std::uint64_t pos = width; pos-- > 0;) {
-    std::uint64_t carry = BitAt(dividend, pos) ? 1U : 0U;
-    for (std::uint64_t& word : remainder) {
-      const std::uint64_t next = word >> 63U;
-      word = (word << 1U) | carry;
-      carry = next;
-    }
-    ClearAboveWidth(remainder, width);
-    if (Order(remainder, divisor, width, Signedness::kUnsigned) >= 0) {
-      SubWords(remainder, divisor, remainder, width);
-      division.quotient[static_cast<std::size_t>(pos / 64U)] |= std::uint64_t{1}
-                                                                << (pos % 64U);
-    }
-  }
+  DivideMagnitudes(dividend, divisor, division.quotient, division.remainder);
   return division;
 }
 
@@ -1671,6 +1750,12 @@ constexpr void ArithmeticShiftRight(
 // here also keeps the arithmetic that composes positions inside a word.
 inline constexpr std::int64_t kPositionLimit = std::int64_t{1} << 32;
 
+// The widest integer a machine target operates on as a value of its own, two
+// words: C's `__int128` and Rust's `u128`, whose every operation the target
+// carries out in a few instructions or a call of its own runtime. A value
+// wider is operated on a word at a time, by code built at its width.
+inline constexpr std::uint64_t kWidestPrimitiveBits = 128;
+
 // How wide the type position arithmetic is done in is: a signed four-state
 // value of this many bits, so an index of any width shifts by a declared range
 // without wrapping and one holding x or z stays unknown through every step.
@@ -1974,11 +2059,45 @@ constexpr void FromDigits(
   return static_cast<std::uint8_t>(BitsAt(a.value, at, count));
 }
 
+// A word's `block`-wide blocks in reversed order, for a block dividing 64: its
+// halves swapped, then the halves of each, down to the block.
+[[nodiscard]] constexpr auto ReversedBlocksOfWord(
+    std::uint64_t word, std::uint64_t block) -> std::uint64_t {
+  // The low half of every run of twice 2^k positions, by k.
+  constexpr std::array<std::uint64_t, 6> kLowHalves = {
+      0x5555'5555'5555'5555U, 0x3333'3333'3333'3333U, 0x0F0F'0F0F'0F0F'0F0FU,
+      0x00FF'00FF'00FF'00FFU, 0x0000'FFFF'0000'FFFFU, 0x0000'0000'FFFF'FFFFU};
+  for (std::uint64_t half = 32U; half >= block && half > 0U; half /= 2U) {
+    const std::uint64_t low =
+        kLowHalves.at(static_cast<std::size_t>(std::countr_zero(half)));
+    word = ((word >> half) & low) | ((word & low) << half);
+  }
+  return word;
+}
+
 // LRM 11.4.14.2: `a`'s `block`-wide blocks in reversed order, counted from its
 // least significant bit, the bits inside each left where they are. The last
-// block is whatever the width leaves over and is not padded.
+// block is whatever the width leaves over and is not padded. Where the block
+// divides 64 and the width, every word of the answer is one run of 64 of `a`'s
+// positions with its blocks reversed, so the answer is made a word at a time.
 constexpr void ReverseBlocks(
     IntegralView out, ConstIntegralView a, std::uint64_t block) {
+  if (64U % block == 0U && out.width % block == 0U) {
+    for (std::size_t k = 0; k < out.value.size(); ++k) {
+      const std::uint64_t low = 64U * k;
+      const std::uint64_t count = std::min<std::uint64_t>(64U, out.width - low);
+      const std::uint64_t from = out.width - low - count;
+      const auto reversed = [&](ConstWordSpan auto plane) {
+        return ReversedBlocksOfWord(BitsAt(plane, from, count), block) >>
+               (64U - count);
+      };
+      SetWord(out.value, k, reversed(a.value));
+      if (!out.unknown.empty()) {
+        SetWord(out.unknown, k, reversed(a.unknown));
+      }
+    }
+    return;
+  }
   detail::Fill(out.value, 0U);
   detail::Fill(out.unknown, 0U);
   for (std::uint64_t low = 0; low < out.width; low += block) {

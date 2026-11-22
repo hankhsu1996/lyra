@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <format>
 #include <optional>
 #include <span>
@@ -62,11 +63,63 @@ auto ShapeOf(const CompilationUnit& unit, TypeId type)
   return ty.IsIntegral() ? std::optional(ShapeOf(ty.Integral())) : std::nullopt;
 }
 
+auto ViewOf(const IntegralConstant& constant, value::IntegralShape shape)
+    -> value::ConstIntegralView {
+  return value::ConstIntegralView{
+      .value = constant.value_words,
+      .unknown = constant.state_words,
+      .width = shape.width,
+      .signedness = shape.signedness};
+}
+
+// The bits the place `place` of `block` names, where they are bits of a
+// constant from a position a constant names: a select of a constant is a
+// constant (LRM 11.2.1), each select of a select taken within the bits of the
+// one it is taken in, and a position outside what is selected reads as a
+// declaration's default does (LRM 11.5.1).
+auto BitsOfAConstant(
+    const CompilationUnit& unit, const Block& block, const Expr& place)
+    -> std::optional<IntegralConstant> {
+  const auto* slice = std::get_if<SliceExpr>(&place.data);
+  if (slice == nullptr) {
+    return std::nullopt;
+  }
+  const Expr& receiver = block.exprs.Get(slice->receiver);
+  const Expr& start = block.exprs.Get(slice->start);
+  const IntegralConstant* position =
+      IntegralPlanesNamedBy(unit.constants, start.data);
+  if (position == nullptr) {
+    return std::nullopt;
+  }
+  std::optional<IntegralConstant> outer;
+  const IntegralConstant* from =
+      IntegralPlanesNamedBy(unit.constants, receiver.data);
+  if (from == nullptr) {
+    outer = BitsOfAConstant(unit, block, receiver);
+    if (!outer.has_value()) {
+      return std::nullopt;
+    }
+    from = &*outer;
+  }
+  const IntegralType& part = unit.types.Get(place.type).Integral();
+  IntegralConstant bits = BlankIntegralConstant(part);
+  value::Slice(
+      value::IntegralView{
+          .value = bits.value_words,
+          .unknown = bits.state_words,
+          .width = part.bit_width},
+      ViewOf(*from, *ShapeOf(unit, receiver.type)),
+      ViewOf(*position, *ShapeOf(unit, start.type)));
+  return bits;
+}
+
 // One operand as the operation is applied to it, absent where the operand is
-// not a value fixed before the program runs.
+// not a value fixed before the program runs. Bits read of a constant are
+// worked out into `held`, which keeps them while the operation is applied.
 auto AppliedOperand(
-    const CompilationUnit& unit, const Expr& operand, IntegralOperandKind kind,
-    const std::optional<value::IntegralShape>& shape)
+    const CompilationUnit& unit, const Block& block, const Expr& operand,
+    IntegralOperandKind kind, const std::optional<value::IntegralShape>& shape,
+    std::deque<IntegralConstant>& held)
     -> std::optional<value::IntegralOperand> {
   switch (kind) {
     case IntegralOperandKind::kBits:
@@ -74,14 +127,17 @@ auto AppliedOperand(
     case IntegralOperandKind::kSameType: {
       const IntegralConstant* constant =
           IntegralPlanesNamedBy(unit.constants, operand.data);
+      if (const auto* read = std::get_if<CopyExpr>(&operand.data);
+          constant == nullptr && read != nullptr) {
+        if (std::optional<IntegralConstant> bits =
+                BitsOfAConstant(unit, block, block.exprs.Get(read->place))) {
+          constant = &held.emplace_back(*std::move(bits));
+        }
+      }
       if (constant == nullptr) {
         return std::nullopt;
       }
-      return value::ConstIntegralView{
-          .value = constant->value_words,
-          .unknown = constant->state_words,
-          .width = shape->width,
-          .signedness = shape->signedness};
+      return ViewOf(*constant, *shape);
     }
     case IntegralOperandKind::kMachineInt: {
       const auto* literal = std::get_if<MachineIntLiteral>(&operand.data);
@@ -155,6 +211,10 @@ auto IntegralOpOf(BinaryOp op) -> IntegralOp {
       return IntegralOp::kLogicalAnd;
     case BinaryOp::kLogicalOr:
       return IntegralOp::kLogicalOr;
+    case BinaryOp::kShl:
+      return IntegralOp::kShiftLeft;
+    case BinaryOp::kShr:
+      return IntegralOp::kLogicalShiftRight;
   }
   throw InternalError("IntegralOpOf: unknown mir::BinaryOp");
 }
@@ -224,6 +284,7 @@ auto FoldIntegral(
   std::vector<value::IntegralShape> integral;
   std::vector<value::IntegralExtent> extents;
   std::vector<value::IntegralOperand> applied;
+  std::deque<IntegralConstant> held;
   for (std::size_t i = 0; i < kinds.size(); ++i) {
     const Expr& operand = block.exprs.Get(operands[i]);
     std::optional<value::IntegralShape> shape;
@@ -237,7 +298,7 @@ auto FoldIntegral(
       extents.push_back(value::ExtentOf(*shape));
     }
     if (std::optional<value::IntegralOperand> fixed =
-            AppliedOperand(unit, operand, kinds[i], shape)) {
+            AppliedOperand(unit, block, operand, kinds[i], shape, held)) {
       applied.push_back(*fixed);
     }
   }

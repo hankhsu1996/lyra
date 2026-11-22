@@ -129,6 +129,17 @@ void ForEachOperand(Data& data, const auto& reach) {
           [&](AsConstAs<Data, FieldAccessExpr>& e) {
             reach(e.receiver, OperandUse::kStorage);
           },
+          // Where the bits start is evaluated before the place they lie in is
+          // reached, as a call's arguments are before the object it is
+          // entered on.
+          [&](AsConstAs<Data, SliceExpr>& e) {
+            value(e.start);
+            reach(e.receiver, OperandUse::kStorage);
+          },
+          [&](AsConstAs<Data, IndexExpr>& e) {
+            value(e.index);
+            reach(e.receiver, OperandUse::kStorage);
+          },
           [&](AsConstAs<Data, ClosureExpr>& e) {
             for (AsConstAs<Data, FieldInit>& init : e.field_inits) {
               value(init.value);

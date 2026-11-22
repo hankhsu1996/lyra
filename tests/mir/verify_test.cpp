@@ -912,10 +912,10 @@ TEST(MirVerifyTest, AWriteLandsThroughAnElementsWriteForm) {
       "writes through a read-only reference");
 }
 
-// Bits are written through the reference `slice_mut` takes on the value they
-// lie in, so that value is reached as a write reaches it: through an
-// element's write form, never through the read form, whose referent may be
-// the element default every read shares (LRM 7.4.5).
+// Bits are a step of the place the value they lie in is, so a write of them
+// reaches that value as any write reaches it: through an element's write form,
+// never through the read form, whose referent may be the element default
+// every read shares (LRM 7.4.5).
 TEST(MirVerifyTest, BitsAreWrittenThroughAnElementsWriteForm) {
   const auto bits_written = [](support::BuiltinFn entry,
                                Mutability mutability) {
@@ -940,31 +940,11 @@ TEST(MirVerifyTest, BitsAreWrittenThroughAnElementsWriteForm) {
                       Type{ReferenceType{
                           .referent = byte, .mutability = mutability}})}),
           byte));
-      const ExprId bits = body.Add(
-          Expr{
-              .data =
-                  CallExpr{
-                      .callee =
-                          Direct{
-                              .target = support::BuiltinFn::kSliceMut,
-                              .receiver = element,
-                              .type_arguments = {nibble}},
-                      .arguments = {at}},
-              .type = u.types.Intern(Type{BitsReferenceType{.bits = nibble}})});
+      const ExprId bits = body.Add(MakeSliceExpr(element, at, nibble));
       const ExprId value =
           body.Add(Expr{.data = NullLiteral{}, .type = nibble});
       body.AppendStmt(
-          ExprStmt{
-              .expr = body.Add(
-                  Expr{
-                      .data =
-                          CallExpr{
-                              .callee =
-                                  Direct{
-                                      .target = support::BuiltinFn::kSet,
-                                      .receiver = bits},
-                              .arguments = {value}},
-                      .type = u.builtins.void_type})});
+          ExprStmt{.expr = body.Add(MakeAssignExpr(u.builtins, bits, value))});
     });
   };
 

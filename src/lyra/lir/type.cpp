@@ -74,6 +74,8 @@ auto BitsOf(MachineIntWidth width) -> std::uint32_t {
       return 32;
     case MachineIntWidth::k64:
       return 64;
+    case MachineIntWidth::k128:
+      return 128;
   }
   throw InternalError("lir: unknown MachineIntWidth");
 }
@@ -371,6 +373,9 @@ auto Type::DerefTarget() const -> std::optional<TypeId> {
   }
   if (const auto* driver = As<DriverType>()) {
     return driver->value;
+  }
+  if (const auto* designation = As<DesignationType>()) {
+    return designation->value;
   }
   return Pointee();
 }
