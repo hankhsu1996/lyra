@@ -164,6 +164,7 @@ filegroup(
     patches = [
         "//third_party/rtlmeter:caliptra_memory_preload.patch",
         "//third_party/rtlmeter:nvdla_memory_valids_on_reset.patch",
+        "//third_party/rtlmeter:xiangshan_replay_valid_reset.patch",
     ],
     remote = "https://github.com/verilator/rtlmeter.git",
 )
