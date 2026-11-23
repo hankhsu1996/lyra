@@ -3933,6 +3933,54 @@ TEST(LyraRun, PrintTimescaleNamesTheDesignElementAsDeclared) {
       << "stdout: " << run.stdout_text;
 }
 
+// `$printtimescale` given a design element prints that element's time unit and
+// precision under the name the call wrote for it, and `$unit` by that name (LRM
+// 20.4.2) -- the shape of the clause's own example. `Middle` states none and
+// takes the compilation unit's (LRM 3.14.2.3).
+TEST(LyraRun, PrintTimescaleOfANamedDesignElement) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  const auto src = *tmp_or / "test.sv";
+  std::ofstream(src) << "timeunit 100ps / 10fs;\n"
+                     << "module Leaf;\n"
+                     << "  timeunit 1ns / 1ps;\n"
+                     << "endmodule\n"
+                     << "module Middle;\n"
+                     << "  Leaf leaf ();\n"
+                     << "endmodule\n"
+                     << "module Test;\n"
+                     << "  timeunit 1ms / 1us;\n"
+                     << "  Middle middle ();\n"
+                     << "  initial begin\n"
+                     << "    $printtimescale($unit);\n"
+                     << "    $printtimescale();\n"
+                     << "    $printtimescale(middle.leaf);\n"
+                     << "    $printtimescale(middle);\n"
+                     << "  end\n"
+                     << "endmodule\n";
+
+  const std::vector<std::string> args = {
+      "run",
+      "--backend",
+      "llvm",
+      "--top",
+      "Test",
+      "--cache-dir",
+      (*tmp_or / "cache").string(),
+      src.string()};
+  const auto run = RunChildProcess(lyra, args);
+  ASSERT_THAT(run, ExitedWithCode(0)) << run.stdout_text << run.stderr_text;
+  EXPECT_EQ(
+      run.stdout_text,
+      "Time scale of ($unit) is 100ps / 10fs\n"
+      "Time scale of (Test) is 1ms / 1us\n"
+      "Time scale of (middle.leaf) is 1ns / 1ps\n"
+      "Time scale of (middle) is 100ps / 10fs\n");
+}
+
 // A nonblocking update is the design's code run where the update is applied
 // (LRM 10.4.2), not where its statement stood, so a run-time error it raises
 // there -- a write to a tagged union's member the tag no longer names (LRM

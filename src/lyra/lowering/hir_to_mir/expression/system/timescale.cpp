@@ -2,8 +2,6 @@
 
 #include <cstddef>
 #include <expected>
-#include <format>
-#include <string>
 #include <utility>
 #include <vector>
 
@@ -21,7 +19,6 @@
 #include "lyra/mir/expr_builders.hpp"
 #include "lyra/support/builtin_fn.hpp"
 #include "lyra/support/file_descriptor.hpp"
-#include "lyra/value/format.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -69,35 +66,21 @@ auto LowerTimeFormatSystemSubroutineCall(
 }
 
 auto LowerPrintTimescaleSystemSubroutineCall(
-    const ProcessLowerer& process, const WalkFrame& frame)
+    ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call)
     -> diag::Result<mir::Expr> {
-  const auto& builtins = process.Owner().Unit().builtins;
+  const auto& unit = process.Owner().Unit();
   mir::Builder body = frame.Builder();
-  const auto resolution = process.Resolution();
-
-  // LRM 20.4.2 fixed format, which names the design element that is the
-  // current scope by the name it was declared under (its example prints
-  // `a_dat` for module `a_dat` itself). The name and the two powers are all
-  // compile-time facts of the enclosing design element, so the message string
-  // is assembled here once and the runtime only sees the same sink write that
-  // $display lands on.
-  const std::string message = std::format(
-      "Time scale of ({}) is {} / {}", process.Owner().Unit().source_name,
-      value::TimeUnitText(resolution.unit_power),
-      value::TimeUnitText(resolution.precision_power));
-  const mir::ExprId text_lit = body.Add(
-      mir::Expr{
-          .data = mir::StringLiteral{.value = message},
-          .type = builtins.string});
-  const mir::ExprId text_id = body.Add(
-      mir::Expr{
-          .data =
-              mir::CallExpr{
-                  .callee = mir::Construct{}, .arguments = {text_lit}},
-          .type = builtins.string});
-
-  const mir::ExprId fd_id = mir::BuildMachineIntLiteral(
-      process.Owner().Unit(), body, support::kStdoutFd);
+  if (call.arguments.size() != 1 || !call.arguments.front().has_value()) {
+    throw InternalError(
+        "$printtimescale reaches MIR holding the line it writes, which the "
+        "elaboration settles");
+  }
+  auto line = process.LowerExpr(
+      process.HirBody().exprs.Get(*call.arguments.front()), frame);
+  if (!line) return std::unexpected(std::move(line.error()));
+  const mir::ExprId text_id = body.Add(*std::move(line));
+  const mir::ExprId fd_id =
+      mir::BuildMachineIntLiteral(unit, body, support::kStdoutFd);
   const mir::ExprId files_id =
       body.Add(BuildFilesCallExpr(process.Owner(), body));
   return mir::Expr{
@@ -108,7 +91,7 @@ auto LowerPrintTimescaleSystemSubroutineCall(
                       .target = support::BuiltinFn::kWriteln,
                       .receiver = files_id},
               .arguments = {fd_id, text_id}},
-      .type = builtins.void_type};
+      .type = unit.builtins.void_type};
 }
 
 }  // namespace lyra::lowering::hir_to_mir

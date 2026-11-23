@@ -18,13 +18,11 @@ auto LowerTimeFormatSystemSubroutineCall(
     ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call,
     diag::SourceSpan span) -> diag::Result<mir::Expr>;
 
-// Lower `$printtimescale` (LRM 20.4.2, no-argument form) into a
-// `runtime.Files().Writeln(stdout_fd, text)` call. The scope's name, time
-// unit, and precision are all known at lowering time, so the message text is
-// formatted into a string literal here -- the runtime only sees the same sink
-// write that `$display` uses.
+// Lower `$printtimescale` (LRM 20.4.2) into the write of its line to standard
+// output, the sink `$display` writes to. The elaboration settles every part of
+// the line, so the call holds it whole.
 auto LowerPrintTimescaleSystemSubroutineCall(
-    const ProcessLowerer& process, const WalkFrame& frame)
+    ProcessLowerer& process, WalkFrame frame, const hir::CallExpr& call)
     -> diag::Result<mir::Expr>;
 
 }  // namespace lyra::lowering::hir_to_mir

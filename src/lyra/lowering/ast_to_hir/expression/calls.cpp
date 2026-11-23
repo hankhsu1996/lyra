@@ -55,6 +55,7 @@
 #include "lyra/lowering/ast_to_hir/expression/query.hpp"
 #include "lyra/lowering/ast_to_hir/expression/references.hpp"
 #include "lyra/lowering/ast_to_hir/expression/slang_atoms.hpp"
+#include "lyra/lowering/ast_to_hir/expression/timescale.hpp"
 #include "lyra/lowering/ast_to_hir/expression/virtual_interface.hpp"
 #include "lyra/lowering/ast_to_hir/inferred_clocking.hpp"
 #include "lyra/lowering/ast_to_hir/process_lowerer.hpp"
@@ -1565,6 +1566,12 @@ auto LowerCallExpr(
   auto sampled = LowerSampledHistoryExpr(lowerer, frame, call, span);
   if (!sampled) return std::unexpected(std::move(sampled.error()));
   if (sampled->has_value()) return *std::move(*sampled);
+
+  // So are the LRM 20.4 timescale functions and task: their argument names a
+  // design element, and what they answer the elaboration settles.
+  auto timescale = LowerTimescaleCall(lowerer.Owner(), frame, call, span);
+  if (!timescale) return std::unexpected(std::move(timescale.error()));
+  if (timescale->has_value()) return *std::move(*timescale);
 
   // LRM 6.24.2: the first actual of a dynamic cast is the destination rather
   // than an operand, so it is resolved before the argument loop. Reached as an

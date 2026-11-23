@@ -9,10 +9,8 @@
 #include "lyra/base/arena.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
-#include "lyra/hir/constraint.hpp"
 #include "lyra/hir/conversion.hpp"
 #include "lyra/hir/operands.hpp"
-#include "lyra/hir/pattern.hpp"
 #include "lyra/hir/primary.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
@@ -222,7 +220,7 @@ struct PieceWalk {
         call.callee);
   }
 
-  [[nodiscard]] auto AnswerOfPrimary(const hir::Primary& p) const
+  [[nodiscard]] static auto AnswerOfPrimary(const hir::Primary& p)
       -> PastAnswer {
     return std::visit(
         Overloaded{

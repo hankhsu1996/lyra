@@ -1,6 +1,5 @@
 #include "lyra/support/builtin_fn.hpp"
 
-#include <optional>
 #include <string_view>
 #include <variant>
 
