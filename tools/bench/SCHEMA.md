@@ -1,7 +1,7 @@
 # Benchmark Result Schema (v8)
 
 Schema for the `bench.json` output produced by `run_benchmarks.py`. The corpus it reads and the
-reasoning behind the shape are in `docs/decisions/benchmark-case-shape.md`; this file describes only
+reasoning behind the shape are in `docs/architecture/testing_strategy.md`; this file describes only
 what a run writes out.
 
 ## What the runner can say

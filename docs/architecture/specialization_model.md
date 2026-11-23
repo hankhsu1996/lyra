@@ -78,9 +78,12 @@ is the point of the next section.
 
 ## What counts as an argument
 
-Everything the parent fixes at the instantiation site is an argument of the specialization. Which of
-them make the lowering another unit is not decided from the arguments: it is whatever makes what the
-lowering publishes differ, which is found by comparing. An argument is **not** only "what was
+Everything the design fixes for an instance is an argument of the specialization: every value or
+type its instantiation may assign (LRM 23.10), the interface each of its interface ports is bound to
+(LRM 25.3), where each name written in it or below it lands once it leaves (LRM 23.8), and what a
+`defparam`, a `bind` or a configuration fixes for it or below it (LRM 23.10.1, 23.11, 33.4). Which
+of them make the lowering another unit is not decided from the arguments: it is whatever makes what
+the lowering publishes differ, which is found by comparing. An argument is **not** only "what was
 written as a parameter", and the difference is not a corner case:
 
 ```systemverilog
@@ -104,7 +107,9 @@ endmodule
 names the interface _definition_, and `Bus #(8) b` there is rejected. So `Leaf` is generic over its
 interface, and the connection is where the argument is deduced rather than written. Two `Leaf`
 instances bound to different interfaces reach different types at different member positions, so they
-are two units -- exactly as two bindings of a parameter the declarations use would be.
+are two units -- exactly as two bindings of a parameter the declarations use would be. The argument
+is the interface's own unit, never its parameter bindings, so a module bound to an interface
+inherits whatever sharing that interface's units already have.
 
 Read as templates, with the argument deduced rather than written:
 
@@ -166,22 +171,42 @@ The dotted arrow is the frontend's answer to which elaborations are alike, and t
 served by A's lowering. Whether A's and C's lowerings are one body is this model's answer, and it is
 a comparison of what they came out as, never a prediction from what the design fixed for them.
 
+**An instance is its body and its environment, and a lowering reads it through nothing else.** The
+environment is everything the body's text reaches outside itself: where each name it writes lands
+once it leaves the instance, where it reaches each class another instance declares, the constant a
+parameter of another instance it reads settled to, what the parent bound to each interface port, and
+which of its own parameters it is handed. It is worked out once per instance, and a fact the
+lowering asks for and does not find there is this compiler's defect rather than a reason to ask the
+frontend again. Of the body itself, the lowering reads only what the text states: the expressions as
+written, where the standard requires a constant as much as anywhere else, the type a declaration
+states, and a type the frontend read as a fact (invariant 12). What has no range of its own -- an
+operator, a conversion, a concatenation, an unbased unsized literal (LRM 11.6.1, 5.7.1) -- is typed
+by its width, signedness and element count, and what a node reads and writes is the longest static
+prefix the source wrote (LRM 9.2.2.2.1, 11.5.3). The frontend also folds answers it was not asked
+for -- a select's result range, a dead branch, a flow analysis's bit runs -- which differ between
+instances whose code is the same, so reading them would make equal code compare unequal.
+
 ## Owns
 
 - What counts as an argument of a specialization.
 - The correspondence between this model and the frontend's symbol graph, including that its record
   of which elaborations are alike is read as given.
+- What a lowering reads of an instance: its body and its environment.
 - The rule that lowerings publishing alike are one unit, and those whose code comes out alike one
   body, shared by every instance they serve.
-- How a unit, a body and a lowering are named.
+- How a unit, a body and a lowering are named, and how a definition, a value and a type are spelled
+  in a name.
 - The rule for which parameter reads are fields of the object and which constants.
 
 ## Does Not Own
 
-- The internal shape of a compilation unit (see `compilation_unit_model.md`).
-- Identity kinds inside a unit (see `identity_and_ownership.md`).
-- Cache keys for incremental reuse (see `incremental_build.md`). Unit and body names feed into that
-  cache, but this doc does not define the cache's contract.
+- The internal shape of a compilation unit and what it publishes (see
+  [`compilation_unit_model.md`](compilation_unit_model.md)).
+- Identity kinds inside a unit (see [`identity_and_ownership.md`](identity_and_ownership.md)).
+- Cache keys for incremental reuse (see [`incremental_build.md`](incremental_build.md)). Unit and
+  body names feed into that cache, but this doc does not define the cache's contract.
+- The whole scheme from source to artifacts and how it lines up with other compilers (see
+  [`compiling_a_design.md`](compiling_a_design.md)).
 
 ## Core Invariants
 
@@ -197,27 +222,43 @@ a comparison of what they came out as, never a prediction from what the design f
    arguments change the unit is what comparing what lowerings publish finds, and which change the
    code is what comparing their code finds. Neither is a precondition for lowering a program
    correctly.
-4. **A parameter the code reads as a value is a field of the object.** Where the language requires a
-   constant -- a width, a type, a generate condition -- the front end has settled it in each
-   elaboration, and what is left of a parameter is a read the object answers from what it was built
-   with. So a value that only steers what the code computes -- an initial value, a count, a flag --
-   forks neither the unit nor the code.
+4. **A parameter the code reads as a value is a field of the object; one it never reads holds
+   nothing at run time.** Where a value decides the class -- a width a type holds, a type -- the
+   front end has settled it in each elaboration, and what is left of a parameter is a read the
+   object answers from what it was built with (invariant 12). So a value that only steers what the
+   code computes -- an initial value, a count, a flag, which generate blocks a construction builds
+   -- forks neither the unit nor the code. A parameter an instance is handed is a declaration of its
+   unit: the construction hands, in the order the unit declares them, whether the instantiation
+   assigned it and the value it assigned, and where it assigned none the unit evaluates the default
+   its declaration states in its own scope (LRM 23.10.2.2, 6.20.1). A local parameter written from
+   such a value is worked out when the object is built.
 5. **A lowering is one elaborated body the frontend did not share, lowered once for the instance it
    was elaborated for under that instance's environment.** Nothing is worked out before lowering to
    say that two instances may share one lowering: which bodies exist is the frontend's answer, and
    which of them come out as one code is the comparison of what they lowered to. A construction
    table is stated per lowering, by its instance's hierarchical path.
 6. **One unit compiles once per distinct body.** A unit is the lowerings whose declarations publish
-   alike, and each distinct code they come out as is a body of it, found by comparing what they
-   state and compiled once, shared by every lowering and instance it serves. Two instances served by
-   one body are indistinguishable at compile time; two of one unit and different bodies are objects
-   of one published class that a referrer cannot tell apart.
+   alike, and each distinct code they come out as is a body of it, found by comparing their HIR
+   whole, a digest only narrowing which are compared, and compiled once, shared by every lowering
+   and instance it serves. Two instances served by one body are indistinguishable at compile time;
+   two of one unit and different bodies are objects of one published class that a referrer cannot
+   tell apart. What a body's code states of anything outside itself is what that thing published and
+   where the source wrote it, never which body it compiled to: a reach leaving the reader's own
+   scope, into a block or up to an enclosing scope, goes through the class that scope published, a
+   subroutine of another scope is called through the slot its published class introduces, and which
+   body each child and block is belongs to the object's construction table. So two bodies that do
+   the same thing state the same code. A class a structural scope declares is stated alike by every
+   body of its unit, from the declaration alone; its code is the code of the scope body that
+   compiled it, so two lowerings differing only there are two bodies
+   ([`object_model.md`](object_model.md) invariant 15).
 7. **A unit's name is a function of its definition and what it publishes.** It depends on no
    traversal order and no instance enumeration: the definition alone where the definition has one
    unit in the design, else the definition and the digest of what the unit publishes. A body is
    named for the first lowering, in the design's order, that came out as it -- the unit's name for
    the first body, the unit's name and the body's ordinal after -- so a body's name alone follows
-   that order. A lowering is named by its instance's hierarchical path, inside one run.
+   that order, and a new distinct body coming out earlier renames later ones, which
+   [`identity_and_ownership.md`](identity_and_ownership.md) invariant 7 counts as a shortfall. A
+   lowering is named by its instance's hierarchical path, inside one run.
 8. **A lowering is read from the body elaborated for it, and from nothing else.** What the design
    fixed for an instance -- what its parent wrote, what was written elsewhere that reaches it or an
    instance below it (LRM 23.10.1, 23.11, 33.4), where each hierarchical name written in it or below
@@ -235,40 +276,97 @@ a comparison of what they came out as, never a prediction from what the design f
    that point. The comparison of what is published is what decides whether two lowerings are one
    unit, and a name that no longer tells two units apart is a defect in the naming, not a second
    definition of the unit.
+10. **What is published is compared with every reference to another instance written by what it
+    reaches.** An instance the lowering holds is written by what that one publishes, so units are
+    found bottom-up; an instance outside it that its environment reaches is written by its place
+    among those its environment reaches, so two lowerings reaching different instances of one class
+    read alike, and the class of each such instance is added to the name once it is known, since an
+    ancestor's class depends on this one's; any other instance is written by its unit. A generate
+    block's class is found the same way inside its unit, a path inside the block written from the
+    block and one reaching a block around it by how far out that block stands, so blocks of a loop
+    that declare alike are one class whatever their index. A unit is of one definition, so two cells
+    of one name in two libraries (LRM 33.2.1) are two whatever they publish, and two different
+    writings reaching one digest are reported, never taken for one unit.
+11. **A definition, a value and a type are spelled by what is stable about each, and a name is
+    folded from that spelling once.** A definition is its cell as a person writes one -- `cell` in
+    the default library, `library.cell` in any other -- and a design element declared inside another
+    is named in the one declaring it, `Outer::Inner` (LRM 33.2.1, 23.4). A value is spelled so that
+    its end can be seen: a real by its bits in fixed-length hexadecimal, a string by its length and
+    its text, an aggregate by its elements between brackets, an integral by its width, signedness
+    and every bit, unknowns included. A type is spelled by its declaration where the source declares
+    it -- a class, an enumeration, a structure or a union, packed or not (LRM 8.3, 6.22.1) -- and by
+    its form where it is built in or built of other types; which instance elaborated the declaration
+    is no part of it. The spelling is this compiler's own, so the frontend's hash or rendering of a
+    type, which folds addresses and numbers types in the order it made them, never enters a name.
+12. **What a body states is lowered as the expression the source wrote, never as the answer the
+    front end settled, whether or not the standard requires a constant there.** A clause requiring a
+    constant expression says the value is known before the program runs, a fact about the source,
+    not that the artifact has to hold it; and a value read at lowering is compiled in, so two
+    elaborations that settled it differently become two bodies. Whether a value belongs to the class
+    is one question: would a different value be a different class, or the same class holding a
+    different value? A value deciding which members, types or instantiated units exist is the
+    class's; one that ends up as a number a field holds, a count a loop runs to or an index a query
+    names is supplied at construction. Which it is follows from what the artifact does with the
+    value, read from whoever owns its representation -- a declared width sits in a type, so
+    [`lir.md`](lir.md) answers for it -- never from how important the value sounds. The rule reaches
+    what a body states and not the declaration surface: a unit's header and a type declaration are
+    elaborated once per parameterization, which is already an artifact of its own, so reading their
+    settled value costs no second one. Evaluating an expression the source wrote is an optimization,
+    which belongs after the shape is fixed.
 
 ## Boundary to Adjacent Layers
 
-- `compilation_unit_model.md` defines the compilation unit. This doc defines which lowerings are one
-  unit and which one body.
-- `incremental_build.md` uses unit and body names as cache keys. The rules in this doc are upstream
-  of incremental reuse.
+- [`compilation_unit_model.md`](compilation_unit_model.md) defines the compilation unit. This doc
+  defines which lowerings are one unit and which one body.
+- [`incremental_build.md`](incremental_build.md) uses unit and body names as cache keys. The rules
+  in this doc are upstream of incremental reuse.
 - HIR is per lowering, and every layer after it per body, never per instance. See the individual IR
   docs for how each manifests in HIR, MIR, and LIR.
 
 ## Forbidden Shapes
 
-- A unit keyed on a parameter's value where the value changes nothing the unit publishes.
+The test each answers to: does it make artifacts follow instances ([`north_star.md`](north_star.md)
+invariant 2), make correctness rest on sharing (its invariant 3), or make two units agree through
+something other than computing the same function (its invariant 5)?
+
+- A unit keyed on a parameter's value where the value changes nothing the unit publishes. It fails
+  [`north_star.md`](north_star.md) invariant 2: a value that follows the instance -- a loop handing
+  each child its index -- makes units follow instances.
 - In the optimized steady state, leaving every lowering as its own unit without comparing what the
-  lowerings publish. The concrete baseline of invariant 1 does exactly this and is correct; the
-  sharing optimization must not stop there.
-- A unit name derived from instance path, instance ordinal, or instance enumeration. A body's name
-  and a lowering's follow the design's order and the instance's path (invariant 7).
+  lowerings publish. It fails [`north_star.md`](north_star.md) invariant 2; the concrete baseline of
+  invariant 1 does exactly this and is correct, and the sharing optimization must not stop there.
+- A unit name derived from instance path, instance ordinal, or instance enumeration. It fails
+  invariant 9: the child's artifact and every parent must compute one name without a table. A body's
+  name and a lowering's follow the design's order and the instance's path (invariant 7).
 - A second answer, beside the frontend's record, to which elaborations are alike: a key worked out
   before lowering that says two instances may share one lowering, or a lowering of an instance the
-  frontend left pointing at another's body through its own body, to check the frontend. Such a key
+  frontend left pointing at another's body through its own body, to check the frontend. It fails
+  [`north_star.md`](north_star.md)'s Forbidden Shapes, which read that record as given; such a key
   was kept right one field at a time, and each miss had an instance run another's code with no
   error.
-- Compiling, for one lowering, a body elaborated for an instance outside it.
+- Predicting before lowering which parameters a declaration or a body relies on. It fails invariant
+  3: the prediction is a list of how SystemVerilog lets a value reach a class, which has no end, and
+  each miss is a wrong program rather than a lost share.
+- Compiling, for one lowering, a body elaborated for an instance outside it. It fails invariant 8:
+  that body states different types at the same positions.
+- A lowering reading an answer the frontend folded in what a body states. It fails invariants 6 and
+  12: equal code would compare unequal between instances that fold differently.
+- Reading a settled value wherever the standard requires a constant, citing the clause. It fails
+  [`north_star.md`](north_star.md) invariant 2: a position the standard fixes can still differ
+  between elaborations, and the clause says the value is known, not where it belongs.
 - An identity stored as the name it renders to, so that two applications are told apart by comparing
-  renderings. A name drops whatever the target it is written for recovers by other means; an
-  identity may drop nothing. Where the two are one value, the day they disagree is silent.
+  renderings. It fails invariant 11: a name drops whatever the target it is written for recovers by
+  other means, while an identity may drop nothing, and where the two are one value the day they
+  disagree is silent.
 - A shared table, registry, or ordinal that both a unit and its instantiator consult to agree on
-  which unit is meant. Agreement comes from computing the same function, never from reading the same
-  table.
+  which unit is meant. It fails [`north_star.md`](north_star.md) invariant 5: agreement comes from
+  computing the same function, never from reading the same table.
+- Two bodies taken as one on a digest alone. It fails [`north_star.md`](north_star.md) invariant 3:
+  bodies that differ become one wherever the digest misses a field or collides.
 - Forking a unit or a body per instance, or allowing instance count to drive the number of
-  artifacts.
-- Rejecting a program because two lowerings cannot be shown alike. The correct fallback is concrete
-  artifacts, never rejection.
+  artifacts. It fails [`north_star.md`](north_star.md) invariant 2.
+- Rejecting a program because two lowerings cannot be shown alike. It fails
+  [`north_star.md`](north_star.md) invariant 3: the correct fallback is concrete artifacts.
 
 ## Notes / Examples
 
@@ -282,6 +380,11 @@ out as one body, each object handed its own value.
 `parameter int N` controlling a `generate for` that instantiates N children: the compiled
 constructor loops N times, producing N child objects. Neither what the unit publishes nor its code
 depends on N, so the unit compiles once for any N that builds blocks of the same kinds.
+
+`Leaf #(.K(i)) u` inside `for (genvar i = 0; i < 256; i++)`, where `K` is read only as a value: the
+256 children are one unit and one body, each object handed its own `K`, and the loop's blocks are
+one class and one body. Where `K` instead sizes a port, each value publishes differently and is a
+unit of its own.
 
 `parameter type T = int` substituting a type parameter: T changes emitted types and operations.
 Distinct types produce distinct units. "Distinct" follows the language: a built-in type, or one

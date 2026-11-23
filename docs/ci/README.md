@@ -446,9 +446,9 @@ see is an execution the corpus does not reach. Under it the corpus builds every 
 `--sanitize address`, so the job watches what the compiler builds as well as the compiler: about
 half of the lifetime defects so far were in generated code or in the runtime a program drives. The
 compiler's own IR pools are not in that class, since they never move what they hold
-([arena-reference-lifetime](../decisions/arena-reference-lifetime.md)). It runs on the Lyra the
-pinned clang builds, under remote execution where the key is set; GCC builds Lyra only for its
-warnings
+([`lowering_organization.md`](../architecture/lowering_organization.md), Pool Selection). It runs on
+the Lyra the pinned clang builds, under remote execution where the key is set; GCC builds Lyra only
+for its warnings
 ([the-pinned-clang-builds-the-lyra-that-is-run](../decisions/the-pinned-clang-builds-the-lyra-that-is-run.md)).
 
 Three things about it follow from what is instrumented. A program the corpus builds is checked

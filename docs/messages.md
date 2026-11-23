@@ -47,6 +47,24 @@ note: in 'Test' at time 0
 - **Something Lyra does not carry out yet says so in one form**: `'randcase' is not yet supported`.
   It names the construct, and never tells the reader that correct code is wrong.
 
+## How a report is built
+
+- **A report's kind is its code's, and one table states it.** Each code is one row of that table,
+  naming the kind of line it makes -- an error in the design, something not yet supported, a failure
+  of the command line or the machine, a failure of the compiler's own, a warning -- and nothing else
+  states a code's kind, so a site never chooses the opening word itself. A code's spelling begins
+  with its kind, so the site that raises it reads which kind of line it makes, and the table's row
+  agrees with that spelling.
+- **Building a report cannot fail.** Its text is a format checked when Lyra is built and its kind is
+  the table's, so code that is reporting one failure never fails again while doing it, and every
+  code has its row, since a code without one would be a lookup failing in front of the user.
+- **A failure that ends the work and a report that lets it go on are one report, made two ways.**
+  Work that cannot continue answers its report as the failed arm of what it returns, and a report
+  made while the work continues, a warning, is a value handed to whoever collects them. Both are
+  built by the same construction from the same code and text.
+- **A report carries no classification nothing reads.** A field beside the code and its kind is
+  added together with what reads it, since one nobody reads is an answer nothing keeps true.
+
 ## What the build checks
 
 A message's text is written where it is reported, as a literal format, and that literal is checked

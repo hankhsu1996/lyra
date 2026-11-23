@@ -64,8 +64,8 @@ class Scope : public GcObject {
 
   // Joins each ancestor's display segment with `.`, ordered from the outermost
   // inward (LRM 23.6). The walk stops at the implicit `$root` so multi-top
-  // output reads `Top.mid.x` rather than `$root.Top.mid.x`. Walked on demand:
-  // the object tree is sealed by Activate.
+  // output reads `Top.mid.x` rather than `$root.Top.mid.x`. Walked on demand
+  // rather than kept: a scope's place is fixed once its constructor gives it.
   [[nodiscard]] auto HierarchicalPath() const -> lyra::value::String;
 
   // The hierarchical name of what `below` names inside this scope: this
@@ -131,7 +131,7 @@ class Scope : public GcObject {
   // activate runs before every scope has initialized.
   //
   // `Resolve` executes every cross-instance route the scope
-  // owns, filling each borrowed-pointer slot with the target's sealed
+  // owns, binding each borrowed-pointer slot to the target's final
   // endpoint (an observable cell for a variable / net reference, an
   // alias for a `ref` port), and attaches cross-instance drivers. The
   // frontend has already proved every route has a determinate target,
@@ -140,7 +140,7 @@ class Scope : public GcObject {
   // hot-path read.
   //
   // `Initialize` runs variable initializers; every reference across the
-  // design is sealed before it starts, so an initializer observes only
+  // design is bound before it starts, so an initializer observes only
   // connected and bound values.
   //
   // `CreateProcesses` creates this scope's processes.

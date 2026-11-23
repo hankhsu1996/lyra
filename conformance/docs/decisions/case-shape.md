@@ -8,7 +8,7 @@ refusal (D2), a dump compared as the standard reads one (D6), a harness of the c
 limits the caller sets (D14), and a disputed reading kept to what both readings require (D15).
 Revised 2026-10-29: the suite is a sub-project of its own that builds none of Lyra (D16), and what
 one tool is known to answer is that tool's to record (D7, D8, D8a, D11, D12), which for Lyra is
-`../../../docs/decisions/lyra-is-held-to-the-conformance-suite.md`.
+`../../../docs/architecture/testing_strategy.md`.
 
 ## Why this decision matters
 
@@ -217,5 +217,5 @@ the corpus does not know the machine it runs on.
 
 - `../../README.md` -- the contract every case answers to.
 - [diagnostic-claims](diagnostic-claims.md) -- how a claim whose observable is a report is stated.
-- `../../../docs/decisions/lyra-is-held-to-the-conformance-suite.md` -- what Lyra records of its
-  answers, and the D8a derivation.
+- `../../../docs/architecture/testing_strategy.md` -- what Lyra records of its answers, and the D8a
+  derivation.

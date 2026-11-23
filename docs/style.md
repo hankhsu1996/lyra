@@ -15,8 +15,10 @@ Prettier; see the Formatting section at the end.
 5. **Target state, not history.** Architecture docs describe the intended permanent shape. No
    "currently", "historically", "not yet", "migration", "transitional", or phase/cut references in
    architecture docs.
-6. **Explicit invariants and forbidden shapes.** Every architecture doc states what must hold and
-   what is not allowed. Implicit behavior is a defect.
+6. **Explicit invariants and forbidden shapes, each naming the requirement it serves.** Every
+   architecture doc states what must hold and what is not allowed, and a shape it rules out is
+   written as the requirement that shape fails (`design-process.md`, on why a prohibition is the
+   part that goes wrong). Implicit behavior is a defect.
 7. **Templates are tools, not laws.** The type-contract template (Purpose / Owns / Does Not Own /
    Core Invariants / Boundary / Forbidden Shapes / Notes) fits subjects whose architecture is well
    described by what types live in a layer and what shapes are forbidden. Behavioral, protocol, or
@@ -27,6 +29,9 @@ Prettier; see the Formatting section at the end.
    document is revisited on its own cadence and not on the cadence of whatever it quoted. The test
    before writing a sentence: would an ordinary change one layer down make this false? If so it
    belongs one layer down, and this document should point at it instead of restating it.
+9. **One current statement per subject.** How a subject works now, and why, is stated once, in its
+   architecture doc, and a change that alters it rewrites that statement in place. A reader learns
+   the current answer from one document, never by following a chain of corrections.
 
 ## Architecture Docs Are Contracts
 
@@ -141,8 +146,8 @@ Architecture docs under `architecture/` are the source of truth for the system's
 dependency between doc kinds is strictly one-way, from permanent to ephemeral:
 
 - `architecture/` defines the system.
-- `decisions/` records dated decisions with rationale. Entries may reference architecture docs and
-  other decisions.
+- `decisions/` records the few choices of direction, each as it was decided. Entries may reference
+  architecture docs and other decisions.
 - `glossary/` defines terminology used by architecture docs.
 - The delta between current code and the target is tracked in GitHub issues. It is the most
   downstream kind: an issue may cite architecture and decisions, never the reverse.
@@ -236,9 +241,21 @@ Do not:
 
 ## Decisions
 
-Entries under `decisions/` record a dated decision with its rationale. They are the only docs
-permitted to describe how a decision was reached. Superseded decisions are linked from the entry
-that supersedes them.
+A record under `decisions/` is kept only for a choice of direction: one that reaches across layers,
+is costly to reverse, and that a later change could otherwise reverse without knowing it had been
+chosen -- that the standard decides what text is legal, say, or that a build compiles for the oldest
+platform it supports. Such a choice comes up perhaps once in a hundred changes. Everything else a
+change decides goes in the architecture doc it alters, in the comment beside the code, and in the
+pull request's description, where `git blame` reaches it.
+
+A record opens with the requirement the choice serves. Each alternative it turns down is written as
+the requirement that alternative fails and the premise the failure rests on, so a later change whose
+requirements differ can see that the record does not bind it, and reopen the choice with that fact.
+
+A record is history: once accepted it is not rewritten. A later choice that reverses or narrows it
+is a new record naming the one it replaces, and the old one gains a line naming its successor and
+nothing else. What holds now is in `architecture/`, so no reader has to walk from record to record
+to learn it. Records are the only docs permitted to describe how a decision was reached.
 
 ## Glossary
 

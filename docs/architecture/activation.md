@@ -1,12 +1,19 @@
 # Activation
 
+The runtime does not yet hold the disposition of invariant 7 as one state. What it holds is read off
+several fields: whether a process was suspended or terminated are flags of the process, whether its
+leaf is blocked is whether the leaf names a wait, and the rest is what the execution running it
+reports. Resume restores what suspension found, as the invariant requires, by reading those fields;
+the single authoritative state the invariant asks for, which keeps them from drifting apart, is not
+built. Everything else here binds every layer as written.
+
 ## Purpose
 
 An activation is the runtime's one shape for "a concrete, in-flight execution instance." A
 SystemVerilog process (`initial`, `always*`), a task enable, and a fork-join branch are each an
 activation: a specific execution that has begun, can suspend and resume, and settles exactly one
-terminal outcome. An activation is not the callable declaration it runs (that is `callable.md`'s
-subject) -- it is what exists after a callable is invoked.
+terminal outcome. An activation is not the callable declaration it runs (that is
+[`callable.md`](callable.md)'s subject) -- it is what exists after a callable is invoked.
 
 The activation concept draws three lines that the rest of the runtime depends on:
 
@@ -45,6 +52,9 @@ the awaiter consumes, not of the scheduler.
   holds a membership owned by what shares its life -- the activation for its queue place, the wait
   the body holds for what that wait watches, the process's record of a disable target for its being
   inside it.
+- The **targets a process is inside**: each disable target its execution entered or was spawned
+  inside, with the generation it captured there, held by the running process rather than read off
+  where a body is written ([`nonlocal_control_flow.md`](nonlocal_control_flow.md)).
 - The **activation disposition**: how an activation currently participates in execution --
   `Executing`, `Runnable`, `Blocked`, `Suspended`, or `Terminal`. This is the activation's
   authoritative state; its queue place, the wait it is parked on, and its completion slot are
@@ -64,14 +74,17 @@ the awaiter consumes, not of the scheduler.
 ## Does Not Own
 
 - The stratified region scheduler -- the queues, the region order, the suspension verbs. That is
-  `scheduling.md`. The activation only exposes the token the scheduler parks and resumes.
-- The callable declaration and its signature, environment, and result type (`callable.md`,
-  `mir.md`). An activation runs a callable; it is not one.
+  [`scheduling.md`](scheduling.md). The activation only exposes the token the scheduler parks and
+  resumes.
+- The callable declaration and its signature, environment, and result type
+  ([`callable.md`](callable.md), [`mir.md`](mir.md)). An activation runs a callable; it is not one.
 - Deferred effects -- a non-blocking assignment's commit, a postponed `$strobe`, a deferred
-  assertion's report. Those are closures submitted to a region (`scheduling.md`), not activations:
-  they capture an environment, run later, and never suspend their submitter or settle a completion
-  an awaiter consumes. Where what a deferred effect does may wait, the effect starts an execution of
-  no lineage to do it (invariant 6).
+  assertion's report. Those are closures submitted to a region ([`scheduling.md`](scheduling.md)),
+  not activations: they capture an environment, run later, and never suspend their submitter or
+  settle a completion an awaiter consumes. Where what a deferred effect does may wait, the effect
+  starts an execution of no lineage to do it (invariant 6).
+- What a departure is, where it lands, and how a disable target is invalidated
+  ([`nonlocal_control_flow.md`](nonlocal_control_flow.md)).
 - Storage layout, frame allocation, and the machine-level suspend/resume protocol (LIR and below).
 
 ## Core Invariants
@@ -110,18 +123,25 @@ the awaiter consumes, not of the scheduler.
    it and the target links it, so the relation is stored once and reached from both ends. The owner
    is whatever shares the membership's life: the activation for its place in a queue; the wait the
    body holds for what that wait watches, which names the activation only while the activation is
-   parked on it; the process's record of a disable target for its being inside. Stopping an
-   activation from outside takes it off its queue and off the wait it is parked on, which keeps the
-   wait itself, because starting it again waits for that same thing (invariant 7). What a wait keeps
-   in order to answer it -- the closure an event control asks whether its expression moved --
-   belongs to the wait and ends with it, since it may refer to anything the frame holds; a foreign
-   task's body, which runs on a stack of its own, is never outlived by the frame either, because an
+   parked on it; the process's record of a disable target for its being inside. A target's list
+   holds memberships of one kind, and the scheduler's own queues and delay slots are targets like
+   any other, so the engine is never searched. Leaving a list is a detach by the membership's own
+   links, which needs neither the target nor its list head, so no membership points back at its
+   target and no interface stands over the kinds of target; an owner keeps its memberships where
+   they never move, since a target's list points at them, and a target released while memberships
+   are still linked to it detaches them. What describes a pair of wait and watched storage -- the
+   bits an event control compares -- belongs to the wait, not to either end. Stopping an activation
+   from outside takes it off its queue and off the wait it is parked on, which keeps the wait
+   itself, because starting it again waits for that same thing (invariant 7). What a wait keeps in
+   order to answer it -- the closure an event control asks whether its expression moved -- belongs
+   to the wait and ends with it, since it may refer to anything the frame holds; a foreign task's
+   body, which runs on a stack of its own, is never outlived by the frame either, because an
    execution inside a foreign call is torn down only once that call has returned, or once the run is
    over, by unwinding the stack the call stands on, which passes through the call first (invariant
-   8). _Consequence: an activation can be cancelled and torn down with no dangling token left in any
-   queue or wait -- its frame's waits and its queue place end with it, and so does every closure
-   that could call back into the frame -- and leaving a list is a detach, so neither end ever
-   searches the other, and neither can hold a belief the other has abandoned._
+   8). _Serves LRM 9.6.2 and 9.7, which release an activation while it is parked: cancelling and
+   tearing it down leaves no dangling token in any queue or wait -- its frame's waits and its queue
+   place end with it, and so does every closure that could call back into the frame -- and
+   cancelling one parked anywhere costs the same constant time._
 
 5. **A typed await consumes the typed terminal outcome.** Awaiting an activation yields its outcome:
    `Succeeded(T)` produces `T`, and a departure carries on past the awaiting frame, which is not the
@@ -167,10 +187,11 @@ the awaiter consumes, not of the scheduler.
    two-step transition: a request first takes the activation off whatever could resume it and
    records the cause, and the outcome is published only once the body reaches a safe boundary. The
    request is not the outcome; between them the activation is un-nameable by any scheduler structure
-   yet still live. _Consequence: `Cancelled` may be requested while a frame is still running, but is
-   settled -- frame released, what awaits it woken -- only at a safe boundary. Settling on the
-   request, publishing the outcome before the body stops, lets a waiter observe a terminated
-   activation that is still executing._
+   yet still live, so a process handle reports a process inside a foreign call terminated only once
+   that call has returned and nothing of it can run again. _Consequence: `Cancelled` may be
+   requested while a frame is still running, but is settled -- frame released, what awaits it woken
+   -- only at a safe boundary. Settling on the request, publishing the outcome before the body
+   stops, lets a waiter observe a terminated activation that is still executing._
 
 9. **An activation has exactly one live next-resume entitlement, and every handover withdraws the
    prior.** The single means by which an activation will next run -- its place on the running stack,
@@ -183,103 +204,90 @@ the awaiter consumes, not of the scheduler.
 
 ## Boundary to Adjacent Layers
 
-- **To the scheduler (`scheduling.md`).** The activation exposes a token the engine parks on a
-  region queue and resumes; the engine reaches process identity and wait state through the token and
-  nothing more. The engine is construct-neutral -- it branches on queue and region, never on the
-  activation's kind or completion type.
-- **To the callable (`callable.md`).** A callable value is invoked to produce an activation. The
-  callable owns the signature and result type (`Coroutine<T>` for a suspending callable); the
-  activation owns the running instance and its terminal outcome.
-- **To MIR (`mir.md`).** The typed completion is MIR semantics: a suspending callable's result type
-  is `Coroutine<T>`, and `await : Coroutine<T> -> T` consumes the terminal outcome. The activation
-  model is how a backend realizes that semantics at runtime; the MIR shape is backend-neutral.
+- **To the scheduler ([`scheduling.md`](scheduling.md)).** The activation exposes a token the engine
+  parks on a region queue and resumes; the engine reaches process identity and wait state through
+  the token and nothing more. The engine is construct-neutral -- it branches on queue and region,
+  never on the activation's kind or completion type.
+- **To the callable ([`callable.md`](callable.md)).** A callable value is invoked to produce an
+  activation. The callable owns the signature and result type (`Coroutine<T>` for a suspending
+  callable); the activation owns the running instance and its terminal outcome.
+- **To non-local control flow ([`nonlocal_control_flow.md`](nonlocal_control_flow.md)).** That
+  document owns the region a departure lands in and the gate an execution passes where it regains
+  control; this one owns the membership a process holds in each target it is inside, and the
+  entitlement the gate reconciles.
+- **To MIR ([`mir.md`](mir.md)).** The typed completion is MIR semantics: a suspending callable's
+  result type is `Coroutine<T>`, and `await : Coroutine<T> -> T` consumes the terminal outcome. The
+  activation model is how a backend realizes that semantics at runtime; the MIR shape is
+  backend-neutral.
 - **To LIR.** A backend lowers an activation's suspend, resume, success, and departure points to
   explicit control edges; the completion slot's outcome is the value an await's resume edge carries.
 
 ## Forbidden Shapes
 
-- **A scheduler that branches on completion type or callable kind.** The scheduler parks and resumes
-  a payload-neutral token; an engine that asks "is this a task / does this return a tuple" has let
-  completion shape leak into execution control (invariant 1).
+Each names the requirement it fails.
 
+- **A scheduler that branches on completion type or callable kind** fails invariant 1: an engine
+  that asks "is this a task / does this return a tuple" has let completion shape into execution
+  control, and adding a completion shape then changes the engine.
 - **A completion value transported outside the completion slot** -- a hidden out-parameter, a
-  backend-invented result sink, a side-channel reference writeback. The terminal outcome is the
-  activation's completion slot; a value reaching the consumer any other way is a backend inventing
-  transport MIR did not state (invariant 2).
-
-- **`output` / `inout` as a live alias of the caller's storage.** They are completion-payload
-  components settled once, not storage the activation writes during its run; only a `ref` is a live
-  alias. A live-alias `output` lets a caller observe an intermediate write while the activation is
-  suspended (invariant 2, `callable.md`).
-
-- **Collapsing ownership, continuation, and cancellation into one relation.** A single "parent
-  pointer" that means owner and consumer and cancellation scope cannot express a fork (owned by the
-  domain, consumed by a join, not resumed as a continuation) or selective cancellation (invariant
-  3).
-
+  backend-invented result sink, a side-channel reference writeback -- fails invariant 2: a value
+  reaching the consumer any other way is a backend inventing transport MIR did not state.
+- **`output` / `inout` as a live alias of the caller's storage** fails LRM 13.3: they are
+  completion-payload components settled once, not storage the activation writes during its run, so a
+  live alias lets a caller observe an intermediate write while the activation is suspended. Only a
+  `ref` is a live alias ([`callable.md`](callable.md)).
+- **Collapsing ownership, continuation, and cancellation into one relation** fails LRM 9.6: a single
+  "parent pointer" meaning owner and consumer and cancellation scope cannot express a fork (owned by
+  the lineage, consumed by a join, not resumed as a continuation) or selective cancellation.
 - **A reference to a parked activation that nothing ends** -- a raw token pushed into a queue,
-  waiter list, or subscription set with no membership whose owner ends it. It dangles the moment the
-  activation is cancelled or destroyed (invariant 4).
-
+  waiter list, or subscription set with no membership whose owner ends it -- fails invariant 4 and
+  LRM 9.7: it dangles the moment the activation is released while parked.
 - **The same membership recorded on both sides** -- a target that stores its own record of which
-  activations it holds while each activation separately stores which targets hold it. Two
-  authoritative copies of one relation must be reconciled, so leaving degrades into searching the
-  other side, enrolling has to defend against drift, and each end needs teardown logic whose only
-  job is to repair the other. The relation is one record, owned by one end and linked by the other
-  (invariant 4).
-
+  activations it holds while each activation separately stores which targets hold it -- fails
+  invariant 4: two authoritative copies of one relation must be reconciled, so leaving degrades into
+  searching the other side, enrolling has to defend against drift, and each end needs teardown logic
+  whose only job is to repair the other.
+- **Every membership owned by the activation** fails invariant 4 from the other side: a wait that
+  stands across a loop outlives each stop the activation makes at it, and a process is inside a
+  disable target across many activations, so tying each to the activation either builds and tears
+  them down at every stop or gives the activation records of lives that are not its own.
 - **A deferred effect modeled as an activation with a completion** -- a non-blocking assignment, a
   postponed `$strobe`, or a deferred assertion action given an activation token, a completion slot,
-  or an await edge. These are closures submitted to a region; they neither suspend their submitter
-  nor settle an outcome a consumer awaits (invariant 6).
-
+  or an await edge -- fails invariant 6: these neither suspend their submitter nor settle an outcome
+  a consumer awaits.
 - **A central taxonomy of wait kinds the scheduler or activation core branches on** -- a
-  `variant`/enum of delay / event / join / await blocks switched over on suspend, resume, or wake.
-  What an activation waits for answers one surface whatever the construct; a suspending construct
-  builds its own wait through its own call, so answering a stop there again is that same construct's
-  business, dispatched uniformly. A kind switch on the execution path reintroduces the
-  source-language timing concept the engine is forbidden to know (invariant 7, `scheduling.md`).
-
+  `variant`/enum of delay / event / join / await blocks switched over on suspend, resume, or wake --
+  fails invariant 7 and the engine's construct-neutrality ([`scheduling.md`](scheduling.md)): what
+  an activation waits for answers one surface whatever the construct, and a kind switch on the
+  execution path reintroduces the source-language timing concept the engine must not know.
 - **A second authoritative copy of the wait's state** -- a blocked-operation object that duplicates
-  the deadline / observable / target the suspending construct already holds, kept in sync with it.
-  The wait's state has one home, which is the wait the body's frame or its reaction holds; nothing
-  mirrors it. Two copies is the membership double-encoding forbidden by invariant 4, one level up.
-
+  the deadline / observable / target the suspending construct already holds, kept in sync with it --
+  fails invariant 4 one level up: the wait's state has one home, the wait the body's frame or its
+  reaction holds.
 - **Scheduling placement folded into the disposition** -- a `Runnable(region)` that pins which
-  region or queue a runnable activation must be restored to. `Runnable` is the semantic entitlement
-  to run; the region is the engine's placement, chosen when the activation is scheduled (resume
-  places a runnable-suspended activation into the active region, LRM 9.7). A disposition that
-  carries region lets scheduler placement leak into activation semantics (invariant 7).
-
+  region or queue a runnable activation must be restored to -- fails LRM 9.7, which places a resumed
+  runnable activation in the active region: `Runnable` is the entitlement to run, and the region is
+  the engine's placement, chosen when the activation is scheduled.
 - **`Suspended` modeled as a new kind of wait, or the disposition split across independent fields**
   -- a suspended activation given its own wait target to re-fire, or its state inferred from
-  execution flags plus queue membership plus which wait it is parked on, each separately
-  authoritative. Suspension saves the prior disposition; the disposition is one authoritative state
-  its resources must agree with (invariant 7).
-
-- **A fork branch modeled as a task the parent awaits.** A branch has its own process identity, is
-  owned by the spawning process's lineage, and is waited for by its fork's join under a join-mode
-  condition; `join_none` has no parent wait at all. Reusing task-enable ownership for a branch
-  conflates the two (invariant 3, invariant 6).
-
-- **A cancellation domain scoped to the fork statement rather than to the process.** `disable fork`
-  terminates every descendant of the calling process, spawned by any fork that process ever
-  executed, and `wait fork` observes the immediate children accumulated across all of them (LRM
-  9.6.1, 9.6.3). A per-fork-statement domain cannot answer either question. The join is
-  per-fork-statement because the join condition is; the lineage is per-process because cancellation
-  and child observation are.
-
-- **A lineage node whose lifetime is its activation's execution.** `disable fork` reaches "the
-  descendants of subprocesses that have already terminated" (LRM 9.6.3), so a terminated process
-  stays reachable from its parent while any descendant is still live. Releasing the node with the
-  frame loses that reach; retaining the frame to keep the node pins the activation storage the frame
-  solely owns. Node lifetime and execution lifetime are distinct.
-
+  execution flags plus queue membership plus which wait it is parked on -- fails invariant 7:
+  suspension saves the prior disposition, which is one state its resources must agree with.
+- **A fork branch modeled as a task the parent awaits** fails LRM 9.3.2: a branch has its own
+  process identity, is owned by the spawning process's lineage, and is waited for by its fork's join
+  under a join-mode condition; `join_none` has no parent wait at all.
+- **A cancellation domain scoped to the fork statement rather than to the process** fails LRM 9.6.1
+  and 9.6.3: `disable fork` terminates every descendant of the calling process, spawned by any fork
+  that process ever executed, and `wait fork` observes the immediate children accumulated across all
+  of them. The join is per fork statement because the join condition is; the lineage is per process
+  because cancellation and child observation are.
+- **A lineage node whose lifetime is its activation's execution** fails LRM 9.6.3, which reaches
+  "the descendants of subprocesses that have already terminated": releasing the node with the frame
+  loses that reach, and retaining the frame to keep the node pins the activation storage the frame
+  solely owns.
 - **A cancellation or scheduling decision that branches on whether an activation is running,
-  waiting, or runnable.** The next-resume entitlement is one thing across every holder (invariant
-  9); an operation that asks "is this activation blocked or runnable" to decide how to reach it has
-  taken on the scheduler's placement job and duplicated the holder state the disposition already
-  owns. A cancellation invalidates the entitlement and lets the activation reconcile at its gate.
+  waiting, or runnable** fails invariant 9: an operation that asks which to decide how to reach it
+  has taken on the scheduler's placement job and duplicated the holder state the disposition already
+  owns.
 
 ## Notes / Examples
 
@@ -308,6 +316,20 @@ Ownership and cancellation membership ride the same lineage edge here; continuat
 That the first two coincide for a branch is not a collapse of the relations -- what invariant 3
 forbids is one edge that also carries the consumer.
 
+A membership, and leaving it:
+
+```text
+membership  = one record: "this target can reach this owner"
+  prev / next  -- linked into the target's list
+  owned by     -- the wait (what it watches), the process (a disable target), the activation (a queue)
+leave       = prev->next = next; next->prev = prev     // the node alone, never the target
+```
+
+Moving a region's whole set of activations to another queue -- taking its snapshot out before
+draining it, so work the drain produces waits for the next pass -- relinks one list onto another,
+and a bulk termination can wake activations as it goes even where a later step releases one of them,
+since a queued activation leaves its queue with its frame.
+
 A reaction is an activation that is no frame: a process whose body runs to its end each time it is
 triggered, held by the run with the object its parts run on and the wait its setup builds. It runs a
 static process, which has no lineage parent; it ends once its body returns, and its
@@ -326,4 +348,8 @@ one it is parked on for as long as it waits. The promise base, the `coroutine_ha
 transfer are this realization's mechanics; the activation, completion slot, memberships,
 disposition, and what it waits for are the model they realize. The LIR / LLVM backend realizes the
 same model with coroutine intrinsics and explicit control edges instead, reaching the same object
-rather than re-entering the suspended body.
+rather than re-entering the suspended body. There the activation token is a coroutine the runtime
+owns, which drives the generated body's own coroutine through its handle -- resume, done, destroy --
+so no generated frame embeds a runtime C++ type, and a departure the body handed over is raised
+again from that coroutine's frame once the body is done. A call that suspends answers into a cell
+the caller reads once the call completes, which nothing observes and whose write wakes no one.

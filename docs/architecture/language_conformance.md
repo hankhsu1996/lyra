@@ -2,6 +2,14 @@
 
 What source text Lyra accepts, who decides it, and how a text nobody is sure about gets ruled on.
 
+Three of the rulings below are not yet what Lyra does, and they bind it regardless. A `%s`
+conversion prints a space for every zero byte, the leading ones included, where the ruling prints
+nothing for those. An ordering method on a dynamic array builds its elements anew, so a reference
+bound to an element goes on reading what that position held before the order was applied, where the
+ruling keeps the slot. And the front end Lyra pins accepts a string or a class handle as a member of
+an untagged union, which Lyra then refuses where it lowers the type, where the rule places that
+refusal in the front end.
+
 ## The rule
 
 **Lyra targets IEEE 1800-2023 and delegates language analysis to a chosen version of its front end.
@@ -62,7 +70,10 @@ Consequences:
 1. **The default options are the front end's, with one kind of exception.** Where the standard
    leaves a choice to the tool, the front end is not wrong whichever way it went, so nothing can be
    corrected upstream, and the policy makes the choice itself (see _Given a meaning, but a tool may
-   refuse it_ below). No other default is overridden, in either direction.
+   refuse it_ below). No other default is overridden, in either direction. A limit the standard lets
+   a tool set is such a choice, and Lyra leaves it where the front end sets it: a packed type may be
+   limited to no fewer than 65,536 bits (6.9.1, 7.4.1), the front end's limit is 2^24 - 1 bits, and
+   Lyra sets none of its own below it, since no cost in Lyra follows a declared width.
 2. **One class of forbidden text the front end refuses is run when a caller asks for it, as a
    compatibility extension.** Its boundary is stated in advance and drawn by the standard rather
    than by any tool's answer: the text is in common use, the meaning Lyra gives it is stated here
@@ -104,8 +115,8 @@ Consequences:
    stated in what the compiler lowers, and off by default; the default keeps the standard's reading.
    There is one: `--coalesce-comb-updates`, under which an `always_comb` or `always_latch` is
    triggered by the net change another's execution leaves rather than by each update it makes
-   (`decisions/combinational-updates-are-coalesced-where-a-build-asks.md`). A design that does not
-   settle under the default is told of it by a note.
+   ([scheduling.md](scheduling.md)). A design that does not settle under the default is told of it
+   by a note.
 
 ## Ruling on a disputed text
 
@@ -281,6 +292,19 @@ for as long as it is held, and a union's storage is read as another type wheneve
 writes it (7.3.2), or ends and holds another member when a tagged union is assigned (11.9). Pass the
 whole union, or pass the member to an `inout` formal, which copies it in and out (13.5) and runs.
 
+#### A string or a class handle as a member of an untagged union
+
+```systemverilog
+typedef union { int count; string name; } u_t;
+```
+
+7.3.2: "Dynamic types and chandle types shall not be used in untagged unions, but may be used in
+tagged unions." 6.16 says "Variables of type string are dynamic", and the glossary counts class
+handles among the dynamic data types. Forbidden: an untagged union is one storage each member reads
+as its own type (7.3), and a string's or a handle's value is no bits another member could read. The
+front end refuses it where it checks a union's members, beside the chandle and the dynamically sized
+array it refuses there. Declare the union `tagged`, or hold the member beside the union.
+
 #### A write in an expression of a concurrent assertion
 
 ```systemverilog
@@ -366,11 +390,9 @@ open simulator, which keeps the forced value of a whole variable as 10.6.2 says,
 `always_comb` last wrote after the release of a part. A force on a whole unpacked variable holds
 every position its type numbers, and a queue, a dynamic array or an associative array is one
 position held whole, as a string is, which 6.4 calls singular although it can be indexed like an
-array. A member of a tagged union, which only the union's tag says is there (7.3.2), and a part of a
-string, a queue, a dynamic array or an associative array, whose parts lie at no fixed place in the
-value (7.10.3), are not yet carried out. An `assign` or `deassign` on a whole unpacked variable
-stays an error, as one on a select does. The front end relaxes a faulty target of `force` and
-`release` only, and gives every faulty target of `assign` and `deassign` an error.
+array. An `assign` or `deassign` on a whole unpacked variable stays an error, as one on a select
+does. The front end relaxes a faulty target of `force` and `release` only, and gives every faulty
+target of `assign` and `deassign` an error.
 
 `-Wno-error=bad-procedural-force` asks for it, and so does `--compat all`.
 
@@ -454,10 +476,8 @@ aggregate holding one of those has no bits a table reads and so no fold, which m
 of a user-defined nettype with no resolution function is (6.6.7): its one driver decides it, nothing
 driving it leaves its type's default, the net type it was declared with contributes nothing, as a
 nettype has no contribution of its own, and a second driver is the design's error, reported where
-that driver is written. A queue, a dynamic or associative array, an event, or an aggregate holding
-one, as such a port, is not yet carried out. Where one connection is all that drives such a port,
-every reading gives the value it is connected to. Write `input var int count`, which every reading
-takes as that variable.
+that driver is written. Where one connection is all that drives such a port, every reading gives the
+value it is connected to. Write `input var int count`, which every reading takes as that variable.
 
 #### A static variable initialized in a procedural block with no `static`
 
@@ -896,6 +916,26 @@ class, so `A::v()` there resolves from the scope holding the call (18.7) and run
 own object, as the same text written outside the constraint would; only a name qualified by `this`
 or `super` is bound to the randomized object.
 
+#### The order packages initialize in
+
+```systemverilog
+package a;
+  int base = 4;
+endpackage
+package b;
+  int twice = a::base * 2;    // 8, or 0?
+endpackage
+```
+
+26.2: "Variable declaration assignments within the package shall occur before any initial or always
+procedures are started". 6.8 and 10.5 say the same of every static variable. None orders one
+package's assignments against another's.
+
+Lyra runs a package's initializers after those of every package they read, so `twice` reads `base`
+initialized and holds 8. Where two packages read each other, one of them runs first and reads the
+other's variable at its default. A case may not assert the order, since a tool that runs `b` first
+is not wrong.
+
 #### A `try_get` while a `get` is waiting for more keys
 
 ```systemverilog
@@ -1211,6 +1251,157 @@ its own, and bits 7:4 have no driver. A whole union value drives every bit, and 
 answers what its bits resolved to. A variable of the type is held the same way, so nothing about the
 union changes with where it is declared.
 
+#### A `shortreal` operation whose value a `real` takes
+
+```systemverilog
+shortreal a = 1.0 + 1.0 / 8192.0;
+real direct = a * a;        // 1.000244140625, or 1.0002441555261612?
+shortreal product = a * a;
+real staged = product;      // 1.000244140625 on every reading
+```
+
+The exact product is `1 + 2^-12 + 2^-26`, whose last term the narrower format does not hold. 11.3.1
+gives an operation over `shortreal` operands a `shortreal` result, and 11.8.1 says "Expression type
+depends only on the operands. It does not depend on the left-hand side". 11.6 sizes an expression
+"by the operands and the context", the left-hand side of an assignment included, and 11.8.2
+propagates "the type and size of the expression ... back down to the context-determined operands".
+No clause says whether `real` against `shortreal` is a difference of type, which 11.8.1 settles one
+way, or of size, which 11.6 settles the other, and Table 11-21 has no entry for the real family. The
+front end's author agreed the standard does not settle it (slang #1976).
+
+Lyra carries out an operation over `shortreal` operands in the format of the assignment it stands
+in, so `direct` above is the wider value. The front end hands the expression over typed that way,
+each operand under a conversion to `real`, the same shape it gives `real * int`, where 11.8.2
+requires the conversions on every reading; a lowering cannot tell the two apart, and the front end
+folds a constant expression by the same reading, so the other one would give one expression a
+meaning folded and another run. A design that needs the narrower product writes it into a
+`shortreal` first, which every reading rounds.
+
+#### A `default` in a `unique` or `priority` case statement
+
+```systemverilog
+unique case (sel)
+  2'b00: y = a;
+  2'b01: y = b;
+  default: y = '0;
+endcase                       // a report where sel is 2'b10, or none?
+```
+
+A qualifier asserts two independent things: uniqueness, that at most one item matches, and totality,
+that at least one does (12.4.2, 12.5.3). 12.4.2 says a violation report "shall be issued if no
+condition matches unless there is an explicit `else`". 12.5.3 says one is issued "if no `case_item`
+matches" and has no matching sentence for `default`, and 12.5 says a `default` "is ignored during
+this linear search", which read alone suggests a `default` does not match and so does not suppress.
+
+Lyra reads a `default` as discharging totality, as an `else` does, and leaves uniqueness as it is:
+two items that both match are still two. Syntax 12-3 makes `default` a `case_item`, so a statement
+holding one always selects a `case_item`; 12.5.3's own note offers the qualifier and a `default` as
+two ways "to trap unexpected case values", which is advice only if writing the `default` settles the
+matter; and 12.5.3.1 sends the case form's reports to 12.4.2.1 as "identical", so rewriting a
+statement from one form into the other changes nothing it reports. A statement whose qualifier is
+left asserting nothing -- `priority` with a `default`, say -- is then evaluated as the unqualified
+statement is, stopping at the first match.
+
+#### What `%s` prints for a zero byte
+
+```systemverilog
+bit [8*4:1] s = "ab";              // 32'h0000_6162
+$display("[%s]", s);               // [ab]
+$display("[%s]", 16'h4100);        // [A ], the zero byte after a character
+```
+
+21.2.1.7 reads the argument as a sequence of 8-bit codes, "right-justified so that the rightmost bit
+of the value is the LSB of the last character", and says "leading zeros are never printed"; the
+example in 11.10 shows a 14-character vector holding "Hello world" printed with nothing before it.
+Of a zero byte after the first nonzero one the clause says nothing, and a C string would end there.
+
+Lyra prints nothing for each leading zero byte, as the clause says, and a space for every zero byte
+after the first nonzero one, so the text keeps one column per byte from its first character on and
+stops at no zero. A value whose every byte is zero prints nothing.
+
+#### What `%p` prints for a container holding nothing, and where its spaces go
+
+```systemverilog
+int d[];
+int q[$] = '{1, 2};
+$display("%p", d);    // '{}, though no assignment pattern is empty
+$display("%p", q);    // '{1, 2}
+$display("%0p", q);   // shorter, or the same?
+```
+
+21.2.1.6 asks for "a legal interpretation of the assignment pattern syntax (see 10.9)", leaves "the
+use of white space" implementation dependent, and makes `%0p` "a shorter, implementation-specific
+form". Syntax 10-5 gives every assignment pattern at least one expression, so a container holding no
+element has no legal pattern; the empty text the language has, `{}`, is an unpacked array
+concatenation (10.10), not an assignment pattern.
+
+Lyra prints a container holding nothing as `'{}`, the brackets every pattern of its type has around
+nothing, so a value's text has one shape at every size. It separates the parts by a comma and one
+space, puts no space inside the brackets, writes a structure's member as `name:value` and an
+associative array's entry as `index:value`, and prints `%0p` exactly as `%p`: the clause lets a tool
+shorten the text and asks nothing of the shorter form, so one text serves both. A case may claim the
+parts and their order, never the white space, which another tool places as it likes.
+
+#### Which edge an output skew written as an edge names
+
+```systemverilog
+clocking cb @(posedge clk);
+  output negedge #2 a;   // the next negedge, then 2 more
+  output posedge b;      // this posedge, or the next one?
+endclocking
+```
+
+14.3: "When the clocking event specifies a simple edge, instead of a number, the skew can be
+specified as the specific edge of the signal", and output skews "always refer to a time after the
+clock"; its example reads `output negedge` as "outputs driven on the negedge clk". 14.16 updates the
+signal "at a time after that clocking event as specified by the output skew". None says which
+occurrence of the edge is meant, whether an edge the clocking event itself is names that occurrence
+or the next, or what a delay written after the edge counts from.
+
+Lyra drives the signal at the first such edge of the clocking event's signal after the clocking
+event the drive matures at, and where a delay follows the edge, that much later. An edge the same as
+the clocking event's is therefore the next one, a cycle on: a skew "after the clock" leaves out the
+occurrence the drive matures at, and a drive meant for that occurrence writes `#0`, which needs no
+edge. The delay counts from the edge because the grammar writes it after the edge
+(`edge_identifier [ delay_control ]`), as a skew written as a number counts from the clocking event.
+
+#### A reference to an array element across an ordering method
+
+```systemverilog
+int a[] = '{3, 1, 2};
+task automatic t(ref int x);
+  a.sort();
+  $display(x);                // 1, or 3?
+endtask
+initial t(a[0]);
+```
+
+7.12.2 says an ordering method reorders "the elements" of an array, and 13.5.2 names no ordering
+method among the operations that outdate a reference to an element. Whether `x` follows the element
+it was bound to or stays at position 0 the standard does not say.
+
+Lyra keeps the slot: on a fixed-size or dynamic array an ordering method rewrites the values its
+positions hold, as a whole assignment does (7.6), and `x` reads 1. A queue removes single elements
+and keeps each one's identity (7.10.3), so on a queue the reference follows its element.
+
+#### An associative entry written again after it was removed while a reference holds it
+
+```systemverilog
+int m[string];
+task automatic t(ref int x);
+  m.delete("k");
+  m["k"] = 7;
+  $display(x);                // 7, or what the removed entry held?
+endtask
+initial begin m["k"] = 1; t(m["k"]); end
+```
+
+7.8.7 allocates an entry for a write to an index the array does not hold, and 13.5.2 keeps a removed
+element for the call that holds a reference to it. Neither says whether the two are one entry.
+
+Lyra makes a new one: the removed element has left the array, so the write finds no entry and makes
+one, and the reference goes on naming the removed element, which still holds 1.
+
 ### Allowed
 
 #### An `always_comb` writing one constant key of an associative array
@@ -1254,11 +1445,19 @@ type is known at elaboration.
 ## Forbidden shapes
 
 - **A default in Lyra's policy that overrides the front end's acceptance or severity**, except where
-  the standard leaves the choice to the tool. It is a second statement of the standard that nobody
-  argues with the front end.
-- **A refusal in lowering phrased as a rule about the source.** Lowering reports one of the outcomes
-  consequence 3 lists, and says which.
-- **A ruling whose stated reason is that a tool accepts or refuses the text.** A tool is at most a
-  second reader of the clause, and tools that take a forbidden text do not agree on what it means.
-- **A carried change to somebody else's design that only suits Lyra.** A design that is wrong is
-  wrong for every tool that follows the standard, and the correction is one its maintainer can take.
+  the standard leaves the choice to the tool. It fails the requirement that language analysis has
+  one implementation: it is a second statement of the standard that nobody argues with the front
+  end, and every difference between the two is a disagreement never settled where it could be.
+- **A check of legality in lowering, or a refusal there phrased as a rule about the source.** It
+  fails the same requirement, and the reader's: lowering reports one of the outcomes consequence 3
+  lists and says which, so a reader can tell a text the language forbids from one Lyra does not
+  carry out.
+- **A rule accepting a forbidden text because some simulator runs it.** It fails the requirement
+  that an accepted text means what the standard's rules give it: tools that take a forbidden text do
+  not agree on which texts or on what they mean, so the design would mean what one tool decided.
+- **A ruling whose stated reason is that a tool accepts or refuses the text.** It fails the
+  requirement that a ruling is argued from the standard's text: a tool is at most a second reader of
+  the clause.
+- **A carried change to somebody else's design that only suits Lyra.** It fails the requirement that
+  a design that is wrong is corrected where every tool following the standard benefits: the
+  correction has to be one its maintainer can take.

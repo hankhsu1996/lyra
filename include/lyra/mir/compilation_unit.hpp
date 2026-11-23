@@ -433,7 +433,7 @@ struct CompilationUnit {
             .wildcard_index = LibraryTypeOf(types, support::LibraryDecl::kWildcardIndex),
         },
         library_records(DeclareLibraryRecords(types)) {
-    // `Coroutine<void>` is the completion type of a process or void task, a
+    // `Coroutine<void>` is the completion type of a process or fork branch, a
     // pointer to a read report is what a function is handed, and a pointer to a
     // wait is what a stop is handed. Each is built in the constructor body
     // because each reads back an already-interned type; their member-list

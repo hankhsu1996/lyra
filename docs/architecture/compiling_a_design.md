@@ -1,15 +1,24 @@
 # Compiling A Design
 
+The compiler realizes this scheme in every respect but one. Units do not read the front end at once.
+Declaring a unit and lowering its bodies to HIR take turns, one unit at a time in the order the
+design lists its units, because the front end's lazy computation is unsynchronized; everything from
+a unit's HIR onward runs beside the other units. The decision on reading the front end, invariant 6
+and the forbidden shape against taking turns bind regardless.
+
 ## Purpose
 
 A design is compiled to as few artifacts as the source and its values require, what referrers
 compile against found from what each lowering declares, before any body is built and from nothing
-building produces, so that an edit rebuilds what it changed and nothing else. This doc is the whole
-of that scheme in one place: what an artifact is, what decides its name, what flows in at run time
-instead, and how the scheme lines up with the compilers and build systems it is modelled on. The
-parts each have a contract of their own -- `specialization_model.md` for what an argument is,
-`incremental_build.md` for keys, fingerprints and the staging, `emission_model.md` for what an
-artifact contains -- and this doc restates none of them.
+building produces, so that an edit rebuilds what it changed and nothing else. Compiling a design and
+running it are separate acts: what compiling produces can be kept, moved to another machine and run
+any number of times without compiling again. This doc is the whole of that scheme in one place: what
+an artifact is, what decides its name, what flows in at run time instead, how the work is spread
+over a machine, and how the scheme lines up with the compilers and build systems it is modelled on.
+The parts each have a contract of their own -- [`specialization_model.md`](specialization_model.md)
+for what an argument is, [`incremental_build.md`](incremental_build.md) for keys, fingerprints, the
+staging and the store, [`emission_model.md`](emission_model.md) for what an artifact contains -- and
+this doc restates none of them.
 
 ## The model
 
@@ -53,8 +62,8 @@ type, a constant a declaration requires. Everywhere else, the generate blocks it
 it is a field the object is built with, read at run time, so a loop handing each child its index
 makes one unit and, where the code comes out alike, one body, not one per index. Where an index
 decides which generate blocks the child builds, the child is still one unit, publishing every block
-class any index built, and one body per set of blocks built, and the loop's blocks holding those
-children are one class.
+class any index built, each block's code is compiled from a child that built it, and the loop's
+blocks holding those children are one class.
 
 ## The decisions
 
@@ -85,11 +94,10 @@ reaching a block takes the block's class from the block the front end resolved i
 **A body is found by comparing what each lowering came out as.** Lowering to HIR is cheap beside
 everything after it, so every lowering is kept to HIR, and those of one unit whose HIR is equal are
 one body -- a digest narrows the comparison, which is whole, as a linker folds identical sections.
-The body is named for the first lowering in the design's order that came out as it, by the unit's
-name where it is the unit's first body and by the unit's name and its ordinal after, and only that
-one is compiled further. Every generate block is lowered on its own and is a body of its own, shared
-with every block of the same body that comes out alike; which body stands where is the object's
-construction.
+The body is named as [`specialization_model.md`](specialization_model.md) invariant 7 states, for
+the first lowering in the design's order that came out as it, and only that one is compiled further.
+Every generate block is lowered on its own and is a body of its own, shared with every block of the
+same body that comes out alike; which body stands where is the object's construction.
 
 **The constructor runs the source's generate.** Its conditions and loops are constructor code, run
 against the values the object was handed, as a C++ constructor runs its own; each block it builds is
@@ -97,6 +105,36 @@ made by the entry its construction table holds for it.
 
 **The content of an artifact decides only whether its dependents rebuild.** A rebuilt body whose
 output is unchanged stops the rebuild there.
+
+**A unit's lowering reads the front end as though it were the only reader.** What the front end
+answers a unit does not depend on which other units read it first or at once. The front end
+elaborates lazily, computing a part where a reader first touches it, and a unit reads past its own
+body wherever a name lands, so what the units read cannot be listed and elaborated before they
+start: the front end's lazy computation synchronizes itself, as rustc's query system does -- a read
+that finds its answer shares it, one that must compute it marks it in progress, and a second reader
+of the same part waits. A unit's HIR exists only while that unit is in flight, so what is resident
+across the wide stage is the elaborated design, every unit's declarations and the units being
+lowered.
+
+**How many units a build compiles at once is stated by whoever invoked it, and never chosen by the
+build.** A compiler sees one design and cannot see what else holds the machine, and a build is often
+nested inside another -- a test suite running many designs at once -- as recursive `make` is. So a
+build told nothing runs one compile at a time, zero says the machine is the invoker's to use whole,
+and the width reaches every stage that takes one unit at a time: lowering, compiling a unit's
+module, and the host compile. What each produces is collected in the order the design lists its
+units, so the program is the same however many ran. The width decides nothing about what is
+produced, so an emitted project does not record it; its recipe takes a width of its own, as it takes
+whether to use a precompiled header, while it records the compiler and the optimization level, which
+do decide what is produced. Every compile is attempted even where one has failed, and every failure
+is reported, since emitted text that does not compile is Lyra's defect and one run naming every unit
+saves a run per unit.
+
+**Running a design is building it and executing the program.** `run` builds the program as `build`
+does, from the same kept results ([`incremental_build.md`](incremental_build.md)), and executes a
+private copy of it in a directory of the run's own, which is removed when the run ends; `build`
+copies the program to where it was asked for. One way to run a design is one thing to keep correct,
+and it is the program a user ships. Linking needs a host C++ driver on either backend: the one named
+with `--cxx`, and otherwise the first of `clang++` and `c++` found on the path.
 
 ## How the scheme lines up
 
@@ -110,6 +148,7 @@ output is unchanged stops the rebuild there.
 | Values handed in at construction              | --                                                                                                    | the arguments `main` builds objects with              | --                                       |
 | Equal code shared as one body                 | LLVM MergeFunctions                                                                                   | linker identical-code folding                         | --                                       |
 | Output content stops a rebuild                | red/green: an equal result fingerprint is green                                                       | a byte-identical module interface (update-if-changed) | output digest is the next action's input |
+| Width stated by the invoker                   | `-j`, defaulting to the machine                                                                       | `make -j`, one when told nothing                      | `--jobs`                                 |
 
 A unit found by what its lowerings publish is CIRCT's FIRRTL deduplication, which hashes a module
 apart from the names of the modules it instantiates and compares bottom-up; ours writes an outside
@@ -131,9 +170,11 @@ scope publishes are read off the front end's elaboration of each instance, where
 definition and the values its generate scheme read, which the front end records, so this reads the
 result of evaluating the instance's own scheme, as a constant it evaluated is read; it never crosses
 into an instance the instance holds, whose blocks are that instance's own name. The cost is that a
-name cannot be worked out until the front end has elaborated the instance.
+name cannot be worked out until the front end has elaborated the instance. A build defaults to one
+compile, as `make` does and cargo and ninja do not, because cargo and ninja are always the outermost
+thing a person types and a Lyra build commonly runs nested.
 
-## Models this one replaces
+## Other models, and what each fails
 
 | Model                                                                | For                                          | Against                                                                                                                           |
 | -------------------------------------------------------------------- | -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
@@ -145,6 +186,10 @@ name cannot be worked out until the front end has elaborated the instance.
 | A body named by the parameters its code reads                        | the body before it is lowered                | a prediction: two values settling one constant are two bodies, and how an object builds has no owner                              |
 | A body holding every block its instances built                       | one body whatever its instances built        | the body follows instances it is not named for; every instance handed new values is merged                                        |
 | A key of everything the design fixed, worked out before lowering     | reads nothing of the front end's sharing     | a third authority on which elaborations are alike, kept right one field at a time; each miss ran another instance's code silently |
+| Units reading the front end one at a time                            | no synchronization in the front end          | serializes independent work, which `north_star.md` forbids                                                                        |
+| Every instance elaborated before any unit reads                      | units read a finished tree at once           | the front end's cost multiplies with the instances it would have shared                                                           |
+| A width defaulting to the machine                                    | the win without asking                       | a nested build multiplies its width by every build around it                                                                      |
+| Running a design inside the compiler, writing nothing                | no link step                                 | a second way to run one design, whose runtime is not the one a program links                                                      |
 
 ## Core Invariants
 
@@ -158,6 +203,13 @@ name cannot be worked out until the front end has elaborated the instance.
    blocks they build; units follow distinct published structures.
 5. Which body a lowering is, is found by comparing its HIR whole, a digest only narrowing the
    comparison, and nothing but the design's construction data reads the answer.
+6. What the front end answers a unit's lowering does not depend on which other units read it, or
+   when, and units read it at once. _Requirement: units compile in parallel
+   ([`north_star.md`](north_star.md) invariant 4), and the front end is read by every unit._
+7. How many compiles a build runs at once is stated by its invoker, is one where nothing states it,
+   and changes nothing the build produces.
+8. What compiling produces is complete without the process that compiled it: a program runs, and is
+   kept and run again, with nothing of the compiler alive.
 
 ## Forbidden Shapes
 
@@ -174,3 +226,12 @@ name cannot be worked out until the front end has elaborated the instance.
 - A second answer to which elaborations are alike beside the front end's: a key worked out before
   lowering, or a lowering of an instance the front end found alike an earlier one through its own
   body to check the front end (invariant 2).
+- Units taking turns to read the front end, or a lock around it. It fails invariant 6 and
+  [`north_star.md`](north_star.md)'s ban on choices that force global serialization of independent
+  compilation work.
+- A width the build chooses for itself, a width written into a design's manifest, or a width baked
+  into an emitted project. It fails invariant 7: each states a fact about one machine in something
+  read on every machine.
+- A program run from state the compiling process holds -- records built after compiling and looked
+  up there, an execution session standing in for the program. It fails invariant 8: what compiling
+  produced is then half a program, which dies with the compiler.

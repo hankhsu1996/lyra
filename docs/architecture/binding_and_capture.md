@@ -9,8 +9,9 @@ capture is the only edge that crosses a callable boundary.
 
 This is the **lexical** axis of reference: which binding, in which callable body. It is distinct
 from the **object-graph** axis -- reaching a member of another object across the hierarchy -- which
-`hierarchy_and_generate.md` and `reference_resolution.md` own. A single source reference may use
-both; this doc owns only the lexical half.
+[`hierarchy_and_generate.md`](hierarchy_and_generate.md) and
+[`reference_resolution.md`](reference_resolution.md) own. A single source reference may use both;
+this doc owns only the lexical half.
 
 ## Owns
 
@@ -35,16 +36,20 @@ both; this doc owns only the lexical half.
 ## Does Not Own
 
 - **Object-graph navigation.** Reaching a member of an enclosing or sibling object through parent
-  pointers and casts is runtime navigation on the object tree, owned by `hierarchy_and_generate.md`;
-  cross-unit resolution timing is owned by `reference_resolution.md`. This doc resolves only the
-  receiver _value_ that such navigation starts from.
-- **The callable concept.** Callable code, callable value, and the environment as a structural
-  concept are owned by `callable.md`. This doc defines what populates that environment and how.
+  pointers and casts is runtime navigation on the object tree, owned by
+  [`hierarchy_and_generate.md`](hierarchy_and_generate.md); cross-unit resolution timing is owned by
+  [`reference_resolution.md`](reference_resolution.md). This doc resolves only the receiver _value_
+  that such navigation starts from.
+- **The callable concept.** Callable code, callable value, the receiver rule, and the environment as
+  a structural concept are owned by [`callable.md`](callable.md). This doc defines what populates
+  that environment and how.
 - **MIR node shapes.** The concrete node that names a binding, and the per-body binding arena, are
-  owned by `mir.md`. This doc states the contract those shapes must satisfy.
-- **Lifetime-extension policy.** Which automatic storage is promoted to a stable object so a longer-
-  lived body may capture it is owned by `runtime_model.md`. This doc requires that captured storage
-  be stable; it does not decide which storage qualifies.
+  owned by [`mir.md`](mir.md). This doc states the contract those shapes must satisfy.
+- **Which automatic storage outlives its scope.** An automatic local a longer-lived body may capture
+  is lifted into a cell held through a shared handle, as
+  [`compiler_generated_storage.md`](compiler_generated_storage.md) states and
+  [`lifetime.md`](lifetime.md) bounds. This doc requires that captured storage be stable; it does
+  not decide which storage qualifies.
 - **The other roles of block structure.** Declaration placement, lexical visibility validation, and
   cleanup ordering remain block concerns; this doc only removes reference resolution from them.
 
@@ -66,7 +71,7 @@ both; this doc owns only the lexical half.
    ensuring the binding is materialized in its lexical parent first, then capturing the parent's
    materialization. An intervening body that never names the binding itself still materializes a
    forwarding capture so its child can capture from it. Reaching past an intervening body to an
-   outer body's materialization is forbidden.
+   outer body's materialization is not representable.
 
 5. **Carrier is per-boundary; view is per-body.** What crosses a boundary is a carrier sufficient
    for the capturing body to obtain the binding (a value, a reference to an observable cell, an
@@ -105,44 +110,51 @@ both; this doc owns only the lexical half.
   name them). **HIR-to-MIR** performs binding resolution and materialization: it seeds each body's
   receiver and parameters, materializes declared locals, and inserts forwarding captures across
   every callable boundary a reference crosses.
-- **`callable.md`** owns the callable value and its environment as structure. The environment fields
-  are exactly the captures this doc materializes; a captured field's snapshot-versus-alias nature is
-  its carrier/view choice (invariant 5), carried by the field's type.
-- **`mir.md`** owns the node that names a binding and the per-body binding arena. The node names a
-  body-local binding (invariant 2); it carries no navigation distance to a declaration.
-- **`reference_resolution.md`** owns the object-graph and cross-unit axis. A multi-segment source
-  reference splits cleanly: the receiver value is resolved by this doc (lexical capture), and the
-  object-graph hops from that receiver to the final member are resolved by that doc. The two never
-  merge into one distance.
-- **`hierarchy_and_generate.md`** owns the object tree that object-graph navigation walks.
-- **`runtime_model.md`** owns which automatic storage is promoted to a stable object so a longer-
-  lived body may capture an owning/shared carrier over it.
+- **[`callable.md`](callable.md)** owns the callable value and its environment as structure. The
+  environment fields are exactly the captures this doc materializes; a captured field's
+  snapshot-versus-alias nature is its carrier/view choice (invariant 5), carried by the field's
+  type.
+- **[`mir.md`](mir.md)** owns the node that names a binding and the per-body binding arena. The node
+  names a body-local binding (invariant 2); it carries no navigation distance to a declaration.
+- **[`reference_resolution.md`](reference_resolution.md)** owns the object-graph and cross-unit
+  axis. A multi-segment source reference splits cleanly: the receiver value is resolved by this doc
+  (lexical capture), and the object-graph hops from that receiver to the final member are resolved
+  by that doc. The two never merge into one distance.
+- **[`hierarchy_and_generate.md`](hierarchy_and_generate.md)** owns the object tree that
+  object-graph navigation walks.
+- **[`compiler_generated_storage.md`](compiler_generated_storage.md)** owns the lifted cell a
+  longer-lived body captures an owning or shared carrier over.
 
 ## Forbidden Shapes
 
+Each shape below fails an invariant above.
+
 - **A reference as a navigation distance to a declaration.** Naming a binding by "the original
   declaration plus a hop count" -- in particular expressing a capture source as a hop count that
-  crosses a callable boundary. A reference names a body-local binding; it carries no route.
+  crosses a callable boundary. It fails invariant 2: a reference names a body-local binding and
+  carries no route.
 - **One materialization used as identity.** Using a single body's local id as the cross-body key for
   a binding, so deduplication or forwarding keys off a physical slot rather than the logical
-  identity.
+  identity. It fails invariant 1.
 - **A privileged receiver slot.** A receiver capture slot of its own, or a receiver mechanism per
-  callable form. The receiver and its object's share are binding origins, materialized and forwarded
-  as every binding is (invariant 7), so no closure construction needs to know either exists.
+  callable form. It fails invariant 7: the receiver and its object's share are binding origins,
+  materialized and forwarded as every binding is, so no closure construction needs to know either
+  exists.
 - **A closure that keeps an object alive by a borrowed pointer.** Capturing the receiver as a
   pointer -- alone, or beside a share of the same object -- where the object lives while referenced.
-  A pointer carries no lifetime (invariant 6), and two carriers of one object are two facts that
-  must agree; the closure carries the share and derives the receiver from it (invariant 9), the one
+  It fails invariant 9: a pointer carries no lifetime, and two carriers of one object are two facts
+  that must agree; the closure carries the share and derives the receiver from it, the one
   derivation canonical carrier uniqueness permits.
 - **Blind carrier propagation.** Forcing every intervening body to adopt an inner body's view --
   propagating "by value" or "by reference" unchanged through a forwarding chain instead of choosing
-  a carrier per boundary and a view per body.
+  a carrier per boundary and a view per body. It fails invariant 5.
 - **Climbing block scopes across a callable boundary** to reach an outer binding, or treating a
-  callable boundary as a kind of block boundary.
+  callable boundary as a kind of block boundary. It fails invariants 3 and 8.
 - **Lifetime by reachability.** Relying on a parent frame still being live to reach a captured
-  binding, instead of capturing an owning or shared carrier.
+  binding, instead of capturing an owning or shared carrier. It fails invariant 6.
 - **Reconstructing the object graph lexically.** Reaching an enclosing object's member by lexical
-  capture instead of explicit object-graph navigation, or vice versa. The two axes stay separate.
+  capture instead of explicit object-graph navigation, or vice versa. It fails invariant 7: the two
+  axes stay separate, and the receiver is where they meet.
 
 ## Notes / Examples
 
@@ -172,9 +184,9 @@ Every closure shape is a consequence of this single recursion, with no per-shape
 
 The receiver sits at the intersection of the two axes: it is a lexical binding (captured per body by
 this model) used as the starting object for object-graph navigation (resolved by
-`reference_resolution.md`). Because the receiver is just a binding, no closure construction needs to
-know it exists; a body that names a member captures the receiver as a side effect of the same
-recursion that captures any local.
+[`reference_resolution.md`](reference_resolution.md)). Because the receiver is just a binding, no
+closure construction needs to know it exists; a body that names a member captures the receiver as a
+side effect of the same recursion that captures any local.
 
 ## Binding Representation and Closure Environment
 
@@ -184,18 +196,18 @@ origin** for what the Purpose section calls "logical binding identity"; the two 
 concept, and "binding origin" is its canonical name from here on.
 
 A binding is one thing at the language level but appears at four representation layers, and keeping
-them separate is the point: collapsing any two is what reintroduces the bug class this reset
-removes.
+them separate is the point: collapsing any two lets one fact be stated twice, by two parties that
+can disagree.
 
 ```text
-1. Binding origin           which variable / parameter / receiver / synthesized entity this is;
-                            stable across every body that names or forwards it.
-2. Body binding             what one callable body reads directly: an activation local, or a field
-                            of that body's closure.
-3. Closure layout    the closure type (named capture fields) a closure's code reads its
-                            captures from, independent of any single construction of it.
+1. Binding origin        which variable / parameter / receiver / synthesized entity this is;
+                         stable across every body that names or forwards it.
+2. Body binding          what one callable body reads directly: an activation local, or a field
+                         of that body's closure.
+3. Closure layout        the closure type (named capture fields) a closure's code reads its
+                         captures from, independent of any single construction of it.
 4. Closure construction  for one construction of a closure value, the closure value
-                            whose fields initialize the environment.
+                         whose fields initialize the environment.
 ```
 
 Layer 1 is identity; layer 2 is per-body materialization; layer 3 belongs to the callable code;
@@ -210,10 +222,12 @@ forwarded across boundaries.
 - A **source origin** names a source-level entity: a procedural variable, a `with`-clause iterator,
   a receiver parameter, or the share a body holds of its receiver's object (invariant 9).
 - A **synthesized origin** names a lowering-created entity that must cross a callable boundary (a
-  non-blocking-assignment value snapshot, a shared-activation handle). It is identified by its
-  deterministic semantic owner -- the source-level site that caused it, plus a purpose and an
-  ordinal -- never a global counter, so identity is stable under incremental and parallel
-  compilation and a dump is self-explanatory.
+  non-blocking-assignment value snapshot, the shared handle to a lifted local's cell). It is
+  identified by the site that introduced it, numbered in the order the unit's lowering walks its
+  source, and by its ordinal among the carriers that site introduces. An origin is a key inside one
+  unit's lowering and reaches nothing that outlives it -- no MIR node, symbol or dump names it -- so
+  a count over that unit's deterministic walk is stable enough, and no counter is shared across
+  units, which keeps units lowering in parallel.
 
 The receiver is not a separate kind: it is a parameter origin whose role is "receiver." The role is
 metadata for callable lowering and diagnostics; it never changes capture semantics. A single body's
@@ -233,9 +247,10 @@ body binding = Local(local id) | Field(field id)
 - `Field` names a field of the body's closure, read as ordinary field access over the closure
   receiver (the closure itself). It carries a stable field id, not a physical layout position.
 - The receiver is a `Local` (a receiver-role parameter at the start of the arena) when a callable is
-  invoked directly. In a closure it is a `Field` where the object lives for the run, and a `Local`
-  derived where the body begins from the captured share where the object lives while referenced
-  (invariant 9). It is never a privileged slot.
+  entered on an object, and absent when it is entered on none ([`callable.md`](callable.md)). In a
+  closure it is a `Field` where the object lives for the run, and a `Local` derived where the body
+  begins from the captured share where the object lives while referenced (invariant 9). It is never
+  a privileged slot.
 
 A reference carries no navigation distance: within a callable there are no hops (one arena); across
 a callable it is a `Field`, resolved by forwarding.
@@ -247,18 +262,18 @@ steps, kept distinct:
 
 - **Source resolution** answers "how is this source variable realized in this body." It yields an
   ordinary MIR expression: a body-binding read for an automatic variable, or a member access over a
-  carrier for a static or promoted variable. There is no separate place-path or projection language;
-  a projection is an ordinary member-access (or deref / select) expression, the same nodes every
-  other access uses.
+  carrier for a static or lifted variable. There is no separate place-path or projection language; a
+  projection is an ordinary member-access (or deref / select) expression, the same nodes every other
+  access uses.
 - **Carrier availability** answers "make this _carrier_ -- a thing that can cross a boundary --
   available as a body binding here," forwarding along the lexical-parent-callable chain one boundary
   at a time.
 
-The carrier is what crosses a boundary: a receiver, a shared-activation handle, or an ordinary local
--- never a static or promoted variable as such. Promotion is a storage strategy, not an identity
-change: a promoted automatic variable keeps its own source origin, and is reached as a member access
-over a handle carrier whose own origin is a synthesized one. The variable's origin never becomes the
-handle's origin, so capture deduplication never sees one variable as two things.
+The carrier is what crosses a boundary: a receiver, a shared handle, or an ordinary local -- never a
+static or lifted variable as such. Lifting is a storage strategy, not an identity change: a lifted
+automatic variable keeps its own source origin, and is reached as a member access over a handle
+carrier whose own origin is a synthesized one. The variable's origin never becomes the handle's
+origin, so capture deduplication never sees one variable as two things.
 
 ### Closure layout and construction (layers 3 and 4)
 
@@ -266,22 +281,22 @@ A closure's captured state splits between the code (the closure type it reads) a
 construction of that struct):
 
 ```text
-callable code . closure : the receiver's type, named capture fields { carrier_origin, type }
-closure field           : a field { FieldId, carrier_origin, type }
-closure value . construction   : a closure construction at the construction site
+callable code . closure       : the receiver's type, named capture fields { carrier_origin, type }
+closure field                 : a field { FieldId, carrier_origin, type }
+closure value . construction  : a closure construction at the construction site
 ```
 
 - A closure field is **not** an activation local: it is a field of the closure, set once per closure
   construction, whereas an activation local is created per invocation.
 - A field names the **carrier** transported across the boundary, not necessarily the source variable
-  later reached through it. Several promoted variables sharing one activation handle capture that
-  one handle once.
+  later reached through it. Several lifted variables sharing one handle capture that one handle
+  once.
 - Snapshot / alias / owning is the field's **type** -- a value type is a snapshot, a reference type
   aliases an enclosing cell, a shared handle owns. There is no separate capture-mode field.
 - A field's identity is its `FieldId` (keyed by the carrier origin), assigned when the capture is
   discovered and independent of physical order. Canonical ordering fixes only the physical field
-  layout (`compiler_generated_storage.md`); the invoke body reads by field id and is never rewritten
-  to follow a layout change.
+  layout ([`compiler_generated_storage.md`](compiler_generated_storage.md)); the invoke body reads
+  by field id and is never rewritten to follow a layout change.
 
 **Closure-construction sequencing.** The closure is constructed at the closure construction site,
 before the value exists. A field source that cannot be evaluated safely in place -- one with a side
@@ -303,8 +318,8 @@ outside the body's boundary is captured automatically, and the view is the closu
 applied to the origin's relation to the closure's construction scope. For a `fork` branch, the
 construction scope is the explicit set of the fork's own block-item declarations: an origin in that
 set is snapshotted, an enclosing origin aliases, and an enclosing origin a longer-lived body could
-outlive is promoted upstream to an owning carrier. The relation is set membership over origins,
-never a depth.
+outlive is lifted upstream to an owning carrier. The relation is set membership over origins, never
+a depth.
 
 A value a deferred body must freeze at construction time but that is not a source variable -- a
 non-blocking assignment's target reference and operand snapshots, a postponed `$display`'s
@@ -338,7 +353,7 @@ the canonical carrier (a projection or temporary) or they are in fact distinct c
    construction versus a per-invocation local.
 4. A closure field's snapshot / alias / owning nature is its type; there is no parallel capture-mode
    field.
-5. A source variable's origin is invariant under promotion; promotion changes its carrier, never its
+5. A source variable's origin is invariant under lifting; lifting changes its carrier, never its
    identity.
 6. Closure fields are evaluated at the construction site in capture order; a non-inline source is
    materialized as a sequenced temporary, and the canonical field layout never reorders an
@@ -346,36 +361,47 @@ the canonical carrier (a projection or temporary) or they are in fact distinct c
 7. Capture view is decided by closure-kind policy from the origin's relation to the construction
    scope, never by lexical depth and never by first-use order.
 8. Every non-parameter local has exactly one declaration site; every reference to it is lexically
-   dominated by that site and does not escape its lexical lifetime. (Flat per-callable locals lose
-   the per-block arena's accidental guard, so this is a construction invariant and a dumper / verify
-   check.)
+   dominated by that site and does not escape its lexical lifetime. Flat per-callable locals have no
+   per-block arena to keep a reference inside its block, so this is a construction invariant and a
+   dumper / verify check.
 
 ### Additional forbidden shapes
 
+Each fails a representation invariant above.
+
 - A closure field represented as an activation local, or a capture-read node distinct from field
-  access. A captured read is ordinary field access over the closure receiver.
-- A closure field's physical layout position used as the stable identity of a captured binding. The
-  identity is the origin (via its `FieldId`); the physical position is only a layout representation.
-- A structural value tuple standing in for the closure environment. The environment is a nominal
-  closure with named fields, not a positional tuple (`compiler_generated_storage.md`).
+  access. It fails representation invariant 3: a captured read is ordinary field access over the
+  closure receiver.
+- A closure field's physical layout position used as the stable identity of a captured binding. It
+  fails representation invariant 2: the identity is the origin, through its `FieldId`.
+- A structural value tuple standing in for the closure environment. It fails representation
+  invariant 2: a positional tuple has no field identity apart from its layout, where the environment
+  is a nominal closure with named fields
+  ([`compiler_generated_storage.md`](compiler_generated_storage.md)).
 - A source-resolution entry point that returns a direct binding in one case and a carrier or member
-  access in another. Source resolution and carrier availability are distinct steps.
-- A capture-mode flag or enum beside the slot type.
+  access in another. It fails representation invariant 1: source resolution and carrier availability
+  are distinct steps.
+- A capture-mode flag or enum beside the slot type. It fails representation invariant 4.
 - A capture view chosen by lexical nesting depth, or by the first use encountered during traversal.
-- A promoted variable whose origin becomes its activation handle (one variable, two origins).
+  It fails representation invariant 7.
+- A lifted variable whose origin becomes its handle's (one variable, two origins). It fails
+  representation invariant 5.
 - An environment slot source left as a detached side-effecting expression, relied upon to evaluate
-  correctly without an explicit sequencing point.
-- A stored lexical-scope id duplicating the block tree, used to decide capture policy.
+  correctly without an explicit sequencing point. It fails representation invariant 6.
+- A stored lexical-scope id duplicating the block tree, used to decide capture policy. It fails
+  invariant 8: block structure does not resolve references, and the construction-scope set is the
+  one fact a policy needs.
 - A binding subsystem inventing a second projection or place language instead of reusing the
-  existing access expressions.
+  existing access expressions. It fails representation invariant 1: a projection is an ordinary
+  access expression.
 
 ### Reconciliation with sibling contracts
 
-- `mir.md`: the binding arena is the callable's, not a per-block one. The body's receiver is an
-  ordinary binding: `self` for a directly-invoked instance callable, a borrow of the closure or its
+- [`mir.md`](mir.md): the binding arena is the callable's, not a per-block one. The body's receiver
+  is an ordinary binding: `self` for a callable entered on an object, a borrow of the closure or its
   box, by its kind, for a closure. A captured source-level `self`, or the share it is reached
   through, is a field of the closure, distinct from the closure receiver.
-- `callable.md`: the captured state is the closure (`compiler_generated_storage.md`), a
-  per-closure-site nominal value type, not a prefix of the per-invocation parameter list and not a
-  general value product. The snapshot-or-alias-by-type rule (`callable.md` invariant 5) is retained
-  and is the reason capture mode is not a separate field.
+- [`callable.md`](callable.md): the captured state is the closure
+  ([`compiler_generated_storage.md`](compiler_generated_storage.md)), a per-closure-site nominal
+  value type, not a prefix of the per-invocation parameter list and not a general value product. The
+  snapshot-or-alias-by-type rule is retained and is the reason capture mode is not a separate field.

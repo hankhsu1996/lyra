@@ -185,6 +185,6 @@ place a case is compared against text a tool wrote.
 ## Cross-references
 
 - [case-shape](case-shape.md) -- the shape this extends, and the judgement every claim is read by.
-- `../../../docs/decisions/qualified-statement-violation-check.md` -- the requirement that forced
-  this, and what the corpus could not see about it.
+- `../../../docs/architecture/language_conformance.md` -- the requirement that forced this, and what
+  the corpus could not see about it.
 - `../../README.md` -- the contract cases are written against.

@@ -1,8 +1,9 @@
 # CLAUDE.md
 
-Layer contracts live under `docs/architecture/` and settled choices under `docs/decisions/`.
-`docs/README.md` indexes them, and `docs/style.md` governs writing them. Gaps against those
-contracts are GitHub issues, written and linked as `CONTRIBUTING.md` says.
+Layer contracts live under `docs/architecture/`, each subject stated once as it holds now, and the
+few choices of direction behind them under `docs/decisions/`. `docs/README.md` indexes them, and
+`docs/style.md` governs writing them. Gaps against those contracts are GitHub issues, written and
+linked as `CONTRIBUTING.md` says.
 
 ## Commands
 
@@ -77,14 +78,14 @@ slang driver, and a standalone `--` ends it; what follows is the simulation's ow
 21.6 plusargs go. `--backend cpp|llvm` picks the backend, `-O0` to `-O3` trade build time for
 simulation speed as a C++ compiler's do, `--lto` optimizes the design together with the runtime,
 `--sanitize address` builds a program that stops at its first read of storage that has ended
-(`docs/decisions/a-program-is-checked-by-the-sanitizer-of-whoever-instrumented-it.md`), and
-`--time-trace` and `--stats-file` read where a run's cost went off the run itself. A build is kept
-in the user's cache directory by what it read, so `--rebuild` is how to build as though nothing were
-kept. `-j` says how many units are lowered and compiled at once, one by default
-(`docs/decisions/a-build-is-told-how-wide-to-run.md`), and every text Lyra reads finds `__lyra__`
-defined as 1 beside the front end's `__slang__` (`docs/decisions/project-file.md` D10).
-`lyra --help` is the authoritative option list, and why each behaves as it does is in
-`docs/decisions/`.
+(`docs/architecture/building_a_program.md`), and `--time-trace` and `--stats-file` read where a
+run's cost went off the run itself. A build is kept in the user's cache directory by what it read,
+so `--rebuild` is how to build as though nothing were kept. `-j` says how many units are lowered and
+compiled at once, one by default (`docs/architecture/compiling_a_design.md`), and every text Lyra
+reads finds `__lyra__` defined as 1 beside the front end's `__slang__`
+(`docs/architecture/project_model.md`). `lyra --help` is the authoritative option list; how each
+behaves, and why, is in `docs/architecture/`, and `docs/decisions/` holds only the choices of
+direction behind it.
 
 ## SystemVerilog version
 
@@ -129,7 +130,7 @@ Nearly every test is a conformance case under `conformance/cases/`: a self-check
 program stating what IEEE 1800 requires of it. The outer directory is the LRM clause, the inner one
 is the subject, and `main.sv` is the entry. `conformance/README.md` is the contract every case
 answers to, and `conformance/docs/decisions/` records why it has that shape;
-`docs/decisions/lyra-is-held-to-the-conformance-suite.md` says what Lyra records of its answers.
+`docs/architecture/testing_strategy.md` says what Lyra records of its answers.
 
 A case names no path. What a path currently refuses is recorded once for the path in
 `tests/paths/<path>.yaml`, and a case that starts passing fails until its entry is dropped, so the
@@ -192,9 +193,10 @@ reads follows `docs/messages.md`.
   a complete lowering path in the same change.
 - **Whatever shape it takes, that set is consumed by a `switch` or a `std::visit`, never by `==`**,
   so gaining an alternative breaks the build until every consumer says what it means. That last
-  clause is what a catch-all switches off, so it takes three rules in
-  `tools/policy/check_architecture.py`: A013 for the comparison, A020 for a `default:` arm, and A021
-  for a visit arm that names no alternative.
+  clause is what a catch-all switches off, so `tools/policy/check_architecture.py` takes three
+  rules: A013 that some `switch` names an enumeration's alternatives at all, A020 against a
+  `default:` arm, and A021 against a visit arm that names no alternative. Nothing checks for an `==`
+  consumer; that part is the reader's to catch.
 - **One namespace per directory**; a sub-namespace with no corresponding folder is not one.
 - **ASCII only in source and docs**, enforced by `tools/policy/check_ascii.py`. In markdown,
   backtick underscored SV keywords (`always_comb` and friends) or Prettier mangles them and the

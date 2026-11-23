@@ -1,7 +1,7 @@
 # Instance Array
 
-**Definition.** One named member whose type is a vector of [owning pointers](owning-pointer.md) to a
-child [object](object-type.md), expanding to a vector of independent child objects; a
+**Definition.** One named member whose type is a vector of [borrowed handles](borrowed-handle.md) to
+child [objects](object-type.md) the runtime object tree owns, one handle per element; a
 multidimensional array nests the vector wrapper.
 
 **Contrast.** Not a _generate construct_. An instance array is a cardinality property of one

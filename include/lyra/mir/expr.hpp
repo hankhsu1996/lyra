@@ -543,7 +543,7 @@ struct TaggedUnionExpr {
 // Waiting for an execution to reach its end (LRM 13.3 task enable): the
 // execution `execution` evaluates to takes over the thread, and control comes
 // back here once it completes, with the value it completed with. `Expr::type`
-// is that value -- a task's output pack, or `Void` for one with no outputs.
+// is that value, the awaited coroutine's completion payload.
 //
 // Invariant, shared with `WaitExpr`: it appears only at statement top level --
 // as the expression of an `ExprStmt`, or as the right-hand side of the

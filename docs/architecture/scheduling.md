@@ -10,9 +10,12 @@ it is due in, and continues running. The engine invokes those closures when thei
 runs, and where the slot to run in is not yet knowable, what is handed over is an execution that
 finds it.
 
-This doc covers the decisions behind the engine itself: process model, suspension protocol, region
-structure, deferred work, how a run ends, and the MIR boundary. Sensitivity tracking, change
-detection, and edge detection are separate runtime subsystems.
+This doc covers the engine and what an execution waits for: the process model, what a wait watches
+and what a write tells it, region structure, deferred work, how a run ends, and the MIR boundary.
+What an activation is belongs to [activation.md](activation.md), the order processes start in at
+time zero to [elaboration_lifecycle.md](elaboration_lifecycle.md), what a net shows to
+[net_resolution.md](net_resolution.md), and what an assertion evaluates and when to
+[assertions.md](assertions.md).
 
 ## Processes and tasks are coroutines, or reactions
 
@@ -35,44 +38,237 @@ is created (LRM 18.14.1). The runtime holds one thing as running at a time -- a 
 reaction, or code on no thread. The code running reads what is in force from it, and a stop parks
 it.
 
-Every wait is part of that state too. It enrols on what it watches for its whole life, which is as
-short as its use allows: outside the innermost loop around its stop for a wait on storage that stays
-the same every time the body reaches the stop, so each pass stops at the one wait, and in a block of
-its own around the stop where no loop repeats it. One only the stop can name, a delay's amount or a
-fork's branches, is built at the stop, and so is one that reads a variable the body declares. A stop
-only marks the activation as parked on it; an occurrence while one is parked wakes it, and any other
-occurrence wakes nothing. That is the C++ and Rust shape of the same thing -- an awaitable is a
-local of the coroutine, declared where its inputs are known, and a stop only awaits it. A
-procedure's timing control asks afresh at its next stop, since it waits only for what happens once
+Every wait is part of that state too. A body stops in exactly one way, at a wait it holds, through
+the one entry every timing control shares; the only other way it gives up control is a foreign task
+carried on a fiber (LRM 35.9), which waits for no occurrence. A wait enrols on what it watches for
+its whole life, which is as short as its use allows: outside the innermost loop around its stop for
+a wait on storage that stays the same every time the body reaches the stop, so each pass stops at
+the one wait, and in a block of its own around the stop where no loop repeats it. One only the stop
+can name -- a delay's amount, a fork's branches, what an evaluation reached -- is built at the stop,
+and so is one that reads a variable the body declares, which exists only from its declaration on
+(LRM 6.21) and is reached in the frame that declared it. A stop only marks the activation as parked
+on it; an occurrence while one is parked wakes it, and any other occurrence wakes nothing. That is
+the C++ and Rust shape of the same thing -- an awaitable is a local of the coroutine, declared where
+its inputs are known, and a stop only awaits it. A wait on a standing state is reached by each
+change on the way there and asked whether the state holds now: a `join` watches each branch's
+termination, which a killed branch reaches as surely as one that ran out (LRM 9.3.2), `wait fork`
+the process's children (LRM 9.6.1), an `await` its target's termination (LRM 9.7).
+
+A procedure's timing control asks afresh at its next stop, since it waits only for what happens once
 it is reached (LRM 9.4.2); a continuous assignment or a procedural continuous assignment is
 sensitive whenever it executes, its own update included (LRM 4.9.1, 4.9.2), so its wait keeps a
 change the process makes itself while it runs, and its next stop places it again in the Active
-region of its set. What a write tells a wait is whether the part the wait watches may have changed:
-the write holds the value it replaced and the one it left, so it answers once for every wait on that
-storage, a part inside the part written included, and passes over each it shows unaffected. An
-observation that answers for a change of value itself still compares, since a write's account is
-only as good as every kind of write giving it: an event control waits for a change in its
-expression's value from where the wait began (LRM 9.4.2), and a foreign callback on a value or a
-size change, or on a class variable, keeps what it last read (LRM 38.36.1)
-([a-write-compares-what-it-reached](../decisions/a-write-compares-what-it-reached.md)). Every write
-is told to every wait as it is made (LRM 4.3, 4.7), with one exception a build asks for: in a design
-built to coalesce combinational updates, where an `always_comb` or `always_latch` writes what
-another reads, the reader is triggered by the net change the writer's execution leaves of it: each
-execution is an interval, a variable it watches keeps the original of each part the interval
-modifies, and the two are compared, and what moved told, when the interval ends -- as the execution
-ends, and whenever such a reader begins or stops listening, armed, stopped or started again, or
-moved by a force or a release; a value written and written back within one interval wakes nothing
-(LRM 9.2.2.2).
+region of its set. Only a change the process makes itself is kept: one another process makes while
+this one waits in a queue is read by the evaluation that run makes. Stopping a process from outside
+takes it off its wait and keeps the wait; starting it again asks the wait afresh -- an event control
+measures from what its expression is worth then, a delay compares its deadline, and a `wait (cond)`
+answers "satisfied" so that the body's own loop reads the condition, which is why a level wait is
+built by a call of its own (LRM 9.7, `activation.md`).
 
 A task is enabled with `co_await`: enabling a time-consuming task suspends the enabling process
 until the task completes (LRM 13.3). The scheduler resumes the innermost suspended frame, and each
 completed task transfers control back to its enabler, so suspension flows through the whole enable
 chain without the engine tracking call depth.
 
-Fibers are rejected: per-process stacks would multiply memory by orders of magnitude for any
-nontrivial design. Coroutine frames hold only the locals live across suspension points. Hand-rolled
-state machines are rejected: they would force HIR-to-MIR lowering to thread resumption state through
-every statement that might suspend, defeating the structured form MIR is designed to carry.
+A stackful thread per process fails the iteration-time target (`north_star.md` invariant 1): its
+stack multiplies memory by orders of magnitude for any nontrivial design, where a coroutine frame
+holds only the locals live across a suspension. A hand-rolled state machine fails `mir.md`'s
+structured form: HIR-to-MIR lowering would thread resumption state through every statement that
+might suspend.
+
+## What a wait watches, and what a write tells it
+
+`storage.md` keeps three identities apart -- the storage a write lands in, the entity its update
+event is raised on, and the expression a process waits on -- and owns what a write reports: which
+entity it updates and what it compares (its invariants 12 and 13). This section owns the expression
+a process waits on and how a write's report reaches the waits.
+
+### An event control watches an expression
+
+An event control waits for a change in the value of its expression from where the wait began (LRM
+9.4.2). That value is no storage's, so the wait keeps it and compares, and nothing else keeps it. An
+event list is a list of leaves, each with its own expression, its own last value, its own predicate
+-- any change, or an edge of the least significant bit -- and its own gate. `or` ORs events rather
+than operands (LRM 9.4.2.1), so `@(a or b)` fires on a change of `a` whether or not `a | b` moved;
+`iff` binds to one leaf and is read only once that leaf's expression has moved, never watched (LRM
+9.4.2.3). A leaf's last value advances on every candidacy, fired or held back by its gate, so it is
+never compared against a value the design has left behind. A named event is a leaf over the object
+the event names where the wait begins, compared by how many times it has been triggered (LRM
+15.5.2), which is why an event and a value change stand in one list and `wait (e.triggered)` needs
+nothing of its own. An event that names no object is one nothing can trigger: triggering it does
+nothing, a wait on it waits as long as the run lasts, and its `triggered` answers 0 (LRM 15.5.5.2).
+An edge operand is anything of the standard's integral set (LRM 6.11.1).
+
+What a leaf depends on is what its last evaluation reached, not what its text names. LRM 9.4.2
+requires a change to an object's data member, an aggregate element or a dynamic array's size read by
+a method to reevaluate the expression, and permits reevaluating for members the method never read.
+So a class object is one event source for all of its properties, and a write publishes to the
+innermost object its place dereferenced, or to the declared variable where it dereferenced none.
+Each evaluation re-collects what the leaf depends on and compares against the last value like any
+other: `p = q` satisfies `@(p.status)` exactly when the new object's `status` differs, which is the
+clause's own example. A null handle reached is the program's error (LRM 8.4, 25.9). One source per
+property is admissible wherever it pays and is never owed. A wait on a class handle or `chandle`
+variable itself ends at a write naming a different object or pointer, null included, and a write
+naming what the variable already names is no event (LRM 9.4.2); a wait on a property of the object
+is another wait, on the object.
+
+An implicit sensitivity -- an `always_comb` or `always_latch` body, an `@*`, a `wait (cond)`, a
+continuous assignment, the evaluation of a procedural continuous assignment -- has no value to
+compare: being reached by a change of what it reads runs it (LRM 9.2.2.2.1, 9.4.2.2, 9.4.3, 10.3).
+`wait (cond)` is a loop that retests the condition around such a wait, which is what makes a
+compound condition correct where a one-shot control on the same reads would not be. An empty list is
+legal and never wakes: a process whose list is empty runs once and waits for ever.
+
+### What an implicit list holds
+
+The list is what the text reads, each read as the longest static prefix of what it selects (LRM
+11.5.3, 9.2.2.2.1), less what the node itself brings into being -- an automatic it declares, a
+formal, an array method's iterator, a pattern's binding -- none of which holds anything from outside
+it (LRM 6.21). A static a wait's expression or an `@*` statement declares exists from time zero and
+stays; an `always_comb` or `always_latch` leaves out every variable its block declares, statics
+included (LRM 9.2.2.2.1). Read from the text:
+
+- **No path is ruled out by a value.** A branch a parameter or a generate index never takes is read
+  all the same, since the clause lists what is read within the block. The requirement is that one
+  body compiled for many constructions reads the same in each (`north_star.md` invariant 2); a
+  branch's constant is supplied at construction. It costs wake-ups and never a value.
+- **Reads keep the order the text makes them**, so two lowerings of one text compare equal and stay
+  one body.
+- **Each read keeps the names that reached it.** A name through an interface port reaches whatever
+  each instance binds the port to (LRM 25.3), so it is watched through the port, as an expression
+  through the port is read.
+- **A query whose answer is its operand's current extent reads the operand** -- `$bits` of a
+  dynamically sized value, `$size` of a queue (LRM 20.6.2, 20.7) -- and one the type fixes reads
+  nothing, which the query's lowering decides where it folds the constant.
+- **An `always_comb` or `always_latch` leaves out what its block and the functions it calls write**
+  (LRM 9.2.2.2.1), where the write's part is named exactly (below) and a read of that part is taken
+  out whole or by bits. An `@*` keeps them, since another process's write of what it both writes and
+  reads changes what it computes (LRM 9.2.2.2.2).
+- **An `@*` leaves out a variable its statement uses only to control its `for` loops.** Assigned
+  before every read, it carries nothing in, so leaving it out changes how often the statement runs
+  and never what it computes, and two statements looping over one shared variable settle instead of
+  waking each other for ever. A control variable the statement names outside its loops stays.
+- **A called function reports what it reads where the call reaches it.** Ahead of the procedure's
+  first run, each call it makes is handed the report parameter a wait hands (below), told to run
+  nothing: the function states what its text reads and writes and makes each call the list follows,
+  with every argument defaulted. A call on a class object or through a virtual interface adds only
+  its arguments (LRM 9.2.2.2.1). The list follows no handle, so it is collected once at time zero,
+  each place listed once, and no unit reads another's body (`north_star.md` invariants 4 and 5).
+
+### Who evaluates
+
+A wait is decided by its process: a change to anything its last evaluation reached makes the process
+a candidate, and it evaluates the expression and the qualifier once, compares, and waits again on
+what that evaluation reached (LRM 4.5, 9.4.2, 9.4.2.3). Where the expression and qualifier read
+nothing but storage elaboration bound, the change decides instead, evaluating them where it lands:
+LRM 4.7 permits that schedule, and such an evaluation does nothing, fails in no way and depends on
+no process, so nothing can tell it from the process evaluating. It saves resuming a process to learn
+a change was no event -- every falling edge of `@(posedge clk)`. Which side a wait is on is a
+question about the expression, answered as clang's `Expr::HasSideEffects` walks: a call, a write, a
+read through a handle or a virtual interface, or a property read makes the process decide.
+Evaluating any other expression at the change fails LRM 4.5, which makes evaluation an event of the
+waiting process: the writer would run the waiter's calls, writes and failures on its own stack, and
+a call writing what it watches re-enters its own evaluation.
+
+The one evaluation states what it reaches, because a second evaluation runs a function's effects
+twice. Every function and class constructor takes one more parameter, the report of the evaluation
+it runs in, and hands it to each call and construction it makes; an ordinary call hands none. Handed
+one, a body states the cells its text reads as it is entered -- whole, however it branches, which
+LRM 9.4.2's permission to reevaluate covers -- and each object it reads a property on and each
+interface variable it reads through a handle as it reaches it. A function is compiled in two forms
+from its body: the one every call, dispatch slot and export reaches, which states nothing and,
+handed a report, defers to the other; and the recording form, reached only through the first, so it
+has no name of its own anywhere a call is resolved. Units compile apart, so what a callee reads can
+only be stated by the callee as it runs (`north_star.md` invariants 4 and 5). Foreign code is
+reached only through the exports it calls, and a parameter cannot cross the foreign boundary, so an
+export finds the evaluation in progress from the running execution -- the one place the report is
+found rather than handed. What no wait can watch fails the simulation at the wait that reached it,
+as the design's run-time error, and leaves the function compiling as before.
+
+A wait watches what it read and keeps none of it. Handles keep an object (LRM 8.29) and a wait is
+none, so an object nothing else refers to ends, and its end tells the waits on its properties
+nothing, since nobody can write what is gone. A handle's last value is a weak reference to the
+object, so one made where an expired one lay is another value. An object a weak reference answered
+is watched for its expiry, which changes what the reference answers (LRM 8.30.3); its waits are told
+once the execution running at the expiry hands back control, in the slot it expired in, never during
+the destruction, since a wake can run the design's code at once.
+
+### What a write tells
+
+A write raises one update, on the declared variable it reaches or on the innermost object its place
+dereferenced, whatever depth it landed at ([`storage.md`](storage.md) invariant 12); which one is
+resolved at run time where the place goes through a handle or a reference. The update says which
+part it reached. A part of a variable is named by the path of steps that reach it -- a member of an
+unpacked structure by its index, an element of an unpacked array by its ordinal (LRM 7.2, 7.4) --
+ending at a range of bits inside a packed value and at a range of elements for a slice (LRM 7.4.1,
+7.4.6). Two paths concern the same storage exactly where one is a prefix of the other. A path holds
+a bounded number of steps; past the bound, at a select no step stands for (an associative array's
+index, LRM 7.8), and from a queue or dynamic array a reference points into -- whose element is not
+its position (LRM 13.5.2, 7.10.3) -- the path ends and is inexact, covering more than the source
+wrote, so it misses no write and no wait; a procedure's own write is taken out of its list only
+where its path is exact. No layer states where a part lies: HIR states the select the source wrote,
+MIR a variable and its steps.
+
+A variable keeps its waits on a tree shaped like its parts, each node made when a wait first needs
+it. A write that changed something tells the waits on the part it reached what it did there, the
+waits on what that part lies in which element or member of theirs it went into, and the waits inside
+it whether their part changed; waits anywhere else are not visited. The requirement is twofold: a
+process waiting on part of a variable is woken by a write exactly when the write reached some of it,
+which an implicit sensitivity is owed because its list is stated part by part (LRM 9.2.2.2.1); and a
+write costs what it wrote and the waits on what it wrote. Where writing a part changes more than the
+part, the written path stops sooner than a watched one: every member of a union is one storage (LRM
+7.3), so a member's write reports the union, and a character's write reports the string. A written
+path is therefore a prefix of every watched path it can change, and the walk reaches every wait the
+write can affect.
+
+What the write compares, and where it can say only that a part may have changed, is
+[`storage.md`](storage.md) invariant 13; a write of bits of a packed value tells each wait which of
+its bits moved. An observer that answers for a value compares for itself, while an implicit
+sensitivity takes the telling as it comes, an extra run costing time and no value.
+
+So what a change is measured from has one holder per kind of observation: an observation of storage
+asks the write, which holds what it replaced; an observation of an expression's value keeps that
+value itself; a per-interval observer is told from the originals its interval keeps (below). The
+engine keeps no earlier value of anything.
+
+Where a wait on a place watches is asked of the type that stands for the place's storage, and every
+place a wait or a read report names is handed to that one question however it was reached: a
+variable's cell answers itself, a net what it shows its value through, and a reference the member it
+was bound into, so a wait built on a port follows a force on it (LRM 10.6.2). A place that is no
+variable, net or reference is storage nothing is told a write to.
+
+Every write is told to every wait as it is made (LRM 4.3, 4.7), with one exception a build asks for:
+in a design built to coalesce combinational updates, where an `always_comb` or `always_latch` writes
+what another reads, the reader is triggered by the net change the writer's execution leaves of it
+(LRM 9.2.2.2). Each execution of such a procedure is an interval, and one interval is open at a
+time. A write announces the part it modifies immediately before it lands, with no code run between.
+Where an interval is open and a per-interval observer watches the variable, the variable keeps that
+part's original, unless it keeps one of a part holding it already, and the write is accumulated: a
+per-change observer is told it as it lands, a per-interval observer only when the interval ends,
+from the original against what the part then holds, so a value written and written back within one
+interval wakes nothing. What is kept costs what the write touched: a write of bits of a packed value
+keeps the words those bits lie in, and a member of an unpacked union keeps the union every member
+reads; an array whose size the run sets is kept whole, at its first modification in the interval. A
+part a path names inexactly -- past the bounded depth, or through a reference into an array whose
+size changes -- is never kept itself; it is accumulated only where a part holding it is kept, and
+told as it lands otherwise, which costs its reader a run and never a value. A class property's
+write, and any occurrence that is no write of a variable, are told as they land.
+
+The interval ends as the execution ends, and whenever such a reader begins or stops listening --
+armed, stopped or started again, or moved by a force or a release -- so none is told what changed
+before it listened, nor misses what changed while it did. It ends for every per-interval observer at
+once, which is the dialect's stated limit: a reader beginning or stopping to listen while another
+procedure's execution is under way cuts that execution's interval in two, so a change the whole
+execution cancels can be told, and its reader run once more.
+
+One membership primitive serves every target a wait or a queue enrols on -- a cell, an object, a
+named event, a cancellation, a fork's parent, a process's termination, a region queue: an intrusive
+ring the target anchors with two links and nothing else, whose member unlinks itself without naming
+the target, and whose one payload means what its target says. The ring is what lets a later slot's
+queue join the current one in constant time. What decides whether a change is an event lives on the
+wait, once, never on a membership. A target that needs an operation the ring lacks is a reason to
+revisit the ring; a second primitive beside it puts two kinds of membership in every list the
+scheduler walks.
 
 ## The engine is a mechanism, not a semantics holder
 
@@ -109,25 +305,26 @@ per-construct branch.
 
 **Invariant:** the engine branches only on queue and region, never on the kind of construct an
 execution came from, because what a construct means lives in what it waits for. A per-construct case
-inside the engine's resume or dispatch path fails that, and so does a note an execution leaves for
-the scheduler to read in place of a placement. When a construct seems to require the engine to ask
-"is this an X?", the neutral verb set is missing a primitive -- add the primitive, do not teach the
-engine the construct. Which region set a thread runs in is not such a note: the standard places a
-thread by it as it places one by time (LRM 24.3.1), so it is part of the placement, chosen where the
-placement is and never read by the dispatch. Nor is where a satisfied wait places an execution: in
-the Active region of its set, as every thread is, or at the occurrence itself, once every wait it
-reached has been asked and before the execution that made it occur goes on, which is how a
-covergroup is sampled on its event (LRM 19.3). It is held beside the region set, chosen where the
-execution is started and passed on to nothing it starts, and read by the one verb that wakes; an
-asynchronous runtime holds the same choice in the same place, as the dispatcher of a coroutine's
-context, one of which resumes a coroutine in whatever resumed it. The executions an occurrence wakes
-there run in the order they began to wait on it, and one that waits again from inside the occurrence
-waits behind those already waiting, so executions that began to wait in some order keep that order
-across every occurrence they wait out; the placements they then make into one region of one slot run
-in the order made. A clocking block's drives rely on exactly this to land, of those maturing
-together, in the order they were made (LRM 14.16.2). Running it only once the waits have all been
-asked is what an event library does when it copies its listeners before calling them: no code of the
-design runs while the list it was reached through is walked.
+inside the engine's resume or dispatch path fails that additivity, and so does a note an execution
+leaves for the scheduler to read in place of a placement. When a construct seems to require the
+engine to ask "is this an X?", the neutral verb set is missing a primitive -- add the primitive, do
+not teach the engine the construct. Which region set a thread runs in is not such a note: the
+standard places a thread by it as it places one by time (LRM 24.3.1), so it is part of the
+placement, chosen where the placement is and never read by the dispatch. Nor is where a satisfied
+wait places an execution: in the Active region of its set, as every thread is, or at the occurrence
+itself, once every wait it reached has been asked and before the execution that made it occur goes
+on, which is how a covergroup is sampled on its event (LRM 19.3). It is held beside the region set,
+chosen where the execution is started and passed on to nothing it starts, and read by the one verb
+that wakes; an asynchronous runtime holds the same choice in the same place, as the dispatcher of a
+coroutine's context, one of which resumes a coroutine in whatever resumed it. The executions an
+occurrence wakes there run in the order they began to wait on it, and one that waits again from
+inside the occurrence waits behind those already waiting, so executions that began to wait in some
+order keep that order across every occurrence they wait out; the placements they then make into one
+region of one slot run in the order made. A clocking block's drives rely on exactly this to land, of
+those maturing together, in the order they were made (LRM 14.16.2;
+[verification_constructs.md](verification_constructs.md)). Running it only once the waits have all
+been asked is what an event library does when it copies its listeners before calling them: no code
+of the design runs while the list it was reached through is walked.
 
 ## Deferred work is a closure submit, not a suspension
 
@@ -181,32 +378,46 @@ in (LRM 18.14.2).
 **Once the Postponed region is reached no earlier region of the slot runs again** (LRM 4.4.2.9), so
 the Postponed region runs what is placed in it while it runs, a final deferred assertion's action
 among it (LRM 16.4.1), and a placement into an earlier region of the slot is the design's error,
-reported once the region has run. A violation report made there matures there, since the slot has no
-Observed region left and the active set can glitch no more; an observed deferred assertion reached
-there has no Observed or Reactive region left and is refused at its statement. Once the simulation
-is over no region runs at all, so a violation report or a final deferred assertion made in a final
-procedure matures, and acts, as it is made, and an observed one is refused as in Postponed.
+reported once the region has run. A violation report made there matures there -- it belongs to the
+process that made it ([runtime_model.md](runtime_model.md)) -- since the slot has no Observed region
+left and the active set can glitch no more; an observed deferred assertion reached there has no
+Observed or Reactive region left and is refused at its statement. Once the simulation is over no
+region runs at all, so a violation report or a final deferred assertion made in a final procedure
+matures, and acts, as it is made, and an observed one is refused as in Postponed. How a deferred
+report matures and is withdrawn is `assertions.md`'s.
 
 **What an effect is and when it is due are two questions, and only the second decides the shape.**
 The standard writes the second one the same way wherever it appears: a nonblocking assignment and a
 nonblocking event trigger both name an optional delay-or-event control and both land in the NBA
 region of the slot it names (LRM 9.4.5, 15.5.1). So the deferral is one envelope taking whatever the
 effect is, and a construct that gains a deferred spelling adds no placement machinery of its own.
-One statement's whole effect goes in one of these, however many places it writes, which is what
-makes a control it carries read once rather than once per write.
+What the effect acts on is fixed where the statement stands, as a nonblocking assignment's target is
+(LRM 10.4.2): a nonblocking trigger reads its event there and triggers the object that event named
+then, whatever the variable names by the time the effect runs. One statement's whole effect goes in
+one of these, however many places it writes -- a destructuring left-hand side (LRM 11.4.12) included
+-- which is what makes a control it carries read once rather than once per write.
 
 **Where the placement is not yet knowable, what is handed over is an execution rather than a
 closure.** An effect due on an event (LRM 9.4.5, 15.5.1) has a region but no slot: which slot it
 lands in is whichever one the event happens in, and nothing where the statement stands can say. So
-the process snapshots its inputs the same way, into an execution that waits for the event and then
-places itself in the region -- and keeps running, exactly as it does for a submit. The waiting is
-the only part that is new; what the effect does, and to what, are settled where the statement stands
-as they are for every other deferred effect.
+the process freezes what the effect writes and where, as it does for every nonblocking update (LRM
+10.4.2), into an execution that waits for the event and then places itself in the NBA region of the
+slot it lands in, and writes when it resumes there. The execution is run up to its wait as the
+statement is reached, before the process carries on: the control is executed by the statement, so a
+change the process makes straight after it is an event for the wait, and a run-time error evaluating
+the control before the wait begins is the statement's, raised in the process. Once it waits, an
+error is its own. A repeat count (`repeat (n) @(ev)`) is read once at the statement and is a loop
+around the wait. Two updates of one variable from one procedure land in the order the statements
+ran, since their executions began to wait, woke and placed themselves in that order. A `disable`
+that reaches the process does not cancel a pending update -- LRM 9.6.2 leaves the outcome open, and
+this is the answer an update carrying a delay already gives.
 
 That execution belongs to no lineage. The standard makes no process of a pending update, so nothing
 that names processes may find it: `wait fork` does not wait for it and `disable fork` does not reach
 it (LRM 9.6.1, 9.6.3). **Forbidden:** giving such an execution a parent to reuse the spawning path,
-which makes the update visible to process control the standard never put it under.
+which fails LRM 9.6.1 and 9.6.3 by putting the update under process control the standard never put
+it under. A membership naming a closure rather than an activation fails the single membership
+primitive above, since every consumer of a fired membership would branch on which it got.
 
 An assertion's action is another execution of no lineage. Its placement is known -- Reactive, or
 Postponed for a final deferred assertion -- but what runs there is a procedural statement that may
@@ -229,13 +440,13 @@ itself asks nothing, because the same statement outside a function is never refu
 assertion's action may write `x <= 1` directly -- and one thread runs both, with no record of how
 deep in calls it is.
 
-Yield-based alternatives are rejected because they would entangle the deferred effect's commit time
-with the process's resumption schedule. A process that does `q <= d; #5; ...` should not be forced
-to suspend before `#5` just because the NBA write has not yet committed; the write commits in the
-NBA region of this same time slot regardless of where the process is by then.
+A deferred effect made by suspending the process fails LRM 10.4.2, which commits a nonblocking write
+in the NBA region of its slot wherever the process is by then: a process doing `q <= d; #5; ...`
+would be held at `#5` until the write committed.
 
-**Forbidden:** routing deferred writes into per-signal queues. Every closure is submitted to one
-region queue, so commit order is the region's, not a function of which signal a write targets.
+**Forbidden:** routing deferred writes into per-signal queues. It fails LRM 4.6, which performs a
+slot's nonblocking writes in the order they were made; every closure is submitted to one region
+queue, so commit order is the region's, not a function of which signal a write targets.
 
 **An effect a later event can take back is a timer, held by whoever owns it.** A continuous
 assignment carrying a delay schedules each new value to propagate, and a different value computed
@@ -258,9 +469,9 @@ condition reads into the Active region, and which ending the wait takes back wit
 
 A time slot runs regions in LRM 4.4 order: Preponed, Pre-Active, Active, Inactive, Pre-NBA, NBA,
 Post-NBA, Observed, Reactive, ReInactive, ReNBA, Pre-Postponed, Postponed. Of that clause's PLI
-regions, these are the ones LRM Table 4-1 places a callback of foreign code in (LRM 4.10, 38.36.2);
-the rest -- Pre-Observed, Post-Observed, Pre-Re-NBA, Post-Re-NBA -- no callback names, so nothing is
-ever placed in them and they are not kept.
+regions, these are the ones LRM Table 4-1 places a callback of foreign code in (LRM 4.10, 38.36.2;
+[foreign_interface.md](foreign_interface.md)); the rest -- Pre-Observed, Post-Observed, Pre-Re-NBA,
+Post-Re-NBA -- no callback names, so nothing is ever placed in them and they are not kept.
 
 Preponed runs once on entry, then Pre-Active once, before the regions that repeat (LRM 4.5); what is
 placed in Pre-Active while it runs runs there too. Postponed runs on exit until nothing placed in it
@@ -319,9 +530,9 @@ clocking block is read in Observed from a copy kept in the NBA region (LRM 14.13
 names no region at all but the end of the pass of the region running now: what a pass did is settled
 there as one, after everything the pass held and before what it placed, as a clocking block puts
 onto an output's variable only the last value the pass's drives gave it (LRM 14.16.2). At time zero
-each set starts its processes in the same turns, the reactive set's once the active set's have
-settled; an execution of a scope woken inside each occurrence of what it waits for, which is no
-procedure, starts in the always procedures' turn.
+each set starts its processes in the same turns (`elaboration_lifecycle.md`, Activate), the reactive
+set's once the active set's have settled; an execution of a scope woken inside each occurrence of
+what it waits for, which is no procedure, starts in the always procedures' turn.
 
 `#0` delays land in **Inactive**, not Active. A user writing `#0` is asking the engine to let other
 already-pending active work finish first, then come back at this same simulation time. Pushing
@@ -341,39 +552,82 @@ timed events.
 
 ## How a run ends
 
-A simulation control task (LRM 20.2) reaches the engine's stop verb, which records that the run is
-over. No process resumes after that: the record is read where a process would be entered, so
-whatever is still parked in the in-progress slot is drained without running a statement.
+Every ending is a composition of three operations, and nothing else ends a run:
 
-Deferred effects already submitted for that slot do still run, so a nonblocking write issued before
-the request commits and a `final` procedure can read it. LRM 20.2 says only that `$finish` makes the
-simulator exit and does not say how much of the in-progress slot still happens, so this is a choice
-rather than a requirement -- which is why the corpus does not hold a case for it.
+```text
+a report     severity, the file and line the call is written at, the hierarchical name of the scope
+             it is made in, and the simulation time (LRM 20.10). Ends nothing.
+a stop       the run is over, and whether it was asked as $finish or $stop (LRM 20.2).
+a departure  this execution leaves, and no region may claim it (nonlocal_control_flow.md).
+
+$info / $warning / $error   report
+$fatal                      report, stop, departure
+$finish / $stop             stop, departure
+$exit                       a departure of every thread of the calling thread's program; from a
+                            thread of no program a warning and nothing else (LRM 24.7)
+the last program ending     stop, while the simulation runs (LRM 24.3)
+a run-time error            report, and stop and departure where its severity is fatal
+```
+
+A report and a stop are separate operations, and `$fatal` is both, as LRM 20.10's "implicit call to
+`$finish`" writes it. A task that ends the run departs from the execution that called it and never
+parks it: no statement after the call may run (LRM 20.2), and the call is legal in a function (LRM
+13.4), which cannot suspend; the stop and the departure are one call, since nothing may run between
+them. The stop verb records that the run is over, and no process resumes after that: the record is
+read where a process would be entered, so whatever is still parked in the in-progress slot is
+drained without running a statement. A process that ended the run reports `KILLED` afterwards (LRM
+9.7), its execution having departed rather than run out its body, and nothing of the design runs in
+it again, a subroutine foreign code calls into later included: an exported function answers the zero
+of its result, and an exported task never returns to foreign code. A foreign frame beneath such an
+execution is told nothing (LRM 35.9 binds a foreign call to the disable protocol only where a
+`disable` targets it, and the run does not go on past its own end).
+
+`$stop` ends the run as `$finish` does, since a tool with no interactive mode cannot resume a
+suspended run, and the Table 20-1 diagnostic is the whole of what separates the two; it exits zero,
+since LRM 20.2 places it beside `$finish` rather than among the severity tasks. The diagnostic a
+stop prints is fixed by its level and printed where the task executes, because level 1 prints the
+call's location and time, facts of that moment; it states what the tool did and carries no severity.
+
+A run-time error of the design is a report Lyra writes for the design, at a severity it chooses per
+condition, and is not a separate ending. Where the standard defines no value for the evaluation to
+go on with, the severity is fatal, so the error asks for the ending `$fatal` asks for, and the same
+tail runs. It becomes a departure at the first landing that takes it (`nonlocal_control_flow.md`).
+An error raised while variable initializers run or processes are created is a run-time error, since
+both are simulation at time zero (LRM 4); one raised while the design is built or its references
+resolved precedes the simulation, and no `final` procedure exists to run.
+
+Deferred effects already submitted for the in-progress slot do still run, so a nonblocking write
+issued before the request commits and a `final` procedure can read it. LRM 20.2 says only that
+`$finish` makes the simulator exit and does not say how much of the in-progress slot still happens,
+so this is a choice rather than a requirement -- which is why the corpus does not hold a case for
+it.
 
 The `final` procedures then run in registration order, because a `final` procedure occurs at the end
-of simulation time (LRM 9.2.3), which a run reaches by being asked to end and equally by running out
-of work. They are not processes of their own but function calls one thread makes in turn, as C's
-`exit` calls what `atexit` was handed on the thread that called it: each unit registers a call of
-its procedure on its instance, and the run makes the thread once the simulation has ended, so
-`process::self()` answers that thread in every one of them and its generator carries on from one to
-the next. Each call runs in its own procedure's scope, place and seeds, and is a landing of its own.
-No initial or always procedure created that thread, so process control may not act on it (LRM 9.7)
-and nothing it runs may schedule what takes effect after the call returns (LRM 13.4.4). A `$finish`
-a `final` executes -- directly, through `$fatal`, or by a run-time error of the design -- ends the
-simulation immediately, so the ones still registered do not run. What the design asked to have done
-once the simulation is over -- writing the coverage database a covergroup asks for (LRM 19.9) -- is
-a call held from wherever it was asked for and run after them, as `atexit` holds a function.
+of simulation time (LRM 9.2.3), which a run reaches by being asked to end, by a run-time error of
+the design ending it, and equally by running out of work. They are not processes of their own but
+function calls one thread makes in turn, as C's `exit` calls what `atexit` was handed on the thread
+that called it: each unit registers a call of its procedure on its instance, and the run makes the
+thread once the simulation has ended, so `process::self()` answers that thread in every one of them
+and its generator carries on from one to the next. Each call runs in its own procedure's scope,
+place and seeds, and is a landing of its own. No initial or always procedure created that thread, so
+process control may not act on it (LRM 9.7) and nothing it runs may schedule what takes effect after
+the call returns (LRM 13.4.4). A `$finish` a `final` executes -- directly, through `$fatal`, or by a
+run-time error of the design -- ends the simulation immediately, so the ones still registered do not
+run. Before them, an assertion attempt still in flight is settled by what the finished trace says of
+it (`assertions.md`); after them, what the design asked to have done once the simulation is over --
+writing the coverage database a covergroup asks for (LRM 19.9) -- is a call held from wherever it
+was asked for and run, as `atexit` holds a function.
 
-The one ending that runs none of them is the tool being unable to carry the run on: a `final`
-procedure is design code, and the state it would read is already known to be wrong; so is what
-writes the coverage database. A request of the design's to end, made after the tool has stopped the
-run, does not turn that ending into the design's. What the engine owes either way -- the immediate
-cover report (LRM 16.3), the flush of what the design wrote, the exit status -- is owed because the
-run is over, not because of how it ended.
-
-A run-time error of the design is not a separate ending. It is reported where the activation it left
-lands, and asks for the ending `$fatal` asks for, so the same tail runs and the engine sees a
-request rather than a failure.
+The one ending that runs none of them is the tool being unable to carry the run on -- an internal
+error of Lyra's, or an exception nothing handles -- which is no ending the language defines: a
+`final` procedure is design code, and the state it would read is already known to be wrong; so is
+what writes the coverage database. The run reports the failure and exits failing. A request of the
+design's to end, made after the tool has stopped the run, does not turn that ending into the
+design's. What the engine owes either way -- the immediate cover report (LRM 16.3), what the design
+wrote delivered to where it wrote it (`runtime_distribution.md`), the exit status -- is owed because
+the run is over, not because of how it ended. A request for memory the host refuses ends the program
+where it asked, delivering what the design wrote and nothing else, since anything run after it may
+ask again.
 
 A program ends its own threads, and the last program to end ends the run (LRM 24.3). Once every
 initial procedure of a program has ended, whatever they started that is still running is ended with
@@ -449,3 +703,26 @@ across a suspension or a region boundary is a reference-typed capture field, not
 arithmetic threaded by hand. The C++ backend realizes such a field as an owned reference value (the
 library's reference captured by value, never a `&` lambda capture), so a write through it still
 wakes the cell's subscribers and nothing dangles when the closure outlives the frame that built it.
+
+MIR states waiting as a source language writes it, with no decomposition, and two constructs as two
+nodes: awaiting an execution, which ends when another body completes and hands back what it
+completed with (LRM 13.3), and waiting on a call that has already arranged this execution's
+resumption and answers whether control must be given up (LRM 9.4). Each operation the runtime
+declaration both backends read names is a function, never a protocol object of one target: generated
+IR cannot form the coroutine handle a C++ awaitable takes, so a declaration naming one makes the
+other backend write a second body, which fails `backend_contract.md`'s one meaning for both
+backends. The decomposition into a call, a branch on its answer and a suspend edge is MIR-to-LIR's
+(`lir.md`).
+
+A value-change wait is ordinary calls: one builds the wait over the whole trigger set, the stop
+every timing control shares takes it, and starting a stopped process waits on it again. A trigger --
+the place watched, the bit projection read, what decides an event -- is a runtime value the IR
+constructs and forwards without inspecting, and the edge an event control was written with is one
+enumeration the compiler and the runtime share. The set goes in one call, because what waits is one
+execution: between per-leaf calls the wait would stand for none of the control. Building reads
+nothing of the engine, since memberships live on what is watched and the wait in the frame, so only
+the stop takes the engine handle, as every runtime effect does; which frame parks is the runtime's
+to know, since a called task takes its process's thread over and gives it back. MIR has no node for
+an event control, a trigger, a sampled read or a takeover: a node invented for a runtime library's
+shape fails `mir.md`'s test that a mechanical backend translates every node without deciding
+anything.

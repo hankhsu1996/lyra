@@ -208,7 +208,7 @@ auto Runtime::Run() -> int {
 void Runtime::RunSimulation() {
   try {
     // LRM 4: every scope initializes before any activates, so a time-zero
-    // initializer reads sealed endpoints and no process runs before all of
+    // initializer reads bound endpoints and no process runs before all of
     // them have.
     //
     // Neither stretch runs in a process, so whatever leaves one lands here. An

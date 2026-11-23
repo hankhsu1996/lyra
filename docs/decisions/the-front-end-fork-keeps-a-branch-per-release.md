@@ -1,93 +1,46 @@
-# The Front End Fork Keeps a Branch per Release
+# The front end fork keeps a branch per release
 
-## Date
+Status: Accepted, 2026-10-22; revised 2026-11-03 (a branch is named by the whole release tag).
 
-2026-10-22; revised 2026-11-03 (a branch is named by the whole release tag) and 2026-11-20 (how a
-commit upstream took after the release is replayed).
+## Requirement
 
-## Status
+Every Lyra commit can be built again. Lyra reads slang from a fork, at the one commit `MODULE.bazel`
+names, so a fork commit no branch reaches is kept by the host only until it collects it, and from
+then on every Lyra commit naming it fails to fetch its front end. That happened once. The fork's one
+branch for Lyra was rebased onto the 11.0 release in place, and the commits Lyra had named on the
+10.0 line were left on no branch. The fork also has to move to new releases, since a fix Lyra needs
+may already be upstream, and moving must not cost the history it leaves behind.
 
-Accepted.
+## Choice
 
-## Why this decision matters
+- **One branch per upstream release the fork is based on, named `lyra/` and that release's whole tag
+  (`lyra/v12.1`), and a branch only grows.** A change Lyra needs, its own or upstream's taken early,
+  is a commit added on the branch Lyra builds from, and nothing on it is rewritten or removed. The
+  host refuses a force-push or a deletion, so the rule is held by the place it lives.
+- **Moving to a new release starts a new branch.** The fork's carried commits are replayed onto the
+  release tag, the pin moves, and the old branch stays, so every commit Lyra named on it stays
+  reachable. A carried commit the release already holds is not replayed, so what the fork carries
+  shrinks at each move to what is still owed upstream.
+- **A check holds the pin to the branch of the release `MODULE.bazel` names.**
 
-Lyra reads slang from a fork, at the one commit `MODULE.bazel` names, and every Lyra commit names
-the commit it was built with. A commit of the fork that no branch reaches is kept by the host only
-until it collects it, and from then on every Lyra commit naming it fails to fetch its front end and
-cannot be built again.
+Rust reads LLVM from its own fork the same way, and `rust-lang/llvm-project` keeps every `rustc/...`
+branch back to 2019, each named by the LLVM release, and Swift names its lines by the whole release.
 
-That happened once. The fork's one branch for Lyra was rebased onto the 11.0 release in place, and
-the two commits Lyra had named on the 10.0 line were left on no branch. They were still served when
-this was found, by chance rather than by anything the fork promised, and are now kept again: one on
-the branch for 10.0, and the other, on a line that branch does not carry forward, by a protected
-tag.
+## Alternatives turned down
 
-The same question comes back whenever upstream releases. A fix Lyra needs may already be upstream,
-in a release newer than the fork's base, so the fork has to move to new releases; moving must not
-cost the history the move leaves behind.
+- **One branch rebased onto each release.** It fails every pinned commit staying reachable, since a
+  rebase writes new commits and leaves the old ones on no branch.
+- **A branch named by the major release alone.** It fails telling two releases of one major apart,
+  since the second needs the name the first holds and a branch's name cannot be rewritten. The
+  failure rests on upstream making minor releases too, which the first naming assumed it did not.
+- **The release tag plus patch files kept in Lyra's repository.** It fails one form per change,
+  since the carried changes are developed and sent upstream as commits on a branch, so patch files
+  would be a second form of each.
+- **A tag per pinned commit.** It fails no requirement, but adds a step at every pin move, where a
+  branch that only grows keeps each pin with no step of its own.
 
-## What the field does
+## Consequences across layers
 
-Rust reads LLVM from its own fork the same way: `rust-lang/rust`'s `.gitmodules` names the branch
-`rustc/23.1-2026-07-22` of `rust-lang/llvm-project`, and that repository still holds every such
-branch back to `rustc/8.0-2019-01-16`. The version in the name is the LLVM release's major and
-minor, so `rustc/18.0-...` and `rustc/18.1-...` are separate lines. Each replay of Rust's changes
-starts a new branch, several within one release, so its names carry a date as well. Swift's
-`swiftlang/llvm-project` names its release lines by the whole release, `swift/release/6.2` beside
-`swift/release/6.2.1`. Lyra replays only when it moves to a release, and between releases adds
-commits on top, so the release alone names a line, and it is named as the release's own tag spells
-it.
-
-## Decision
-
-**D1. One branch per upstream release the fork is based on, named `lyra/` and that release's tag
-(`lyra/v12.1` for the tag `v12.1`), and a branch only ever grows.** A change Lyra needs, whether its
-own or upstream's taken early, is a commit added on the branch Lyra builds from; nothing on such a
-branch is rewritten or removed. The host refuses a force-push to it and its deletion, so the rule is
-held by the place it lives rather than by whoever pushes.
-
-**D2. Moving to a new release starts a new branch.** The commits the fork carries are replayed onto
-the release tag as its branch, and Lyra's pin moves to it; the old branch stays where it is, so
-every commit Lyra named on it is still reachable. A carried commit the release already has, as
-written or reworked by upstream, is not replayed, and one upstream took after the release is
-replayed as upstream's own commit, so the list of what the fork carries shrinks at each move to what
-is still owed upstream. Where upstream's commit does not apply to the release as written, because it
-was made on a tree the release does not have, the fork's backport of it is replayed instead, naming
-upstream's commit by `-x`; a later move drops it once its base holds that commit. Upstream's release
-branches take fixes only, so what Lyra sends upstream as a change of behaviour or of the API stays
-carried until the next major release holds it.
-
-**D3. The release Lyra's `MODULE.bazel` names says which branch its pinned commit must be on, and a
-check holds the two together.** `tools/policy/check_pinned_sources.py` fetches the branch named for
-the release the pin claims (`lyra/v12.1` for `12.1`) and refuses a pin its history does not contain.
-
-## History
-
-The branches were first named `lyra/v<major>` (`lyra/v10`, `lyra/v11`), on the premise that the fork
-moves only to a new major release. Upstream makes minor releases too (9.1, 12.1), and a second
-release of one major would have needed a name already taken, which D1 forbids rewriting. On
-2026-11-03, with the move to 12.1, the two lines were renamed `lyra/v10.0` and `lyra/v11.0` at the
-same commits, and the tag `lyra/v10-a9e580e7` became `lyra/v10.0-a9e580e7`. A build fetches the
-front end by its commit, never by a branch, so no earlier Lyra commit stopped building: every commit
-`MODULE.bazel` had ever named was checked reachable from the new names before the old ones were
-removed.
-
-The move to 12.2 (2026-11-20) was the first to a patch release on the same release branch: `v12.2`
-is `v12.1` with fixes upstream took from its main line, and none of the changes Lyra had sent
-upstream since 12.1. Of the commits `lyra/v12.1` carried, the two that release holds were dropped,
-four of those upstream took after it replayed as the fork's backports, which is what D2's sentence
-on them now says, and the rest replayed onto `lyra/v12.2`.
-
-## Rejected
-
-- **One branch rebased onto each release.** It is what lost the 10.0 pins: a rebase writes new
-  commits and leaves the old ones on no branch.
-- **A branch named by the major release alone.** It cannot tell apart two releases of one major, and
-  the second needs the name the first holds.
-- **The release tag plus patch files kept in Lyra's repository**, as a module registry carries a
-  dependency's fixes. Each Lyra commit would then hold its whole front end and need no fork at all,
-  but the carried changes are developed and sent upstream as commits on a branch, and keeping them
-  as patch files too is the same change in two forms.
-- **Tagging every pinned commit.** A tag per pin keeps each one reachable without a branch rule, but
-  it is one more step at every pin move, while a commit Lyra needs is made on a branch anyway, and a
-  branch that only grows keeps it with no step of its own.
+- Every correction of the front end Lyra makes lands on such a branch and moves the pin
+  ([the-standard-decides-what-text-is-legal](the-standard-decides-what-text-is-legal.md)).
+- `tools/policy/check_pinned_sources.py` is the check, run on every pull request.

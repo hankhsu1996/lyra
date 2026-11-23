@@ -240,12 +240,13 @@ using LibraryType = support::LibraryType<TypeId>;
 
 // The call protocol of a coroutine callable: invoking it yields a coroutine the
 // site must await or spawn, and awaiting it produces a value of `payload` --
-// the completion payload (a task's output pack, or `Void` when the completion
-// yields nothing). A fork branch (LRM 9.3.2) is a closure whose result type is
-// this. What an execution completes with lands in storage of its own that its
-// awaiter is handed, never in the frame that made it, so `payload` is never
-// boxed, whatever its size. The scheduler holds a single coroutine-handle type
-// regardless of `payload`.
+// the completion payload. A task's is the product of its return value and its
+// output values, a product at every count including none (LRM 13.5); an
+// execution that completes with nothing, as a process does, has `Void`. A fork
+// branch (LRM 9.3.2) is a closure whose result type is this. What an execution
+// completes with lands in storage of its own that its awaiter is handed, never
+// in the frame that made it, so `payload` is never boxed, whatever its size.
+// The scheduler holds a single coroutine-handle type regardless of `payload`.
 struct CoroutineType {
   TypeId payload;
 

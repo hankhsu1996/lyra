@@ -102,8 +102,8 @@ all_tests.sv:51:5: note: '$finish' at time 1015
 ```
 
 The library is the design's own code, and the design is what runs: its tops and the files only it
-needs, such as testbenches. The [project file decision](docs/decisions/project-file.md) has the
-whole schema.
+needs, such as testbenches. The [project model](docs/architecture/project_model.md) has the whole
+schema.
 
 ## What Lyra reads
 

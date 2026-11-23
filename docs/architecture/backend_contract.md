@@ -8,7 +8,7 @@ The primary backend is HIR -> MIR -> LIR -> LLVM IR. The C++ backend is a second
 which consumes the same MIR but renders to C++ source instead of descending through LIR and LLVM IR.
 The C++ backend's emitted output is **how MIR is observed** -- a developer reads the emitted C++ to
 validate that MIR's shape faithfully represents the source SystemVerilog through MIR's semantic
-model (`compiler_overview.md`).
+model ([`compiler_overview.md`](compiler_overview.md)).
 
 Being secondary does **not** loosen the mechanical-translation discipline. The contract in this doc
 is exactly the discipline the LLVM IR backend needs, in which every render rule is a fixed function
@@ -22,22 +22,21 @@ The C++ backend's render therefore serves as the cross-check on MIR shape. Any p
 render is not a mechanical single-node translation is a place where the MIR-to-LIR lowering hits the
 same obstruction. The bug is in MIR, not in render.
 
-**The finished shape, which the work toward this contract is measured against.** A value-emission
-entry is punctuation around the renders of its own children and nothing else: a piece of the
-target's syntax with those renders filled into it. Every name it would otherwise have to know comes
-from somewhere that owns naming -- a type's spelling from type mapping, a runtime operation's from
-the runtime-entry declaration the layers above share, a wrapper's access protocol from the
-place-access dispatch. So the end state is observable rather than a matter of judgement: **no
-value-emission entry names a runtime library identifier at all**, and a reader checks that by
-reading the entries rather than by reasoning about what they decide. A string literal in one that
-carries anything but target syntax is the defect, whatever it was written for.
+**The shape a value-emission entry has.** It is punctuation around the renders of its own children
+and nothing else: a piece of the target's syntax with those renders filled into it. Every name it
+would otherwise have to know comes from somewhere that owns naming -- a type's spelling from type
+mapping, a runtime operation's from the runtime-entry declaration the layers above share, a
+wrapper's access protocol from the place-access dispatch. So the shape is observable rather than a
+matter of judgement: **no value-emission entry names a runtime library identifier at all**, and a
+reader checks that by reading the entries rather than by reasoning about what they decide. A string
+literal in one that carries anything but target syntax is the defect, whatever it was written for.
 
-A backend that has reached it holds no table of its own. Gaining a runtime operation, a value
-family, or a container kind changes the shared declaration and reaches every backend at once;
-nothing in an emitter has to be found and edited to match. That is the same property from the other
-side as the rule that a backend never decides what a node means -- an emitter with nothing to look
-up has nothing to decide -- which is why this shape and the invariants below are one statement read
-two ways.
+A backend in that shape holds no table of its own. Gaining a runtime operation, a value family, or a
+container kind changes the shared declaration and reaches every backend at once; nothing in an
+emitter has to be found and edited to match. That is the same property from the other side as the
+rule that a backend never decides what a node means -- an emitter with nothing to look up has
+nothing to decide -- which is why this shape and the invariants below are one statement read two
+ways.
 
 ## Owns
 
@@ -71,14 +70,19 @@ two ways.
 - The contract that MIR's primitive set is closed for backends: if a backend's render entry cannot
   produce its output from the node's structural fields plus subordinate renders, the missing
   semantic is upstream (MIR's primitive set or HIR-to-MIR's lowering), not in render.
+- Where a text backend's output goes: every render entry writes into the artifact it belongs to, and
+  answers with no text.
 
 ## Does Not Own
 
-- Which primitives MIR has (see `mir.md`).
+- Which primitives MIR has (see [`mir.md`](mir.md)).
 - Which target language a backend chooses.
-- The per-artifact and cross-unit boundary (see `emission_model.md`).
+- The per-artifact and cross-unit boundary (see [`emission_model.md`](emission_model.md)).
 - The runtime library a particular backend chooses to wrap target-side storage realizations in.
-- Where the runtime library lives and how a binary locates it (see `runtime_distribution.md`).
+- Where the runtime library lives and how a binary locates it (see
+  [`runtime_distribution.md`](runtime_distribution.md)).
+- How a value lies below LIR and what code compiled before a design is told of a type
+  ([`lir.md`](lir.md)).
 
 ## Core Invariants
 
@@ -153,13 +157,14 @@ two ways.
 
 4. **Place access is one dispatch per MIR type variant, exhaustive over capability wrappers.** MIR
    states that the storage a wrapper represents is reached by dereferencing the wrapper's place
-   (`mir.md` invariant 14); it does not state what that costs in a target. Each backend supplies it
-   from the place's type through a single dispatch, sibling to type mapping, answering one question:
-   how the storage behind a place of that type is named as an lvalue. Two things compose onto that
-   answer -- a by-reference binding, and the place a write lands on -- and they are the same step,
-   which is why there is one entry rather than one per consumer. Value emission asks that dispatch
-   and never inspects the wrapper kind itself. Reading a wrapper's own value, rebinding it, and
-   taking its address name the bare place and reach no protocol, so they have no entry here.
+   ([`mir.md`](mir.md) invariant 14); it does not state what that costs in a target. Each backend
+   supplies it from the place's type through a single dispatch, sibling to type mapping, answering
+   one question: how the storage behind a place of that type is named as an lvalue. Two things
+   compose onto that answer -- a by-reference binding, and the place a write lands on -- and they
+   are the same step, which is why there is one entry rather than one per consumer. Value emission
+   asks that dispatch and never inspects the wrapper kind itself. Reading a wrapper's own value,
+   rebinding it, and taking its address name the bare place and reach no protocol, so they have no
+   entry here.
 
    Replacing the whole of what a wrapper holds, and reading it, reach no entry here either, for the
    opposite reason: each acts on the wrapper rather than naming its storage, so each is a call in
@@ -215,8 +220,8 @@ two ways.
     interface, the record its value is laid out as and its four operations on a whole value: its
     default and a copy, each answering a value, writing a copy over a value, and ending one. A move
     is no operation of a type's: it relocates a value whatever the type, and nothing ends its source
-    (`mir.md`). A type that states none has the steps its parts give it. A backend writes each
-    operation as any declaration is written, from the declaration MIR states, and composes no
+    ([`mir.md`](mir.md)). A type that states none has the steps its parts give it. A backend writes
+    each operation as any declaration is written, from the declaration MIR states, and composes no
     declaration out of text of its own. Where the target's object model asks more of a type than the
     four operations say -- a C++ class must have constructors, assignments and a destructor, and C++
     destroys a moved-from object -- the target's library realizes that once for every type of a
@@ -232,92 +237,107 @@ two ways.
     execution backend hands the library for the type, and a construction of the type there, run the
     same operations, the execution backend building a copy in its return place. So the two are two
     ways of reaching one set of operations, never two implementations of them. Which artifact holds
-    a definition already decided is a backend's packaging (`emission_model.md` invariant 11), and
-    choosing it decides nothing about what exists or what it does.
+    a definition already decided is a backend's packaging ([`emission_model.md`](emission_model.md)
+    invariant 11), and choosing it decides nothing about what exists or what it does.
+
+11. **A render entry writes into the artifact it belongs to, and each byte is written once.** The
+    destination is handed down; every entry writes its own punctuation and asks its children to
+    write theirs, in the order the text is read, and answers with nothing. Target syntax is written
+    as bytes, and a formatting call only converts a value -- a number to its digits -- never places
+    text. A name and a type are written the same way: each is decided in one place, which answers
+    with what decides the spelling -- a source identifier, a kind and a position, a type -- rather
+    than with the characters, and the one reader that needs the characters as a value, the name of
+    the file a class is written into, writes them into a value of its own. What column a line opens
+    at, the blank line between sections, and the depth a body opens at are the destination's, and a
+    separator is paid by the first byte of the section it opens, so a section with nothing in it
+    costs nothing and no entry answers in advance whether its own section is there. _Requirement:
+    the north star's iteration time. When each node answers with its own text, a byte is copied once
+    for every level above it and each node parses a format string at run time, so emission's cost
+    follows how deeply expressions nest rather than how much text there is._ The dumps of the
+    intermediate forms are not held to this: each is written only when a person asks for it, and no
+    build waits on one.
 
 ## Boundary to Adjacent Layers
 
-- `compiler_overview.md` defines the pipeline (HIR -> MIR -> LIR -> LLVM IR) and the position of
-  each backend within it.
-- `mir.md` defines the primitive set this contract realizes. A render entry that needs anything
-  beyond the node's structural fields is one of two failures: a missing MIR primitive (extend MIR)
-  or a missed HIR-to-MIR lowering (extend HIR-to-MIR). Render absorbs neither.
-- `lowering_boundaries.md` requires HIR-to-MIR to produce MIR that satisfies this contract: the
-  output MIR must be mechanically translatable by any backend, including a mechanical LLVM IR
-  backend.
-- `emission_model.md` owns the per-artifact and cross-unit boundary. Within an artifact, this doc
-  owns the per-node translation rules.
-- `runtime_distribution.md` owns where the runtime library lives; this doc owns how a backend may
-  reference runtime library types (only through type mapping).
+- [`compiler_overview.md`](compiler_overview.md) defines the pipeline (HIR -> MIR -> LIR -> LLVM IR)
+  and the position of each backend within it.
+- [`mir.md`](mir.md) defines the primitive set this contract realizes. A render entry that needs
+  anything beyond the node's structural fields is one of two failures: a missing MIR primitive
+  (extend MIR) or a missed HIR-to-MIR lowering (extend HIR-to-MIR). Render absorbs neither.
+- [`lowering_boundaries.md`](lowering_boundaries.md) requires HIR-to-MIR to produce MIR that
+  satisfies this contract: the output MIR must be mechanically translatable by any backend,
+  including a mechanical LLVM IR backend.
+- [`emission_model.md`](emission_model.md) owns the per-artifact and cross-unit boundary. Within an
+  artifact, this doc owns the per-node translation rules.
+- [`runtime_distribution.md`](runtime_distribution.md) owns where the runtime library lives; this
+  doc owns how a backend may reference runtime library types (only through type mapping).
 
 ## Forbidden Shapes
 
-- **A value-emission branch whose arms differ in what the program does.** This is the canonical
-  render-side defect: render deciding what should be a MIR-level distinction. The fix is upstream,
-  never inside render.
+Each entry names the invariant it breaks, and through it the requirement: that one MIR means one
+program on every backend, with no fact decided in more than one place.
 
+- **A value-emission branch whose arms differ in what the program does** fails invariant 2. It is
+  the canonical render-side defect: render deciding what should be a MIR-level distinction. The fix
+  is upstream, never inside render.
 - **A value-emission branch that exists only to shape the emitted text** -- collapsing a construct
-  the producer built, avoiding one a reader would call redundant, shortening a form. It decides
-  nothing and states nothing, so what it costs is a branch that must be read and kept correct, and
-  what it buys is not something the artifact is for. Where the collapsed form is the right one, the
-  producer is what states it. This fails the rule that the artifact is not read for its looks, and
-  only that rule: a form the target requires in order to accept the text at all is the backend's own
+  the producer built, avoiding one a reader would call redundant, shortening a form -- fails the
+  rule that the artifact is not read for its looks, and only that rule: it decides nothing and
+  states nothing, so what it costs is a branch that must be read and kept correct, and what it buys
+  is not something the artifact is for. Where the collapsed form is the right one, the producer is
+  what states it. A form the target requires in order to accept the text at all is the backend's own
   answer (invariant 2).
-
-- A value-emission entry that composes a target-language type literal as a string. Every
-  target-language type literal a backend emits comes from the type-mapping dispatch.
-
-- A value-emission entry that names a runtime library identifier (wrapper type, helper function,
-  helper struct, method spelling) directly. The runtime library's identifiers appear at render
-  through the MIR types and MIR calls that map onto them.
-
-- A value-emission entry that switches on a MIR type's payload to choose a non-mechanical emission
-  form. Type payload is for type-mapping; value emission acting on it reads value-layer data carried
-  in a type.
-
-- A value-emission entry that branches on which capability wrapper a place's type is -- an
+- **A value-emission entry that composes a target-language type literal as a string** fails
+  invariant 3: a library type's spelling then lives in two places, and gaining a type means finding
+  every emitter that wrote it.
+- **A value-emission entry that names a runtime library identifier directly** -- a wrapper type, a
+  helper function, a helper struct, a method spelling -- fails invariant 8. The runtime library's
+  identifiers appear at render through the MIR types and MIR calls that map onto them.
+- **A value-emission entry that switches on a MIR type's payload to choose a non-mechanical emission
+  form** fails invariant 2: type payload is for type mapping, and value emission acting on it reads
+  value-layer data carried in a type.
+- **A value-emission entry that branches on which capability wrapper a place's type is** -- an
   observable arm, a driver arm, a reference arm -- whether in value render, assignment render,
-  projection render, or argument render. A wrapper's access protocol comes from the place-access
-  dispatch, at one site. Spread across emitters it is the same defect as a runtime library name
-  escaping type mapping, and it obliges every emitter to grow an arm each time a wrapper is added.
-
-- A member render entry that emits constructor arguments built from the member's type payload. A
-  member is (name, type). Construction state arrives as ordinary MIR primitives in the constructor
-  body, never as type payload.
-
-- A render entry whose output depends on the node tree outside the node's own structural fields and
-  its subordinate renders.
-
-- An architecture doc, a glossary entry, or a MIR invariant that names a backend's runtime library
-  type by its target-language spelling. Those names are implementation detail of one backend's
-  choice; architecture refers to MIR types and their type-mapping role.
-
-- A new MIR node or MIR primitive added to make one backend's render simpler. MIR's primitive set is
-  uniform across backends. A primitive earns its place by being a generic programming-language
-  concept (`mir.md`), not by being convenient for one backend.
-
-- A render entry that fabricates an expression from MIR data (composing constructor arguments,
-  inlining a struct literal, deriving navigation steps from a payload). Render translates existing
-  expressions, never invents them. An invented expression is HIR-to-MIR's job.
-
-- A render entry that writes one node as two target constructs, or spells what the one construct
-  supplies itself -- a `sizeof` beside an allocation, a receiver worked out from an argument
-  (invariant 9).
-
-- A second site deciding how a call reaches a runtime entry beside the one that reads the entry's
-  declaration: the two answer one question and nothing holds them in step (invariant 6).
-
-- A render entry that writes a declaration no IR declaration states -- a type, a constant or a
-  function whose structure the render works out from data rather than translates. Every declaration
-  in the target output stands for one the IR holds, so that what the output shows is what the IR
-  states, and a structure two backends need is decided once, before either consumes it. What the
-  semantic IR should not carry, because it is a realization rather than a language concept, is
-  materialized by a step both backends consume, not by one backend for itself.
-
-- A render entry that writes a class's special member, an adapter or a library name the shared
-  declarations do not state for it -- choosing which operation a step or a question calls, or
-  supplying an argument the declaration does not have. It decides what the class does, which the
-  execution backend then decides again (invariant 10).
+  projection render, or argument render, fails invariant 4: a wrapper's access protocol comes from
+  the place-access dispatch, at one site, and spread across emitters it obliges every emitter to
+  grow an arm each time a wrapper is added.
+- **A member render entry that emits constructor arguments built from the member's type payload**
+  fails invariant 5: a member is a type at a position, and construction state arrives as ordinary
+  MIR primitives in the constructor body.
+- **A render entry whose output depends on the node tree outside the node's own structural fields
+  and its subordinate renders** fails invariant 1.
+- **An architecture doc, a glossary entry, or a MIR invariant that names a backend's runtime library
+  type by its target-language spelling** fails invariant 7: those names are one backend's choice,
+  and architecture refers to MIR types and their type-mapping role.
+- **A new MIR node or MIR primitive added to make one backend's render simpler** fails invariant 7:
+  MIR's primitive set is uniform across backends, and a primitive earns its place by being a generic
+  programming-language concept ([`mir.md`](mir.md)), not by being convenient for one backend.
+- **A render entry that fabricates an expression from MIR data** -- composing constructor arguments,
+  inlining a struct literal, deriving navigation steps from a payload -- fails invariant 2: render
+  translates existing expressions, and an invented expression is HIR-to-MIR's job.
+- **A render entry that writes one node as two target constructs, or spells what the one construct
+  supplies itself** -- a `sizeof` beside an allocation, a receiver worked out from an argument, a
+  member reference emitting a call, a conversion and a dereference -- fails invariant 9: such a node
+  is standing for operations it did not state.
+- **A second site deciding how a call reaches a runtime entry beside the one that reads the entry's
+  declaration** fails invariant 6: the two answer one question and nothing holds them in step.
+- **A render entry that writes a declaration no IR declaration states** -- a type, a constant or a
+  function whose structure the render works out from data rather than translates -- fails invariant
+  6: every declaration in the target output stands for one the IR holds, so that what the output
+  shows is what the IR states, and a structure two backends need is decided once, before either
+  consumes it. What the semantic IR should not carry, because it is a realization rather than a
+  language concept, is materialized by a step both backends consume, not by one backend for itself.
+- **A render entry that writes a class's special member, an adapter or a library name the shared
+  declarations do not state for it** -- choosing which operation a step or a question calls, or
+  supplying an argument the declaration does not have -- fails invariant 10: it decides what the
+  class does, which the execution backend then decides again.
+- **A render entry that answers with its text, or places text with a formatting call** fails
+  invariant 11: each level above it copies the text again, and the format string is parsed while the
+  compiler runs though it was fixed when the compiler was built.
+- **A mechanism for one backend alone to realize something MIR states for both** -- a runtime
+  formatter walking an aggregate the C++ host compiler can instantiate and the execution backend
+  cannot, a description of a type handed to code compiled before the program -- fails invariant 7:
+  the other backend then needs a second mechanism, and nothing holds the two to one answer.
 
 ## Notes / Examples
 
@@ -337,8 +357,12 @@ a run-time-sized container, over its elements in place for a fixed-size array --
 each item and state no algorithm of their own (invariant 10); each item is defined once in the
 type's own code file, and every other operation of a type -- a container's or a fixed-size array's
 own methods and language traits' items, a tuple's -- is a function the code file calling it defines,
-each a definition every unit states alike. Neither backend asks for a type's whole interface, which
-would be choosing among its operations.
+each a definition every unit states alike. Neither backend, nor the lowering to LIR, asks for a
+type's whole interface, which would be choosing among its operations; each reads the implementation
+MIR states and the operations its code names. So each operation of a fixed-size array -- its
+equalities, its bit stream, the positions a net reads and writes -- is one body MIR states for its
+type, which both backends compile, as rustc monomorphizes
+`impl<T, U, const N: usize> PartialEq<[U; N]> for [T; N]` for every backend alike.
 
 The canonical write rule for any value-emission entry: write it as if the target were LLVM IR. If
 you cannot write a mechanical translation rule for it -- if your draft contains an `if` whose arms
@@ -354,7 +378,10 @@ its operands. The callee's name for a runtime operation is one lookup in the sha
 which already says whether a call site reaches the operation as a free function, as a method on the
 object it acts on, or as a factory on the type it builds, or that no call reaches it because a
 new-expression names it as its allocation function -- so the entry chooses nothing and knows no
-identifier.
+identifier. The same declaration says how the entry reads each operand -- its planes with their
+width, a quantity with its signedness, a value the entry keeps with its type, a count or a flag as
+the machine value it is -- and a call is arranged from that declaration and from nothing about the
+value in hand, as clang arranges a call from the callee's `CGFunctionInfo` apart from emitting it.
 
 What invariant 9 looks like for a placement new-expression. For C++ the construct is the one clang's
 AST holds, a `CXXNewExpr`, `::new (args) T(init)`: the target finds the allocation function by the
@@ -442,7 +469,17 @@ A value-emission entry may not read _past_ its node to synthesize operands or pi
 enclosing declaration, not a sibling, not an expected destination, not a node reached by matching on
 what an operand happens to be. Its own operands are a different matter and are named by invariant 1
 as structural context -- an access asking whether the value it reaches is held through a pointer is
-reading the input it was handed, not looking around.
+reading the input it was handed, not looking around. Nor does an entry fold two nodes into one: the
+address of a dereference is translated as the two nodes it is, never rewritten into the
+dereference's operand, since over a managed handle the address of the handle's object is not the
+handle.
+
+A relation the compiler established is not checked again on a path the program runs per access --
+that a value has the width its type fixes, that a place names the kind of storage its node states. A
+check of what the program computes, an index against its range, is the language's and is not this.
+Such a check belongs where the compiler can make it, or to a construction that cannot produce the
+bad state; repeated per access it costs every run of the program for a fact that was settled before
+the program existed, which fails the north star's iteration time.
 
 A type a callee is generic over is part of the callee, stated where the call is built, and what the
 call answers with follows from it rather than the reverse. An entry whose operands do not settle
@@ -457,15 +494,20 @@ such an entry that states no type, and a type stated to a callee generic over no
 width the type fixes is therefore never an operand, on a read, a write or a reference alike.
 
 An operand that stands for a type survives only where its contents are an input: a value no type
-states -- the one a literal wrote for a missing entry of one array -- is handed over as the value it
-is. What an element of an array holds before anything is written to it is not such a value. Its type
-states it, the unit states the code that builds it once for that type, and a call that builds an
-array of any kind carries none. The same holds of every other fact a type fixes: what a reduction
-answers over no entries, the index an associative dimension reports where nothing is allocated and
-the shape a value read out of a stream of bits takes are each its answer type's, and a queue's
-declared bound is the queue type's. Each is a fact the type carries, so it reaches an entry with
-that type -- named where the call is written by a backend that resolves types there, handed as the
-type's constant by one calling code compiled once for every type -- and never as an operand. A value
+states -- the `default:` a literal wrote for a missing entry of one associative array (LRM 7.9.11),
+which two arrays of one type may state differently -- is handed over as the value it is, as the
+operand of an operation of its own on the array the literal's entries built. What an element of an
+array holds before anything is written to it is not such a value. Its type states it (LRM Table
+7-1), the unit states the code that builds it once for that type, and a call that builds an array of
+any kind -- a construction, `new[n]`, a conversion from one array kind to another, a concatenation
+-- carries none, so each operation has one operand list whatever kind of array it answers. The same
+holds of every other fact a type fixes: what a reduction answers over no entries, the index an
+associative dimension reports where nothing is allocated and the shape a value read out of a stream
+of bits takes are each its answer type's, and a queue's declared bound is the queue type's. Each is
+a fact the type carries, so it reaches an entry with that type -- named where the call is written by
+a backend that resolves types there, handed as the type's constant by one calling code compiled once
+for every type -- and never as an operand. On the C++ backend nothing is emitted for an element's
+default: the host compiler's default construction of the element type is the same statement. A value
 passed for its type alone is the wrong way to say any of them: nothing downstream can tell such an
 operand from one whose contents matter, so every backend builds contents it then discards, and every
 runtime entry taking one advertises a parameter whose value it must document as unused. What a
@@ -473,3 +515,44 @@ declaration fixes and an entry needs as numbers -- an array's declared range -- 
 of the call that needs it. An enumeration's member table is a constant like any other: the unit
 holds it once as a value, a use names it, and it reaches render as that name, never composed by the
 consuming call's render.
+
+How a value reads under a format (LRM 21.2.1.6) is computation MIR states, never data a backend's
+formatter walks. A type either decides nothing the value does not -- an integral, a real, a string,
+a handle -- or decides a text beside the value, as an enumeration's name sits beside the integral a
+radix conversion prints, or decides the only text the clause defines for it, as an aggregate does.
+For the last two the compiler synthesizes one callable per source type, in generic MIR, whose body
+builds the text -- a container's by a loop over its elements -- and a print carries what that
+callable returns, so the library's formatter renders leaves only and an aggregate never reaches it.
+The C++ host compiler could walk an aggregate and the execution backend's library cannot, so a
+mechanism for either alone would be a primitive for one backend (invariant 7); stating the rendering
+where the SystemVerilog type is still in hand needs neither. A format string the program computes
+reaches no directive until it is parsed, so each operand carries every reading its type has, and an
+aggregate, which has only its text, refuses by name a directive asking for another.
+
+The leaves the library renders are rendered by one formatter per value type, reached through one
+operand of erased type, as `std::format` reaches a `formatter<T>` through a `basic_format_arg`: a
+value type gains its readings by stating its own formatter, and no list of types is kept anywhere to
+be found and edited. A print's operand borrows the value it reads, which outlives the print, so
+printing copies nothing it formats. What a reading depends on besides its operand is an operand of
+the print as well -- what `$timeformat` last set (LRM 20.4.3), the scope's time unit a `%t` scales
+against, the name a `%m` prints -- read where the call is written, so the formatter reads no state
+of the run and every input of a print is stated at its call. A `%s` of an integral value reads the
+value's own bytes (LRM 21.2.1.7), never the value converted to a string, a conversion that removes
+every zero byte (LRM 6.16, [`storage.md`](storage.md)); what a zero byte prints is the ruling in
+[`language_conformance.md`](language_conformance.md).
+
+A source name reaches C++'s identifier space by one total, injective function, since an escaped
+SystemVerilog identifier may hold any printable character (LRM 5.6.1) and C++ allows letters, digits
+and underscores and reserves words of its own. A name that already reads as a C++ identifier, is no
+reserved word and does not begin with the prefix the backend keeps for itself is written as it is;
+every other name is that prefix, an escape marker and its bytes, each spelled so no two names meet.
+What the compiler mints -- a local, a position where the source wrote no name -- is written into a
+range of that prefix the escaped names never reach. Replacing a bad character instead would turn two
+source names into one C++ name, which no reader of the output could catch. A name foreign C code
+also spells, a DPI-C linkage name (LRM 35.4), is written exactly as given.
+
+In the current implementation the C++ backend's render entries write into one destination type and
+answer `void`, so an entry answering text does not compile where it would be written, and
+`tools/policy/check_architecture.py` refuses `std::format` anywhere in the C++ backend. The LLVM
+backend builds its artifact through LLVM's own interface rather than as text, so invariant 11, which
+governs a text backend, does not reach it.
