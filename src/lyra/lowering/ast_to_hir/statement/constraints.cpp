@@ -8,9 +8,12 @@
 #include <slang/ast/expressions/MiscExpressions.h>
 #include <slang/ast/expressions/OperatorExpressions.h>
 #include <slang/ast/symbols/VariableSymbols.h>
+#include <slang/ast/types/Type.h>
 #include <slang/syntax/AllSyntax.h>
 
+#include "lyra/base/diag_message.hpp"
 #include "lyra/base/internal_error.hpp"
+#include "lyra/diag/diag_code.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/frontend/slang_source_span.hpp"
 #include "lyra/hir/constraint.hpp"
@@ -165,8 +168,27 @@ auto ProcessLowerer::LowerConstraint(
       if (!target) return std::unexpected(std::move(target.error()));
       return make(hir::DisableSoftConstraint{.target = *target});
     }
+    // LRM 18.5.9: a variable an ordering names is integral or real. The front
+    // end refuses any other unless a tolerant reading relaxed that, which lends
+    // the item nothing to order either, while its elements or its size, which
+    // an ordering may name, say what it would.
     case slang::ast::ConstraintKind::SolveBefore: {
       const auto& c = constraint.as<slang::ast::SolveBeforeConstraint>();
+      for (const auto items : {c.solve, c.after}) {
+        for (const slang::ast::Expression* item : items) {
+          if (item->type->isNumeric()) continue;
+          return std::unexpected(
+              diag::Make(
+                  frontend::SpanOf(item->sourceRange),
+                  diag::DiagCode::kErrorInvalidFrontendSemantics,
+                  base::DiagMessage(
+                      "a 'solve before' constraint cannot order a value that "
+                      "is neither integral nor real"))
+                  .WithNote(
+                      "name its elements instead, or its size if it is a "
+                      "dynamic array or a queue"));
+        }
+      }
       auto solve = exprs(c.solve);
       if (!solve) return std::unexpected(std::move(solve.error()));
       auto after = exprs(c.after);

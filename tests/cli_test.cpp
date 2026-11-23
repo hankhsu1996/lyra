@@ -2533,6 +2533,80 @@ TEST(LyraCheck, RefusesAPureVirtualMethodCalledWithoutDispatch) {
       << lowered.stderr_text;
 }
 
+// A variable a `solve ... before` orders is integral or real (LRM 18.5.9), so a
+// whole array names nothing to order; its elements, or a queue's size, do. The
+// front end refuses it, and a tolerant reading that relaxes the error lends the
+// ordering no meaning either, so the compiler refuses it in its own words, on
+// either side of `before`.
+TEST(LyraCheck, RefusesASolveBeforeItemThatIsNeitherIntegralNorReal) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  WriteFile(
+      *tmp_or / "after.sv",
+      "class Delays;\n"
+      "  rand int lo;\n"
+      "  rand int mid[2];\n"
+      "  constraint c { solve lo before mid; }\n"
+      "endclass\n"
+      "module Test;\n"
+      "  Delays d;\n"
+      "  initial begin\n"
+      "    d = new;\n"
+      "    void'(d.randomize());\n"
+      "  end\n"
+      "endmodule\n");
+  WriteFile(
+      *tmp_or / "before.sv",
+      "class Delays;\n"
+      "  rand int lo;\n"
+      "  rand int q[$];\n"
+      "  constraint c { solve q before lo; }\n"
+      "endclass\n"
+      "module Test;\n"
+      "  Delays d;\n"
+      "  initial begin\n"
+      "    d = new;\n"
+      "    void'(d.randomize());\n"
+      "  end\n"
+      "endmodule\n");
+
+  const auto strict = RunLyraFrom(lyra, *tmp_or, "check --top Test after.sv");
+  EXPECT_THAT(strict, ExitedWithCode(1)) << strict.stderr_text;
+  EXPECT_NE(strict.stderr_text.find("[-Wsolve-before-type]"), std::string::npos)
+      << strict.stderr_text;
+
+  const auto checked =
+      RunLyraFrom(lyra, *tmp_or, "check --compat all --top Test after.sv");
+  EXPECT_THAT(checked, ExitedWithCode(0)) << checked.stderr_text;
+
+  struct Refused {
+    std::string_view file;
+    std::string_view at;
+  };
+  for (const Refused& refused : {
+           Refused{.file = "after.sv", .at = "after.sv:4:34: "},
+           Refused{.file = "before.sv", .at = "before.sv:4:24: "},
+       }) {
+    const auto lowered = RunLyraFrom(
+        lyra, *tmp_or,
+        std::format("dump hir --compat all --top Test {}", refused.file));
+    EXPECT_THAT(lowered, ExitedWithCode(1)) << lowered.stderr_text;
+    EXPECT_NE(
+        lowered.stderr_text.find(
+            std::format(
+                "{}error: a 'solve before' constraint cannot order a value "
+                "that is neither integral nor real",
+                refused.at)),
+        std::string::npos)
+        << refused.file << ": " << lowered.stderr_text;
+    EXPECT_EQ(lowered.stderr_text.find("internal error"), std::string::npos)
+        << refused.file << ": " << lowered.stderr_text;
+  }
+}
+
 // A construct Lyra does not yet carry out is refused by the compiler, in its
 // own words and with one answer whichever backend was asked for, and nothing is
 // written -- rather than a project written as text another compiler rejects, or
