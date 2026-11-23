@@ -337,6 +337,29 @@ names an instance member of a class the body does not derive from, which no clau
 front end already refuses for any other such class. Lyra refuses it in the front end it pins. Call
 `m()` to reach the implementation.
 
+#### A whole array, or another value that is not a number, named by `solve ... before`
+
+```systemverilog
+class Delays;
+  rand int min_delay;
+  rand int mid_delay[2];
+  constraint c { solve min_delay before mid_delay; }
+endclass
+```
+
+18.5.9 restricts the variables an ordering names: "The variables shall be integral or real values",
+and "array.size (with optional following parentheses) is allowed as a variable". An unpacked array,
+a queue, an unpacked structure and a class handle are none of these, while the grammar's `select`
+admits an element, so `mid_delay[0], mid_delay[1]` names what the text means. Forbidden. The front
+end Lyra pins refuses it beside its rules that the variable be `rand` and not `randc`.
+
+It is not run as an extension. A tool that takes it has one obvious answer for a fixed array, every
+element in turn, but an allowed text says the same, so the author is told of that; a structure or a
+handle has no allowed text near enough to lend it an order. `-Wno-error=solve-before-type` and
+`--compat all` make a warning, and a tolerant reading lends the item nothing to order, so Lyra then
+refuses it where it reads the constraint. Name the elements, or the size of a dynamic array or
+queue.
+
 ### Forbidden, run as an extension when asked
 
 Refused by default and run when the caller asks for it by name, with the meaning stated here. The
