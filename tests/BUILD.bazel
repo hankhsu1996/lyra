@@ -806,7 +806,9 @@ filegroup(
 # the case the suite itself marks as its quick check, and the cases of the
 # suites `external_design_suites.yaml` describes. A design is tens of thousands
 # to hundreds of thousands of lines, so one case is minutes and gigabytes, and
-# the suite is half a gigabyte to fetch. `manual` is what keeps
+# the suite is half a gigabyte to fetch. Its declared time is each case's whole
+# limit, the same in every run of it, and well past the slowest case measured,
+# so what it catches is a case that will not end. `manual` is what keeps
 # both out of every run that does not name this target: a tag the test filter
 # leaves out is still analyzed, and analysis is what fetches. The program is
 # linked with the host C++ compiler, and the cases run one at a time because a
@@ -829,6 +831,7 @@ cc_test(
     ],
     deps = [
         ":framework",
+        "//:base",
         "//:cli",
         "//:ports",
         "@bazel_tools//tools/cpp/runfiles",
