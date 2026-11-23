@@ -11,10 +11,10 @@ runs, and where the slot to run in is not yet knowable, what is handed over is a
 finds it.
 
 This doc covers the engine and what an execution waits for: the process model, what a wait watches
-and what a write tells it, region structure, deferred work, how a run ends, and the MIR boundary.
-What an activation is belongs to [activation.md](activation.md), the order processes start in at
-time zero to [elaboration_lifecycle.md](elaboration_lifecycle.md), what a net shows to
-[net_resolution.md](net_resolution.md), and what an assertion evaluates and when to
+and what a write tells it, region structure, deferred work, how a run ends, what a run counts of its
+own work, and the MIR boundary. What an activation is belongs to [activation.md](activation.md), the
+order processes start in at time zero to [elaboration_lifecycle.md](elaboration_lifecycle.md), what
+a net shows to [net_resolution.md](net_resolution.md), and what an assertion evaluates and when to
 [assertions.md](assertions.md).
 
 ## Processes and tasks are coroutines, or reactions
@@ -637,6 +637,22 @@ because no call was made. A simulation that has already ended has nothing left f
 `$exit` ends the program the calling thread originates in, that thread with it, and from any other
 thread does nothing but warn (LRM 24.7). The program's continuous assignments are not its threads,
 so neither ending reaches them.
+
+## What a run counts of its own work
+
+A program built with `--runtime-statistics` counts each kind of scheduling work as it does it: time
+slots; for each region, its passes, the activations it ran, those run again in the same execution of
+the region (its passes since a pass of another region last ran, LRM 4.5's `execute_region`), the
+deferred effects it ran and the timers it fired; the activations run at an occurrence; and the
+changes told, the memberships they reached, those a change passed over as unaffected, and the
+activations woken. Run with `+lyra+stats=<file>`, it writes them as it ends, as a JSON object whose
+`work` maps each kind to its count, the shape of the compiler's own `--stats-file`, and
+`tools/trace/report.py` reads and compares either. A file it cannot write fails the run as the
+tool's failure.
+
+Only a program built to count carries any counting, because a count is work on every event
+([building_a_program.md](building_a_program.md)). The counts are kept by region, never by the
+construct an execution came from, and nothing the engine decides reads them.
 
 ## What a deferred closure may refer to
 

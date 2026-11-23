@@ -4,11 +4,11 @@ A command that builds a design is a compiler and a build tool at once: it lowers
 unit itself and drives the host compiler where the C++ backend needs one, so what a build tool owes
 the person waiting on it is this command's to owe. This doc owns that part -- the files a command
 claims and what it cleans up however it ends, what it shows while it runs, how it offers the host
-compiler a prepared header, how it optimizes a program together with the runtime under `--lto`, and
-how it builds a program that checks its own memory. Which artifacts a design compiles into is
-[compiling_a_design.md](compiling_a_design.md)'s, how a result is kept and found again is
-[incremental_build.md](incremental_build.md)'s, what a project declares is
-[project_model.md](project_model.md)'s, and the runtime a program links is
+compiler a prepared header, how it optimizes a program together with the runtime under `--lto`, how
+it builds a program that checks its own memory, and how it builds one that counts its scheduling
+work. Which artifacts a design compiles into is [compiling_a_design.md](compiling_a_design.md)'s,
+how a result is kept and found again is [incremental_build.md](incremental_build.md)'s, what a
+project declares is [project_model.md](project_model.md)'s, and the runtime a program links is
 [runtime_distribution.md](runtime_distribution.md)'s.
 
 ## A build answers for what it starts
@@ -201,6 +201,18 @@ handed over compiled was instrumented, or not, by whoever compiled it.
 person running Lyra already named one**, since Lyra both supplies the instrumenting release, as
 clang does, and starts the program, as a test runner does. A program `build` wrote and a person
 starts finds a symbolizer as clang's and rustc's programs do, on `PATH`.
+
+## A program built to count its scheduling work
+
+**`--runtime-statistics` links the build of the runtime that counts its own scheduling work**, which
+a run of the program writes where its `+lyra+stats=<file>` says ([scheduling.md](scheduling.md)). A
+count is work on every event, a fixed share of each event's cost and a growing one as the event path
+gets cheaper, so only a program built to count carries any counting, as LLVM compiles its statistics
+only into the builds that ask for them and Tokio its worker metrics. The counting build has the same
+headers as the plain one, so every unit's object is the same either way and asking for counts only
+links again. It is an invocation property like `--sanitize`, and the two are not asked for together,
+since the build compiled for the sanitizer counts nothing. `emit cpp` does not take it: counts are
+for the runs a command builds.
 
 ## Forbidden shapes
 

@@ -436,6 +436,9 @@ class Runtime final : public RuntimeEffects {
   // LRM 16.3 requires a tool to report immediate cover results at the end of
   // simulation where it offers no assertion API to ask for them on demand.
   void ReportCoverage();
+  // Writes what a counting run counted of its own work where its options asked,
+  // a file it cannot write being the tool's failure.
+  void WriteStatistics();
 
   FileTable files_;
   DiagnosticDispatcher diagnostic_{files_};

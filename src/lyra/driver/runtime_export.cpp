@@ -97,6 +97,29 @@ auto CarriesRuntimeSources(
   std::unreachable();
 }
 
+// Where each build of the runtime ships its library and its sources.
+struct ShippedRuntimeBuild {
+  std::string_view library;
+  std::string_view sources;
+  std::string_view named;
+};
+
+auto ShippedBuildOf(RuntimeStatistics statistics) -> ShippedRuntimeBuild {
+  switch (statistics) {
+    case RuntimeStatistics::kNotKept:
+      return {
+          .library = "_main/libcpp_runtime.a",
+          .sources = "_main/runtime_sources",
+          .named = "the Lyra runtime"};
+    case RuntimeStatistics::kKept:
+      return {
+          .library = "_main/libcpp_runtime_statistics.a",
+          .sources = "_main/runtime_sources_statistics",
+          .named = "the Lyra runtime built to count its scheduling work"};
+  }
+  std::unreachable();
+}
+
 }  // namespace
 
 auto ExecutionBackendLibrary(
@@ -136,8 +159,10 @@ auto ExecutionBackendRuntime(
   std::unreachable();
 }
 
-auto ResolveRuntimeLocation(std::string_view binary_path)
+auto ResolveRuntimeLocation(
+    std::string_view binary_path, RuntimeStatistics statistics)
     -> diag::Result<RuntimeLocation> {
+  const ShippedRuntimeBuild build = ShippedBuildOf(statistics);
   auto shipped = OpenShipped(binary_path);
   if (!shipped) {
     return std::unexpected(std::move(shipped.error()));
@@ -155,7 +180,8 @@ auto ResolveRuntimeLocation(std::string_view binary_path)
     return std::unexpected(std::move(anchor.error()));
   }
   auto lib = LocateShipped(
-      runfiles, "_main/libcpp_runtime.a", "the Lyra runtime library");
+      runfiles, std::string(build.library),
+      std::format("{}'s library", build.named));
   if (!lib) {
     return std::unexpected(std::move(lib.error()));
   }
@@ -195,8 +221,8 @@ auto ResolveRuntimeLocation(std::string_view binary_path)
     return std::unexpected(std::move(licenses.error()));
   }
   auto source_list = LocateShipped(
-      runfiles, std::format("_main/runtime_sources/{}", kRuntimeSourceList),
-      "the Lyra runtime sources");
+      runfiles, std::format("{}/{}", build.sources, kRuntimeSourceList),
+      std::format("{}'s sources", build.named));
   if (!source_list) {
     return std::unexpected(std::move(source_list.error()));
   }

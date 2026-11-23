@@ -79,7 +79,8 @@ class PreparedHeader : public testing::TestWithParam<lyra::test::HostCompiler> {
 TEST_P(PreparedHeader, IsNamedByEveryFileItReads) {
   const auto lyra_exe = lyra::test::ResolveLyra();
   ASSERT_FALSE(lyra_exe.empty());
-  auto loc_or = lyra::driver::ResolveRuntimeLocation(lyra_exe.string());
+  auto loc_or = lyra::driver::ResolveRuntimeLocation(
+      lyra_exe.string(), lyra::driver::RuntimeStatistics::kNotKept);
   ASSERT_TRUE(loc_or) << loc_or.error().primary.message;
 
   // A project of this test's own, so the headers it rewrites are copies and the

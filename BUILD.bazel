@@ -229,12 +229,35 @@ cc_library(
     ],
 )
 
+# Whether this build of the runtime counts its own scheduling work, as a
+# constant its code reads at compile time: every count is code only the copy
+# shipped for counting carries, so a program built without asking for it pays
+# nothing for them.
+genrule(
+    name = "runtime_keeps_statistics",
+    outs = ["include/lyra/runtime/keeps_statistics.hpp"],
+    cmd = "{ " +
+          "printf '#pragma once\\n\\n'; " +
+          "printf 'namespace lyra::runtime {\\n\\n'; " +
+          "printf '// Whether this build of the runtime counts its own scheduling work.\\n'; " +
+          "printf 'inline constexpr bool kKeepsStatistics = %s;\\n\\n' " +
+          select({
+              "//tools/bazel:keeping_statistics": "true",
+              "//conditions:default": "false",
+          }) + "; " +
+          "printf '}  // namespace lyra::runtime\\n'; " +
+          "} > $@",
+)
+
 cc_library(
     name = "runtime",
     srcs = glob([
         "src/lyra/runtime/*.c",
         "src/lyra/runtime/*.cpp",
-    ]) + [":third_party_licenses_text"],
+    ]) + [
+        ":runtime_keeps_statistics",
+        ":third_party_licenses_text",
+    ],
     hdrs = glob(["include/lyra/runtime/*.hpp"]),
     copts = LYRA_COPTS,
     includes = ["include"],
@@ -306,6 +329,16 @@ shipped_sources(
     visibility = ["//visibility:public"],
 )
 
+# The same sources built to count the runtime's own scheduling work, for a
+# program built with `--runtime-statistics`.
+shipped_sources(
+    name = "runtime_sources_statistics",
+    lib = ":runtime",
+    root = "runtime_sources_statistics",
+    statistics = True,
+    visibility = ["//visibility:public"],
+)
+
 # What an emitted program links. Optimized whatever mode built the compiler,
 # because a user's simulation runs this code as it is shipped.
 shipped_artifact(
@@ -325,6 +358,17 @@ shipped_artifact(
     out = "libcpp_runtime_address_sanitized.a",
     lib = ":cpp_runtime_lib",
     sanitizer = "address",
+    visibility = ["//visibility:public"],
+)
+
+# The same library built to count its own scheduling work, which a program
+# built with `--runtime-statistics` links in its place. Every unit's object is
+# the same either way, so asking for it only links again.
+shipped_artifact(
+    name = "cpp_runtime_statistics",
+    out = "libcpp_runtime_statistics.a",
+    lib = ":cpp_runtime_lib",
+    statistics = True,
     visibility = ["//visibility:public"],
 )
 
@@ -661,8 +705,10 @@ cc_binary(
         ":address_sanitizer_runtime",
         ":cpp_runtime",
         ":cpp_runtime_address_sanitized",
+        ":cpp_runtime_statistics",
         ":port_store",
         ":runtime_sources",
+        ":runtime_sources_statistics",
         ":runtime_surface",
         ":runtime_surface_svdpi",
         ":third_party_licenses",

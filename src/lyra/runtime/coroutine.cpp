@@ -9,6 +9,8 @@
 #include "lyra/base/internal_error.hpp"
 #include "lyra/runtime/cancellation.hpp"
 #include "lyra/runtime/intrusive_list.hpp"
+#include "lyra/runtime/keeps_statistics.hpp"
+#include "lyra/runtime/run_work.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
 #include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/wait.hpp"
@@ -18,7 +20,13 @@ namespace lyra::runtime {
 Activation::Activation() {
   queued.activation = this;
 }
-Activation::~Activation() = default;
+// An activation made later at the same address is another one, which has not
+// run in the region's execution under way.
+Activation::~Activation() {
+  if constexpr (kKeepsStatistics) {
+    TheKeptWork().ran_in_execution.erase(this);
+  }
+}
 
 FrameActivation::FrameActivation() = default;
 FrameActivation::~FrameActivation() = default;

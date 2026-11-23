@@ -34,18 +34,32 @@ load("@rules_cc//cc/common:cc_info.bzl", "CcInfo")
 # rather than inheriting the enclosing build's.
 _ADDRESS_SANITIZER = str(Label("@llvm//config:asan"))
 
+# Whether the runtime is built to count its own scheduling work. Only a shipped
+# artifact sets it, so nothing else the build compiles ever counts.
+_KEEPS_STATISTICS = str(Label("//tools/bazel:keeps_statistics"))
+
+def _no_value_impl(_ctx):
+    return []
+
+keeps_statistics_setting = rule(
+    implementation = _no_value_impl,
+    build_setting = config.bool(flag = False),
+    doc = "Set by a shipped artifact's transition, never on the command line.",
+)
+
 # A shipped artifact is built by the release's clang, optimized, with no option
 # the enclosing build added, whatever that build asked for.
-def _artifact_settings(copt, sanitized):
+def _artifact_settings(copt, sanitized, keeps_statistics):
     return {
         "//command_line_option:compilation_mode": "opt",
         "//command_line_option:copt": copt,
         "//command_line_option:extra_toolchains": ["@llvm//toolchain:all"],
         "//command_line_option:linkopt": [],
         _ADDRESS_SANITIZER: sanitized,
+        _KEEPS_STATISTICS: keeps_statistics,
     }
 
-_ARTIFACT_SETTING_NAMES = _artifact_settings([], False).keys()
+_ARTIFACT_SETTING_NAMES = _artifact_settings([], False, False).keys()
 
 # The library carries machine code and bitcode, so a link optimizing a program
 # whole can read it, except where it is built for a sanitizer: the fat-object
@@ -54,7 +68,11 @@ _ARTIFACT_SETTING_NAMES = _artifact_settings([], False).keys()
 # as it links any member carrying no bitcode.
 def _shipped_transition_impl(_settings, attr):
     sanitized = getattr(attr, "sanitizer", "") == "address"
-    return _artifact_settings([] if sanitized else ["-flto=thin", "-ffat-lto-objects"], sanitized)
+    return _artifact_settings(
+        [] if sanitized else ["-flto=thin", "-ffat-lto-objects"],
+        sanitized,
+        getattr(attr, "statistics", False),
+    )
 
 _shipped_transition = transition(
     implementation = _shipped_transition_impl,
@@ -71,7 +89,7 @@ shipped_artifact = rule(
     implementation = _shipped_artifact_impl,
     doc = """Re-exports `lib` as `out`, built optimized and with no option the
 enclosing build added, unless `sanitizer` names one the artifact is built to
-run under.""",
+run under, or `statistics` asks that it count its own scheduling work.""",
     attrs = {
         "lib": attr.label(
             allow_single_file = True,
@@ -86,6 +104,10 @@ run under.""",
             doc = "The sanitizer the artifact checks a program with, or none.",
             default = "",
             values = ["", "address"],
+        ),
+        "statistics": attr.bool(
+            doc = "Whether the runtime counts its own scheduling work.",
+            default = False,
         ),
         "_allowlist_function_transition": attr.label(
             default = "@bazel_tools//tools/allowlists/function_transition_allowlist",
@@ -233,6 +255,10 @@ include directories, and the macros every compile defines.""",
             doc = "Where the sources are staged, as one path segment or more.",
             mandatory = True,
         ),
+        "statistics": attr.bool(
+            doc = "Whether the runtime counts its own scheduling work.",
+            default = False,
+        ),
         "_allowlist_function_transition": attr.label(
             default = "@bazel_tools//tools/allowlists/function_transition_allowlist",
         ),
@@ -242,7 +268,7 @@ include directories, and the macros every compile defines.""",
 # The sanitizer's runtime is built as the release builds it -- by its clang,
 # optimized, and not instrumented itself.
 def _sanitizer_runtime_transition_impl(_settings, _attr):
-    return _artifact_settings([], False)
+    return _artifact_settings([], False, False)
 
 _sanitizer_runtime_transition = transition(
     implementation = _sanitizer_runtime_transition_impl,

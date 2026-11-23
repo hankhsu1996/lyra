@@ -71,7 +71,8 @@ namespace {
 // executable.
 auto ResolveRuntime(const CommandContext& ctx)
     -> std::optional<driver::RuntimeLocation> {
-  auto loc_or = driver::ResolveRuntimeLocation(std::string(ctx.program_path));
+  auto loc_or = driver::ResolveRuntimeLocation(
+      std::string(ctx.program_path), ctx.args->runtime_statistics);
   if (!loc_or) {
     ctx.sink->Report(std::move(loc_or.error()));
     return std::nullopt;

@@ -18,6 +18,7 @@
 #include "lyra/driver/dpi_boundary.hpp"
 #include "lyra/driver/pch.hpp"
 #include "lyra/driver/project_layout.hpp"
+#include "lyra/driver/runtime_export.hpp"
 #include "lyra/mir_transform/pass.hpp"
 #include "lyra/status/status.hpp"
 #include "lyra/support/assertion_policy.hpp"
@@ -53,6 +54,8 @@ struct ParsedArgs {
   driver::OptimizationLevel optimization = driver::OptimizationLevel::kO0;
   driver::LinkTimeOptimization link_time = driver::LinkTimeOptimization::kNone;
   support::Sanitizer sanitizer = support::Sanitizer::kNone;
+  driver::RuntimeStatistics runtime_statistics =
+      driver::RuntimeStatistics::kNotKept;
   driver::pch::Policy pch = driver::pch::Policy::kAttempt;
   // The host C++ compiler a program is compiled or linked with, when the caller
   // named one: a program name or path, never flags.
@@ -100,6 +103,7 @@ struct CliOptions {
   std::optional<std::string> optimization;
   std::optional<bool> link_time;
   std::optional<std::string> sanitize;
+  std::optional<bool> runtime_statistics;
   std::optional<std::string> config;
   std::optional<std::string> ports;
   std::optional<bool> locked;

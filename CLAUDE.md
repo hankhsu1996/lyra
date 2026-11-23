@@ -79,7 +79,9 @@ slang driver, and a standalone `--` ends it; what follows is the simulation's ow
 simulation speed as a C++ compiler's do, `--lto` optimizes the design together with the runtime,
 `--sanitize address` builds a program that stops at its first read of storage that has ended
 (`docs/architecture/building_a_program.md`), and `--time-trace` and `--stats-file` read where a
-run's cost went off the run itself. A build is kept in the user's cache directory by what it read,
+build's cost went off the build itself, as a program built with `--runtime-statistics` and run with
+`+lyra+stats=<file>` after `--` reads where a simulation's scheduling went off the simulation
+(`docs/architecture/scheduling.md`). A build is kept in the user's cache directory by what it read,
 so `--rebuild` is how to build as though nothing were kept. `-j` says how many units are lowered and
 compiled at once, one by default (`docs/architecture/compiling_a_design.md`), and every text Lyra
 reads finds `__lyra__` defined as 1 beside the front end's `__slang__`
