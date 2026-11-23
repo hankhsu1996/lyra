@@ -1061,10 +1061,9 @@ auto UnitLowerer::ResolveClass(
     class_cache_.emplace(&cls, id);
     return id;
   }
-  // A class of this unit not yet minted (e.g. a class nested inside a generate
-  // block, which the top-level scope walk does not reach): mint it lazily
-  // now, so a reference and the pre-pass both converge on the same identity
-  // regardless of which route saw the class first.
+  // A class of this unit the declaration walk has not reached yet, which a
+  // declaration minted before it can name: mint it now, so a reference and the
+  // walk converge on the same identity whichever reaches the class first.
   return InternOwnClass(cls, span);
 }
 

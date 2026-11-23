@@ -4,14 +4,14 @@ Lyra is a SystemVerilog compiler. This directory defines the compiler's architec
 it has the shape it has. The work in flight against it is tracked in GitHub issues, as
 `../CONTRIBUTING.md` says.
 
-Architecture docs are **contracts**: they describe what each layer is, what it owns, and what shapes
-are forbidden. Current code must conform to these contracts; if it does not, the code is wrong, not
-the doc.
+Architecture docs are **contracts**: they describe what each layer is, what it owns, and which
+shapes fail which requirement. Each subject is stated once, as it holds now. Current code must
+conform to these contracts; if it does not, the code is wrong, not the doc.
 
 ## Structure
 
 - `architecture/` -- binding contracts for each layer and cross-cutting concept. Start here.
-- `decisions/` -- logged architectural decisions (one file per decision).
+- `decisions/` -- the few choices of direction, each as it was decided (one file per decision).
 - `glossary/` -- canonical definitions of terminology used across docs.
 - `ci/` -- what each workflow enforces, and why some of it runs nightly instead.
 - `design-process.md` -- how to arrive at a design and how to falsify one.

@@ -36,8 +36,8 @@ property that matters. **A requirement sentence naming a type, a function, or a 
 read and mistook for a need.**
 
 This is the first step, not a replacement for the ones below: derive from the requirement, then
-compare against `decisions/`, and argue explicitly where the two disagree (see the last section).
-Deriving without looking is the point; landing without comparing is not.
+compare against the subject's architecture doc, and argue explicitly where the two disagree (see the
+last section). Deriving without looking is the point; landing without comparing is not.
 
 ## Start from the layer's motivation, not from its invariant list
 
@@ -443,8 +443,11 @@ sound.
 So when a fix suggests a rule, write down two things instead: what the cause actually was, in that
 problem's own terms, and which question exposed it. The question is what transfers.
 
-## When the derivation contradicts the record
+## When the derivation contradicts the contract
 
-`decisions/` entries record why a choice was made, often with numbers behind them. Re-derive anyway,
-then compare. If the derivation would reverse a decision, quote the decision's stated rationale and
-argue against that rationale explicitly. Silent reversal is the failure; disagreement is not.
+An architecture doc states why its subject has the shape it has, and a record in `decisions/` why a
+direction was chosen, often with numbers behind them. Read them after deriving, never as a list of
+what is allowed before it, then compare. If the derivation would reverse one, quote the requirement
+it states and argue against that explicitly. Where the requirement no longer holds, or a new one
+outweighs it, the change rewrites the architecture doc in place, and a reversed choice of direction
+gets a new record naming the one it replaces. Silent reversal is the failure; disagreement is not.

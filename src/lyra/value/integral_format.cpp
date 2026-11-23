@@ -219,9 +219,10 @@ auto FormatCharBody(const ConstIntegralView& value) -> std::string {
 
 auto FormatStringBody(const ConstIntegralView& value) -> std::string {
   // LRM 21.2.1.7: the value's bytes render as ASCII characters, most
-  // significant byte first. The LRM leaves a NUL byte's rendering unpinned;
-  // match the de-facto convention -- a NUL (and an x/z byte, which reaches here
-  // as 0x00) renders as a space, so it stays one column rather than vanishing.
+  // significant byte first. A NUL (and an x/z byte, which reaches here as 0x00)
+  // renders as a space, so it stays one column rather than vanishing.
+  // TODO(hankhsu): the clause says leading zeros are never printed, so a
+  // leading NUL prints nothing.
   std::string out = BytesOf(value);
   for (char& c : out) {
     if (c == '\0') c = ' ';

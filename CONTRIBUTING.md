@@ -102,6 +102,21 @@ clang-tidy -p . <files>
    verb-first summary, what changed and why, and `Closes #N` for the issue it answers. The
    template's prompts are comments, so they leave nothing behind.
 
+## Changing the front end
+
+Lyra reads [slang](https://github.com/MikePopoloski/slang) from a fork, at the commit `MODULE.bazel`
+names, on a branch named for the upstream release it is based on (`lyra/v12.2`). The branch only
+grows, so every commit Lyra ever named stays reachable
+([why](docs/decisions/the-front-end-fork-keeps-a-branch-per-release.md)). A correction of the front
+end is a commit added there and a move of the pin, and the same change is offered upstream.
+
+Moving to a new release starts a new branch from its tag and replays the commits the fork carries. A
+carried commit upstream took after that release is replayed as upstream's own commit; where it does
+not apply to the release as written, the fork's backport of it is replayed instead, naming
+upstream's commit with `git cherry-pick -x`. A later move drops it once its base holds that commit.
+Upstream's release branches take fixes only, so a change of behaviour or API sent upstream stays
+carried until the next major release holds it.
+
 ## Tests
 
 Most tests are cases of the conformance suite in `conformance/`, one directory per case under
@@ -165,5 +180,6 @@ unassigns themselves when they stop.
 
 ## Documentation
 
-If you add or change behavior, update the architecture contract or the decision record it answers
-to. A document never points at an issue as where a fact lives. It states the fact.
+If you add or change behavior, update the architecture contract it answers to, in place. A choice of
+direction also gets a record, as `docs/style.md` says under Decisions; nothing else does. A document
+never points at an issue as where a fact lives. It states the fact.

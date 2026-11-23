@@ -1,55 +1,12 @@
-# A value is its machine data
+# A value is its machine data, and a representation is judged by what its cost scales with
 
-Date: 2026-10-04 Status: accepted. Supersedes decisions 1 and 4 of
-[integral-representation](integral-representation.md), decision 1 of
-[runtime-shape-and-default-value](runtime-shape-and-default-value.md), the self-describing-value
-rule of [packed-shape-belongs-to-the-type](packed-shape-belongs-to-the-type.md), invariant 5 of
-[jit-value-realization](jit-value-realization.md), and the one-runtime-type-per-domain rule of
-[a-value-lives-in-its-makers-frame](a-value-lives-in-its-makers-frame.md).
-[a-packed-value-is-its-words](a-packed-value-is-its-words.md) carries D1 to D5 out for packed
-values, revises D2 above 64 bits -- on the execution backend an operation there is stated on the
-words up to a fixed size where its work is linear in the width, and is a call taking the words
-otherwise -- and narrows D5 for them: code compiled once is told a packed value's size and width as
-numbers and is handed no function for one.
-[a-fixed-array-is-laid-out-by-its-type](a-fixed-array-is-laid-out-by-its-type.md) carries out the
-last sentence of D6, and narrows D5 for a fixed-size unpacked array: code compiled once is handed
-the array's type as constant data -- a count and the element's type -- with the functions generated
-for the array type. The element's type is handed with the function that builds its default, for an
-array of any kind
-([an-arrays-element-default-is-its-element-types](an-arrays-element-default-is-its-element-types.md)).
-D1 and D2 hold of a `real` and a `shortreal` as well: MIR lays each out as the IEEE 754 value of its
-width (LRM 6.12), and the execution backend computes its arithmetic and its comparisons as the
-machine's float instructions, with no flag letting the optimizer change a result the standard fixes;
-what the library has content for -- a conversion, `**`, a mathematical function, printing -- stays a
-call handed the value where it lies.
+Status: Accepted, 2026-10-04.
 
-## Context
+## Requirement
 
-Every packed integral is one runtime type that carries its width, signedness and state domain as
-data, and every operation on it is a call into the prebuilt library that reads them back. On Ibex,
-C++ backend `-O2`, a 32-bit add costs about 190 instructions, `&` about 415, `++` about 340, and a
-run makes about 10,000 such calls per simulated cycle. The execution backend realizes every value as
-a pointer to opaque runtime storage and every operation as a runtime entry, and its containers hold
-each element as an erased `RuntimeValue`.
-
-Nothing in the language asks for that. The width, signedness and state domain of every expression
-are fixed by its type (LRM 11.6, 11.8), the front end hands each operator operands of exactly its
-own type, and a unit is shared across instances only where no width depends on the parameter that
-differs -- so within one compiled unit every expression has one type for all its instances. The
-choice was made for the C++ backend's text to have one shape and no bridges between shapes, with
-speed explicitly left unmeasured.
-
-Every fast compiled simulator fixes width where it compiles: Verilator's `CData` to `QData` and
-`VlWide<N>` (its `verilated.h`), CXXRTL's `value<Bits>` with always-inlined operations (its runtime
-`cxxrtl.h`), Arcilator's LLVM `iN`, ESSENT's `UInt<w>`. NVC's Verilog support shows the four-state
-cost at a fixed width: `vec2` and `vec4` types with compile-time width and sign, two words inline up
-to 64 bits, a four-state add about four or five instructions over a two-state one, a runtime call
-only above 64 bits.
-
-## The test each choice answers to
-
-A compiler meets designs larger than any it was measured on, so a choice is justified by what each
-cost scales with, for any input; measured designs only check the arithmetic.
+A compiler meets designs larger than any it was measured on, so how a value is represented is
+justified by what each cost scales with for any input, and measured designs only check the
+arithmetic. Five bounds are the test:
 
 1. An operation costs the bits it touches.
 2. A change propagates at the cost of the part that changed.
@@ -57,118 +14,53 @@ cost scales with, for any input; measured designs only check the arithmetic.
 4. Memory follows the declared bits, by at most a constant factor.
 5. Every decision reads one unit and the published declarations it uses.
 
-## Decision
+Nothing in the language asks a value to carry its type. The width, signedness and state domain of
+every expression are fixed by its type (LRM 11.6, 11.8), and the front end hands each operator
+operands of one type. Every fast compiled simulator fixes width where it compiles -- Verilator's
+`VlWide<N>`, CXXRTL's `value<Bits>`, Arcilator's `iN`, NVC's `vec2` and `vec4`.
 
-**D1. A value is held as the machine holds data of its size, and its type is the compiler's to
-know.** A two-state packed value is its value bits in words; a four-state one is the same words
-followed by an equal run of unknown words, the encoding DPI's `aval`/`bval` already uses. Up to 64
-bits that is one word or two; above, a number of words fixed by the type. No value carries its
-width, signedness or state domain.
+## Choice
 
-**D2. An operation is the machine's work on those words, generated where the operation is
-compiled.** Up to 64 bits it is inline instructions; above, a loop over a word count the type fixes,
-or a call taking the words and that count for the long algorithms (multiply, divide). Signedness is
-part of the type, which decides the operation, as the front end has already made both operands of
-every operator one type.
+- **A value is held as the machine holds data of its size, and its type is the compiler's to know.**
+  A two-state packed value is its bits in words; a four-state one is the same words followed by an
+  equal run of unknown words, the encoding DPI's `aval` / `bval` uses. No value carries its width,
+  signedness or state domain.
+- **An operation is the machine's work on those words, generated where it is compiled**, so its cost
+  follows the bits it touches (bound 1). A type is its exact width, signedness and state domain.
+- **A packed value is laid out as the standard describes it, its bits contiguous** (LRM 7.4.1,
+  7.2.1), and an element at a run-time index is reached by bit addressing, whose cost is the
+  element's (bounds 1 and 4).
+- **Nothing reads a description of a type while the program runs.** What is specific to a type is
+  code the compiler generates where the type is used; code compiled once in the runtime is told only
+  sizes, widths and the addresses of functions the design's own code contains.
+- **A write reports the part it reached**, so a wait is decided on what changed (bound 2).
 
-**D3. A concrete type is identified by its exact width, signedness and state domain**, and a packed
-collection's operations work on the types of its elements and members. A multidimensional packed
-array's element and a packed struct's member are ordinary values of their own type; what is wide is
-the storage, not the arithmetic. Counted over nine open designs, taking packed collections apart
-leaves 32 to 140 distinct shapes per design however large it is -- XiangShan grows from 121 to 123
-between its small and its default configuration -- against 87 to 598 counted whole, which is the
-bound principle 3 asks for.
+## Alternatives turned down
 
-**D4. A packed value is laid out as the standard describes it: its bits, contiguous.** An element or
-member at a run-time index is reached by bit addressing -- a word index and an offset computed from
-the index, one or two words read, shifted and masked -- which costs the element, not the collection.
-LRM 7.4.1 makes a packed array "a contiguous set of bits" and 7.2.1 a packed structure "packed
-together in memory without gaps"; no clause lets a user observe a layout, and every way out of the
-language (DPI, VPI, `$readmem`) copies through a fixed format. Laying each element in a slot of its
-own was considered and rejected below.
+- **A runtime type per value, with fast paths inside it.** It fails bound 1, since an operation
+  reading its operands' shape back costs hundreds of instructions whatever its width. The failure
+  rests on the boundary between generated code and a precompiled library, which three rounds of
+  making the object cheaper inside it did not remove.
+- **A type identified by its storage size, with the exact width an argument of each operation**, as
+  Verilator's helpers have it. It fails a missing conversion being a compile error rather than a
+  wrong value. What it buys rests on the count of exact types growing with the design, which does
+  not hold once packed collections are taken apart into their elements' types (bound 3).
+- **A slot per element, padded to a machine size.** It fails bound 4, since a two-bit element grows
+  fourfold, a packed struct of one-bit fields eightfold. It also gives one storage two layouts where
+  the standard makes it one (LRM 13.5.2, 7.3.1, 10.11).
+- **A description of a type the runtime interprets** -- a self-describing value, or a record the
+  runtime walks. It fails bound 1, doing again at run time what the compiler had already done where
+  every operation is compiled.
 
-**D5. Nothing reads a description of a type while the program runs.** Every type is known where it
-is used, so what is specific to a type is code the compiler generates there: `$display` calls the
-formatting of the argument's type, a DPI call converts at the call site, a wait compares through a
-function generated for that wait. Where code written once in the prebuilt runtime must act on a
-value of a type it was compiled without -- a container's algorithm, the scheduler's question of
-whether a change is an event -- it is handed the functions the compiler generated for that type,
-never a description to interpret.
+## Consequences across layers
 
-**D6. A container whose size is a run-time quantity -- a queue, a dynamic array, an associative
-array -- holds its elements as raw storage in a core the library compiles once, and every operation
-on an element is compiled with the element's type.** An associative array's core is handed the
-element type's record and the index type's, and asks them only how large an entry is and how to end
-one; it finds an entry by an index of a kind whose order the language fixes, and keeps an index of
-any other type in the order its entries were made. A dynamic array's core holds the record for the
-size and alignment of the storage it hands out and for what a lease keeps past the array, and a
-queue's holds nothing that depends on the element type; the one function of either that ends such an
-element, a lease's, is handed its type by its caller. What a container does on every call --
-reaching an element, putting one at an end and taking one out, holding a queue to its bound, taking
-and giving back an element's storage, ending the elements, finding or making the entry an
-associative array's index names -- is the container type's own code over the core's fields and
-entries, compiled with its caller. An element at an index lies where those fields say -- base plus
-index times element size, a queue's ring, or the entry the core or the type's own search finds --
-and every write through an index, one that makes or drops an element included, is built on one such
-body. Building, copying, comparing, streaming and taking out an element are the operations of bodies
-the compiler builds for the container type, on both backends. A fixed-size unpacked array is no
-container: its size is a constant, so the compiler lays it out in place. Revised 2026-11-12: this
-said, for the execution backend alone, that the container acts on its elements through the functions
-generated for the element type and that the compiler addresses an element without a call. Acting
-through those functions made every element operation an indirect call from the library, and a
-queue's push and pop through its core took nearly ten times the instructions of hand-written C++ of
-the same semantics, which the requirement that `-O2 --lto` code match such C++ rules out. How the
-core and the bodies divide the work is
-[a-containers-operations-are-built-for-its-type-over-a-core](a-containers-operations-are-built-for-its-type-over-a-core.md).
-
-**D7. A write reports the range it reached, and a wait decided at the write tests that range against
-the bits it watches in place**, on the words, without materializing either side. Inside a packed
-value a wait's watched part stays the contiguous bit range it is today, because under D4 a bit's
-position is its place in storage; which part of an unpacked variable a wait watches and a write
-reached is named apart from that range
-([a-part-of-a-variable-is-named-by-its-steps](a-part-of-a-variable-is-named-by-its-steps.md)). Which
-waits are decided at the write is unchanged
-([the-waiting-process-evaluates-its-wait](the-waiting-process-evaluates-its-wait.md)).
-
-## Rejected
-
-- **A runtime type per value, with fast paths inside it.** The structure this replaces. Three rounds
-  made the object cheaper inside the same boundary -- the shape out of the value, a 48-byte object
-  with its planes in one array, positions settled at compile time -- and the operations still cost
-  hundreds of instructions, because what remains is the boundary itself.
-- **Identifying a type by its storage size, the exact width an argument of each operation**
-  (Verilator's helpers). It keeps the count of types down when that count is the whole design's
-  distinct widths; under D3 the count is bounded already, and the exact type keeps the emitted text
-  readable and makes a missing conversion a compile error instead of a wrong value.
-- **A slot per element, each padded to 8, 16, 32 or 64 bits or a whole number of words.** Element
-  access is one load instead of a few instructions, and both are constant. It breaks principle 4: a
-  two-bit element grows fourfold and a packed struct of one-bit fields eightfold. It also gives one
-  storage two layouts where the standard makes them one: a `ref` between equivalent packed types of
-  different shape (LRM 13.5.2, "both the caller and the subroutine share the same representation"),
-  a packed union read through another member (7.3.1), and a net alias (10.11).
-- **The execution backend generating each container's algorithms per element type**, as clang
-  instantiates the C++ backend's templates. Correct and the closest to clang, at the price of a
-  second implementation of every container algorithm. Revised 2026-11-12: this also said containers
-  live in testbenches rather than on the paths a design spends its time in, which weighed their
-  speed below the requirement that an operation match hand-written code of the same semantics. A
-  dynamic array's and a queue's per-call work is now generated per container type, as MIR both
-  backends compile, which is this alternative without its second implementation.
-- **A description of a type the runtime interprets** (a self-describing value, or a type record the
-  runtime walks). The type is known where every operation is compiled, so interpreting it later is
-  work the compiler had already done.
-
-## Consequences
-
-- `PackedArray` and the erased `RuntimeValue` go, with the runtime entries that perform an operation
-  the compiler now generates; runtime scalars that were packed values (a file descriptor, a seed, a
-  count) are machine integers. A delay's amount is not one of them: an unknown amount is a zero
-  delay (LRM 9.4.1), which a machine integer cannot say, so it crosses as its bits with its width.
-- The execution backend lays out values, cells and frames from the type, as the cross-unit record
-  layout already does, so a cell's layout is a pure function of its type on both sides of a unit
-  boundary.
-- Constants are compile-time constants on both backends wherever a value lies in what holds it.
-  [a-packed-value-is-its-words](a-packed-value-is-its-words.md) D2 says what a larger one is stated
-  as.
-- The C++ backend compiles one instantiation per distinct type a unit uses. Under D3 that number is
-  bounded per unit; its compile cost is measured on the way, and edits pay it only for the units
-  whose emitted text changed.
+- How a value lies below LIR, what code compiled once is told of a type, and where a value too large
+  for a frame is held are [`lir.md`](../architecture/lir.md)'s and
+  [`mir.md`](../architecture/mir.md)'s; what a write tells a wait is
+  [`scheduling.md`](../architecture/scheduling.md)'s; how a container's operations divide between
+  its core and the bodies generated for its type is [`mir.md`](../architecture/mir.md)'s.
+- The library never chooses by a type's kind
+  ([the-library-is-parametric-in-the-types-a-design-composes](the-library-is-parametric-in-the-types-a-design-composes.md)).
+- Whether a declared width belongs in a type is answered here, and
+  [an-elaboration-time-value-is-an-input](an-elaboration-time-value-is-an-input.md) follows that
+  answer.

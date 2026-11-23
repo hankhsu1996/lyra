@@ -53,7 +53,7 @@ struct InstalledConcurrentAssertion {
 // Fills the storage where the design activates: the positions the property
 // starts at and what a tick runs.
 // Nothing about an assertion needs an earlier phase -- what it reads is reached
-// through cells sealed since Seal -- and Activate is where the sampling those
+// through cells bound in Resolve -- and Activate is where the sampling those
 // cells answer from is armed.
 void AppendConcurrentAssertionInstall(
     const StructuralScopeLowerer& lowerer, const WalkFrame& activate_frame,

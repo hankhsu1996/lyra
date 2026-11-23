@@ -4081,9 +4081,9 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
     // filled in the resolve phase) have no "value assignment" -- their
     // declaration shape itself fixes the field at construction. A net takes
     // none either: its value is produced by its drivers, seeded when each
-    // driver updates in the initialize phase. Variables receive an LRM 10.5
-    // initialization statement, run in the initialize phase after the tree's
-    // references resolve, not in the constructor.
+    // driver first evaluates, in its turn at activation. Variables receive an
+    // LRM 10.5 initialization statement, run in the initialize phase after the
+    // tree's references resolve, not in the constructor.
     const bool is_assignable_value =
         var != nullptr && !IsOwnedChildOrReferenceSlot(value_ty);
     if (is_assignable_value) {
@@ -4556,8 +4556,8 @@ auto StructuralScopeLowerer::PopulateBodies() -> diag::Result<void> {
   }
 
   // Every assertion's storage is filled here too. Nothing about one needs an
-  // earlier phase -- what it reads it reaches through cells sealed since Seal
-  // -- and the sampling those cells answer from is armed just above.
+  // earlier phase -- what it reads it reaches through cells bound in Resolve --
+  // and the sampling those cells answer from is armed just above.
   for (const InstalledConcurrentAssertion& installed : installed_assertions) {
     AppendConcurrentAssertionInstall(*this, activate_frame, installed);
   }

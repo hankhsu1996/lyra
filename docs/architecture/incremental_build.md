@@ -1,11 +1,5 @@
 # Incremental Build
 
-## Purpose
-
-Define how incremental compilation works at the architectural level: what is cached, how identity is
-defined across sessions, how reuse is determined, and what shape the work takes so that units
-compile in parallel.
-
 The compiler realizes this contract only below the lowering. Each step from a unit's emitted text
 onwards -- compiling a unit's module or an emitted file to an object, linking the program -- is an
 action kept under the digest of everything it reads, so a build after an edit compiles and links
@@ -14,6 +8,13 @@ text still spells changes it. The front end and every lowering run whole on ever
 query memoized and no key finer than a unit. The rules here constrain every layer regardless,
 because they are what keeps a query-based implementation of the rest possible -- a design that
 assumes whole-design lowering forecloses it.
+
+## Purpose
+
+Define how incremental compilation works at the architectural level: what is cached, how identity is
+defined across sessions, how reuse is determined, what shape the work takes so that units compile in
+parallel, and how a compiled result is kept so that a run whose inputs did not change pays for none
+of the compile.
 
 ## Owns
 
@@ -26,14 +27,16 @@ assumes whole-design lowering forecloses it.
   any unit's bodies are lowered, and a unit's later work consumes only what other units publish.
 - The rule that the only cross-unit synchronization points are that staging barrier and the final
   link.
+- The store every kept result lives in, what names an entry, and what may change one.
 
 ## Does Not Own
 
 - Specific query implementations or on-disk storage formats.
-- Build-tool integration (how the scheduler dispatches queries, what executable drives them).
+- Build-tool integration (how the scheduler dispatches queries, what executable drives them) and how
+  many run at once (see [`compiling_a_design.md`](compiling_a_design.md)).
 - Runtime behavior or simulation outcomes.
 - The shape of compilation units or IR layers (covered by other architecture docs).
-- What a signature contains (see `compilation_unit_model.md`).
+- What a signature contains (see [`compilation_unit_model.md`](compilation_unit_model.md)).
 
 ## Core Invariants
 
@@ -86,41 +89,81 @@ assumes whole-design lowering forecloses it.
     different units. A fact reaching a unit by any other path is a dependency the graph does not
     have, and it is invisible until a cached result is reused, at which point it is a stale result
     rather than an error.
+12. **Every kept result is an action's output, kept by content.** An action is a step and every
+    input it reads; the store maps the digest of an action to the digest of its one output, and a
+    digest to the bytes it is the digest of, as Bazel's remote execution API and LLVM's CAS do. A
+    unit's object, an emitted file's object, a prepared header and a program are each one action's
+    output, and an output that comes out the same however it was reached leaves every action reading
+    it found again. An action is performed at most once in a build however many ask for it.
+13. **An entry is named by what its step reads, never by the SystemVerilog sources.** A compile is
+    named by the text it compiles, every file it includes, the compiler that runs and the level it
+    runs at; a link by the bytes of what it links, the runtime library, the foreign code and the
+    driver it runs under. That name is complete by construction, where one built from the sources
+    and the options would have to list every file the front end opened and every define in effect,
+    and the first one missed is a stale program that runs without a word. How many compiles ran at
+    once is in no name, since the objects are the same however many there were.
+14. **An entry never changes, and the store is shared.** One store per user serves every checkout
+    and every configuration of every design, so two that agree share an entry and two that differ
+    get different ones, and nothing one does can change what another reads. An entry is written
+    under a temporary name and renamed into place, an entry that vanishes between being found and
+    being read is a miss, and a command hands back a private copy of a program rather than a link
+    into the store -- so clearing or trimming the store fails no build and breaks no program already
+    handed out.
 
 ## Boundary to Adjacent Layers
 
-- `identity_and_ownership.md` establishes that identity follows ownership, not traversal order. This
-  doc builds on that rule as the foundation of stable keys; it does not restate it.
-- `compilation_unit_model.md` defines the compilation-unit ownership boundary and what a unit's
-  signature contains. This doc uses that boundary as the coarsest granularity of incremental reuse,
-  and the signature as the unit of cross-unit dependency; it does not define what is on one.
-- `specialization_model.md` defines unit and body names. Those names feed the cache this doc
-  describes; this doc does not redefine them.
-- `lowering_boundaries.md` owns what a single lowering may do. This doc owns the order the units'
-  lowerings run in relative to each other, which is a separate axis.
+- [`identity_and_ownership.md`](identity_and_ownership.md) establishes that identity follows
+  ownership, not traversal order. This doc builds on that rule as the foundation of stable keys; it
+  does not restate it.
+- [`compilation_unit_model.md`](compilation_unit_model.md) defines the compilation-unit ownership
+  boundary and what a unit's signature contains. This doc uses that boundary as the coarsest
+  granularity of incremental reuse, and the signature as the unit of cross-unit dependency; it does
+  not define what is on one.
+- [`specialization_model.md`](specialization_model.md) defines unit and body names. Those names feed
+  the cache this doc describes; this doc does not redefine them.
+- [`lowering_boundaries.md`](lowering_boundaries.md) owns what a single lowering may do. This doc
+  owns the order the units' lowerings run in relative to each other, which is a separate axis.
 - Each IR layer defines its own identity kinds. This doc uses those identities as key sources; it
   does not redefine them.
+- [`emission_model.md`](emission_model.md) owns what each artifact an action compiles contains.
 
 ## Forbidden Shapes
 
-- Using raw pointer identity as part of a key.
-- Using global sequential ids as stable keys.
-- Fingerprints derived from raw source text rather than from semantic content.
-- Dependencies between queries that are not captured in the query graph.
-- Recomputing entire compilation units in response to a local edit inside one callable.
-- A key scheme that shifts when unrelated entities are inserted, removed, or reordered.
+Each shape below fails an invariant above, and through it [`north_star.md`](north_star.md)
+invariant 4.
+
+- Using raw pointer identity as part of a key. It fails invariant 2: an address is a fact of one
+  run, so no later build matches it.
+- Using global sequential ids as stable keys. It fails invariants 2 and 6: an insertion anywhere
+  shifts every key after it.
+- Fingerprints derived from raw source text rather than from semantic content. It fails invariant 3:
+  a rename or a moved line would invalidate what it did not change.
+- Dependencies between queries that are not captured in the query graph. It fails invariant 1, and
+  surfaces only as a stale result once one is reused.
+- Recomputing entire compilation units in response to a local edit inside one callable. It fails
+  invariants 5 and 7.
+- A key scheme that shifts when unrelated entities are inserted, removed, or reordered. It fails
+  invariant 2.
 - Collapsing the key and the fingerprint into a single value, such that semantic equivalence cannot
-  be detected independently of structural identity.
-- Signature derivation that consults another unit. It would put a dependency graph, an order, and a
-  cycle diagnostic in front of the one stage that has none of those, and every later stage would
-  inherit the ordering.
-- A compilation order computed over the units. After the signature stage there is nothing to order:
-  a scheduler that sequences units is serializing work that has no edge between it.
+  be detected independently of structural identity. It fails invariant 4.
+- Signature derivation that consults another unit. It fails invariant 8: it would put a dependency
+  graph, an order, and a cycle diagnostic in front of the one stage that has none of those, and
+  every later stage would inherit the ordering.
+- A compilation order computed over the units. It fails invariant 10: after the signature stage
+  there is nothing to order, and a scheduler that sequences units is serializing work that has no
+  edge between it.
 - A stage that reaches a fact about another unit around its signature -- through a whole-design
-  view, a global table, or a shared frontend graph. The fact is then outside the query graph, so no
-  fingerprint covers it.
-- A synchronization point between the signature stage and the link. Any barrier there stalls units
-  that have no dependency on each other.
+  view, a global table, or a shared frontend graph. It fails invariant 11: the fact is then outside
+  the query graph, so no fingerprint covers it.
+- A synchronization point between the signature stage and the link. It fails invariant 9: any
+  barrier there stalls units that have no dependency on each other.
+- A kept program or object named by the sources and options that produced it. It fails invariant 13:
+  a stale program has no fallback the way a stale prepared header does, which is refused and
+  compiled again; it is simply executed.
+- An entry changed in place, or a program handed out as a link into the store. It fails invariant
+  14: another checkout reading the entry, or a program already handed out, would change under it.
+- A store kept per project directory. It fails invariant 14: every checkout recompiles every
+  configuration, and a design named only on a command line has no project directory at all.
 
 ## Notes / Examples
 
@@ -149,7 +192,8 @@ flowchart TB
 
 One sequential head, one barrier, one join. Between the barrier and the join every unit is a
 pipeline of its own with no edge to any other, which is why a unit may reach emit while its
-neighbour is still lowering bodies.
+neighbour is still lowering bodies. A unit's object is compiled inside its own pipeline and kept
+under its own name, so the link is the only join after the barrier.
 
 The barrier is not a cost being tolerated. It is what removes every other ordering: because no
 signature needs another, the stage before it is unordered, and because every signature exists after
@@ -206,3 +250,16 @@ its tree of the whole design, and what that consulted is no recorded read: an up
 where it does because of every scope its search passed. While that is so, no lowering's result can
 be reused across builds, and like a query reading state its tracking cannot see, it is computed
 again every time.
+
+### The store
+
+_Current implementation:_ the store is `lyra` under `$XDG_CACHE_HOME` where that is an absolute path
+and under `$HOME/.cache` otherwise, the rule Go's build cache follows; finding it creates nothing,
+so a command that keeps nothing leaves no trace, and where the platform names no such directory
+there is no store and a build is slower and nothing else. A build removes entries unused for five
+days, at most once a day, as Go's cache does. `--rebuild` builds as though the store were empty and
+writes what it built, which repairs an entry suspected of being stale; `lyra cache clear` empties
+it. The host compiler's own system -- its standard library and C runtime -- is stood in for by the
+compiler's identity, the file its path resolves to with its modification time and size, which is the
+trade ccache makes by default; Lyra's own build is part of the name of an object Lyra's code
+generator compiled.

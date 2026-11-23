@@ -6,10 +6,10 @@ LIR is a self-contained, target-neutral executable model IR. Its conceptual peer
 Rust's MIR, compiler IRs that express a program as a control-flow graph over typed values, with
 explicit effect ordering and an explicit storage model, shaped so a backend can lower it to a
 target. So the layer of rustc that Lyra's LIR corresponds to is the one rustc calls MIR, whatever
-Lyra's own MIR shares with it in name; `compiler_overview.md` maps every layer. LIR is not a
-high-level programming language; it is what a program looks like once structured control flow and
-the object-oriented vocabulary have been lowered into a control-flow graph a code generator can
-consume.
+Lyra's own MIR shares with it in name; [`compiler_overview.md`](compiler_overview.md) maps every
+layer. LIR is not a high-level programming language; it is what a program looks like once structured
+control flow and the object-oriented vocabulary have been lowered into a control-flow graph a code
+generator can consume.
 
 LIR's vocabulary is what those execution-model IRs share:
 
@@ -50,7 +50,10 @@ below LIR, at LIR-to-LLVM.
 - Control-flow graphs: basic blocks, successors, edges.
 - A self-contained type graph: LIR-owned type identities that type every local, value, place
   projection, return, and call argument. Each is translated from a generic-PL type at MIR-to-LIR and
-  carries no live reference back to MIR.
+  carries no live reference back to MIR. The unit's types are interned by their content, so a type
+  reached by two routes is one identity and comparing identities is comparing types; the content is
+  the whole type, since LIR holds nothing present for the front end's benefit, and a nominal type's
+  content is its declaration, so two classes with the same members stay two types.
 - The place vocabulary: a place is a base local plus a projection chain of member, dereference,
   element, index, component and slice steps, spelled inside the instruction that consumes it and
   never held. Every load, store, and address-of names a place by logical identity, and address-of is
@@ -71,7 +74,9 @@ below LIR, at LIR-to-LLVM.
   indirection is reached by a dereference step.
 - When the bytes a frame keeps for a value are in use: from where a slot or a value is made, to a
   point stated on every way out of the extent it belongs to but unwinding out of the body, which
-  ends every byte of the frame.
+  ends every byte of the frame. The statement is a promise a target may act on -- the bytes may hold
+  something else after their end -- so a value read after its storage's end is a miscompile, never a
+  lost optimization.
 - Whether a write initializes or assigns: a value put into storage holding none -- a slot's first
   value, one whose value was ended before, or a part of a body's return place, where an answer is
   built part by part -- is an assignment naming that storage as its destination, made there or moved
@@ -86,10 +91,13 @@ below LIR, at LIR-to-LLVM.
   from the type's parts (a product's components in order, an array's elements, a tagged union's live
   member, a closure's captures), the body built for a run-time-sized container's type over the
   library's core, the definition a value opens with, or, for an owning pointer's end, what it points
-  at, ended where the pointer ends. And for each class the unit defines that a value is built of,
-  how the parts it places begin and end and how an object of it is created whole and given its
-  class, and ended. The step is stated as an operation -- a copy, a value built of parts, a value
-  put in storage -- and the query says what it does, as rustc's `Drop` names a type's drop glue.
+  at, ended where the pointer ends. Every type the unit names whose step is such a function is given
+  it, whatever else then uses it, since a type's declaration brings its steps; the operations of a
+  type on a whole value, by contrast, are built only where something asks for one (Boundary below).
+  And for each class the unit defines that a value is built of, how the parts it places begin and
+  end and how an object of it is created whole and given its class, and ended. The step is stated as
+  an operation -- a copy, a value built of parts, a value put in storage -- and the query says what
+  it does, as rustc's `Drop` names a type's drop glue.
 - Who ends a value a pointer owns: a uniquely owning pointer is an owned value with no copy, moved
   wherever it is handed on -- into a slot, to a caller, to a callee -- and ended by its last holder,
   which ends what it points at and gives the storage back. Storage of dynamic duration for a value
@@ -109,11 +117,17 @@ below LIR, at LIR-to-LLVM.
 - Which element of a sequence of handles is taken out of it by value, at the position the program
   computes. A part of any other value is reached as a step of the place the value is held in.
 - Logical storage topology: which local, member, element, or referent a place names, and the logical
-  identity of every class member and callable a node refers to. A member step reaches a class this
-  unit compiles or a class another unit published, both member-bearing objects of this unit's own
-  graph, and only what the artifact emits distinguishes them. A step into another unit's object
+  identity of every class member and callable a node refers to. A member step names the class that
+  declares the member and the slot that class gave it; the type the place arrived at is checked
+  against that class, never consulted to find the member (LRM 8.14). A member step reaches a class
+  this unit compiles or a class another unit published, both member-bearing objects of this unit's
+  own graph, and only what the artifact emits distinguishes them. A step into another unit's object
   reaches only a member its scope published, which leads that object's storage in the order the
   publication states; what lowering added to the object is reached by no step from outside it.
+- Each closure the unit builds: its captures as members, and its one body. It is no class -- no
+  base, no dispatch, no constructor, its captures initialized where a value of it is built -- and
+  shares the member vocabulary with a class and nothing else, so a capture read is a member step
+  through the body's receiver.
 - Each operation of a type no declaration states it for that the unit asks for, by the type and the
   operation, with the function answering it, or none where the language gives the type no such
   operation. A body of one is linked within its artifact, since no other unit names it.
@@ -146,15 +160,21 @@ below LIR, at LIR-to-LLVM.
 - Where unwinding goes in a body, as rustc's MIR states a call's unwind action: a call that can be
   unwound out of at a point where the body owes something on the way out names the first block of
   what is owed, and so ends its block; any other call is an instruction, unwinding from it leaving
-  the body. A block reached only by unwinding is marked as one. Unwinding ends where a region of the
+  the body. A value whose type's end does nothing is owed no end, and since leaving the body ends
+  every byte of its frame, a slot's use is owed only on a way out that stays in the body; every
+  other obligation -- a value's end, a lease let go, a write in progress ended -- is owed on every
+  way out. A block reached only by unwinding is marked as one. Unwinding ends where a region of the
   body, or the top of an execution, takes it -- a terminator asking the runtime what arrived and
   going on with a departure of the design, while anything else goes on unwinding as the same raise
   -- or by going on out of the body. What is unwinding is no value of the body, and how a target
   carries it -- landing pads, where it is kept while cleanups run, beginning and ending a catch,
-  resuming -- is below LIR. The unit's verification holds two rules apart: a block reached only by
-  unwinding calls nothing that can be unwound out of and is reached only by unwinding, and a
-  function declared not to unwind lets no unwinding out of it.
-- The boundary protocol to the scheduling runtime (entry, suspend, resume, abandonment, completion).
+  resuming -- is below LIR ([`nonlocal_control_flow.md`](nonlocal_control_flow.md)). The unit's
+  verification holds two rules apart: a block reached only by unwinding calls nothing that can be
+  unwound out of and is reached only by unwinding, and a function declared not to unwind lets no
+  unwinding out of it.
+- The boundary protocol to the scheduling runtime (entry, suspend, resume, abandonment, completion),
+  and which bodies speak it: a body whose call protocol is the coroutine one says so in its result
+  type, carried unchanged from MIR, and nothing else restates it.
 - Where in the source each instruction and terminator came from, as rustc's MIR statements and
   terminators carry a span: that of the innermost MIR node naming one whose lowering emitted it, so
   what the code generator fails on or refuses is reported there.
@@ -166,17 +186,22 @@ below LIR, at LIR-to-LLVM.
 
 ## Does Not Own
 
-- Semantic ownership of objects, members, or callables (see `mir.md`). LIR consumes the ownership,
-  wrapper, and object-model decisions MIR fixed; it does not re-decide them.
+- Semantic ownership of objects, members, or callables (see [`mir.md`](mir.md)). LIR consumes the
+  ownership, wrapper, and object-model decisions MIR fixed; it does not re-decide them.
 - Physical layout: byte size, alignment, field offset, object-header placement, padding. These are
-  derived below LIR from the logical topology, the target data layout, and the runtime ABI profile.
+  derived below LIR from the logical topology, the target data layout, and the runtime ABI profile;
+  Notes states the derivation.
 - Target ABI classification: by-value versus indirect parameter passing, `sret` returns, register
   and stack placement, calling conventions, and the LLVM-facing encoding of a value.
+- How a coroutine's frame, its resume state and the values that live across a suspension are laid
+  out. LLVM's coroutine passes derive them from the suspensions LIR states.
 - A live dependency on MIR. After lowering, LIR consults nothing upstream; every type and identity
   it uses is its own.
 - Language-level constructs (loops as loops, assertions as assertions).
-- The generate-region tree or hierarchy structure (see `hierarchy_and_generate.md`).
-- Identity rules for upstream references (see `identity_and_ownership.md`).
+- The generate-region tree or hierarchy structure (see
+  [`hierarchy_and_generate.md`](hierarchy_and_generate.md)).
+- Identity rules for upstream references (see
+  [`identity_and_ownership.md`](identity_and_ownership.md)).
 - Target-machine details: register allocation, instruction selection, per-target calling
   conventions. These belong below LIR.
 
@@ -221,11 +246,15 @@ identity is the suspect, not the analysis.
    ways control can leave it -- the driver resumes the body, or ends it where it stands -- so what
    the second owes is in the graph rather than assumed; and an execution's body left by unwinding,
    or an execution completed by a departure, says so with a terminator of its own, as a returning
-   one does. A coroutine body's entry is such a suspension, before its first statement, so whoever
-   drives the body runs every stretch of it, the first included, and ending it there ends what it
-   was handed and nothing else -- the initial suspend a C++ coroutine's promise states, here stated
-   in the graph rather than left to each backend. _Machine-execution consequence: the scheduler's
-   boundary is visible to the optimizer as edges, not as a side convention only the lowering knows._
+   one does. A suspension arranges nothing: the runtime calls before it build and register the wait,
+   so a delay, an event control and a level wait differ only in those calls and share one suspend,
+   and the stop acts on the execution the runtime has running, so no activation token appears in
+   LIR. A coroutine body's entry is such a suspension, before its first statement, so whoever drives
+   the body runs every stretch of it, the first included, and ending it there ends what it was
+   handed and nothing else -- the initial suspend a C++ coroutine's promise states, here stated in
+   the graph rather than left to each backend. _Machine-execution consequence: the scheduler's
+   boundary is visible to the optimizer as edges, not as a side convention only the lowering knows,
+   and a backend reads which bodies are coroutines from their result type alone._
 7. LIR carries no source-language semantics. Every node is a generic machine-execution operation; no
    SV-specific shape -- an out-of-bounds guard, an index-validity predicate, an NBA region, an event
    control -- survives, because each was lowered to generic control flow or a runtime call at
@@ -250,6 +279,16 @@ identity is the suspect, not the analysis.
     its own type to write a part of that part. _Machine-execution consequence: what a write costs
     follows the bits it names and not the value they lie in, and a bit the program did not name is
     not written._
+11. A type's identity is its content. Two requests for one content answer one identity, whichever
+    route asked, so the verifier's and the code generator's comparisons by identity are comparisons
+    of types. _Machine-execution consequence: a type one lowering builds and another translates from
+    MIR are the same type, and no cache beside the pool is a second authority for an identity._
+12. A cast between two packed values is between one type. It renames only what the program holds the
+    bits to be; any change to the integral type -- its width, signedness or state domain -- is the
+    reshape MIR states as a library call, and the unit's verification refuses a cast between two
+    packed types that differ. _Machine-execution consequence: every cast is a pair of types a target
+    writes in its own conversion syntax, and no value silently changes width at a cast because the
+    reshape meant to precede it is missing._
 
 ## Boundary to Adjacent Layers
 
@@ -273,64 +312,91 @@ identity is the suspect, not the analysis.
   target needs of a type's operations was asked for and lowered before the unit left here. Whoever
   drives a unit alternates lowering bodies and asking the target what the finished ones ask of the
   library's records, until nothing new is asked, as rustc's collector hands code generation a
-  complete list. Physical layout and target ABI are a separate derivation: the LIR program, the
-  target data layout, and the runtime ABI profile together yield byte sizes, alignments, field
-  offsets, and parameter-passing classification. LIR-to-LLVM consumes the LIR program and that
-  derivation. It preserves the execution semantics LIR decided, while selecting the concrete
-  representation and runtime realization the backend requires, and it is also where the place /
-  transient-value form becomes fully SSA. The LLVM path never queries MIR; it is not a second
-  semantic lowering.
+  complete list; each body asked for is built as MIR, rewritten into the legalized phase and
+  verified alone, and lowered, which may ask for more, and the set of types, constants and functions
+  only grows while it runs. Emission then runs one way, on a unit no body is added to. Physical
+  layout and target ABI are a separate derivation: the LIR program, the target data layout, and the
+  runtime ABI profile together yield byte sizes, alignments, field offsets, and parameter-passing
+  classification. LIR-to-LLVM consumes the LIR program and that derivation. It preserves the
+  execution semantics LIR decided, while selecting the concrete representation and runtime
+  realization the backend requires, and it is also where the place / transient-value form becomes
+  fully SSA. The LLVM path never queries MIR; it is not a second semantic lowering.
 
 ## Forbidden Shapes
 
-These are the patterns that violate the identity. Each is the inverse of a property a
-self-contained, target-neutral execution-model IR implies; the diagnostic for any new forbidden
-shape is "what identity property does this break".
+Each entry names the property of the identity in Purpose it breaks; the diagnostic for any new
+forbidden shape is the same question.
 
-- A parallel identity or ownership system that duplicates MIR's. (Identity is owned by the layer
-  that introduced it; LIR consumes, never re-mints.)
-- A MIR identity reaching LIR as a live reference: a `mir::TypeId`, a class / member / method index,
-  or a borrowed `mir::CompilationUnit`, held on a node or consulted in a later pass. An
-  un-translated MIR type passed through as a fallback instead of being rejected at the boundary is
-  this shape.
-- Byte offsets, addresses, alignment, padding, or LLVM-facing types on a LIR node or place. A place
-  that names `base + N` instead of a logical projection is this shape; physical layout is derived
-  below LIR, not encoded in the place.
-- Object or member semantics decided at LIR -- which override a call runs, which interface behavior
-  a method answers, where a member sits. Those are MIR's statements or the layout step's answers,
-  and LIR only carries them. (LIR's vocabulary is machine-execution, not high-level programming
-  language.)
-- Hierarchy navigation logic expressed at LIR. Hierarchy is resolved by MIR and consumed as logical
-  storage topology at LIR.
-- Language-level constructs reintroduced at LIR (a "foreach" node instead of a loop CFG). (LIR is
-  CFG-shaped; structured constructs do not survive lowering.)
-- A source-language concept reintroduced as a LIR node: a guard, an index-validity predicate, an
-  out-of-bounds default, an NBA region, an event control. These are lowered to generic control flow
-  or runtime calls at HIR-to-MIR; one reappearing at LIR is an upstream leak, never a LIR node to
-  add.
-- A source language's ownership discipline reconstructed at LIR -- move semantics, borrow checking.
-  LIR's value model is value-copy, a uniquely owning pointer moved wherever it is handed on, and
-  explicit borrowed references; an affine discipline is a rule about what a program may write,
-  decided where the program is still that language. (Deriving where storage is released is not this:
-  it is a lowering computing a fact about the code in front of it, which is what an execution-model
-  IR is for, and both peers named in Purpose do it.)
-- Implicit control flow. Every control transfer is an explicit edge. (Machine-execution IRs do not
-  carry implicit transitions; the codegen relies on edges being explicit.)
-- Reintroducing semantic structure that MIR has already lowered away.
-- Target ABI policy decided during LLVM lowering. Parameter passing, `sret`, and register / stack
-  classification are facts the physical-layout derivation fixes; the LLVM step encodes them, it does
-  not choose them.
-- The LLVM path querying MIR for a semantic type, a class member, an object layout, or an ABI
-  decision. The LLVM path consumes the LIR program and the physical-layout derivation only.
-- Basic blocks that cross callable boundaries. (Each callable is one CFG; cross-callable transfer is
-  a call edge, not a basic-block-level transition.)
+- **A parallel identity or ownership system beside MIR's** fails invariant 5: identity is owned by
+  the layer that introduced it, and a second system re-decides what MIR fixed.
+- **A MIR identity reaching LIR as a live reference** -- a `mir::TypeId`, a class / member / method
+  index, or a borrowed `mir::CompilationUnit`, held on a node or consulted in a later pass, or an
+  un-translated MIR type passed through as a fallback instead of being rejected at the boundary --
+  fails invariant 4: the unit is then not lowerable with no MIR present.
+- **Byte offsets, addresses, alignment, padding, or LLVM-facing types on a LIR node or place** -- a
+  place naming `base + N` instead of a logical projection -- fails invariant 3: the program would be
+  valid for one target only.
+- **Object or member semantics decided at LIR** -- which override a call runs, which interface
+  behavior a method answers, where a member sits -- fails invariant 5: the first two are MIR's
+  statements and the third the layout step's answer, and LIR only carries them.
+- **A member found by searching the type a place arrived at** fails LRM 8.14, which binds a name to
+  the class the access names, and invariant 5: the class and the slot are MIR's answer, carried.
+- **Hierarchy navigation expressed at LIR** fails invariant 5: hierarchy is resolved by MIR and
+  arrives as logical storage topology.
+- **A structured construct reintroduced at LIR** -- a "foreach" node instead of a loop CFG -- fails
+  invariant 1.
+- **A source-language concept reintroduced as a LIR node** -- a guard, an index-validity predicate,
+  an out-of-bounds default, an NBA region, an event control -- fails invariant 7; one reappearing at
+  LIR is an upstream leak, never a LIR node to add.
+- **A suspension terminator that names its wakeup source** -- a delay, an event or a level-wait form
+  of it -- fails invariant 7 (the wait is a runtime call) and invariant 6 (a suspension arranges
+  nothing, so one suspend serves every wait).
+- **A flag on a function, a terminator or a node saying it is a coroutine** fails invariant 6's
+  reading of coroutine-ness from the result type: a flag is a second statement of one fact, and it
+  appears only where an upstream layer erased the protocol from the type, which is the defect to
+  fix.
+- **Checking at LIR that the program obeys a source language's ownership rules** -- that nothing is
+  read after a move, that a borrow does not outlive its referent -- fails invariant 5: legality is
+  decided where the program is still that language, and LIR's value model is value copy, a uniquely
+  owning pointer moved wherever it is handed on, and explicit borrowed references. Deriving where
+  storage is released is not this: it is a lowering computing a fact about the code in front of it,
+  which is what an execution-model IR is for, and both peers named in Purpose do it.
+- **A control transfer not stated as an edge** fails invariant 1 and invariant 6: the codegen and
+  the optimizer rely on every transfer being one.
+- **A call naming a block to unwind to where nothing is owed on that way out** fails the north
+  star's iteration time, on the premise that a target pays for each landing whether or not it runs
+  anything -- LLVM's instruction selection sends every block ending in an invoke, and every landing,
+  through its slow path at `-O0` -- and it states an obligation the body does not have.
+- **The extent of a catch, or what is unwinding as a value of the body, stated in LIR** fails target
+  neutrality: it is one target's exception ABI, which has two realizations in LLVM alone (landing
+  pads, and Windows' funclets), and handing a departure over once at a taking point leaves no extent
+  to state.
+- **Target ABI policy decided during LLVM lowering** -- parameter passing, `sret`, register / stack
+  classification -- fails the separation of LIR from its physical derivation: those are facts the
+  derivation fixes, and the LLVM step encodes them without choosing them.
+- **The LLVM path querying MIR** for a semantic type, a class member, an object layout, or an ABI
+  decision fails invariant 4: it consumes the LIR program and the physical-layout derivation only.
+- **A basic block that crosses a callable boundary** fails invariant 1: each callable is one CFG,
+  and a transfer between callables is a call.
+- **A type identity minted per request**, or a cache keyed by a type's content standing beside the
+  pool, fails invariant 11: one type reached by two routes then arrives as two identities, and a
+  store or an address-of between them is refused by name.
+- **A lowering deciding that a declared local needs no storage** -- substituting the value its
+  declaration produced at every mention -- fails the rule that every declared variable is storage
+  ([`storage.md`](storage.md) invariant 1), and is an optimization taken by a step that translates
+  one node at a time and so cannot see every write that reaches the local; keeping a variable out of
+  memory is the saving of whoever sees the whole function, whose failure is a slower program rather
+  than a refused one.
 
 ## Notes / Examples
 
 A MIR process becomes an LIR callable with a CFG. Its suspend points (for example, event controls)
-appear as explicit CFG edges that hand control back to the scheduler. The optimizer sees the suspend
-point as an edge it can reason about (does it post-dominate any node, what values does it demand)
-rather than as a convention buried inside a node's semantics.
+appear as explicit CFG edges that hand control back to the scheduler, each after the runtime call
+that builds its wait; the wait is held in a local of the body, so a stop reached again stops at the
+same wait. The optimizer sees the suspend point as an edge it can reason about (does it
+post-dominate any node, what values does it demand) rather than as a convention buried inside a
+node's semantics. A level wait lowers to a re-check loop -- evaluate, continue if true, else build
+the wait on what the evaluation reached and stop at it, then evaluate again on resume.
 
 A structured `if` with then and else blocks becomes a conditional branch to two basic blocks that
 rejoin at a merge block; a switch becomes one terminator naming the block for each value and the
@@ -340,11 +406,15 @@ The structured nesting MIR carried is gone; the CFG is the only control structur
 flattening is the core of MIR-to-LIR -- a backend that targets a structured language (the C++
 backend) never performs it, so it is work LIR introduces from scratch.
 
-A callable's function-local set is small: the receiver `self` and the compiler temporaries the
-lowering introduces. A source-level variable with static lifetime is not a function local; it is a
-cell of whatever its declaration belongs to, which for a body of the design hierarchy is a member of
-the enclosing class reached through `self` as a place. The bulk of a program's state is member
-storage reached through receivers, not locals on a frame.
+A callable's locals are the receiver `self`, its parameters, the automatic variables its body
+declares, and the temporaries the lowering introduces. Every declared local has storage, and where
+it lies follows from what it is: a variable MIR states as a cell, which a process may wait on, lies
+among the body's variables, and every other local is a slot of the frame, which a reference binds as
+it binds any storage and which the target keeps across a suspension. A source-level variable with
+static lifetime is not a function local; it is a cell of whatever its declaration belongs to, which
+for a body of the design hierarchy is a member of the enclosing class reached through `self` as a
+place. The bulk of a program's state is member storage reached through receivers, not locals on a
+frame.
 
 LIR is not an SSA form. A local is either a transient -- computed once, consumed, with a pure
 dataflow origin -- or a place, which is named storage: the frame's, or for the callable's return
@@ -360,19 +430,30 @@ case the entry block copies the argument into that place. Recovering a register 
 never truly needed is a target-side derivation, not a property LIR must establish: LIR states the
 storage topology, it does not minimize it.
 
+The current execution backend realizes the statements of when a coroutine's slot is in use as
+`llvm.lifetime.start` and `llvm.lifetime.end` at every optimization level, as clang does for a
+coroutine. LLVM's coroutine split asks of every slot whether it is in use across a suspension, and
+without those statements answers from every pair of the slot's uses, which costs the square of a
+long body. Storage no way out ends -- the body's variables, the slot a landing keeps what is
+unwinding in -- has a start and no end.
+
 A closure lowers to a value of its declaration, built from its captures by an instruction of its
-own; its one body is entered with a borrow of that value, or its box, as `self`, by its kind. `self`
-is the first argument, supplied like any other; LIR has no implicit receiver. A direct call to a
-statically known callable passes its receiver and arguments to a named function. LIR knows only
-"call target" and "arguments"; which values a closure captures was decided in MIR.
+own; its one body is entered with a borrow of that value, or its box, as `self`, by its kind -- a
+read-only borrow for a closure that only reads its captures, a mutable one for a closure that keeps
+state between calls, the box for a body that takes the closure over. `self` is the first argument,
+supplied like any other; LIR has no implicit receiver. A direct call to a statically known callable
+passes its receiver and arguments to a named function. LIR knows only "call target" and "arguments";
+which values a closure captures was decided in MIR. A closure, its body and its definition belong to
+the body building it, and nothing outside that body names them, so all three are linked within it.
 
 A place is the logical path -- `self.counter`, `*p`, `(*p).flag` -- the way Rust's MIR names a field
 projection rather than `base + N`. The same place is valid on every target; only the derivation
 below LIR turns it into an address. A member access lowers to a place whose projection names the
-member by its logical identity, not by an offset. An observable signal arrives already as a
-runtime-library call -- the cell's get / set / mutate, because HIR-to-MIR expressed the access that
-way -- and lowers as a call, the same as any other. Whether a plain-value member's place becomes a
-load or a store, and at what address, is the physical layer's question, not LIR's.
+member by its logical identity, not by an offset. A read of an observable signal and a whole write
+of one arrive as calls on its cell, and a partial write as a write in progress opened on it, because
+HIR-to-MIR expressed them that way, and each lowers as a call, the same as any other. Whether a
+plain-value member's place becomes a load or a store, and at what address, is the physical layer's
+question, not LIR's.
 
 An object member access -- reaching a member of an object through its receiver -- always yields a
 place. What the use site does with that place -- read the value it holds, write a value into it, or
@@ -388,57 +469,140 @@ A place is the access path to independently addressable storage -- storage with 
 own -- not merely something a source-level assignment can target. Path and identity are two phases,
 and the split is what makes the vocabulary safe: the path is written where an instruction consumes
 it and locates whatever its base and projections reach at that moment, while the identity a program
-retains is the value address-of yields (`storage.md`). Assignability and place-ness are different
-questions, and which parts of a value are storage of their own is the language's answer rather than
-this layer's. An element of an array, queue or associative array, and a member of an unpacked
-structure, each have an identity a second name may denote (`storage.md`), so each is a place, which
-a load reads where it lies and a store writes into the object already there. A member, and an
-element of a fixed-size array, is a step extending the place holding its value; an element of a
-dynamic array, a queue or an associative array is the dereference of the address its type's own body
-answers, as rustc reaches an element of a `Vec` by a call of `Index::index`, and its place is the
-identity a name of it holds. Value semantics hold because a copy of the aggregate copies its parts,
-so no two values share one and a write through one is seen through no other. An untagged union is a
-structure of one component, its storage, and a member is no part of it: MIR states a read of one as
-the storage's bits made into the member's type and a write as a store of the member's bits into the
-storage, so nothing here knows a union has members. A tagged union's member has no identity of its
-own and is still reached in place: a component step on the union, at the union's own start, with a
-load and a store through it as through any step. A tagged union's tag is read by its own instruction
-over the union's place, rustc's `Discriminant`, and a whole union is built by one instruction naming
-the member and its value, which leaves every other byte zero. A value that lies in no storage is
-held in a local before a part of it is reached, so no layer extracts a part of a value or rebuilds a
-value around one; the one element taken by value is an element of a sequence of handles. Bits of a
-packed value are not parts of that kind either: the integral's own operations read them out of a
-value and write them into one. Bits of a packed value lying at a place are written where they lie.
-The store names the place, each part the bits are reached through, outermost first -- where the part
-starts within the one before it and the type that fixes how many bits it has -- and the bits. The
-bits ride on the statement and not on the place, because a place is storage a load, a store and an
-address-of can each name, and some bits of a value are none of those alone. A part reaches nothing
-outside the part it is taken in, and a start that names no position writes nothing; both are
-outcomes of the insertion the store is realized by, never control flow or a test stated here. A
-step's direction is the access's: reading a missing element reads the default, and writing one
-allocates or discards it by the container's own rule, which whatever realizes the step applies --
-arithmetic within a fixed-size array's layout, or, for a dynamic array, a queue or an associative
-array, the body the unit states for the container's type, which the library's steps within a write
-reach through the type's record. A write in progress is not a place but a value: the write itself,
-which the writer owns and ends and which names no place, and each place designated within it -- the
-whole of what it was opened on, and each part reached from there -- which borrows the write. Each
-step MIR takes within a write is one call on a designation answering with the next, and what the
-step does to the write -- an element step tells it what forming the element did -- is the library's,
-as it is in the C++ rendering of the same MIR. Where the write lands is a call on a designation,
-stated before anything is written there, that answers with the part's address; the part is then
-storage like any other. A run of elements written within a write is a call on the container's
-designation. Bits written within one are a store through the dereference of the designation of the
-value they lie in, naming the same parts and bits a store at a place names; the write keeps what
-those bits held and hears which of them moved. That is how the variable learns whether the write
-changed it (LRM 4.3). Which library entry realizes a step, and whether it is an instruction or a
-call at all, is a realization question answered below LIR; it never decides which node the step is
-expressed as. A mutating method on a receiver -- a container's `delete`, a queue's `push` -- changes
-the storage the receiver names in place.
+retains is the value address-of yields ([`storage.md`](storage.md)). Assignability and place-ness
+are different questions, and which parts of a value are storage of their own is the language's
+answer rather than this layer's. An element of an array, queue or associative array, and a member of
+an unpacked structure, each have an identity a second name may denote ([`storage.md`](storage.md)),
+so each is a place, which a load reads where it lies and a store writes into the object already
+there. A member, and an element of a fixed-size array, is a step extending the place holding its
+value; an element of a dynamic array, a queue or an associative array is the dereference of the
+address its type's own body answers, as rustc reaches an element of a `Vec` by a call of
+`Index::index`, and its place is the identity a name of it holds. Value semantics hold because a
+copy of the aggregate copies its parts, so no two values share one and a write through one is seen
+through no other. An untagged union is a structure of one component, its storage, and a member is no
+part of it: MIR states a read of one as the storage's bits made into the member's type and a write
+as a store of the member's bits into the storage, so nothing here knows a union has members. A
+tagged union's member has no identity of its own and is still reached in place: a component step on
+the union, at the union's own start, with a load and a store through it as through any step. A
+tagged union's tag is read by its own instruction over the union's place, rustc's `Discriminant`,
+and a whole union is built by one instruction naming the member and its value, which leaves every
+other byte zero. A value that lies in no storage is held in a local before a part of it is reached,
+so no layer extracts a part of a value or rebuilds a value around one; the one element taken by
+value is an element of a sequence of handles. Bits of a packed value are not parts of that kind
+either: the integral's own operations read them out of a value and write them into one. Bits of a
+packed value lying at a place are written where they lie. The store names the place, each part the
+bits are reached through, outermost first -- where the part starts within the one before it and the
+type that fixes how many bits it has -- and the bits. The bits ride on the statement and not on the
+place, because a place is storage a load, a store and an address-of can each name, and some bits of
+a value are none of those alone. A part reaches nothing outside the part it is taken in, and a start
+that names no position writes nothing; both are outcomes of the insertion the store is realized by,
+never control flow or a test stated here. A step's direction is the access's: reading a missing
+element reads the default, and writing one allocates or discards it by the container's own rule,
+which whatever realizes the step applies -- arithmetic within a fixed-size array's layout, or, for a
+dynamic array, a queue or an associative array, the body the unit states for the container's type,
+which the library's steps within a write reach through the type's record. A write in progress is not
+a place but a value: the write itself, which the writer owns and ends and which names no place, and
+each place designated within it -- the whole of what it was opened on, and each part reached from
+there -- which borrows the write. Each step MIR takes within a write is one call on a designation
+answering with the next, and what the step does to the write -- an element step tells it what
+forming the element did -- is the library's, as it is in the C++ rendering of the same MIR. Where
+the write lands is a call on a designation, stated before anything is written there, that answers
+with the part's address; the part is then storage like any other. A run of elements written within a
+write is a call on the container's designation. Bits written within one are a store through the
+dereference of the designation of the value they lie in, naming the same parts and bits a store at a
+place names; the write keeps what those bits held and hears which of them moved. That is how the
+variable learns whether the write changed it (LRM 4.3). Which library entry realizes a step, and
+whether it is an instruction or a call at all, is a realization question answered below LIR; it
+never decides which node the step is expressed as. A mutating method on a receiver -- a container's
+`delete`, a queue's `push` -- changes the storage the receiver names in place.
+
+### How a value lies below LIR
 
 LIR states an integral type as MIR does: its width, its signedness, and whether it is two-state or
 four-state. It names an operation on one by the language's operator and carries a constant of one as
-its bits at its type. It does not carry how a value is stored. The encoding of a four-state value --
-its value bits, and beside them the bits saying which positions hold x or z -- is the runtime ABI
-profile's, shared by generated code and the library; turning that encoding into a concrete size,
-alignment, and placement, and an operator into the instructions or the library call that performs it
-at that width, is the derivation's below. LIR states the type; the layers below realize it.
+its bits at its type. It does not carry how a value is stored; the derivation below LIR decides that
+from the type, by the rules here. How a value lies is the same on both backends, since the C++
+backend's value types lay a value out the same way; what the execution backend adds is what its
+prebuilt library causes -- what code compiled once is told of a type, and how a holder of the
+library's keeps a value. A choice of representation is justified by what each cost scales with for
+any input, never by the designs that happen to have been measured, which only check the arithmetic:
+an operation costs the bits it touches, a change propagates at the cost of the part that changed,
+artifacts follow what one unit states, memory follows the declared bits by a constant factor, and
+every decision reads one unit and the published declarations it uses. Each rule below serves one of
+those bounds, or that a program the compiler accepts runs at every width it accepts.
+
+**A value is its machine data, laid out flat at every size.** A two-state packed value is its value
+bits in a storage unit of one, two, four or eight bytes, or in 64-bit words past that; a four-state
+one is the same followed by an equal run of unknown bits, a position reading 0 as (0, 0), 1 as (1,
+0), z as (0, 1) and x as (1, 1) -- the encoding DPI's `aval` / `bval` uses. Every position above the
+width is clear in both planes whatever the signedness, because a write is a change exactly where
+storage differs and a conversion between a signed and an unsigned type of one width changes no bit,
+and both need one encoding per bit pattern. A fixed-size array is its elements one after another,
+the element's size rounded up to its alignment apart, with no count, element type or header beside
+them. A structure and a tuple are laid out as C lays out a record, each component at the first
+offset its alignment allows after the one before; an untagged union is its storage; a tagged union
+is its members overlaid, then its tag. The address of any of these is the address of its bytes,
+wherever it lies, so a pointer, a reference and a designation each name the value itself. No value
+owns storage of its own on account of its size: a value of a type too large for a frame is held
+through a box MIR states ([`mir.md`](mir.md)), so what a call takes from the stack never follows a
+declared width.
+
+**An element of a fixed-size array is address arithmetic** -- a bounds test, a multiply and an add.
+A position naming no element is the one path that enters the library: a read is answered with the
+element type's default and a write lands on storage no read reaches (LRM 7.4.5), each asked of the
+element type.
+
+**An operator over a value of at most two machine words is instructions on its planes**, which the
+code generator derives as a fixed function of the operand type, as rustc's code generation picks
+`sdiv` or `udiv` from a type. Past two words each operator is a call of its type's own operation, a
+body MIR states over the value's words and both backends compile, which loops over them, so the code
+of one site follows no width. The library is called only for what no type's body states at every
+width: an operator handed a value made elsewhere (text, a foreign buffer, a net's resolved
+positions), a string's bits, and the few operations whose work is long at every width (a power, a
+reversal of blocks, a selection of positions). A part of a value -- a select read, or bits written
+into a place -- is reached by the words of each plane it spans where the value lies, as clang reads
+a bit-field, so its cost follows the part. Each operator up to two words is stated once in the value
+library, and that one statement is the C++ value type's operator, the execution backend's entry
+where it calls one, and the compiler's constant folding, so a folded, an inlined and a called
+operation cannot disagree; what holds the code generator's formulas and the bodies past two words to
+it is a conformance case comparing every operator applied to variables with the same operator
+evaluated as a constant expression by the front end, which shares no code with either.
+
+**Code compiled before a design exists is told three things about the design's types and no others:
+a number of bytes, a number of bits, and the address of a function the design's own code contains.**
+It never interprets a description of a type to learn what a value is, because without the type it
+can only allocate, move and copy bytes and do integer arithmetic over bits, and anything else means
+something only for the type. A type crosses as a constant record laid out as C lays one out, which
+the code generator and the library both read: the value's size and alignment and a table of what
+every holder asks of a value -- copy, relocation, end, a write over a value already there, and
+whether a write changed it -- plus what a kind of value adds (a fixed-size array's count and its
+element type's record, a queue type's element and its bound, the function building an element type's
+default). Each operation a caller asks by name is handed by the calling unit as a record of its own,
+so no type carries an answer for a holder that never asks. Every unit handing a type over states its
+record under a name the type settles, and the linker keeps one, as it keeps one copy of a template's
+static data member, so one type is one object in the program. How an entry reads each operand is
+declared with the entry -- its planes with their width, a quantity with its signedness, a value the
+entry keeps with its type, a count or a flag as the machine value it is -- and a call is arranged
+from that declaration and from nothing about the value in hand, as clang arranges a call from the
+callee's `CGFunctionInfo`. A comparison answers one four-valued bit encoded as its two plane bits,
+wherever it was compiled. A net's positions are words and a count, resolved by the same functions
+that fold an integral value with the count as their width.
+
+**What holds a value for the library is the library's part, then the value laid out by its type.** A
+variable's cell, a net, a class's property, what a suspending call answers into: each is told the
+value's width or its type's record where it is built, keeps it, and is told nothing more by the
+entries acting on it afterwards. It keeps the value's address at a fixed offset whichever way the
+value lies, so generated code reads and writes the value through one pointer, and a value too large
+to lie in its holder is one address of storage the holder owns, taken where the holder is built. A
+holder holds a valid value from the moment it is built, its type's start, so a reference, a binding
+and a force name the value from the holder's construction on, before any initializer writes it
+([`lifetime.md`](lifetime.md), [`object_model.md`](object_model.md)). What the library keeps of a
+value for itself -- the value a variable held when a time slot began, a driver's contribution, a
+history's entries -- is a value of its own, allocated once. Every value laid out by its type is one
+domain of the library's, whatever kind of value the type is, and what the library does with one --
+hold it, compare its bytes, resolve a net of it, keep its history -- it does by the record it is
+told, as Go's runtime moves any value by one function told its type (`typedmemmove`).
+
+In the current implementation a value past 1,024 bytes, and every value past the 16 KiB a frame
+keeps of a body's values together, is held through a box; the widest packed type is the front end's,
+2^24 - 1 bits.
