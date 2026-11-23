@@ -7,7 +7,12 @@
 // command a failure names. What it is recorded as stopping on is held exactly:
 // a case that stops somewhere else, says something else, or stops no longer
 // fails until the record says so, which makes the record the account of how
-// far each design gets.
+// far each design gets. A case has the time its test is declared to take, the
+// same in every run of it and well past the slowest case measured, and a step
+// still going when that is up fails whatever the record says, since how long a
+// step takes is the machine's answer as much as the design's. A run ended so
+// says the simulation time it had reached, which tells one that hangs from one
+// slower than anything measured.
 //
 // A text the standard does not settle is refused, and so is one it forbids; a
 // reader may ask for either by name. A design written in such a text is built
@@ -43,16 +48,21 @@
 #include <vector>
 
 #include "conformance/framework/process.hpp"
+#include "lyra/base/overloaded.hpp"
 #include "lyra/cli/lock_file.hpp"
 #include "lyra/ports/port.hpp"
 #include "tests/framework/cli_fixture.hpp"
 #include "tools/cpp/runfiles/runfiles.h"
 
 using bazel::tools::cpp::runfiles::Runfiles;
+using conformance::framework::CouldNotRun;
+using conformance::framework::Describe;
 using conformance::framework::ExitCodeOf;
+using conformance::framework::Exited;
 using conformance::framework::MakeScratchDir;
 using conformance::framework::ProcessOutcome;
 using conformance::framework::RunShellScript;
+using conformance::framework::Signalled;
 using conformance::framework::TestTimedOut;
 using conformance::framework::TimedOut;
 using lyra::test::DesignCase;
@@ -61,7 +71,6 @@ using lyra::test::DesignStep;
 using lyra::test::DesignStop;
 using lyra::test::LayOutDesign;
 using lyra::test::NameOf;
-using namespace std::chrono_literals;
 
 namespace {
 
@@ -84,28 +93,6 @@ constexpr int kBuildWidth = 4;
 constexpr std::size_t kFirstLinesShown = 30;
 constexpr std::size_t kLastLinesShown = 10;
 
-// How long a step may take; a design past it stops at that step, which is the
-// finding, and how long each case took is said beside it.
-//
-// A build is bounded well past the slowest one measured, so that which side of
-// the limit a design falls on does not turn on the machine: what it catches is
-// a build that will not end. A run is bounded by what it should cost. The
-// longest runs here are the benchmark suite's quick checks, which Verilator's
-// own published figures put under a second for most designs and at about
-// thirty for the largest, so ten times the largest is the limit. A run past it
-// is either stuck or slower than that. Waiting longer does not say which, and
-// the time it says it had reached when asked to end does.
-auto TimeLimitOf(DesignStep step) -> std::chrono::seconds {
-  switch (step) {
-    case DesignStep::kBuild:
-      return 1800s;
-    case DesignStep::kRun:
-    case DesignStep::kCheck:
-      return 300s;
-  }
-  std::unreachable();
-}
-
 auto ShellQuoted(std::string_view word) -> std::string {
   std::string out = "'";
   for (const char c : word) {
@@ -121,28 +108,49 @@ auto ShellQuoted(std::string_view word) -> std::string {
 
 // Runs a shell command from `dir`, since where a step runs is part of what it
 // is: a declaration is found from there, and a test reads and writes there.
-auto RunFrom(
-    DesignStep step, const std::filesystem::path& dir,
-    const std::string& command) -> ProcessOutcome {
+auto RunFrom(const std::filesystem::path& dir, const std::string& command)
+    -> ProcessOutcome {
   return RunShellScript(
       std::format(
           "ulimit -v {} && cd {} && {}", kStepAddressLimitKib,
-          ShellQuoted(dir.string()), command),
-      {}, TimeLimitOf(step));
+          ShellQuoted(dir.string()), command));
 }
 
-auto Said(DesignStep step, const ProcessOutcome& outcome) -> std::string {
-  if (std::holds_alternative<TimedOut>(outcome.end)) {
-    return std::format(
-        "did not end within {} s\n{}{}", TimeLimitOf(step).count(),
-        outcome.stdout_text, outcome.stderr_text);
-  }
-  if (std::holds_alternative<TestTimedOut>(outcome.end)) {
-    return std::format(
-        "was ended because the test ran out of time\n{}{}", outcome.stdout_text,
-        outcome.stderr_text);
-  }
-  return outcome.stdout_text + outcome.stderr_text;
+// A case that built, ran, and passed its check where it has one.
+struct GotAllTheWay {};
+
+// A step still going when its time was up, and what it had said by then.
+struct OutOfTime {
+  DesignStep at;
+  std::string said;
+};
+
+using CaseEnd = std::variant<GotAllTheWay, DesignStop, OutOfTime>;
+
+// How a step ended where it did not succeed, with `written`, what it wrote
+// beside its own output, after what it said; nothing where it succeeded.
+auto EndOf(
+    DesignStep step, const ProcessOutcome& outcome,
+    const std::string& written = {}) -> std::optional<CaseEnd> {
+  const std::string said = outcome.stdout_text + outcome.stderr_text + written;
+  const auto stopped = [&]() -> std::optional<CaseEnd> {
+    return DesignStop{.at = step, .said = said};
+  };
+  const auto late = [&]() -> std::optional<CaseEnd> {
+    return OutOfTime{
+        .at = step, .said = std::format("{}\n{}", Describe(outcome.end), said)};
+  };
+  return std::visit(
+      lyra::Overloaded{
+          [&](const Exited& exited) -> std::optional<CaseEnd> {
+            if (exited.code == 0) return std::nullopt;
+            return stopped();
+          },
+          [&](const CouldNotRun&) { return stopped(); },
+          [&](const Signalled&) { return stopped(); },
+          [&](const TimedOut&) { return late(); },
+          [&](const TestTimedOut&) { return late(); }},
+      outcome.end);
 }
 
 auto ReadWhole(const std::filesystem::path& path) -> std::string {
@@ -196,38 +204,31 @@ auto Carry(
     const std::filesystem::path& lyra, const DesignCase& design,
     const std::vector<std::string>& options,
     const std::vector<std::string>& build_options,
-    const std::filesystem::path& work) -> std::optional<DesignStop> {
+    const std::filesystem::path& work) -> CaseEnd {
   const std::filesystem::path run = LayOutDesign(design, work);
-  const auto built = RunFrom(
-      DesignStep::kBuild, work, BuildCommand(lyra, options, build_options));
-  if (ExitCodeOf(built) != 0) {
-    return DesignStop{
-        .at = DesignStep::kBuild, .said = Said(DesignStep::kBuild, built)};
+  const auto built = RunFrom(work, BuildCommand(lyra, options, build_options));
+  if (auto ended = EndOf(DesignStep::kBuild, built)) {
+    return *std::move(ended);
   }
 
   // The program is the step's process itself, so that asking the step to end
   // asks the program, and the step ends when the program does.
   const std::string command = "exec ../sim" + QuotedWords(design.arguments);
-  const auto ran =
-      RunFrom(DesignStep::kRun, run, command + " > _execute/stdout.log 2>&1");
-  if (ExitCodeOf(ran) != 0) {
-    return DesignStop{
-        .at = DesignStep::kRun,
-        .said = Said(DesignStep::kRun, ran) +
-                ReadWhole(run / "_execute" / "stdout.log")};
+  const auto ran = RunFrom(run, command + " > _execute/stdout.log 2>&1");
+  if (auto ended = EndOf(
+          DesignStep::kRun, ran, ReadWhole(run / "_execute" / "stdout.log"))) {
+    return *std::move(ended);
   }
 
   if (design.check) {
     // A check is a program of its own, so each is written in whatever its
     // first line names.
-    const auto checked =
-        RunFrom(DesignStep::kCheck, run, QuotedWords(*design.check));
-    if (ExitCodeOf(checked) != 0) {
-      return DesignStop{
-          .at = DesignStep::kCheck, .said = Said(DesignStep::kCheck, checked)};
+    const auto checked = RunFrom(run, QuotedWords(*design.check));
+    if (auto ended = EndOf(DesignStep::kCheck, checked)) {
+      return *std::move(ended);
     }
   }
-  return std::nullopt;
+  return GotAllTheWay{};
 }
 
 // Of the front end's `options` the case in `work` was built with, each the
@@ -242,8 +243,8 @@ auto NotNeeded(
     std::ranges::copy_if(
         options, std::back_inserter(others),
         [&](const std::string& other) { return other != option; });
-    const auto checked = RunFrom(
-        DesignStep::kBuild, work, LyraCommand(lyra, "check -Wnone", others));
+    const auto checked =
+        RunFrom(work, LyraCommand(lyra, "check -Wnone", others));
     if (ExitCodeOf(checked) == 0) {
       not_needed.push_back(option);
     }
@@ -287,28 +288,67 @@ auto Shown(std::string_view text) -> std::string {
 
 // Holds what a case did against what is recorded of it. Nothing where they
 // agree; otherwise what differs and what the record would have to say.
-auto Differs(
-    const std::optional<DesignStop>& stop,
-    const std::optional<DesignStop>& recorded) -> std::optional<std::string> {
-  if (!stop) {
-    if (!recorded) return std::nullopt;
-    return std::format(
-        "is recorded as stopping at its {} and no longer stops, so its entry "
-        "goes",
-        NameOf(recorded->at));
-  }
-  if (recorded && recorded->at == stop->at &&
-      stop->said.find(recorded->said) != std::string::npos) {
-    return std::nullopt;
-  }
-  const std::string was =
-      recorded ? std::format(
-                     "recorded as stopping at its {} saying '{}'",
-                     NameOf(recorded->at), recorded->said)
-               : std::string("recorded as stopping nowhere");
-  return std::format(
-      "stops at its {}, and is {}. What the step said:\n{}", NameOf(stop->at),
-      was, Shown(stop->said));
+auto Differs(const CaseEnd& end, const std::optional<DesignStop>& recorded)
+    -> std::optional<std::string> {
+  return std::visit(
+      lyra::Overloaded{
+          [&](const GotAllTheWay&) -> std::optional<std::string> {
+            if (!recorded) return std::nullopt;
+            return std::format(
+                "is recorded as stopping at its {} and no longer stops, so its "
+                "entry goes",
+                NameOf(recorded->at));
+          },
+          [&](const DesignStop& stop) -> std::optional<std::string> {
+            if (recorded && recorded->at == stop.at &&
+                stop.said.find(recorded->said) != std::string::npos) {
+              return std::nullopt;
+            }
+            const std::string was =
+                recorded ? std::format(
+                               "recorded as stopping at its {} saying '{}'",
+                               NameOf(recorded->at), recorded->said)
+                         : std::string("recorded as stopping nowhere");
+            return std::format(
+                "stops at its {}, and is {}. What the step said:\n{}",
+                NameOf(stop.at), was, Shown(stop.said));
+          },
+          [](const OutOfTime& late) -> std::optional<std::string> {
+            return std::format(
+                "did not end its {} in time, which no record holds. What the "
+                "step said:\n{}",
+                NameOf(late.at), Shown(late.said));
+          }},
+      end);
+}
+
+auto HowFar(const CaseEnd& end) -> std::string {
+  return std::visit(
+      lyra::Overloaded{
+          [](const GotAllTheWay&) -> std::string {
+            return "builds, runs and passes its check";
+          },
+          [](const DesignStop& stop) {
+            return std::format("stops at its {}", NameOf(stop.at));
+          },
+          [](const OutOfTime& late) {
+            return std::format("did not end its {} in time", NameOf(late.at));
+          }},
+      end);
+}
+
+// What a case's last step said, where it ended short of getting all the way.
+auto LastSaid(const CaseEnd& end) -> const std::string* {
+  return std::visit(
+      lyra::Overloaded{
+          [](const GotAllTheWay&) -> const std::string* { return nullptr; },
+          [](const DesignStop& stop) -> const std::string* {
+            return &stop.said;
+          },
+          [](const OutOfTime& late) -> const std::string* {
+            return &late.said;
+          }},
+      end);
 }
 
 auto LoadCorpus() -> DesignCorpus {
@@ -392,16 +432,17 @@ TEST_P(Design, GetsAsFarAsIsRecordedOfIt) {
 
   const DesignSubject& subject = GetParam();
   const auto began = std::chrono::steady_clock::now();
-  const std::optional<DesignStop> stop = Carry(
+  const CaseEnd end = Carry(
       lyra, subject.design, subject.options, subject.build_options, *work);
+  const std::string* last_said = LastSaid(end);
   const auto took = std::chrono::duration_cast<std::chrono::seconds>(
       std::chrono::steady_clock::now() - began);
   // Written as each case ends, so a run that is cut short has still said how
-  // far the cases before it got. A case that stops is said with where it was
-  // built, since one that stops as recorded is looked into from there as much
-  // as one that does not, and with the last lines its step wrote, which say how
-  // it ended. Each port of a supported library the case took is said by its
-  // identity and digest, which is what the result was measured against.
+  // far the cases before it got. A case that ends short is said with where it
+  // was built, since one that stops as recorded is looked into from there as
+  // much as one that does not, and with the last lines its step wrote, which
+  // say how it ended. Each port of a supported library the case took is said
+  // by its identity and digest, which is what the result was measured against.
   std::string taken;
   if (const auto lock =
           lyra::cli::ReadLockFile(*work / lyra::cli::kLockFileName)) {
@@ -412,19 +453,18 @@ TEST_P(Design, GetsAsFarAsIsRecordedOfIt) {
     }
   }
   std::cout << std::format(
-                   "{}: {}{} after {} s{}", subject.design.name,
-                   stop ? std::format("stops at its {}", NameOf(stop->at))
-                        : std::string("builds, runs and passes its check"),
+                   "{}: {}{} after {} s{}", subject.design.name, HowFar(end),
                    taken, took.count(),
-                   stop ? std::format(
-                              ", built in\n{}\n{}", work->string(),
-                              LastLines(stop->said))
-                        : std::string())
+                   last_said != nullptr
+                       ? std::format(
+                             ", built in\n{}\n{}", work->string(),
+                             LastLines(*last_said))
+                       : std::string())
             << std::endl;
 
-  if (const auto differs = Differs(stop, subject.recorded)) {
+  if (const auto differs = Differs(end, subject.recorded)) {
     ADD_FAILURE() << subject.design.name << " " << *differs
-                  << (stop
+                  << (last_said != nullptr
                           ? std::format(
                                 "\nIt is built from the directory above by\n{}",
                                 BuildCommand(
@@ -438,7 +478,7 @@ TEST_P(Design, GetsAsFarAsIsRecordedOfIt) {
   }
   // A design's objects and program are gigabytes, and nobody looks into one
   // that got all the way.
-  if (!stop) {
+  if (last_said == nullptr) {
     std::error_code left;
     std::filesystem::remove_all(*work, left);
     EXPECT_FALSE(left) << work->string()

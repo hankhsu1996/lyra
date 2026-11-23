@@ -308,16 +308,21 @@ execution Lyra offers as a build option
 that option, listed in `tests/external_design_build_options.yaml`; whether it is still needed takes
 a whole build to answer, so no run asks it.
 
-A build that takes more than half an hour, a run or a check that takes more than five minutes, or a
-step that asks for more memory than the smallest machine these run on holds, stops the case there.
-The build's limit is set well past the slowest build measured, so that a design does not fall on one
-side of it on one machine and the other on the next; what it catches is a build that will not end. A
-run past its limit is either stuck or slow, and waiting longer does not say which. It is asked to
-end before it is killed, and the simulation time it says it had reached, with the procedure running
-then, is printed beside where it stopped. Each build compiles a fixed number of units at once, so
-how wide a build ran does not differ from one machine to the next either. How long each case took is
-printed beside where it stopped, and a case that stops keeps the directory it was built in and names
-it, while one that gets all the way leaves nothing behind.
+A step that asks for more memory than the smallest machine these run on holds stops the case there,
+as the same design does on every machine. Each build compiles a fixed number of units at once, so
+how wide a build ran does not differ from one machine to the next either. Time is not like that. How
+far a step gets in a given time turns on the machine running it, and one tree has run a design more
+than twice as far in the same time on one night as on the next. So a case has one limit, the time
+its test is declared to take, the same in every run of it and well past the slowest case measured,
+and what it catches is a case that will not end. A step still going when that is up fails the case
+whatever the record says of it, since a duration is no stop a record can hold; LLVM's lit reports a
+timeout the same way, as a failure of its own that no expected failure covers. The step is asked to
+end before it is killed, and a run says the simulation time it had reached and the procedure running
+then, which tells one that hangs from one slower than anything measured. How fast a design runs is a
+question for a count and never for a duration, which the instruction count above answers for the
+designs it lists; here a design that runs is held only to getting all the way. How long each case
+took is printed beside how far it got, and a case that stops keeps the directory it was built in and
+names it, while one that gets all the way leaves nothing behind.
 
 A suite that ships sources and no description of its own is described in
 `tests/external_design_suites.yaml` instead: the supported libraries every case of it takes, by
@@ -462,10 +467,11 @@ Bazel's override of the limits is meant for a condition known to be slow.
 
 `external-designs-nightly.yml` runs `external_design_tests`, one job per case, with the compiler
 built optimized. It **gates its own run**: a case that stops somewhere other than where it is
-recorded as stopping is either further along, which is an entry to update, or a regression. One that
-newly stops at its check is read against the standard before it is called either, since the check is
-the suite's and was written for another simulator. The jobs are the cases the test itself lists, so
-a case a suite gains is run without this file changing.
+recorded as stopping is either further along, which is an entry to update, or a regression, and one
+with a step still going when its time is up is red until it ends. One that newly stops at its check
+is read against the standard before it is called either, since the check is the suite's and was
+written for another simulator. The jobs are the cases the test itself lists, so a case a suite gains
+is run without this file changing.
 
 `conformance-nightly.yml` judges every case of the conformance suite on each configuration a record
 is published for: Lyra on its C++ path, Lyra on its LLVM path, and a pinned Verilator release, each
