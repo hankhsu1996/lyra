@@ -3,7 +3,9 @@
 
 A run asked with `--time-trace` and `--stats-file` writes where its time went
 and its numbers; the compiler prints no summary of either, because which
-reading is wanted depends on who is reading. This is two of those readings.
+reading is wanted depends on who is reading. This is two of those readings. A
+program run with `+lyra+stats=<file>` writes its own numbers, which are only
+work: how many times it did each kind of scheduling work.
 
 `summary` prints one run: the stages that ran alone with their time and peak
 memory, the time each per-unit stage took summed over units with the slowest
@@ -89,10 +91,12 @@ def summary(args):
     trace = load(args.trace) if args.trace else None
     times = stage_times(trace) if trace else {}
 
-    print(f"width {stats['width']}")
-    print()
-    print("stages that ran alone")
-    for stage in stats["stages"]:
+    if "width" in stats:
+        print(f"width {stats['width']}")
+        print()
+    if stats.get("stages"):
+        print("stages that ran alone")
+    for stage in stats.get("stages", []):
         took = times.get(stage["name"])
         peak = stage.get("peak_rss_bytes")
         print(
@@ -113,10 +117,11 @@ def summary(args):
                     f"   slowest {unit} {seconds(took)}"
                 )
 
-    print()
-    print("bodies")
+    if stats.get("bodies"):
+        print()
+        print("bodies")
     for unit in sorted(
-        stats["bodies"],
+        stats.get("bodies", []),
         key=lambda u: sum(a["bytes"] for a in u["artifacts"]),
         reverse=True,
     ):
@@ -134,7 +139,7 @@ def summary(args):
         for kind, count in stats["work"].items():
             print(f"  {kind:<40}{count:>12}")
 
-    if stats["children"]:
+    if stats.get("children"):
         print()
         print("tools the build ran")
         for child in stats["children"]:
@@ -154,8 +159,8 @@ def compare(args):
     now = load(args.stats)
     regressions = []
 
-    base_bodies = {u["name"]: u for u in base["bodies"]}
-    now_bodies = {u["name"]: u for u in now["bodies"]}
+    base_bodies = {u["name"]: u for u in base.get("bodies", [])}
+    now_bodies = {u["name"]: u for u in now.get("bodies", [])}
     if len(now_bodies) > len(base_bodies):
         regressions.append(f"bodies: {len(base_bodies)} -> {len(now_bodies)}")
     for name, unit in now_bodies.items():
@@ -193,10 +198,10 @@ def compare(args):
     # a peak only one side has is nothing to compare.
     base_peaks = {
         s["name"]: s["peak_rss_bytes"]
-        for s in base["stages"]
+        for s in base.get("stages", [])
         if "peak_rss_bytes" in s
     }
-    for stage in now["stages"]:
+    for stage in now.get("stages", []):
         before = base_peaks.get(stage["name"])
         peak = stage.get("peak_rss_bytes")
         if (

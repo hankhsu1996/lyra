@@ -3884,6 +3884,133 @@ TEST(LyraRun, TheRunsOptionsChooseWhatIsDumped) {
   }
 }
 
+// A program built with the runtime that counts its scheduling work says how
+// many times it did each kind, so where a run's cost goes is read off one run.
+// The counts are the runtime's, so both backends' programs write the same file;
+// a program built without asking carries none of the counting.
+TEST(LyraRun, TheRunCountsItsSchedulingWorkWhenAsked) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+  const std::filesystem::path dir = *tmp_or;
+
+  // `d` reads `a` and, through two assignments, `a` again, so a change of `a`
+  // runs it once before `c` has settled and once after. A nonblocking write,
+  // a `#0`, a program's procedure and an event put work in other regions, and
+  // a write of the half of `wide` that a wait does not read reaches its
+  // membership and passes it over.
+  WriteFile(
+      dir / "work.sv",
+      "program prog;\n"
+      "  initial #10 $display(\"reactive\");\n"
+      "endprogram\n"
+      "module Test;\n"
+      "  logic [3:0] a = 0;\n"
+      "  wire [3:0] b, c, d;\n"
+      "  assign b = a + 1;\n"
+      "  assign c = b + 1;\n"
+      "  assign d = a + c;\n"
+      "  logic [3:0] q;\n"
+      "  logic [7:0] wide = 0;\n"
+      "  event e;\n"
+      "  always @(d) q <= d;\n"
+      "  always @(e) #0 q = 0;\n"
+      "  always @(wide[7:4]) q = 1;\n"
+      "  prog p();\n"
+      "  initial begin\n"
+      "    #1 a = 1;\n"
+      "    #1 -> e;\n"
+      "    #1 wide[3:0] = 4'h5;\n"
+      "    #1 a = 2;\n"
+      "  end\n"
+      "endmodule\n");
+  // Each assignment reads only the one before it.
+  WriteFile(
+      dir / "chain.sv",
+      "module Test;\n"
+      "  logic [3:0] a = 0;\n"
+      "  wire [3:0] b, c, d;\n"
+      "  assign b = a + 1;\n"
+      "  assign c = b + 1;\n"
+      "  assign d = c + 1;\n"
+      "  initial begin\n"
+      "    #1 a = 1;\n"
+      "    #1 a = 2;\n"
+      "  end\n"
+      "endmodule\n");
+
+  const auto run = [&](std::string_view source, std::string_view backend,
+                       const std::string& stats,
+                       std::string_view build = "--runtime-statistics") {
+    return RunLyraFrom(
+        lyra, dir,
+        std::format(
+            "run --backend {} {} --top Test {} -- +lyra+stats={}", backend,
+            build, source, stats));
+  };
+
+  std::optional<nlohmann::json> first;
+  for (const std::string_view backend : {"llvm", "cpp"}) {
+    SCOPED_TRACE(backend);
+    const std::filesystem::path file =
+        dir / std::format("work_{}.json", backend);
+    const auto ran = run("work.sv", backend, file.string());
+    ASSERT_THAT(ran, ExitedWithCode(0)) << ran.stdout_text << ran.stderr_text;
+    const nlohmann::json stats = ReadJson(file);
+    ASSERT_TRUE(stats.contains("work")) << stats.dump(2);
+    const nlohmann::json& work = stats["work"];
+    // Time zero, the four steps of the initial procedure, and the program's
+    // step, whose end ends the run (LRM 24.3).
+    EXPECT_EQ(work.value("time slots", 0), 6) << work.dump(2);
+    EXPECT_GE(work.value("Active activations run again", 0), 1) << work.dump(2);
+    EXPECT_GE(work.value("NBA deferred effects run", 0), 1) << work.dump(2);
+    EXPECT_GE(work.value("Inactive activations run", 0), 1) << work.dump(2);
+    EXPECT_GE(work.value("Reactive activations run", 0), 1) << work.dump(2);
+    EXPECT_GE(work.value("changes told", 0), 1) << work.dump(2);
+    EXPECT_GE(work.value("memberships passed over", 0), 1) << work.dump(2);
+    EXPECT_GE(work.value("activations woken", 0), 1) << work.dump(2);
+    if (first.has_value()) {
+      EXPECT_EQ(stats, *first);
+    } else {
+      first = stats;
+    }
+
+    const std::filesystem::path chain_file =
+        dir / std::format("chain_{}.json", backend);
+    const auto chained = run("chain.sv", backend, chain_file.string());
+    ASSERT_THAT(chained, ExitedWithCode(0))
+        << chained.stdout_text << chained.stderr_text;
+    const nlohmann::json chain = ReadJson(chain_file);
+    ASSERT_TRUE(chain.contains("work")) << chain.dump(2);
+    EXPECT_EQ(chain["work"].value("Active activations run again", -1), 0)
+        << chain.dump(2);
+
+    // A file the run cannot write is the tool's failure, and fails the run.
+    const auto refused = run("chain.sv", backend, "/dev/full");
+    EXPECT_THAT(refused, ExitedWithCode(1)) << refused.stderr_text;
+    EXPECT_TRUE(refused.stderr_text.contains(
+        "the run's statistics could not be written to '/dev/full'"))
+        << refused.stderr_text;
+
+    const std::filesystem::path plain_file =
+        dir / std::format("plain_{}.json", backend);
+    const auto plain = run("chain.sv", backend, plain_file.string(), "");
+    ASSERT_THAT(plain, ExitedWithCode(0))
+        << plain.stdout_text << plain.stderr_text;
+    EXPECT_FALSE(std::filesystem::exists(plain_file));
+
+    // The library built for the sanitizer counts nothing.
+    const auto both =
+        run("chain.sv", backend, plain_file.string(),
+            "--runtime-statistics --sanitize address");
+    EXPECT_THAT(both, ExitedWithCode(1)) << both.stderr_text;
+    EXPECT_TRUE(both.stderr_text.contains(
+        "'--runtime-statistics' and '--sanitize' cannot be given together"))
+        << both.stderr_text;
+  }
+}
+
 // `$printtimescale` with no argument names the design element it is called in
 // by the name that element was declared under (LRM 20.4.2, whose example
 // prints `a_dat` for module `a_dat`). Two instances whose parameters make them

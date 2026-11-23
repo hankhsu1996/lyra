@@ -44,6 +44,10 @@ compiler that compiles the design, so the runtime ships in a form each such comp
   code alone, since the release refuses to instrument a fat object's modules a second time. The
   release's `llvm-symbolizer` ships beside its sanitizer runtime, which starts it to name the
   functions in a report ([building_a_program.md](building_a_program.md)).
+- **A third build of the library, and of its sources, counts the runtime's own scheduling work**,
+  for a program built with `--runtime-statistics` ([scheduling.md](scheduling.md)). It carries
+  machine code and bitcode as the first does, and its headers are the first's, so a program asking
+  for it is linked again from the same objects.
 
 ## What a unit's object holds of the runtime
 

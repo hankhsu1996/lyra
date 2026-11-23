@@ -21,10 +21,12 @@
 #include "lyra/runtime/delay.hpp"
 #include "lyra/runtime/diagnostic.hpp"
 #include "lyra/runtime/interval_accumulator.hpp"
+#include "lyra/runtime/keeps_statistics.hpp"
 #include "lyra/runtime/loop_blocks.hpp"
 #include "lyra/runtime/observable.hpp"
 #include "lyra/runtime/program_threads.hpp"
 #include "lyra/runtime/property_wait.hpp"
+#include "lyra/runtime/run_work.hpp"
 #include "lyra/runtime/runtime.hpp"
 #include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/sampled_value.hpp"
@@ -169,6 +171,9 @@ void RuntimeEffects::Schedule(
 }
 
 void RuntimeEffects::Wake(Activation* activation) {
+  if constexpr (kKeepsStatistics) {
+    ++TheKeptWork().counts.activations_woken;
+  }
   ConsumeWait(activation);
   const ExecutionContext& context = activation->Context();
   switch (context.wake) {
@@ -430,6 +435,9 @@ void RuntimeEffects::RunWokenAtTheOccurrence() {
       std::visit(
           Overloaded{
               [&](Activation* activation) {
+                if constexpr (kKeepsStatistics) {
+                  ++TheKeptWork().counts.activations_run_at_the_occurrence;
+                }
                 activation->RunAtTheOccurrence(rt);
               },
               [](VpiCallbacks* callbacks) { callbacks->RunDue(); }},
@@ -472,7 +480,11 @@ void RuntimeEffects::TellChange(
     bool accumulated) {
   const TellingAnOccurrence telling(AsRuntime(*this).occurrences_being_told_);
   members.ForEach([&](WaitMembership& membership) {
-    if (change.KnownUnchanged(membership.reads)) {
+    const bool unaffected = change.KnownUnchanged(membership.reads);
+    if constexpr (kKeepsStatistics) {
+      TheKeptWork().Reached(unaffected);
+    }
+    if (unaffected) {
       return;
     }
     std::visit(
@@ -506,6 +518,9 @@ void RuntimeEffects::TellChange(
 // property written, an object expiring -- no interval accumulated.
 void RuntimeEffects::WakeParkedOn(
     IntrusiveList<WaitMembership>& members, const Change& change) {
+  if constexpr (kKeepsStatistics) {
+    ++TheKeptWork().counts.changes_told;
+  }
   const bool accumulated = false;
   TellChange(members, change, accumulated);
   RunWokenAtTheOccurrence();
@@ -520,6 +535,9 @@ void RuntimeEffects::WakeParkedOn(
 void RuntimeEffects::WakeParkedOn(
     Observable& place, const PartPath& written, const Change& change,
     bool accumulated) {
+  if constexpr (kKeepsStatistics) {
+    ++TheKeptWork().counts.changes_told;
+  }
   {
     const TellingAnOccurrence telling(AsRuntime(*this).occurrences_being_told_);
     place.TellChange(*this, written, change, accumulated);
@@ -530,7 +548,11 @@ void RuntimeEffects::WakeParkedOn(
 void RuntimeEffects::TellIntervalChange(
     IntrusiveList<WaitMembership>& members, const Change& change) {
   members.ForEach([&](WaitMembership& membership) {
-    if (change.KnownUnchanged(membership.reads)) {
+    const bool unaffected = change.KnownUnchanged(membership.reads);
+    if constexpr (kKeepsStatistics) {
+      TheKeptWork().Reached(unaffected);
+    }
+    if (unaffected) {
       return;
     }
     std::visit(
@@ -601,11 +623,17 @@ void RuntimeEffects::EndInterval() {
              runtime.interval_accumulators_.PopFront()) {
     for (const PartOriginalAt& kept : accumulator->parts) {
       if (const std::optional<Change> change = kept.original->Changed()) {
+        if constexpr (kKeepsStatistics) {
+          ++TheKeptWork().counts.changes_told;
+        }
         accumulator->place->TellIntervalChange(*this, kept.at, *change);
       }
     }
     for (BitsOriginalAt& kept : accumulator->bits) {
       if (const std::optional<Change> change = kept.bits.Changed()) {
+        if constexpr (kKeepsStatistics) {
+          ++TheKeptWork().counts.changes_told;
+        }
         accumulator->place->TellIntervalChange(*this, kept.at, *change);
       }
     }

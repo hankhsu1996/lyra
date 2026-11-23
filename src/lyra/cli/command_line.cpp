@@ -60,6 +60,7 @@ enum class LyraOption : std::uint8_t {
   kOptimization,
   kLinkTime,
   kSanitize,
+  kRuntimeStatistics,
   kNoPch,
   kCacheDir,
   kRebuild,
@@ -139,13 +140,14 @@ constexpr OptionSet kRewritesMir =
         LyraOption::kMirVerifyEach};
 // What building the design's program acts on besides.
 constexpr OptionSet kBuildsAProgram =
-    kRewritesMir | OptionSet{LyraOption::kOptimization, LyraOption::kLinkTime,
-                             LyraOption::kSanitize,     LyraOption::kNoPch,
-                             LyraOption::kCacheDir,     LyraOption::kRebuild,
-                             LyraOption::kCxx,          LyraOption::kJobs,
-                             LyraOption::kBackend,      LyraOption::kDpiLink,
-                             LyraOption::kSvRoot,       LyraOption::kSvLib,
-                             LyraOption::kSvLiblist};
+    kRewritesMir |
+    OptionSet{LyraOption::kOptimization, LyraOption::kLinkTime,
+              LyraOption::kSanitize,     LyraOption::kRuntimeStatistics,
+              LyraOption::kNoPch,        LyraOption::kCacheDir,
+              LyraOption::kRebuild,      LyraOption::kCxx,
+              LyraOption::kJobs,         LyraOption::kBackend,
+              LyraOption::kDpiLink,      LyraOption::kSvRoot,
+              LyraOption::kSvLib,        LyraOption::kSvLiblist};
 
 // Where a command shows what it is doing when nobody said. The error stream
 // carries it, so the answer follows from what else the command's streams are
@@ -275,6 +277,8 @@ auto Spelling(LyraOption option) -> std::string_view {
       return "--lto";
     case LyraOption::kSanitize:
       return "--sanitize";
+    case LyraOption::kRuntimeStatistics:
+      return "--runtime-statistics";
     case LyraOption::kNoPch:
       return "--no-pch";
     case LyraOption::kCacheDir:
@@ -351,6 +355,8 @@ auto IsGiven(
       return opts.link_time.has_value();
     case LyraOption::kSanitize:
       return opts.sanitize.has_value();
+    case LyraOption::kRuntimeStatistics:
+      return opts.runtime_statistics.has_value();
     case LyraOption::kNoPch:
       return opts.no_pch.has_value();
     case LyraOption::kCacheDir:
@@ -678,6 +684,10 @@ void RegisterCliOptions(slang::CommandLine& cmd, CliOptions& opts) {
       "storage that has ended, or was never its own, ends the run with a "
       "report",
       "address");
+  cmd.add(
+      "--runtime-statistics", opts.runtime_statistics,
+      "link the runtime built to count its own scheduling work, which a run "
+      "writes to the file its +lyra+stats=<file> names");
   cmd.add(
       "--no-pch", opts.no_pch,
       "compile the C++ backend's output without a precompiled header");
@@ -1214,6 +1224,19 @@ auto ResolveCliOptions(
           "'{}' given to '--sanitize' is not 'address'", *opts.sanitize);
     }
     out.sanitizer = *sanitizer;
+  }
+  if (opts.runtime_statistics.value_or(false)) {
+    // The library built to count is the plain one counting, and the one built
+    // for the sanitizer counts nothing.
+    switch (out.sanitizer) {
+      case support::Sanitizer::kNone:
+        break;
+      case support::Sanitizer::kAddress:
+        return diag::Fail(
+            diag::DiagCode::kHostInvalidCliArgs,
+            "'--runtime-statistics' and '--sanitize' cannot be given together");
+    }
+    out.runtime_statistics = driver::RuntimeStatistics::kKept;
   }
   out.pch = opts.no_pch.value_or(false) ? driver::pch::Policy::kSkip
                                         : driver::pch::Policy::kAttempt;

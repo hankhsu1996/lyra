@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <ctime>
 #include <format>
+#include <fstream>
 #include <map>
 #include <memory>
 #include <optional>
@@ -29,7 +30,9 @@
 #include "lyra/runtime/evaluation_attempts.hpp"
 #include "lyra/runtime/file_table.hpp"
 #include "lyra/runtime/intrusive_list.hpp"
+#include "lyra/runtime/keeps_statistics.hpp"
 #include "lyra/runtime/program_threads.hpp"
+#include "lyra/runtime/run_work.hpp"
 #include "lyra/runtime/runtime_process.hpp"
 #include "lyra/runtime/scope.hpp"
 #include "lyra/runtime/signal_watcher.hpp"
@@ -177,12 +180,20 @@ void Runtime::WalkActivate(Scope& scope) {
 
 auto Runtime::Run() -> int {
   EnsureReadyToRun();
+  if constexpr (kKeepsStatistics) {
+    TheKeptWork() = KeptWork{};
+  }
   ResolveGlobalTimePrecision();
   dumps_.Begin(*this, design_->Root(), global_precision_power_);
   RunSimulation();
   // The dump file is complete once the run is: what it recorded is written
   // and the file ended, a failure to write it reported as the design's own.
   RunAsLanding(*this, [this] { dumps_.End(); });
+  // What the run counted of its own work is complete once nothing of the design
+  // runs any more.
+  if constexpr (kKeepsStatistics) {
+    WriteStatistics();
+  }
   // Owed because the run is over, whichever way it ended: LRM 16.3 asks a tool
   // with no assertion API to report immediate cover results at the end of
   // simulation.
@@ -407,6 +418,22 @@ void Runtime::ReportUnsettledSlot(const SlotPasses& passes) {
         "of what it reads, a value written and written back included; to "
         "trigger one only by the net change an execution of another leaves, "
         "build with '--coalesce-comb-updates'");
+  }
+}
+
+void Runtime::WriteStatistics() {
+  const std::optional<std::string> file =
+      RunStatisticsFile(command_line_.Plusargs());
+  if (!file.has_value()) {
+    return;
+  }
+  std::ofstream out(*file);
+  out << RunStatisticsText(TheKeptWork().counts);
+  out.flush();
+  if (!out) {
+    ReportToolFailure(
+        std::format(
+            "the run's statistics could not be written to '{}'", *file));
   }
 }
 
@@ -683,6 +710,9 @@ auto Runtime::Callbacks() -> VpiCallbacks& {
 }
 
 void Runtime::ExecuteTimeSlot() {
+  if constexpr (kKeepsStatistics) {
+    ++TheKeptWork().counts.time_slots;
+  }
   RunRegion(support::Region::kPreponed);
   SlotPasses passes;
   // LRM 4.5: the Pre-Active region runs once, before the regions that are run
@@ -775,6 +805,9 @@ auto Runtime::DrainRegions(
 
 void Runtime::RunRegion(support::Region region) {
   RegionQueue& queue = current_slot_[region];
+  if constexpr (kKeepsStatistics) {
+    TheKeptWork().PassBegins(region);
+  }
   // LRM 9.3.2: work arriving while this pass runs belongs to the next pass, so
   // what the region holds moves out of it and new arrivals accumulate behind.
   draining_.activations.Append(queue.activations);
@@ -789,7 +822,10 @@ void Runtime::RunRegion(support::Region region) {
   // What a deferred body entered to run on no thread ends with the effect
   // running it, however the effect returns.
   const auto run_effect =
-      [this](const ProcedureContext& made_by, const auto& effect) {
+      [this, region](const ProcedureContext& made_by, const auto& effect) {
+        if constexpr (kKeepsStatistics) {
+          ++TheKeptWork().WorkOf(region).deferred_effects_run;
+        }
         {
           const RunningAnEffect running(procedure_in_force_, made_by);
           const NoThreadRunsScope ends(*this);
@@ -804,6 +840,9 @@ void Runtime::RunRegion(support::Region region) {
   // landing of its own too. One its owners share is kept until it has fired,
   // whatever it lets go of.
   while (TimerPlace* fired = draining_.timers.PopFront()) {
+    if constexpr (kKeepsStatistics) {
+      ++TheKeptWork().WorkOf(region).timers_fired;
+    }
     {
       const std::shared_ptr<Timer> kept = fired->timer->KeepWhileFiring();
       const RunningAnEffect running(
@@ -814,6 +853,14 @@ void Runtime::RunRegion(support::Region region) {
   }
   while (QueuePlace* queued = draining_.activations.PopFront()) {
     Activation* activation = queued->activation;
+    if constexpr (kKeepsStatistics) {
+      KeptWork& kept = TheKeptWork();
+      RegionWork& work = kept.WorkOf(region);
+      ++work.activations_run;
+      if (kept.RunsAgain(*activation)) {
+        ++work.activations_run_again;
+      }
+    }
     ConsumeWait(activation);
     RunProcess(activation);
     EndEventExecution();

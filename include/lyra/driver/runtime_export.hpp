@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -21,6 +22,15 @@ struct AddressSanitizerRuntime {
   std::filesystem::path symbolizer;
 };
 
+// Which build of the runtime a program links: the one every program links, or
+// the one that also counts its own scheduling work, which a run of the program
+// writes where its `+lyra+stats=<file>` says. Only the second carries any of
+// that counting, so a program built without asking pays nothing for it.
+enum class RuntimeStatistics : std::uint8_t {
+  kNotKept,
+  kKept,
+};
+
 // The files the running binary ships for an emitted project to consume, as they
 // sit on disk. Mostly the Lyra C++ runtime, plus the one standard header the
 // user's own foreign sources need; they resolve together because they are
@@ -28,7 +38,7 @@ struct AddressSanitizerRuntime {
 struct RuntimeLocation {
   // Directory to pass to the compiler's `-I`; contains the `lyra/` header tree.
   std::filesystem::path include_root;
-  // The runtime static library to link.
+  // The runtime static library to link, of the build the invocation asked for.
   std::filesystem::path lib;
   // The same library compiled to check a program's memory, for a program the
   // execution backend builds for the address sanitizer, and the sanitizer's
@@ -36,7 +46,8 @@ struct RuntimeLocation {
   std::filesystem::path address_sanitized_lib;
   AddressSanitizerRuntime address_sanitizer;
   // The root of the runtime's own sources and the lists saying how each is
-  // compiled, for a build whose compiler builds them beside the design.
+  // compiled, for a build whose compiler builds them beside the design, of the
+  // build of the runtime the invocation asked for.
   std::filesystem::path sources_root;
   // The standard's C headers (LRM Annexes I, K, L and M), shipped beside a
   // program's generated DPI-C header so a user's foreign sources compile
@@ -67,11 +78,13 @@ auto ExecutionBackendLibrary(
     const RuntimeLocation& runtime, support::Sanitizer sanitizer)
     -> const std::filesystem::path&;
 
-// Locate what the binary at `binary_path` ships. Resolution is a single seam:
-// today it reads the binary's Bazel runfiles tree; a released binary will
-// resolve relative to its own install location. Callers depend only on the
-// returned paths.
-auto ResolveRuntimeLocation(std::string_view binary_path)
+// Locate what the binary at `binary_path` ships, with the runtime's library and
+// sources of the build `statistics` names. Resolution is a single seam: today
+// it reads the binary's Bazel runfiles tree; a released binary will resolve
+// relative to its own install location. Callers depend only on the returned
+// paths.
+auto ResolveRuntimeLocation(
+    std::string_view binary_path, RuntimeStatistics statistics)
     -> diag::Result<RuntimeLocation>;
 
 // Where the ports of the third-party libraries Lyra supports are, shipped and

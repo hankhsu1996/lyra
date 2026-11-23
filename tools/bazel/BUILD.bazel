@@ -1,3 +1,5 @@
+load(":shipped.bzl", "keeps_statistics_setting")
+
 # Everything the build compiles is compiled for the oldest C library Lyra
 # supports and the oldest release of the C++ library a design may be compiled
 # with. An artifact needs of a machine exactly what it was compiled and linked
@@ -20,5 +22,19 @@ platform(
 config_setting(
     name = "under_address_sanitizer",
     values = {"copt": "-fsanitize=address"},
+    visibility = ["//visibility:public"],
+)
+
+# Whether the runtime being built counts its own scheduling work: true only in
+# the copy of the runtime shipped for a program built to count it.
+keeps_statistics_setting(
+    name = "keeps_statistics",
+    build_setting_default = False,
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "keeping_statistics",
+    flag_values = {":keeps_statistics": "True"},
     visibility = ["//visibility:public"],
 )

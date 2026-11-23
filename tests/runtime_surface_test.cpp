@@ -438,7 +438,8 @@ TEST(RuntimeSurface, AUnitOfAnotherCompilerFindsWhatItCallsInTheLibrary) {
   ASSERT_FALSE(lyra_exe.empty());
   auto dir_or = conformance::framework::MakeScratchDir();
   ASSERT_TRUE(dir_or) << dir_or.error();
-  auto runtime_or = lyra::driver::ResolveRuntimeLocation(lyra_exe.string());
+  auto runtime_or = lyra::driver::ResolveRuntimeLocation(
+      lyra_exe.string(), lyra::driver::RuntimeStatistics::kNotKept);
   ASSERT_TRUE(runtime_or) << runtime_or.error().primary.message;
 
   const auto symbols = [&](std::string_view which,
@@ -626,7 +627,8 @@ TEST(RuntimeSurface, TheLibraryNamesNoStandardStream) {
   ASSERT_FALSE(nm.empty());
   const auto lyra_exe = lyra::test::ResolveLyra();
   ASSERT_FALSE(lyra_exe.empty());
-  auto runtime_or = lyra::driver::ResolveRuntimeLocation(lyra_exe.string());
+  auto runtime_or = lyra::driver::ResolveRuntimeLocation(
+      lyra_exe.string(), lyra::driver::RuntimeStatistics::kNotKept);
   ASSERT_TRUE(runtime_or) << runtime_or.error().primary.message;
 
   const std::vector<std::string> args = {
