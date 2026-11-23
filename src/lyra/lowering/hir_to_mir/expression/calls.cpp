@@ -265,7 +265,8 @@ auto LowerSystemSubroutineCall(
           [&](const support::PrintTimescaleSystemSubroutineInfo&)
               -> diag::Result<mir::Expr> {
             if constexpr (kProcedural) {
-              return LowerPrintTimescaleSystemSubroutineCall(lowerer, frame);
+              return LowerPrintTimescaleSystemSubroutineCall(
+                  lowerer, frame, call);
             } else {
               return RejectStructuralEffect(span);
             }

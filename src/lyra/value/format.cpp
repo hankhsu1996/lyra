@@ -50,11 +50,6 @@ auto TimeUnitSpellingOf(std::int8_t power) -> TimeUnitSpelling {
   }
 }
 
-auto TimeUnitText(std::int8_t power) -> std::string {
-  const TimeUnitSpelling spelling = TimeUnitSpellingOf(power);
-  return std::format("{}{}", spelling.count, spelling.unit);
-}
-
 namespace {
 
 // LRM 21.2.1.2 pads a short field on the left: a hexadecimal, octal or binary

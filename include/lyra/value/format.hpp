@@ -90,9 +90,6 @@ struct TimeUnitSpelling {
 // power outside the table is no time unit the language can write.
 [[nodiscard]] auto TimeUnitSpellingOf(std::int8_t power) -> TimeUnitSpelling;
 
-// The same written out, `10ns`.
-[[nodiscard]] auto TimeUnitText(std::int8_t power) -> std::string;
-
 // Per-call context routed alongside the spec into every Formatter::Format.
 // Holds what a formatter sometimes needs but the spec itself cannot carry (the
 // spec is closed and shared across call sites): the design-wide bits `%t`

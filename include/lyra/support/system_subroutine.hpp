@@ -134,8 +134,8 @@ struct TimeSystemSubroutineInfo {
 // arguments).
 struct TimeFormatSystemSubroutineInfo {};
 
-// LRM 20.4.2: `$printtimescale` prints a design element's time unit and
-// precision. Only the no-argument (current scope) form is modeled.
+// LRM 20.4.2: `$printtimescale` prints the time unit and precision of the
+// design element it names, or of the one it is called in where it names none.
 struct PrintTimescaleSystemSubroutineInfo {};
 
 // LRM 21.6 command-line plusargs: `$test$plusargs` tests whether any plusarg
@@ -893,7 +893,7 @@ inline constexpr std::array kSystemSubroutines = {
         .id = SystemSubroutineId{52},
         .name = "$printtimescale",
         .kind = SystemSubroutineKind::kTask,
-        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 0},
+        .arg_policy = ArgCountPolicy{.min_args = 0, .max_args = 1},
         .semantic = PrintTimescaleSystemSubroutineInfo{},
     },
     SystemSubroutineDesc{

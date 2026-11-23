@@ -40,7 +40,6 @@
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/hir/process.hpp"
 #include "lyra/hir/published_covergroup.hpp"
-#include "lyra/hir/range_bounds.hpp"
 #include "lyra/hir/scope_construction.hpp"
 #include "lyra/hir/stmt.hpp"
 #include "lyra/hir/structural_data_object.hpp"
