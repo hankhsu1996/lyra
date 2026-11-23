@@ -377,6 +377,7 @@ static void Handles(int* d, vpiHandle top) {
   ExpectStr(
       d, vpi_get_str(vpiName, b), "three",
       "the other handle after one was released");
+  ExpectInt(d, vpi_free_object(c), 1, "releasing a handle by its older name");
 }
 
 int walk(void) {

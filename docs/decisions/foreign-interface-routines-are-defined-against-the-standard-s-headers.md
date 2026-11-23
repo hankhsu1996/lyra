@@ -3,7 +3,7 @@
 Date: 2026-11-07 Status: accepted. Revised 2026-11-09: the DPI routines too. Revised 2026-11-18: the
 header of the TF routines, and a null string handed back. Revised 2026-11-19: D5 had the context
 import as the only application routine, written before foreign code could be called back; a
-callback's call is one too.
+callback's call is one too. Revised 2026-11-22: the deprecated name of `vpi_release_handle`.
 
 ## Why this decision matters
 
@@ -86,6 +86,12 @@ D10. A string foreign code hands over -- an import's result, an output or inout 
     say "none" and reads it back as the empty string, so a reading that refused it, or that let
     the host library's string throw, would stop every program built on UVM. The rule is the value
     library's, where a string is built from C text, so every crossing reads it alike.
+
+D11. `vpi_free_object` is defined beside `vpi_release_handle` and does what it does. It is the
+    routine's name before IEEE 1800-2009 renamed it (LRM C.2.4), the standard's header still
+    declares it, and foreign code still calls it -- uvm-core's C does, keeping the older name for
+    a tool that lacks the newer one. The deprecated TF routines of D9 differ, since no clause of
+    IEEE 1800 defines them, while this one is a routine it defines under another name.
 ```
 
 ## Rejected alternatives
@@ -114,6 +120,7 @@ D10. A string foreign code hands over -- an import's result, an output or inout 
 - [dpi-foreign-boundary](dpi-foreign-boundary.md) -- the context import a VPI call is made from.
 - IEEE 1800-2023: 35.4 (foreign code), 35.5.6 (argument types), 36.1 (the deprecated TF and ACC
   routines), 36.2 (the VPI library), 36.12.2.1 (compatibility modes), 38.2 (`vpi_chk_error`), 38.4
-  (`vpi_control`), 38.36.3 (what a tool may lack), Annex C.2.1 (the TF and ACC libraries), H.8.10
-  (string arguments), H.9.3 (context utilities), H.10.1 (the header), H.11.5 (canonical utilities),
-  H.14 (SV3.1a compatibility), Annexes I, K, L and M.
+  (`vpi_control`), 38.36.3 (what a tool may lack), 38.38 (`vpi_release_handle`), Annex C.2.1 (the TF
+  and ACC libraries), C.2.4 (`vpi_free_object`), H.8.10 (string arguments), H.9.3 (context
+  utilities), H.10.1 (the header), H.11.5 (canonical utilities), H.14 (SV3.1a compatibility),
+  Annexes I, K, L and M.

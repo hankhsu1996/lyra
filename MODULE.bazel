@@ -171,8 +171,8 @@ filegroup(
 # The UVM class library, pinned as the benchmark suite is and fetched only by
 # the targets that name it: UVM 1.2's examples, which are cases, with the
 # corrections `third_party/uvm_1_2` states for the examples that break the
-# standard; and uvm-core, the library of IEEE 1800.2-2020. The UVM 1.2 those
-# examples are built against is the port Lyra ships, below.
+# standard. The UVM 1.2 those examples are built against, and uvm-core, the
+# library of IEEE 1800.2-2020, are the ports Lyra ships, below.
 http_archive(
     name = "uvm_1_2",
     build_file_content = """
@@ -215,17 +215,25 @@ filegroup(
     urls = ["https://www.accellera.org/images/downloads/standards/uvm/uvm-1.2.tar.gz"],
 )
 
-git_repository(
-    name = "uvm_core",
+# uvm-core 2020.3.1 as Lyra ships it, port version 1
+# (`ports/uvm/2020.3.1/1`), on the same terms as UVM 1.2's above.
+http_archive(
+    name = "uvm_2020_3_1_port_1",
     build_file_content = """
 filegroup(
-    name = "suite",
-    srcs = glob(["src/**"]),
+    name = "library",
+    srcs = glob(["src/**"]) + [
+        "LICENSE.txt",
+        "NOTICE.txt",
+    ],
     visibility = ["//visibility:public"],
 )
 """,
-    commit = "78c06547a2a0a29b3dc9dcafae62b75b2ff61544",
-    remote = "https://github.com/accellera-official/uvm-core.git",
+    patch_strip = 1,
+    patches = ["//ports/uvm/2020.3.1/1:patches/hdl_access_through_vpi.patch"],
+    sha256 = "f55bdbc02cc500d4a2f41b31bad127653289eb2073f806ce156fb82662b362b8",
+    strip_prefix = "uvm-core-2020.3.1",
+    urls = ["https://github.com/accellera-official/uvm-core/archive/refs/tags/2020.3.1.tar.gz"],
 )
 
 # Development tools

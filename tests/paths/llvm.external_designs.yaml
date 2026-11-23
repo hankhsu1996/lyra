@@ -14,6 +14,3 @@ HammerBlade:16x8:hello:
 OpenTitan:default:hello:
   stops: run
   says: did not end within
-uvm-core:hello:default:
-  stops: build
-  says: "undefined reference to `uvm_hdl_read'"

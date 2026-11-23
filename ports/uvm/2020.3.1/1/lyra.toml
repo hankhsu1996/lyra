@@ -1,0 +1,9 @@
+# uvm-core 2020.3.1 as Lyra ships it: the Accellera release of the IEEE
+# 1800.2-2020 library, with its C reaching the design through the standard's
+# VPI alone, the back end UVM_HDL_VPI selects.
+[library]
+name = "uvm"
+files = ["src/uvm.sv"]
+export_incdir = ["src"]
+dpi = ["src/dpi/uvm_dpi.cc"]
+dpi_defines = ["UVM_HDL_VPI"]

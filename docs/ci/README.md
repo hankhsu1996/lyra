@@ -320,8 +320,8 @@ printed beside where it stopped, and a case that stops keeps the directory it wa
 it, while one that gets all the way leaves nothing behind.
 
 A suite that ships sources and no description of its own is described in
-`tests/external_design_suites.yaml` instead: the sources every case of it compiles first, what
-reading them needs, and each case's own files, runs and check. The harness knows the shape of such a
+`tests/external_design_suites.yaml` instead: the supported libraries every case of it takes, by
+version, and each case's own files, runs and check. The harness knows the shape of such a
 description and nothing of any one suite. Today it holds the UVM class library, on which most
 testbenches are written, because what breaks a testbench is a class library's way of writing --
 handles, parameterized classes, a factory, objections -- which neither the corpus nor a design of
@@ -329,11 +329,11 @@ the benchmark suite writes. UVM 1.2 ships examples its authors run on every simu
 Makefile saying what it compiles, which runs it makes and how a run is judged; each of its cases is
 read off one of those Makefiles, and judged as it judges, by the report server's summary saying
 exactly the expected counts of errors and fatals. uvm-core, the library of IEEE 1800.2-2020, ships
-no examples, so its cases are tests of this repository under `tests/uvm`, judged the same way. A
-uvm-1.2 case takes UVM as a user does, by `uvm = { version = "1.2" }`, from the port Lyra ships with
-its C; uvm-core's are built without the library's DPI side, so one that needs it stops where it
-does. The UVM 1.2 examples and uvm-core are fetched at a pinned release, as the benchmark suite is,
-and nothing of either is kept here.
+no examples, so its cases are tests of this repository under `tests/uvm`, judged the same way. Each
+case takes UVM as a user does, from the port Lyra ships with its C -- a uvm-1.2 case by
+`uvm = { version = "1.2" }`, a uvm-core one by `uvm = { version = "2020.3.1" }`. The UVM 1.2
+examples and both libraries are fetched at a pinned release, as the benchmark suite is, and of the
+libraries only the patches their ports state are kept here.
 
 Where each case stops is recorded in `tests/paths/llvm.external_designs.yaml`, and a case is held to
 exactly what is listed for it, so the file is the account of what stands between Lyra and each

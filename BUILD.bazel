@@ -59,7 +59,10 @@ shipped_headers(
 # Lyra with no network.
 port_store(
     name = "port_store",
-    ports = ["//ports/uvm/1.2/1:port"],
+    ports = [
+        "//ports/uvm/1.2/1:port",
+        "//ports/uvm/2020.3.1/1:port",
+    ],
     root = "port_store",
 )
 
