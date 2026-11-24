@@ -698,11 +698,13 @@ cc_test(
 # is the same decision as when its cost is paid.
 #
 # Each case runs a few small builds and none shares anything with another, so
-# the target takes more shards than it has cases and its wait is its slowest
-# case rather than the sum of them; a shard with nothing to run ends at once.
+# the target is split into shards and its wait is its slowest shard rather than
+# the sum of every case. There are more cases than shards, so a shard holds
+# several, and a case building a dozen designs takes minutes; a shard's time is
+# therefore a large test's.
 cc_test(
     name = "cli_tests",
-    size = "medium",
+    size = "large",
     srcs = ["cli_test.cpp"],
     copts = LYRA_COPTS,
     data = [
