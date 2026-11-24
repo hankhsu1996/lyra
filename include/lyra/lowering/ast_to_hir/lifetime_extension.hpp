@@ -3,12 +3,21 @@
 #include <span>
 #include <unordered_set>
 
+#include <slang/ast/SemanticFacts.h>
+
 namespace slang::ast {
 class Statement;
 class VariableSymbol;
 }  // namespace slang::ast
 
 namespace lyra::lowering::ast_to_hir {
+
+// Whether a block of `kind` can be left while branches it started still run,
+// and so outlive the scope around it: a fork that does not wait for every
+// branch (LRM 9.3.2 Table 9-1). Its own block_item_declarations are no branch;
+// they run in the forking process before any branch is spawned.
+[[nodiscard]] auto BranchesMayOutliveBlock(slang::ast::StatementBlockKind kind)
+    -> bool;
 
 // LRM 6.21: the automatic variables a detached (join_none / join_any) fork
 // branch borrows and can outlive. A pre-pass over a procedural body, run before

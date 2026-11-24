@@ -2607,6 +2607,118 @@ TEST(LyraCheck, RefusesASolveBeforeItemThatIsNeitherIntegralNorReal) {
   }
 }
 
+// A branch its fork does not wait for can run after the call that passed a
+// `ref` argument has returned, when the actual may be storage of the caller's
+// that has ended, so it may not name the argument (LRM 9.3.2). The front end
+// refuses that, and a tolerant reading that relaxes the error keeps nothing of
+// the caller's alive either, so the compiler refuses it in its own words: in a
+// `join_none` and a `join_any` branch, read and written, in a declaration of
+// the branch's own, inside a fork nested in the branch, as a `const ref`, and
+// handed on to another call. A `ref static` argument, passed only storage that
+// lasts the whole run, is named there freely.
+TEST(LyraCheck, RefusesARefArgumentNamedInABranchThatCanOutliveItsCall) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  struct Refused {
+    std::string_view file;
+    std::string_view formal;
+    std::string_view fork;
+    std::string_view at;
+  };
+  const std::array refusals = {
+      Refused{
+          .file = "written.sv",
+          .formal = "ref int r",
+          .fork = "fork begin #1; r = 5; end join_none",
+          .at = "written.sv:4:20: "},
+      Refused{
+          .file = "any.sv",
+          .formal = "ref int r",
+          .fork = "fork begin #1; $display(r); end join_any",
+          .at = "any.sv:4:29: "},
+      Refused{
+          .file = "declared.sv",
+          .formal = "ref int r",
+          .fork = "fork begin automatic int m = r; #1 $display(m); end "
+                  "join_none",
+          .at = "declared.sv:4:34: "},
+      Refused{
+          .file = "nested.sv",
+          .formal = "ref int r",
+          .fork = "fork fork #1 r = 5; join join_none",
+          .at = "nested.sv:4:18: "},
+      Refused{
+          .file = "const.sv",
+          .formal = "const ref int r",
+          .fork = "fork #1 $display(r); join_none",
+          .at = "const.sv:4:22: "},
+      Refused{
+          .file = "handed_on.sv",
+          .formal = "ref int r",
+          .fork = "fork #1 other(r); join_none",
+          .at = "handed_on.sv:4:19: "},
+  };
+  for (const Refused& refused : refusals) {
+    WriteFile(
+        *tmp_or / refused.file,
+        std::format(
+            "module Test;\n"
+            "  task automatic other(ref int s); s = 1; endtask\n"
+            "  task automatic t({});\n"
+            "    {}\n"
+            "  endtask\n"
+            "  task automatic caller(); int x; t(x); endtask\n"
+            "  initial begin caller(); #2 $display(\"done\"); end\n"
+            "endmodule\n",
+            refused.formal, refused.fork));
+  }
+
+  const auto strict = RunLyraFrom(lyra, *tmp_or, "check --top Test written.sv");
+  EXPECT_THAT(strict, ExitedWithCode(1)) << strict.stderr_text;
+  EXPECT_NE(
+      strict.stderr_text.find("[-Wref-arg-in-fork-join]"), std::string::npos)
+      << strict.stderr_text;
+
+  const auto checked =
+      RunLyraFrom(lyra, *tmp_or, "check --compat all --top Test written.sv");
+  EXPECT_THAT(checked, ExitedWithCode(0)) << checked.stderr_text;
+
+  WriteFile(
+      *tmp_or / "static.sv",
+      "module Test;\n"
+      "  int counter;\n"
+      "  task automatic t(ref static int r);\n"
+      "    fork #1 r = 5; join_none\n"
+      "  endtask\n"
+      "  initial begin t(counter); #2 $display(\"done\"); end\n"
+      "endmodule\n");
+  const auto lent_for_the_run =
+      RunLyraFrom(lyra, *tmp_or, "dump hir --compat all --top Test static.sv");
+  EXPECT_THAT(lent_for_the_run, ExitedWithCode(0))
+      << lent_for_the_run.stderr_text;
+
+  for (const Refused& refused : refusals) {
+    const auto lowered = RunLyraFrom(
+        lyra, *tmp_or,
+        std::format("dump hir --compat all --top Test {}", refused.file));
+    EXPECT_THAT(lowered, ExitedWithCode(1)) << lowered.stderr_text;
+    EXPECT_NE(
+        lowered.stderr_text.find(
+            std::format(
+                "{}error: 'ref' argument 'r' cannot be used in a 'join_any' or "
+                "'join_none' branch, which can run after the call that passed "
+                "it has returned",
+                refused.at)),
+        std::string::npos)
+        << refused.file << ": " << lowered.stderr_text;
+    EXPECT_EQ(lowered.stderr_text.find("internal error"), std::string::npos)
+        << refused.file << ": " << lowered.stderr_text;
+  }
+}
+
 // A construct Lyra does not yet carry out is refused by the compiler, in its
 // own words and with one answer whichever backend was asked for, and nothing is
 // written -- rather than a project written as text another compiler rejects, or

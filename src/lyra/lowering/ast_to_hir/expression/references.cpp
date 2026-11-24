@@ -23,6 +23,7 @@
 #include "lyra/base/diag_message.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/diag/diag_code.hpp"
+#include "lyra/diag/diagnostic.hpp"
 #include "lyra/frontend/slang_source_span.hpp"
 #include "lyra/hir/expr_builders.hpp"
 #include "lyra/hir/primary.hpp"
@@ -65,6 +66,17 @@ auto IsCurrentInstanceHandle(const slang::ast::Symbol& sym) -> bool {
     return con->thisVar == variable;
   }
   return false;
+}
+
+// Whether `var` is a formal passed by reference that is valid only while its
+// call runs, since its actual may be an automatic of the caller: any `ref` but
+// a `ref static`, which is passed only storage that lasts the whole run (LRM
+// 13.5.2).
+auto IsValidOnlyForItsCall(const slang::ast::VariableSymbol& var) -> bool {
+  const auto* formal = var.as_if<slang::ast::FormalArgumentSymbol>();
+  return formal != nullptr &&
+         formal->direction == slang::ast::ArgumentDirection::Ref &&
+         !formal->flags.has(slang::ast::VariableFlags::RefStatic);
 }
 
 }  // namespace
@@ -621,6 +633,23 @@ auto LowerNamedValueProc(
     // storage outside the body.
     case Referent::kVariableStorage: {
       const auto& var = target.as<slang::ast::VariableSymbol>();
+      // A branch its fork does not wait for can outlast the call, so LRM 9.3.2
+      // forbids it to name such a formal. The front end refuses that unless a
+      // tolerant reading relaxed it, which keeps none of the caller's storage
+      // alive for the branch either.
+      if (frame.within_detached_branch && IsValidOnlyForItsCall(var)) {
+        return std::unexpected(
+            diag::Make(
+                span, diag::DiagCode::kErrorInvalidFrontendSemantics,
+                base::DiagMessage(
+                    "'ref' argument '{}' cannot be used in a 'join_any' or "
+                    "'join_none' branch, which can run after the call that "
+                    "passed it has returned",
+                    var.name))
+                .WithNote(
+                    "copy it into a variable the fork declares, or declare it "
+                    "'ref static' if only static variables are passed to it"));
+      }
       if (auto local = proc.LookupProceduralVar(var)) {
         return MakeProceduralVarRefExpr(
             unit_lowerer, *local, *named.type, span);

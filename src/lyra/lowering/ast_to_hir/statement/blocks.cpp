@@ -16,6 +16,7 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/hir/procedural_scope.hpp"
+#include "lyra/lowering/ast_to_hir/lifetime_extension.hpp"
 #include "lyra/lowering/ast_to_hir/name_in_a_path.hpp"
 
 namespace lyra::lowering::ast_to_hir {
@@ -187,8 +188,8 @@ auto LowerForkStmt(
   // before any branch spawns. The grammar places them before the statements, so
   // they form a prefix; each remaining statement is a branch. The fork's own
   // lexical declaration scope owns those locals; they lower in the parent
-  // execution context but attach to the fork scope, and only the branches enter
-  // the fork-branch execution scope.
+  // execution context but attach to the fork scope, so only a branch is ever
+  // lowered as one its fork may not wait for.
   ProceduralScope scope(proc, frame, block.blockSymbol, kind);
   const WalkFrame& fork_scope_frame = scope.Frame();
 
@@ -209,7 +210,9 @@ auto LowerForkStmt(
 
   std::vector<hir::StmtId> branches;
   branches.reserve(branch_stmts.size());
-  const WalkFrame branch_frame = fork_scope_frame.WithForkBranch();
+  const WalkFrame branch_frame = BranchesMayOutliveBlock(block.blockKind)
+                                     ? fork_scope_frame.WithinDetachedBranch()
+                                     : fork_scope_frame;
   for (const auto* child : branch_stmts) {
     auto child_stmt = proc.LowerStmt(*child, branch_frame);
     if (!child_stmt) return std::unexpected(std::move(child_stmt.error()));
