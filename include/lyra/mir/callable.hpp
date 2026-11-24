@@ -104,9 +104,8 @@ using CallableOwner = std::variant<
 // `code` carries the signature wherever this unit states one; its body is
 // present exactly when this declaration also defines the callable. A pure
 // virtual method (LRM 8.21) and a DPI-C import (LRM 35.4) are the two this unit
-// states and does not define. The receiver is not a kind either: an instance
-// method carries `self` as its first parameter and a static callable omits it,
-// which the signature already says.
+// states and does not define. The receiver is not a kind either: `code` names
+// it where the body is entered on an object, and a static callable has none.
 //
 // Access is not stated here. A scope draws no access boundary at all --
 // anything lexically inside a module reaches its subroutines, and a

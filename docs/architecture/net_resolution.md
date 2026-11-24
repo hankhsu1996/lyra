@@ -2,8 +2,12 @@
 
 The compiler does not yet carry out every net this model covers. It refuses a driver whose 0 and 1
 strengths differ (LRM 28.11), a delay on a net declaration that does not assign (LRM 10.3.3, 28.16),
-an `interconnect` net (LRM 6.6.8), a net of a user-defined nettype (LRM 6.6.7) and a net holding a
-tagged union; the contract below binds each regardless.
+an `interconnect` net (LRM 6.6.8), a net of a user-defined nettype (LRM 6.6.7), a net holding a
+tagged union, a net of a dynamic array, queue, associative array or event type (LRM 23.2.2.3), a net
+a package declares, and a procedural continuous assignment to part of a string, a queue, a dynamic
+or associative array or to a member of a tagged union. It also refuses a join of nets whose types
+resolve differently, and an `inout` port connected to a net of a different width, where invariant 9
+takes the type Table 23-1 gives. The contract below binds each regardless.
 
 ## Purpose
 
@@ -81,10 +85,10 @@ topology assembled as the design is built, never a list the net's unit gathers.
 
 - The rule that a resolution pools the contributions reaching its positions and never makes one
   resolution's value an input to another's.
-- The rule that one resolution has one net type, so a join requires the nets it reaches to state the
-  same one -- the same fold, the same contribution of the net type's own, and the same answer to
-  whether resolution keeps that contribution current. What a net type states carries no width, so
-  nets of unequal width state the same one.
+- The rule that one resolution has one net type -- one fold, one contribution of the net type's own,
+  and one answer to whether resolution keeps that contribution current -- so a join of nets that
+  state different ones takes the type LRM Table 23-1 gives (invariant 9). What a net type states
+  carries no width, so nets of unequal width state the same one.
 - What a procedural continuous assignment (LRM 10.6) does to what its target shows: a takeover held
   on the target, per position, at one of two levels.
 
@@ -152,12 +156,12 @@ topology assembled as the design is built, never a list the net's unit gathers.
    that would, and both are outside this document's subject. A bidirectional connection is not one
    of them: it pools the contributions rather than the results, which is what makes it
    non-strength-reducing (LRM 23.3.3).
-9. One resolution has one net type. A join therefore requires the nets it covers to state the same
-   fold and the same contribution of the net type's own; where they differ, the standard names a
-   dominating type per pair of nets (LRM Table 23-1) and that relation is not transitive -- `tri0`
-   dominates `trireg`, while `trireg` and `wand` tie and so do `tri0` and `wand` -- so it gives no
-   answer for the set a chain of connections joins, and the program is reported rather than
-   answered. The check reads what the two nets state, where the join is made.
+9. One resolution has one net type. Where the nets a join covers state different types, the standard
+   names the dominating type of each pair (LRM Table 23-1), and the resolution takes it. That
+   relation is not transitive -- `tri0` dominates `trireg`, while `trireg` and `wand` tie and so do
+   `tri0` and `wand` -- so a set a chain of connections joins has one type only where every pair's
+   answer agrees; where they disagree the standard gives none, and the program is reported rather
+   than answered. The check reads what the nets state, where the join is made.
 10. Positions one driver decides show that driver's contribution, and nothing resolves them: the
     driver's update is the net's change there, published as invariant 3 requires. One driver decides
     the positions it drives where it is the only driver reaching them, the net type contributes
@@ -196,11 +200,11 @@ topology assembled as the design is built, never a list the net's unit gathers.
 14. A takeover's evaluation is the evaluate-then-await loop a continuous assignment runs, as an
     execution of no lineage (`scheduling.md`) started where the statement runs: LRM 10.6 makes the
     right-hand side continuously evaluated, and makes no process of it, so `wait fork` and
-    `disable fork` do not reach it. It carries the generation it began under and stops itself once
-    its level holds no position under that generation, so the ending statement needs no handle on
-    it; with nothing whose change could matter it drives once and ends, since one is begun per
-    execution of a statement and a parked evaluation per pass of a testbench loop would grow without
-    bound.
+    `disable fork` do not reach it. It carries the generation each part of its target was taken over
+    under and stops itself once no takeover of those generations holds a position at its level, so
+    the ending statement needs no handle on it; with nothing whose change could matter it drives
+    once and ends, since one is begun per execution of a statement and a parked evaluation per pass
+    of a testbench loop would grow without bound.
 
 ## Boundary to Adjacent Layers
 
@@ -215,7 +219,7 @@ topology assembled as the design is built, never a list the net's unit gathers.
   error rather than as a value -- a net type that admits one driver, a nettype declared with no
   resolution function -- is decided there, and this model resolves whatever topology it is handed.
   It also implements Table 23-1 per port connection and warns where the table says to; this model
-  refuses a join of differing net types rather than restating the table.
+  reads the table's answer for the nets a join covers (invariant 9) rather than restating it.
 - `mir.md` owns the capability-type family. A net's resolved value is a capability type sibling to
   the plain observable cell (readable and observable, but not directly writable); a driver is a
   capability handle sibling to a reference. Beginning and ending a takeover are calls on the

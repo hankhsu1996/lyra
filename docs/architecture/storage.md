@@ -380,7 +380,8 @@ q.sort();               // q = '{1, 2, 3}; s reads 3, the element it was bound t
 projection chain -- and address-of is the operation of invariant 4 that yields the retained
 identity. A reference is a library object on both backends, holding what holds the storage, the
 address, and whether it names the whole. A write in progress is a library object the writer opens on
-the variable's cell, ends with its full-expression, and asks for the address each step designates. A
-queue element's storage comes from the run's recycler for storage of its size, an associative
-array's entries are each allocated on their own, and a dynamic array's generation is one block; each
-keeps the count of the leases on it.
+what it writes into -- a variable's cell, a reference, a net's driver -- ends with its
+full-expression, and asks for the address each step designates. A queue element's storage comes from
+the run's recycler for storage of its size and alignment, an associative array's entries are each
+allocated on their own, and a dynamic array's generation is one block; each keeps the count of the
+leases on it.

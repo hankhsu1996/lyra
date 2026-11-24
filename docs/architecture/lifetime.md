@@ -3,8 +3,10 @@
 The managed regime below is realized today by counting the shares held in each object rather than by
 a tracing collector, so a cycle of objects nothing else reaches is never reclaimed and a weak
 reference clears the moment the last share goes, and no activation frame is yet described to a
-collector. The contract binds every layer regardless: nothing may be built that a tracing collector
-could not serve.
+collector. Nor does any type yet answer whether a value of it can hold a managed edge, since nothing
+traces: a share is released where a value's end is emitted, and what every type answers is whether
+its end does anything. The contract binds every layer regardless: nothing may be built that a
+tracing collector could not serve.
 
 ## Purpose
 

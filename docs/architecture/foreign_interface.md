@@ -2,8 +2,13 @@
 
 The compiler does not yet carry every value across the DPI-C boundary this doc describes. It refuses
 a formal that is a sized unpacked array throughout, an unpacked structure passed on its own, an open
-array whose element type Annex H.7.3 puts in C-compatible form, and an open array of more than three
-unpacked dimensions; the rules below for the C layout and the open array bind each regardless.
+array whose element type Annex H.7.3 puts in C-compatible form, an open array of more than three
+unpacked dimensions, and an actual of an open array formal holding a dynamic array or a queue below
+its outermost dimension; the rules below for the C layout and the open array bind each regardless.
+Through VPI the runtime names no entry of an associative array keyed by a class handle or a
+`chandle` and lists no entry of one with a wildcard index, and it accepts and never calls a signal
+callback registered once the last time slot has run, or an end-of-simulation callback registered
+from inside one; the rules below for names, iterations and refused callbacks bind each regardless.
 
 Foreign code is C, written against the standard's headers, compiled apart from the design and linked
 into the program that runs it. Through DPI-C (LRM 35, Annex H) the design calls it and it calls the
@@ -187,12 +192,11 @@ absence -- and the element's type stays on the formal. Each unsized dimension re
 range and each sized one its declared range, unnormalized (Annex H.7.5, H.7.6).
 
 **The actual's own shape is stated where the call is, because the image is built before the call:**
-a fixed-size dimension's range from its declaration, and a dynamic array's or a queue's, which LRM
-7.6 admits for an input formal, as `[0:size-1]` with its size read as the call begins. A dynamic
-array or a queue as the actual of a formal that is written back is refused by name: the foreign side
-cannot change the image's extent, so the write-back would need a size it has no way to state. An
-exported subroutine takes no open array (LRM 35.5.6.1, H.8.2), and the front end rejects the
-declaration.
+a fixed-size dimension's range from its declaration, and a dynamic array's or a queue's, which is an
+actual of an open array formal as it is of any formal (LRM 7.7, 35.6.1.1), as `[0:size-1]` with its
+size read as the call begins. The foreign side cannot change the image's extent, so a formal that is
+written back gives the actual its value at the size it had when the call began. An exported
+subroutine takes no open array (LRM 35.5.6.1, H.8.2), and the front end rejects the declaration.
 
 A formal that is a sized unpacked array throughout, and an open array whose element type Annex H.7.3
 puts in C-compatible form, cross in the C layout Annex H.11.4 requires.
@@ -448,19 +452,20 @@ accepted to wait silently.
   hexadecimal or octal digit whose bits hold both x and z is an X, as `%h` prints one (LRM
   21.2.1.3); an element of a dynamic container is allocated by the run, `vpiDynamicScheme`; a
   typespec no typedef names answers no name, but a class's, which is named after the class (LRM
-  37.25, 37.32). The name of an entry keyed by a class handle or a `chandle` has no literal to be
-  written with, and the entries of an associative array with a wildcard index are listed by no
-  operation of the language (LRM 7.9).
+  37.25, 37.32). A key of a class handle or a `chandle` has no literal to be written with, and no
+  operation of the language lists the entries of an associative array with a wildcard index (LRM
+  7.9); every entry still answers a name that reaches it again, and iterating an associative array's
+  entries lists every one it holds.
 - **Callbacks.** A read-write synchronization runs in Post-NBA, since it runs "after execution of
   events for a specified time" (LRM 38.36.2). An after-delay callback of no delay asked for once
   Pre-Active has run runs in the slot's Active region, the earliest the slot still runs. An
   end-of-simulation callback runs once the final procedures and what the design asked for at its end
   have run, and not where the tool could not carry the run on. An error callback is called for each
-  run-time error the run reports of the design, and a routine-error callback for each error of a VPI
-  routine at its level or above; neither is called again from inside a call of its own. A signal
-  callback traps the signal and is called between two region passes, before the next region is
-  chosen; a signal the system lets no program catch, or that reports a fault of the instruction
-  raising it, is refused.
+  run-time error the run reports of the design, and a routine-error callback for each error a VPI
+  routine reports at the level `vpiError` or above; neither is called again from inside a call of
+  its own. A signal callback traps the signal and is called between two region passes, before the
+  next region is chosen; a signal the system lets no program catch, or that reports a fault of the
+  instruction raising it, is refused.
 
 ## Forbidden shapes
 

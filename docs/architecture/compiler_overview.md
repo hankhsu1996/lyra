@@ -1,10 +1,14 @@
 # Compiler Overview
 
-The compiler holds to this contract except in two places, both in AST-to-HIR. The lowerings of one
-unit are sorted into bodies by a digest of their HIR dump's text, and a generate block's bodies are
-grouped by a digest of its scope's dump the same way, so a lowering step reads a dumper's output,
-which invariant 8 forbids; in both, the comparison that decides two are one body is still made on
-the HIR itself.
+The compiler holds to this contract except in three places. Units do not reach HIR side by side:
+declaring a unit and lowering its bodies to HIR take turns, one unit at a time in the order the
+design lists them, and only what follows a unit's HIR runs beside the other units
+([`compiling_a_design.md`](compiling_a_design.md)). The lowerings of one unit are sorted into bodies
+by a digest of their HIR dump's text, and a generate block's bodies are grouped by a digest of its
+scope's dump the same way, so a lowering step reads a dumper's output, which invariant 8 forbids; in
+both, the comparison that decides two are one body is still made on the HIR itself. And a failure
+the compiler does not throw -- a fault in memory, an abort, a fatal error inside the code generator
+-- unwinds nothing, so it collects nothing and names no place.
 
 ## Purpose
 
@@ -103,23 +107,23 @@ reports every gap it can reach, and a run that met any produces nothing, since w
 design is not the design.
 
 **Collect within a stage; stop between stages.** Every unit's declarations are attempted, then every
-unit's bodies, then each unit's vertical below HIR, then the one whole-design step; a failure inside
-a stage is reported and the stage goes on, and a stage that reported anything is the last that runs.
-What makes a failure's neighbours still reachable is the staging itself
-([`lowering_organization.md`](lowering_organization.md)): nothing needs another entity's body to be
-built, so a body that will not lower is reported and its siblings lower anyway, while a declaration
-that will not settle ends its stage, because every later stage reads declarations and would only
-report the want of one. A lowering abandons a body at its first refusal, since the statements after
-it have no defined relation to one that was never built. The C++ backend goes on through the body
-instead, because it is a rendering fold ([`lowering_organization.md`](lowering_organization.md)) and
-no node's text reads another's, so what it writes after a refusal stands on its own; a unit that
-reported anything writes no file. A unit whose own lowering broke one of the compiler's invariants
-is that unit's report: its pipeline reads nothing another unit's writes, so the other units are
-still attempted, and a broken invariant ends the unit rather than the body because it says the
-lowering's own state may be wrong. The checks that hold a unit to what its consumers require do not
-run on a run that reported anything, which would answer a stated gap with a bug report. None of this
-is a mode: no flag asks for the whole account, because the run fails either way and the work of
-going on is work the next run would repeat.
+unit's bodies, each unit taken on below HIR as soon as its own are lowered, then the one
+whole-design step; a failure inside a stage is reported and the stage goes on, and a stage that
+reported anything is the last that runs. What makes a failure's neighbours still reachable is the
+staging itself ([`lowering_organization.md`](lowering_organization.md)): nothing needs another
+entity's body to be built, so a body that will not lower is reported and its siblings lower anyway,
+while a declaration that will not settle ends its stage, because every later stage reads
+declarations and would only report the want of one. A lowering abandons a body at its first refusal,
+since the statements after it have no defined relation to one that was never built. The C++ backend
+goes on through the body instead, because it is a rendering fold
+([`lowering_organization.md`](lowering_organization.md)) and no node's text reads another's, so what
+it writes after a refusal stands on its own; a unit that reported anything writes no file. A unit
+whose own lowering broke one of the compiler's invariants is that unit's report: its pipeline reads
+nothing another unit's writes, so the other units are still attempted, and a broken invariant ends
+the unit rather than the body because it says the lowering's own state may be wrong. The checks that
+hold a unit to what its consumers require do not run on a run that reported anything, which would
+answer a stated gap with a bug report. None of this is a mode: no flag asks for the whole account,
+because the run fails either way and the work of going on is work the next run would repeat.
 
 **A request names the products it is answered with.** Asking the compiler for something is calling
 the entry for what is wanted -- the elaborated source, the design's HIR, every unit modelled
@@ -278,7 +282,4 @@ Parameters on a compilation unit are constructor or config inputs. Per-instance 
 hierarchical position, parameter values) flows in at runtime construction. The compile-time model
 remains class-level.
 
-A failure the compiler does not throw -- a fault in memory, an abort, a fatal error inside the code
-generator -- unwinds nothing, so in the current implementation it collects nothing and names no
-place. The compiler targets Linux and macOS, and a stage's peak memory is read through what Linux
-offers.
+The compiler runs on Linux, and a stage's peak memory is read through what Linux offers.

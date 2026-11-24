@@ -12,8 +12,11 @@ namespace lyra::mir {
 enum class Phase : std::uint8_t {
   // As HIR-to-MIR states it.
   kBuilt,
-  // Every construct is one the backends accept: every class handle is opened by
-  // the library's call, every callee reporting at its caller is handed where it
+  // Every construct is one the backends accept: every operator over an integral
+  // value wider than a machine operates on at once is a call of its type's
+  // operation, where the library does not carry it out at every width and it
+  // takes more than the low part; every class handle is opened by the
+  // library's call, every callee reporting at its caller is handed where it
   // was called, no node keeps two operands a target could run in the other
   // order to another answer, and no frame holds a value too large for one.
   kLegalized,

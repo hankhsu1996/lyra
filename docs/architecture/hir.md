@@ -30,11 +30,12 @@ visible. The translation away from that vocabulary is the next layer's job, not 
 
 - Language constructs as first-class nodes: declarations, expressions, statements, processes,
   assertions, functions, tasks, parameters, ports.
-- Compilation-unit-local declarations with typed identities, one id kind per kind of declaration
-  (variables, nets, parameters, instance members, interface ports). An interface port is a kind of
-  its own rather than an instance member, because the scope is handed the instance it names instead
-  of building one (LRM 25.3), so a route stepping through it continues into whatever unit that
-  instance is of.
+- Compilation-unit-local declarations with typed identities, one id kind per kind of declaration: a
+  data object of a structural scope (a variable, a net, a parameter, a genvar, a port's name for
+  storage it does not own -- told apart by what the declaration states, LRM 6.5), a variable a body
+  declares, an instance member, and an interface port. An interface port is a kind of its own rather
+  than an instance member, because the scope is handed the instance it names instead of building one
+  (LRM 25.3), so a route stepping through it continues into whatever unit that instance is of.
 - The unit's type pool, a type graph whose every edge is a type identity. A packed array is one
   declared dimension over an element named by its type, so an array of a packed structure carries
   that structure, and the nest bottoms out at a scalar bit, a leaf type of its own (LRM 7.4.1);
@@ -221,9 +222,10 @@ names it.
 
 ## Notes / Examples
 
-A reference to a local variable carries a `VariableId` in the compilation unit's arena. A reference
-to a package-level entity or to another unit's declaration names the unit's own entry for it, the
-same kind of id, and which unit declares it is a fact of that entry (invariant 2).
+A reference to a variable a body declares carries the body's typed id for it. A reference to another
+unit's class names the unit's own id for the class, the same kind of id as for a class of its own,
+and a reference to a package's variable names the unit's entry for the package and the variable's
+position there; which unit declares either is a fact of that entry (invariant 2).
 
 A SystemVerilog `always_comb` block, a non-blocking assignment, an event control, and a `generate`
 region all appear in HIR as themselves -- a process kind, an NBA statement, an event-control

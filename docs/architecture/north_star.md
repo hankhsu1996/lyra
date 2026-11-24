@@ -81,12 +81,12 @@ documents, not here. If a principle can be stated as a mechanism ("identity foll
 "frontend pointer identity stops at AST-to-HIR"), it is not North Star material. North Star names
 the objective and the first-class constraints; lower-level docs name the mechanisms.
 
-Invariant 2 used to say that compile-time **work** does not scale with instance count, and the
-separation it now draws was paid for. Measured on a repeated structure at 256 repetitions: the whole
-front end and both semantic IRs cost under half a second, of which the per-instance duplication is
-0.019s, while optimization and code generation cost 4.2s and compiling the emitted target 16.8s. So
-the work clause named a few percent of the cost, was unsatisfiable anyway because the front end
-elaborates every instance it does not find alike an earlier one, and -- being the half that reads as
-the demanding one -- was twice used to reject a correct design in favour of one that would have
-produced more artifacts. An invariant is worth keeping when it selects; this one did, in the wrong
-direction, until the two axes were split.
+Invariant 2 bounds compile-time artifacts and leaves compile-time work alone, because a bound on
+work would select the wrong designs. The front end and both semantic IRs are a small part of what a
+build costs, and the work they repeat per instance a small part of that; optimization, code
+generation and compiling the emitted target are nearly all the rest, and they are what the artifacts
+go on to cost. A clause on work would therefore name a few percent of the cost, could not be met
+while the front end elaborates every instance it does not find alike an earlier one, and, reading as
+the more demanding half, would be cited to reject a correct design in favour of one that produces
+more artifacts. An invariant is worth keeping when it selects, and a clause on work would select in
+the wrong direction.

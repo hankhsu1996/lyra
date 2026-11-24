@@ -1,9 +1,13 @@
 # Lowering Organization
 
-The two lowerings from source do not yet all take the handler shape of invariants 4 and 6:
-HIR-to-MIR's per-kind handlers for randomization and covergroups take the walk position by reference
-and no source span, and some take the result type as a trailing argument. Everything else here binds
-every construction pass as written.
+The two lowerings from source do not yet take the handler shape of invariants 4 and 6. HIR-to-MIR's
+per-kind handlers take no source span, since its walk position carries the source being lowered,
+most of its expression handlers take the result type as a trailing argument, and some -- those for
+randomization, covergroups and a dynamic cast among them -- take the walk position by reference.
+AST-to-HIR's walk position carries no source, which its handlers take as the span instead, and it
+holds the chain of structural scopes, the sequence and property instances being expanded, and the
+active iteration clauses as lists, so copying it allocates. Everything else here binds every
+construction pass as written.
 
 ## How to Read This Document
 
@@ -101,9 +105,9 @@ Position").
    instance's lifetime. Nested builders opened mid-walk are not class members.
 
 3. The class exposes a public entry method (typically `Run`) that performs the task and returns its
-   output, together with public dispatcher methods (`LowerExpr`, `LowerStmt`, `InternType`, etc.)
-   that per-kind handlers recurse through. Internal helpers that are not recursion entry points are
-   private. All methods on the class access class state through `this`.
+   output, together with public dispatcher methods (`LowerExpr`, `LowerStmt`, etc.) that per-kind
+   handlers recurse through. Internal helpers that are not recursion entry points are private. All
+   methods on the class access class state through `this`.
 
 4. Dispatcher method signatures are exactly
    `(const NodeType& node, WalkFrame frame) -> diag::Result<OutputType>` (or the raw `OutputType`
@@ -195,18 +199,20 @@ Position").
     the pass class header so the header does not grow per kind. Per-kind handlers form a layer the
     pass class delegates to; they are not part of the class's public surface.
 
-    _Current implementation:_ the dispatcher is a method on the pass class with body = one switch
-    routing to per-kind handler free functions in subsystem files. Per-kind handlers have signature
+    _Current implementation:_ the expression dispatcher is a method on each pass class whose body
+    calls one template shared by both pass classes, a visit over node kind routing to per-kind
+    handler free functions in subsystem files; the template lives in the boundary's expression
+    dispatch file (`expression/lower.cpp` at AST-to-HIR, `expression/dispatch.cpp` at HIR-to-MIR).
+    Per-kind handlers have signature
     `(PassClass&, WalkFrame, const NodeKind&, diag::SourceSpan) -> diag::Result<T>`. Adding a kind
-    touches the switch (in the class's `.cpp`), the subsystem header (declaration), and the
-    subsystem `.cpp` (definition) -- the class header is not touched.
+    touches the visit (in the dispatch file), the subsystem header (declaration), and the subsystem
+    `.cpp` (definition) -- the class header is not touched.
 
 11. Per-kind handlers are grouped by semantic family (operators, references, calls, selects,
     aggregates, etc.) and live in subsystem header / implementation pairs. The boundaries of a
     subsystem are determined by LRM-level expression / statement family, not by individual node
     kind. A subsystem header declares the handlers it owns; a subsystem implementation defines them.
-    The pass class's `.cpp` (which defines the dispatcher method) includes every subsystem header to
-    wire the switch.
+    The file defining the dispatcher includes every subsystem header to wire the switch.
 
 12. Subsystem files depend on exactly one contract surface for recursion -- the pass class itself.
     No parallel dispatch-contract carrier exists in any form (an external declaration file, a
@@ -242,9 +248,9 @@ Position").
     per-pass-class pair, because a name is the one thing that means something different in the two
     contexts. An expression that writes is not: what a write puts where is decided by the write, so
     an assignment and an increment are shared like everything else, and a loop generate's step is
-    the structural one (LRM 27.4). The single kind still handled in one context alone is a queue's
-    `$` bound, and that is this walk's reach rather than anything the language confines to a
-    procedure.
+    the structural one (LRM 27.4). The kinds still handled in one context alone are a queue's `$`
+    bound and, at HIR-to-MIR, a call of `rand_mode()` or `constraint_mode()`, and that is this
+    walk's reach rather than anything the language confines to a procedure.
 
 14. Whoever walks says what it is working on, and nothing at a failing site does. The unit step
     names the unit; each lowering names the declaration, the statement and the expression it is
@@ -559,9 +565,9 @@ guarantee.
 - **An ambient setter / getter pair on the class whose only purpose is install / restore of a
   walk-position concept** fails invariant 6: the concept is a `WalkFrame` field, which a recursion
   sets by making a new frame and nothing has to restore.
-- **An `Add*Expr` helper that wraps `scope.AddExpr(Make...(...))` for a freshly built node and
-  returns its `mir::ExprId`** fails the node-builder rule below: a freshly built node is returned
-  detached and interned by the caller, so whether the arena was written is visible at the call site.
+- **An `Add*Expr` helper that wraps `block.Add(Make...(...))` for a freshly built node and returns
+  its `mir::ExprId`** fails the node-builder rule below: a freshly built node is returned detached
+  and interned by the caller, so whether the arena was written is visible at the call site.
 - **A base class that spans construction-pass classes to share their state or machinery** --
   registries, a dispatcher, `WalkFrame` fields, the root output -- fails invariant 9: every derived
   pass carries state it may not use. This forbids a state-coupling base, not every type two passes
@@ -619,13 +625,13 @@ When a layer's expression / statement dispatch grows past a single readable file
 into the pass class itself and one subsystem file per expression / statement family. The shape is
 fixed:
 
-- The pass class header (`process_lowerer.hpp`, `structural_scope_lowerer.hpp`,
-  `module_lowerer.hpp`) declares the dispatcher methods (`LowerExpr`, `LowerStmt`, `InternType`,
-  etc.), the registry operations, and the fact accessors. Per-kind handler declarations are not on
-  the class.
-- The pass class implementation (`process_lowerer.cpp`, etc.) defines the dispatcher methods. Each
-  dispatcher method body is a single switch over node kind, with each case routing to a per-kind
-  handler in a subsystem file.
+- The pass class header (`process_lowerer.hpp`, `structural_scope_lowerer.hpp`, `unit_lowerer.hpp`)
+  declares the dispatcher methods (`LowerExpr`, `LowerStmt`, etc.), the registry operations, and the
+  fact accessors. Per-kind handler declarations are not on the class.
+- The dispatcher methods are defined in one file per node category -- the pass class implementation
+  (`process_lowerer.cpp`) or the expression directory's dispatch file. Each dispatcher method body
+  forwards to the one template the two pass classes share (invariant 10), whose dispatch over node
+  kind routes each kind to a per-kind handler in a subsystem file.
 - One subsystem header per family declares the per-kind handlers for that family as free functions
   (`operators.hpp` for unary / binary / conditional / conversion; `calls.hpp` for the call
   expression; `selects.hpp` for element-select / range-select / member-access; `aggregates.hpp` for
@@ -639,9 +645,9 @@ fixed:
   `lowerer.LowerX(...)`) and the subsystem header.
 
 Adding a new expression / statement kind touches three files: the subsystem header that owns its
-family (declaration), the subsystem implementation (definition), and the pass class's `.cpp` (one
-new switch case in the dispatcher method body). Other subsystem `.cpp` files do not recompile, and
-the pass class header is not modified.
+family (declaration), the subsystem implementation (definition), and the file defining the
+dispatcher (one new switch case in the dispatcher method body). Other subsystem `.cpp` files do not
+recompile, and the pass class header is not modified.
 
 Adding a new family creates a new header / implementation pair and adds the corresponding switch
 cases in the dispatcher method body. Existing families are not touched.
@@ -663,20 +669,18 @@ handle:
   reads the frame, and not by what kind of node it returns:
   - **`Make*`** is pure: it interns nothing. It assembles the returned node from ready-made parts
     and may read a `const` frame (the `self` binding, a builtin `mir::TypeId`), but it touches no
-    arena. The caller interns the single returned node with `scope.AddExpr(...)`. Examples:
-    `MakeLocalRefExpr`, `MakeSelfRefExpr`, `MakeServicesCallExpr`.
-  - **`Build*`** is composite: it interns one or more child nodes into a scope
-    (`frame.current_block` or a passed `mir::Block&`) as it builds, then returns the top node --
-    detached as a `mir::Expr` for the caller to intern, or already interned as a `mir::ExprId`.
-    Examples: `BuildServicesCallExpr` (interns the `self` child that `MakeServicesCallExpr` takes
-    ready-made), `BuildDefaultValueExpr`, `BuildElementAccessCallExpr`,
-    `BuildArrayConstructionCall`.
+    arena. The caller interns the single returned node with `block.Add(...)`. Examples:
+    `MakeLocalRefExpr`, `MakeSelfRefExpr`.
+  - **`Build*`** is composite: it interns one or more child nodes into a block (the frame's current
+    block or a passed `mir::Builder`) as it builds, then returns the top node -- detached as a
+    `mir::Expr` for the caller to intern, or already interned as a `mir::ExprId`. Examples:
+    `BuildDefaultValueExpr`, `BuildElementAccessCallExpr`, `BuildArrayConstructionCall`.
 
   The distinguishing test is the scope side effect: a helper that reads `self` off a
   `const WalkFrame&` and returns the node for the caller to intern is `Make*` however much frame
   state it consults, while one that interns even a single child is `Build*`.
 
-- **Transform** -- keyed on an input `mir::ExprId`: it reads `scope.GetExpr(id)` to decide what to
+- **Transform** -- keyed on an input `mir::ExprId`: it reads `block.Get(id)` to decide what to
   build, or may return the input unchanged (pass-through). A transform returns a `mir::ExprId`,
   because it operates on already-interned arena nodes. Examples: `WrapIndexAsPosition` (returns its
   index input unchanged where the declaration numbers from the index's own zero), `ConvertToType`
@@ -687,8 +691,8 @@ The rule follows from the dispatcher contract, and it is the same contract on bo
 returns a detached `mir::Stmt` the caller appends. So a hand-written builder of either kind obeys
 one shape, and the prefix answers one question at the call site -- has the arena already been
 written to? That question does not change with the node kind, which is why the split does not
-either. The only way to obtain a `mir::ExprId` is `scope.AddExpr(<an Expr produced by a factory>)`;
-a freshly built node is never interned behind an `Add*` helper that hands back the id.
+either. The only way to obtain a `mir::ExprId` is `block.Add(<an Expr produced by a factory>)`; a
+freshly built node is never interned behind an `Add*` helper that hands back the id.
 
 ## Notes
 

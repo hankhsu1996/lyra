@@ -1,10 +1,15 @@
 # MIR
 
-One part of this contract is not yet what the compiler does: a few switches still end in a catch-all
-arm (invariant 19) -- among MIR's sets, the HIR-to-MIR lowering of the file input and output tasks
-over the runtime entries it does not name; the rest, over the front end's sets and the format kinds,
-are the ones `tools/policy/check_architecture.py` lists as standing under A020. The rules below bind
-every layer regardless.
+One part of this contract is not yet what the compiler does: invariant 19. A few switches still end
+in a catch-all arm -- among MIR's sets, the HIR-to-MIR lowering of the file input and output tasks
+over the runtime entries it does not name; the rest, over the front end's sets, a classification
+AST-to-HIR makes of the front end's system names, and the format kinds, are the ones
+`tools/policy/check_architecture.py` lists as standing under A020. And MIR's consumers still ask its
+node, callee and type sets whether a value is one alternative (`std::get_if`,
+`std::holds_alternative`, a type's `Is<>`) where the answer is a question over the whole set, which
+no rule checks. And every statement still carries the source's own label beside the one a `break`
+names, which the C++ backend writes out and the LLVM backend drops. The rules below bind every layer
+regardless.
 
 ## Purpose
 
@@ -51,10 +56,16 @@ what the construct means.
 
 ## Owns
 
+### Objects and members
+
 - Objects, members, and member access as first-class entities.
 - A member as a type at a position in its object, and separately the identifier a source declaration
   reaches that position by. The type is the sole carrier of the member's storage shape and, for a
   member that holds a child, of its child-scope kind and cardinality.
+- The identity of each object and member within a compilation unit.
+
+### Machine data and the type system
+
 - Machine data -- a machine boolean, a machine integer, a machine float, a borrowed C string, a raw
   pointer, the fixed-size contiguous aggregate of them, a read-only view of such an aggregate's
   entries, and a plain code address -- as ordinary types of the language, the way `bool`, `i64`,
@@ -89,32 +100,21 @@ what the construct means.
   box or a borrow, of a signature of machine types and nothing else
   ([compiler_generated_storage.md](compiler_generated_storage.md) invariant 10), and beside it the
   **erased value**, a value of a type known only where the program runs, reached only through a
-  reference, as Rust's `dyn Any` is; and the **object** (`mir::Class`), the rich nominal object with
-  methods and dispatch. A fixed-size unpacked array is an element type and a count, numbered from
-  the left, as LLVM's array type is, one dimension per type node -- a further dimension is its
-  element type, as HIR states it: the range the source declared is a coordinate system a select
-  resolves where it is lowered, so two arrays of equivalent elements and one count are one type
-  whatever ranges they were declared with (LRM 6.22.2). A component of a tuple or a record is
-  reached the same way: by its position, as a field step on the place holding it, whether that place
-  is a variable, a dereference or a value held for the full-expression. The closure and the object
-  share a **field substrate** -- a field declaration, a field id keyed within one declaration, and
-  one access node -- while staying distinct types; an access names the declaration it reaches into,
-  so what the substrate shares is the vocabulary and never the identity. Structural versus nominal,
-  and storage versus callable, are the ordinary generic-language distinctions (C++/Rust/LLVM carry
-  them).
-- Two references to an object that are values of the simulation, beside the machine pointer: a
-  managed reference, whose object lives while some reference reaches it -- a class handle (LRM 8.3),
-  and an event, whose value is a reference to the synchronization object the runtime defines, or to
-  none (LRM 6.17, 15.5): it is held, copied, compared, nulled and stored as a handle is, and
-  triggering it, asking whether it was triggered, making a new object and putting a wait on it are
-  runtime calls handed the reference -- and one owning nothing (a `chandle`, LRM 6.14, whose pointee
-  is `void`; a virtual interface, LRM 25.9, whose pointee is its interface's object). A variable
-  holds either in a cell, defaults to null, prints and compares by identity, which no machine
-  pointer does; a chandle crosses a foreign call as the machine pointer by a conversion, as an
-  integral value crosses as its words. `null` has no type of its own: it reaches MIR only at the
-  type its use gives it, which HIR states as a conversion -- the other operand's, or, formatted, the
-  chandle's, since a handle naming nothing prints alike whatever type of handle it is (LRM 21.2.1.6)
-  -- as the null of that type.
+  reference, as Rust's `dyn Any` is; and the **object**, the rich nominal object with methods and
+  dispatch. A fixed-size unpacked array is an element type and a count, numbered from the left, as
+  LLVM's array type is, one dimension per type node -- a further dimension is its element type, as
+  HIR states it: the range the source declared is a coordinate system a select resolves where it is
+  lowered, so two arrays of equivalent elements and one count are one type whatever ranges they were
+  declared with (LRM 6.22.2). A component of a tuple or a record is reached the same way: by its
+  position, as a field step on the place holding it, whether that place is a variable, a dereference
+  or a value held for the full-expression. The closure and the object share a **field substrate** --
+  a field declaration, a field id keyed within one declaration, and one access node -- while staying
+  distinct types; an access names the declaration it reaches into, so what the substrate shares is
+  the vocabulary and never the identity. Structural versus nominal, and storage versus callable, are
+  the ordinary generic-language distinctions (C++/Rust/LLVM carry them).
+
+### Types the runtime library declares
+
 - One type for every type the runtime library declares, named by its declaration and the arguments
   the language gives it -- a type, or a value such as a queue's bound -- as rustc's `Adt(def, args)`
   names a definition of a library crate. A type is MIR's own only where MIR's constructs make, take
@@ -140,6 +140,9 @@ what the construct means.
   position, leasing an element a call binds, what a queue's bound admits -- is MIR's to state, and
   it reads the element type, the index type and the bound as the arguments the declaration names
   them; a rule naming one container asks whether a type is declared by that declaration.
+
+### Records, packed aggregates and enumerations
+
 - A record is an unpacked structure, union or tagged union the source declared (LRM 7.2, 7.3), as
   rustc's struct, union and enum are one kind of declared type. It carries its kind, its members'
   types, the name another unit reaches it by and a method for each operation the language defines on
@@ -149,30 +152,30 @@ what the construct means.
   `impl PartialEq` answers `eq`. A method's receiver is the value it is asked of, taken by reference
   as Rust's comparison operators take theirs; one asked of the type, as building a value from a
   stream is, has none. The declaration brings the methods, so they exist whether or not the
-  declaring unit calls them, and a unit naming another unit's record states none and calls them
-  through the declaration; an operation the type does not have has no method -- a real or a chandle
-  member leaves no bit stream (LRM 6.24.3). A structure's type is the record and nothing else. An
-  untagged union's record has one component, its storage: the bits of its widest member, 4-state
-  where any member has a 4-state bit, as a packed union's are (LRM 7.3.1), with every member a view
-  of them from the first position -- an integral member's bits, a real's IEEE 754 bits, a
-  structure's and an array's parts in turn -- so a common initial sequence reads what any structure
-  sharing it wrote (LRM 7.3), and a read through another member answers what its positions hold,
-  which is no error (LRM 7.3.2). A read of a member makes the member out of the storage's first
-  positions and a write replaces those positions by the member's; a literal names its member and
-  zeroes every other bit, since every bit may be read; every whole-value operation reads the first
-  member, as `%p` and streaming do (LRM 21.2.1.6, 11.4.14.1), except whether a holder changed and
-  the positions a net holds, which are the storage's. A tagged union's members overlay one storage
-  at its start, laid out by their own types since a tagged union may hold what owns something (LRM
-  7.3), with the tag after them; held in an untagged union, its positions are the member it holds
-  from the first and the tag above its widest member's, as a packed tagged union lays them out (LRM
-  7.3.2). Every read and write of a tagged union's member is preceded by the check LRM 11.9 makes:
-  the tag, read by its own node, compared with the member's position, and the design's error where
-  they differ; the check and the whole read -- every select written below the member -- are steps of
-  one evaluation, so no sibling operand retags the union between them, and a write is checked before
-  it lands. A whole tagged value is built by storing the member and then the tag, and assigning one
-  ends the old value first. A local a scope keeps past its end (LRM 6.21) is no struct: it is its
-  own cell, reached through a `Shared<>` wrapper. A closure is not a struct-with-invoke but its own
-  callable-value category.
+  declaring unit calls them, and a unit naming another unit's record declares them, defines none,
+  and calls them through the declaration; an operation the type does not have has no method -- a
+  real or a chandle member leaves no bit stream (LRM 6.24.3). A structure's type is the record and
+  nothing else. An untagged union's record has one component, its storage: the bits of its widest
+  member, 4-state where any member has a 4-state bit, as a packed union's are (LRM 7.3.1), with
+  every member a view of them from the first position -- an integral member's bits, a real's IEEE
+  754 bits, a structure's and an array's parts in turn -- so a common initial sequence reads what
+  any structure sharing it wrote (LRM 7.3), and a read through another member answers what its
+  positions hold, which is no error (LRM 7.3.2). A read of a member makes the member out of the
+  storage's first positions and a write replaces those positions by the member's; a literal names
+  its member and zeroes every other bit, since every bit may be read; every whole-value operation
+  reads the first member, as `%p` and streaming do (LRM 21.2.1.6, 11.4.14.1), except whether a
+  holder changed and the positions a net holds, which are the storage's. A tagged union's members
+  overlay one storage at its start, laid out by their own types since a tagged union may hold what
+  owns something (LRM 7.3), with the tag after them; held in an untagged union, its positions are
+  the member it holds from the first and the tag above its widest member's, as a packed tagged union
+  lays them out (LRM 7.3.2). Every read and write of a tagged union's member is preceded by the
+  check LRM 11.9 makes: the tag, read by its own node, compared with the member's position, and the
+  design's error where they differ; the check and the whole read -- every select written below the
+  member -- are steps of one evaluation, so no sibling operand retags the union between them, and a
+  write is checked before it lands. A whole tagged value is built by storing the member and then the
+  tag, and assigning one ends the old value first. A local a scope keeps past its end (LRM 6.21) is
+  no struct: it is its own cell, reached through a `Shared<>` wrapper. A closure is not a
+  struct-with-invoke but its own callable-value category.
 - A packed structure or union the **source declared** is the single vector its members project onto.
   No member name is carried by any aggregate: an access names a member by its declaration-order
   position, the carrier LLVM IR and Rust MIR both use, and what the language reads a name for --
@@ -190,6 +193,9 @@ what the construct means.
   member table the unit states as a constant, so the search and the wrap are written once for every
   enumeration. A value is a member where it is bit-identical to one. Below MIR every question that
   reads the member list has been stated as such a call, so LIR carries an enumeration as its base.
+
+### A type's operations and interface
+
 - The operations of a fixed-size unpacked array, which has no declaration to state them: one per
   operation the language defines on its whole value, built from its elements' operations, which a
   use calls by the type and the operation, handing each value by reference as a record's method
@@ -235,22 +241,23 @@ what the construct means.
   its type arguments meet its bounds, and a fixed-size array's own methods and the items of its
   language traits; a record's methods are its declaration's, each declared the same way. An integral
   type wider than the widest integer a machine operates on at once has one as well: each operator of
-  the language over a value of it, a body over the words the value lies in, as compiler-rt and
-  Rust's `compiler_builtins` state in the language itself, over the machine's words, what a machine
-  lacks for a wide integer. Those words are the one layout every backend gives the type, so such a
-  body states them as a view of the value's storage, and nothing else does. An operation takes and
-  answers the same at every type that has it, as one trait method's signature is every
-  implementation's, and an array's operation is one program over its elements whatever kind of array
-  it is, asking the array how many it holds. A type is named by what it is, the same in every unit
-  that names it, as clang's canonical type names a type rather than a translation unit's spelling of
-  it, so two types are never one. A unit holds no such body, as a call in rustc's THIR holds no
-  instance: a body is built when something below this layer finds the unit needs it, as a generic
-  impl is instantiated where it is used, from the unit's types and nothing of the source, then
-  legalized and verified alone and lowered with the unit. What needs one is a call naming it, a
-  record of the library that a value of the type is handed over with, which only the target
-  realizing the record can state, or an item of the type's implementation of the library's traits
-  that a target's library asks of a value of the type wherever its own code holds one. A type the
-  unit only names has none, and a call is well formed without one.
+  the language over a value of it that the library does not carry out at every width, a body over
+  the words the value lies in, as compiler-rt and Rust's `compiler_builtins` state in the language
+  itself, over the machine's words, what a machine lacks for a wide integer; a conversion to a type
+  no wider than a machine integer needs none, being the value's low bits. Those words are the one
+  layout every backend gives the type, so such a body states them as a view of the value's storage,
+  and nothing else does. An operation takes and answers the same at every type that has it, as one
+  trait method's signature is every implementation's, and an array's operation is one program over
+  its elements whatever kind of array it is, asking the array how many it holds. A type is named by
+  what it is, the same in every unit that names it, as clang's canonical type names a type rather
+  than a translation unit's spelling of it, so two types are never one. A unit holds no such body,
+  as a call in rustc's THIR holds no instance: a body is built when something below this layer finds
+  the unit needs it, as a generic impl is instantiated where it is used, from the unit's types and
+  nothing of the source, then legalized and verified alone and lowered with the unit. What needs one
+  is a call naming it, a record of the library that a value of the type is handed over with, which
+  only the target realizing the record can state, or an item of the type's implementation of the
+  library's traits that a target's library asks of a value of the type wherever its own code holds
+  one. A type the unit only names has none, and a call is well formed without one.
 - Which of a type's operations the runtime library asks of it by name: the library declares its
   traits -- a value's life, its change test, its elements, being made a count long, being taken
   over, a net's positions, the questions asked of a whole value, its stream at a width the program
@@ -269,6 +276,9 @@ what the construct means.
   queue keeping what its own bound admits (LRM 7.6, 7.10.5) -- wherever a value is assigned to a
   type of its own: an assignment, an argument, a returned value, a pattern's item, a value a queue
   method inserts. Each is built where a call reaches it, as a fixed-size array's operations are.
+
+### A type's value before anything is written
+
 - What a value of a type is before anything is written to it: the code that builds it, stated once
   for the type, because the source's declaration decides it -- a structure member's own initializer
   is part of it (LRM 7.2.2, 7.4.5) -- and nothing below this layer has that declaration. An array's
@@ -282,16 +292,43 @@ what the construct means.
   them, of each member of a structure whose declaration gives it no initializer -- and an array
   growing by `new[N]` (LRM 7.5.1) each state a new object per position on top of the type's value,
   so no copy of one value stands for several objects.
+
+### Object references and capability wrappers
+
+- Two references to an object that are values of the simulation, beside the machine pointer: a
+  managed reference, whose object lives while some reference reaches it -- a class handle (LRM 8.3),
+  and an event, whose value is a reference to the synchronization object the runtime defines, or to
+  none (LRM 6.17, 15.5): it is held, copied, compared, nulled and stored as a handle is, and
+  triggering it, asking whether it was triggered, making a new object and putting a wait on it are
+  runtime calls handed the reference -- and one owning nothing (a `chandle`, LRM 6.14, whose pointee
+  is `void`; a virtual interface, LRM 25.9, whose pointee is its interface's object). A variable
+  holds either in a cell, defaults to null, prints and compares by identity, which no machine
+  pointer does; a chandle crosses a foreign call as the machine pointer by a conversion, as an
+  integral value crosses as its words. `null` has no type of its own: it reaches MIR only at the
+  type its use gives it, which HIR states as a conversion -- the other operand's, or, formatted, the
+  chandle's, since a handle naming nothing prints alike whatever type of handle it is (LRM 21.2.1.6)
+  -- as the null of that type.
+- Opening a class handle, as a call of the library's entry that answers a pointer to the object the
+  handle names, which the dereference then reads through, as rustc's `ElaborateBoxDerefs` states a
+  `Box`'s dereference through the pointer inside it. A handle naming no object fails the design
+  there (LRM 8.4), so it is a call like any other that can fail, handed its location. A unit is
+  built with the dereference of the handle and a rewrite of the stage opens it, or, where opening it
+  is all a call does, with the opening itself, so no target dereferences a handle itself.
 - Capability wrappers: types that represent a storage place instead of being a value -- an
   observable cell; a reference to a cell, which reads and writes through the cell's protocol and is
   either bound once as it is created (a `ref` formal, as C++'s `T&`) or held as a member, bound
   after its object is built and again by a force (a port, as `std::reference_wrapper`); a net's
-  resolved value; a net driver's contribution; and a write in progress into what a wrapper or an
-  object holds, with the place designated within it. A capability wrapper composes over the value
-  type it represents, and the wrapper and that storage are distinct places (invariant 14). The
-  capability the wrapper carries -- notifying waiters on change, aliasing another place, resolving
-  contributions, reporting a write when it ends -- is a fact of the type alone; naming the wrapper
-  type states it, and nothing beside the type restates it.
+  resolved value; and a net driver's contribution. A capability wrapper composes over the value type
+  it represents, and the wrapper and that storage are distinct places (invariant 14). The capability
+  the wrapper carries -- notifying waiters on change, aliasing another place, resolving
+  contributions -- is a fact of the type alone; naming the wrapper type states it, and nothing
+  beside the type restates it. A write in progress into what a wrapper or an object holds is no
+  wrapper and names no place: it is an object the writer holds, which tells what it was opened on
+  that it was written when it ends, and the place designated within it borrows that write, its
+  dereference being where the write lands.
+
+### Callables, calls and runtime effects
+
 - Callables: one concept -- callable code (a signature, plus a body where the declaration defines
   it) and a callable value (code plus a bound environment). Which bodies have a receiver is
   [callable.md](callable.md) invariant 2's, and how MIR states it is invariant 11 below. The body
@@ -330,13 +367,19 @@ what the construct means.
   destinations the call names completes with the values it settled, and the call site writes each
   where the source named it. A construction states which of four things it is, and no consumer
   recovers that from the result type, the operand count or an operand's type: a value that is its
-  own parts is the value-build primitive; an operation a library performs -- building a container
-  from an element list, sizing one at run time (`new[N]` and `new[N](src)` are two entries, LRM
-  7.5.1), reshaping a value into another representation -- names its entry; a value re-typed with
-  its bits unchanged is a cast; and a library type's one way of coming into existence is a
-  construction. An operation the front end answers outright -- LRM 7.12.4's `item.index`, LRM
-  6.19.5's `first` -- is no entry, since no layer could hold a call of it.
-- The identity of each object and member within a compilation unit.
+  own parts is the value-build primitive; an operation a library performs -- sizing a container at
+  run time (`new[N]` and `new[N](src)` are two entries, LRM 7.5.1), reshaping a value into another
+  representation -- names its entry; a value re-typed with its bits unchanged is a cast; and a
+  library type's one way of coming into existence, a container built from an element list among
+  them, is a construction. An operation the front end answers outright -- LRM 7.12.4's `item.index`,
+  LRM 6.19.5's `first` -- is no entry, since no layer could hold a call of it.
+- Action shapes for constructs that bind behavior to schedule events (always blocks, continuous
+  assignments, deferred assertions, concurrent assertions). A value-change wait, a trigger, a
+  sampled read and a takeover are calls on runtime types, never nodes
+  ([scheduling.md](scheduling.md), its MIR boundary).
+
+### Structured control flow
+
 - Lightweight structured control flow inside a callable body: `if`, loop, sequence, the region that
   consumes a control effect naming it, the raise that passes one it declines outward, and the body
   paired with a cleanup that runs on every way out of it -- which is how an extent whose exit is an
@@ -346,11 +389,15 @@ what the construct means.
   body, so the order of the cases means nothing. A loop, and a block standing as a statement, may
   carry a label, and every `break` names the one it leaves, as rustc's THIR names the scope every
   `break` leaves; a label is carried only where a `break` names it. No basic blocks at this layer.
+
+### The primitive expression set
+
 - A primitive expression set: literals -- a floating one typed at either floating type, the machine
   float or the real of its width, as clang's `FloatingLiteral` takes its type -- references, unary /
-  binary / conditional operators, calls, casts, closures, the block expression, member access
-  through an explicit receiver expression, the field step that names a component of a product, a
-  member of a union or a member of a sum on the place holding it, the tag a tagged union holds, the
+  binary / conditional operators, the assignment, which yields nothing, calls, casts, closures, the
+  block expression, member access through an explicit receiver expression, the field step that names
+  a component of a product, a member of a union or a member of a sum on the place holding it, the
+  tag a tagged union holds, the run of bits of a packed value on the place holding it, the
   dereference, the address-of that turns a place of ordinary storage into a borrowed pointer to it,
   the entry of a machine aggregate at a position the program computes, which is a step of the place
   holding the aggregate as rustc's `ProjectionElem::Index` is, the element of a sequence the
@@ -413,6 +460,8 @@ what the construct means.
   The set is closed under what a generic programming-language AST needs to express; it does not grow
   to model a particular backend's storage realization or runtime library shape.
 
+### Where values lie and who owns them
+
 - Which values are held through a uniquely owning pointer because a value of their type is too large
   for a frame -- a local, a parameter taken by value wherever its signature is stated, a made value
   and a capture -- or because the values a body keeps before them already take what a frame may keep
@@ -448,10 +497,9 @@ what the construct means.
   storage that lives for the whole run, and the unit's verification refuses any other where a build
   asks for every check. Every copy, transfer and end follows from these by one rule, which the
   lowering to LIR and the C++ target both apply ([lifetime.md](lifetime.md) owns when each ends).
-- Action shapes for constructs that bind behavior to schedule events (always blocks, continuous
-  assignments, deferred assertions, concurrent assertions). A value-change wait, a trigger, a
-  sampled read and a takeover are calls on runtime types, never nodes
-  ([scheduling.md](scheduling.md), its MIR boundary).
+
+### Linkage and constants
+
 - What decides how a definition is linked, which no node states because it is no fact of the
   language: who may name each definition -- what a unit published, and what is reached only by its
   position -- and whether a unit's declarations alone build it or one body's code does. How many
@@ -481,6 +529,9 @@ what the construct means.
   is one too, held by the class, since every unit names it by the class. The table its objects
   dispatch through is not: the class states which body answers each behavior, and the table is laid
   out below MIR, once for every target ([object_model.md](object_model.md) invariant 8).
+
+### Source spans, caller locations and the dump
+
 - Where in the source each expression and statement came from: the front end's own value for the
   piece of source it was lowered from, or no place where it was lowered from none, as rustc's THIR
   carries a span on every expression. A node is given it as it is built, by whatever lowers that
@@ -501,12 +552,6 @@ what the construct means.
   MIR says nothing of it. The semantic kept is what LRM 20.10 asks of a report and rustc's
   `track_caller` gives a callee: where a failure is reported is the design's statement, never the
   library's or the tool's own line.
-- Opening a class handle, as a call of the library's entry that answers a pointer to the object the
-  handle names, which the dereference then reads through, as rustc's `ElaborateBoxDerefs` states a
-  `Box`'s dereference through the pointer inside it. A handle naming no object fails the design
-  there (LRM 8.4), so it is a call like any other that can fail, handed its location. A unit is
-  built with the dereference of the handle and a rewrite of the stage opens it, or, where opening it
-  is all a call does, with the opening itself, so no target dereferences a handle itself.
 - A textual dumper that serializes MIR for inspection. The dumper is not a backend; its output is
   not executable, and nothing asserts on its wording. It prints no source span, which only the front
   end can read.
@@ -546,6 +591,8 @@ Each invariant below is a direct consequence of the identity stated in Purpose. 
 invariant should be derivable from the identity; an invariant that cannot be re-derived is the
 suspect, not the analysis ([lowering_organization.md](lowering_organization.md) states this
 discipline in general).
+
+### Entities, identity and hierarchy
 
 1. Every compiled entity is exactly one of: an object, a member of an object, a callable, or an
    action bound to a callable. _Programming-language consequence: the entities a program defines are
@@ -601,6 +648,9 @@ discipline in general).
    is orthogonal to which unit defines the held object's class. The same wrapper composes over any
    object type and to any depth. _Programming-language consequence: cardinality and kind compose
    through generic type wrappers._
+
+### Explicit semantics and the receiver
+
 10. Every semantic decision is explicit in MIR's structure, expressed in MIR's existing primitive
     set. MIR is consumed by more than one backend; each chooses only how to represent MIR's stated
     semantics in its target, by a fixed function of the node kind. A backend reads a semantic fact
@@ -633,6 +683,8 @@ discipline in general).
     still expose it explicitly in their IRs (LLVM IR's first parameter, Python's
     `__call__(self, ...)`); MIR does the same. A static method, like a free function, takes none._
 
+### Nonlocal references
+
 12. A nonlocal cross-instance reference is one MIR shape; lexical form does not split it into
     species. A reference whose target lives across an instance boundary is the same MIR concept
     whether the source spelling reached it as a bare name, a downward dotted name, an upward dotted
@@ -646,6 +698,8 @@ discipline in general).
     the hot path reads the bound endpoint without traversing. _Programming-language consequence: in
     the same way a Rust binding once initialized refers to its target by address rather than
     re-locating it on every use, a MIR reference's runtime cost is paid at the bind, not at access._
+
+### Places, evaluation and the types of values
 
 14. A capability wrapper's place and the storage it represents are distinct places, told apart by
     structure alone. A bare wrapper place denotes the wrapper: reading it yields the wrapper as a
@@ -724,6 +778,8 @@ discipline in general).
     a typed IR checks its operands, so a rewrite that drops a conversion a write needs is a refused
     unit rather than a program whose bits happened to come out the same._
 
+### Type identity and closed sets
+
 18. A type is interned, and its key is every field its alternative carries. Constructing a type
     answers the one identity for what it is, so within one unit two types are equal exactly where
     their identities are; a nominal type is keyed by its declaration -- a class by its registry
@@ -755,42 +811,53 @@ discipline in general).
 
 ## Boundary to Adjacent Layers
 
+### HIR and the lexical reference contract
+
 - Consumes HIR. HIR-to-MIR is the layer where SV-specific concepts get translated into MIR's generic
   programming-language vocabulary. Anything SV-specific that does not appear in MIR's vocabulary is
   either translated at this boundary (an event-control delay becomes a coroutine suspension; a
   non-blocking assignment becomes a deferred closure submission) or rejected as unsupported.
   HIR-to-MIR has the SV knowledge; MIR does not.
+- [binding_and_capture.md](binding_and_capture.md) owns the lexical reference contract MIR's value
+  references obey: a reference names a binding materialized in its own callable body, and a binding
+  crosses a closure boundary only as a captured environment field. MIR carries no navigation
+  distance to a declaration, and no reference resolves into another callable body.
+
+### The rewrites before any consumer
+
 - Rewritten into MIR before anything reads it below. Between HIR-to-MIR and every consumer, a unit
   passes through one ordered list of rewrites, each of which keeps what the program does and says
   what it changes in MIR's own vocabulary. The unit is in one of two phases, which it records:
   built, as HIR-to-MIR states it, and legalized, with every operator over an integral value wider
-  than a machine operates on at once a call of its type's operation, every class handle opened by
-  the library's call, every callee that reports at its caller handed its location, no node leaving
-  two of its operands a target could run in the other order to another answer, and no frame holding
-  a value too large for one or more than a frame keeps together, which is the only phase a consumer
-  takes. A body built after the unit left its rewrites goes through the same rewrites alone before
-  anything reads it, as rustc runs its passes over a shim built on demand, so a consumer reads no
-  body that is not of the unit's phase. A conversion -- the rewrites that bring the unit from one
-  phase into the next -- is what a correct program needs, so no build skips one; every other rewrite
-  runs inside a phase, leaves the same program at another cost, and a build may skip it by name,
-  though every build runs it unless one does, so the gate tests it. So that no answer depends on an
-  optional rewrite is a property a run can show by skipping all of them. The conversions are this
-  layer's rather than each consumer's because one consumer writes MIR out as C++, whose own rules
-  would otherwise decide the order operands run in and where a value lies; rustc keeps its required
-  conversions at the layer below, which has no such consumer. Making the evaluation order explicit
-  and deciding where each value lies are two rewrites, the second keeping the order the first left
-  by the same rule rather than an order of its own. Which operands are taken ahead is decided by the
-  shape of the evaluation, never by what a call does: a node has side effects unless it is a
-  constant, a read, a reference formed, an operation over values, a construction or the making of an
-  execution, made of nodes without -- a call answering an execution runs none of its body until it
-  is driven, a construction joins nothing to the engine, and an allocation touches nothing a program
-  reads -- and every other call has them, whatever it calls; a read of a frame's local whose address
-  nothing takes can be changed only by what beside it names that local. An operand taken ahead is
-  read back as a copy where a copy holds its value entire and moved otherwise, a fact of its type,
-  and the verifier refuses a legalized unit with a node still leaving such a pair. Which code a unit
-  holds -- a constructor with the nodes it enters its base's with, a class's and the unit's
-  callables, a record's methods, a type's operations, a closure's body, an exported entry -- is at
-  one named source, and a rewrite local to a body says only how it rewrites one.
+  than a machine operates on at once -- but a narrowing to a machine's width, which takes the low
+  part, and one the library carries out at every width -- a call of its type's operation, every
+  class handle opened by the library's call, every callee that reports at its caller handed its
+  location, no node leaving two of its operands a target could run in the other order to another
+  answer, and no frame holding a value too large for one or more than a frame keeps together, which
+  is the only phase a consumer takes. A body built after the unit left its rewrites goes through the
+  same rewrites alone before anything reads it, as rustc runs its passes over a shim built on
+  demand, so a consumer reads no body that is not of the unit's phase. A conversion -- the rewrites
+  that bring the unit from one phase into the next -- is what a correct program needs, so no build
+  skips one; every other rewrite runs inside a phase, leaves the same program at another cost, and a
+  build may skip it by name, though every build runs it unless one does, so the gate tests it. So
+  that no answer depends on an optional rewrite is a property a run can show by skipping all of
+  them. The conversions are this layer's rather than each consumer's because one consumer writes MIR
+  out as C++, whose own rules would otherwise decide the order operands run in and where a value
+  lies; rustc keeps its required conversions at the layer below, which has no such consumer. Making
+  the evaluation order explicit and deciding where each value lies are two rewrites, the second
+  keeping the order the first left by the same rule rather than an order of its own. Which operands
+  are taken ahead is decided by the shape of the evaluation, never by what a call does: a node has
+  side effects unless it is a constant, a read, a reference formed, an operation over values, a
+  construction or the making of an execution, made of nodes without -- a call answering an execution
+  runs none of its body until it is driven, a construction joins nothing to the engine, and an
+  allocation touches nothing a program reads -- and every other call has them, whatever it calls; a
+  read of a frame's local whose address nothing takes can be changed only by what beside it names
+  that local. An operand taken ahead is read back as a copy where a copy holds its value entire and
+  moved otherwise, a fact of its type, and the verifier, where a build asks for every check, refuses
+  a legalized unit with a node still leaving such a pair. Which code a unit holds -- a constructor
+  with the nodes it enters its base's with, a class's and the unit's callables, a record's methods,
+  a closure's body, an exported entry -- is at one named source, and so is a body built for a type's
+  operation, which the unit does not hold; a rewrite local to a body says only how it rewrites one.
 - The optional rewrites are those a cost the program's meaning does not decide calls for, taken out
   once for both backends while HIR-to-MIR still states the meaning one way. A whole select of a
   value is replaced by the whole. A loop that moves consecutive bits of packed values one bit a
@@ -800,26 +867,26 @@ discipline in general).
   written, as LLVM's vectorizer asks its runtime checks once ahead of a loop. And a process body
   that stops only at the head of its loop -- a continuous assignment, an `always_comb`, an
   `always_ff` (LRM 4.9.1, 9.2.2, 10.3) -- becomes two plain bodies the run calls, a setup and a
-  pass, handed over as a reaction ([scheduling.md](scheduling.md)), which keeps one kind of process
-  in every layer above and asks nothing of the language: that a process is a coroutine is this
-  compiler's representation. A rewrite that changes a body's signature applies only to a body
-  nothing outside the unit names, as LLVM rewrites a signature only under local linkage.
+  pass, and one that never stops becomes a setup alone, each handed over as a reaction
+  ([scheduling.md](scheduling.md)), which keeps one kind of process in every layer above and asks
+  nothing of the language: that a process is a coroutine is this compiler's representation. A
+  rewrite that changes a body's signature applies only to a body nothing outside the unit names, as
+  LLVM rewrites a signature only under local linkage.
 - The verification asks of a unit what its phase requires; it is verified once, as it leaves the
-  rewrites, since that is the form every consumer reads, and on reaching each phase and after each
-  optional rewrite where a build asks; a dump, which a person reads rather than a consumer, shows it
-  unchecked. Every build checks what one node or statement states, at a cost that follows the unit's
-  size; what holds only across a whole body or the unit -- the order operands run in, a computation
-  reached once, a move as a local's last use, the bytes a frame keeps together, what a block
-  expression yields outliving it, a closure kept past its frame -- has to be worked out again over
-  all of it, so it is checked where a build asks for every check, as rustc's validator makes its
-  costly checks, and its lint pass its dataflow analyses, only where a build asks, and LLVM builds
-  its expensive checks only where asked. A rewrite builds a node through the same builders as the
-  lowering, folding included, and a consumer cannot tell a node a rewrite built from one the
-  lowering built.
-- [binding_and_capture.md](binding_and_capture.md) owns the lexical reference contract MIR's value
-  references obey: a reference names a binding materialized in its own callable body, and a binding
-  crosses a closure boundary only as a captured environment field. MIR carries no navigation
-  distance to a declaration, and no reference resolves into another callable body.
+  rewrites, since that is the form every consumer reads, or, where a build asks, as lowered, on
+  reaching each phase and after each optional rewrite; a dump, which a person reads rather than a
+  consumer, shows it unchecked. Every build checks what one node or statement states, at a cost that
+  follows the unit's size; what holds only across a whole body or the unit -- the order operands run
+  in, a computation reached once, a move as a local's last use, the bytes a frame keeps together,
+  what a block expression yields outliving it, a closure kept past its frame -- has to be worked out
+  again over all of it, so it is checked where a build asks for every check, as rustc's validator
+  makes its costly checks, and its lint pass its dataflow analyses, only where a build asks, and
+  LLVM builds its expensive checks only where asked. A rewrite builds a node through the same
+  builders as the lowering, folding included, and a consumer cannot tell a node a rewrite built from
+  one the lowering built.
+
+### LIR and the backends
+
 - Produces input to LIR. MIR-to-LIR is the layer where the programming language gets translated into
   a machine-execution model. CFG structure, storage placement, and execution-oriented details are
   introduced at this boundary; MIR does not predict them.
@@ -840,6 +907,8 @@ discipline in general).
 Each entry names the requirement the shape fails; where the failure rests on a premise that could
 change, the premise is named too.
 
+### Control flow and body structure
+
 - **Basic blocks, successor lists, or phi nodes in MIR nodes.** They fail Purpose's requirement that
   the program read as structured software at this layer, and they decide at MIR what LIR decides
   with the machine model in hand.
@@ -853,14 +922,26 @@ change, the premise is named too.
   expression's purpose: a closure is a value with identity whose result type says whether it
   suspends, so every sequencing site would look like a body that may, and the closure's function
   boundary would reinterpret a source `return` among the steps.
-- **Storage offsets, byte layouts, or alignment data in MIR nodes.** They fail invariant 10 on its
-  open-backend side: each target lays values out for itself, and a layout stated above it is one
-  more answer the two can disagree with. Storage placement belongs to LIR.
-- **A select carrying a source language's coordinate system for a consumer to resolve** -- a
-  declared range or shape beside the index, a direction, which part-select form was written. It
-  fails north star invariant 1 ([north_star.md](north_star.md)): every consumer would work out the
-  same position again, on every evaluation where the consumer is the runtime; and the form is
-  SystemVerilog syntax reaching past HIR-to-MIR, which Purpose excludes.
+- **A list the source writes, stated one level of nesting per item** -- a case's items as an `if`
+  whose `else` holds the rest, a join's operands as a chain of two-operand calls. It fails the
+  requirement that a program the language accepts be one every target accepts: a target compiler
+  bounds how deeply text may nest, and every consumer walking by nesting recurses once per item.
+- **A generic definition, type parameter or bound in MIR.** It fails the requirement that every
+  rewrite, the verifier and both backends read concrete bodies, and it rests on a premise: nothing a
+  user writes is generic once the front end has specialized it, so a MIR generic would serve only
+  the compiler's own operations, each stated as plainly by a builder per site or per type. Where an
+  operation appears whose definition, checked against its bounds where it is defined, would catch
+  what no check of a concrete body can, or whose concrete forms outnumber what one definition costs,
+  a generic comes back whole: a bound is a trait the type implements, a call through one is a method
+  of it, the body is checked where it is defined, and making it concrete is the first conversion of
+  a unit.
+- **Code per member in anything the compiler states for an enumeration** -- a conditional nested one
+  level per member for `name` or `next`. It fails north star invariant 1: the work of building it
+  follows the member count at every optimization level, where data the library's one routine reads
+  costs nothing to build.
+
+### Identity, hierarchy and classification
+
 - **A secondary hierarchy or identity system that shadows MIR ids** -- coordinate tuples, ordinals,
   symbol paths used as identity. It fails invariant 4: two name systems for one thing can disagree,
   and [identity_and_ownership.md](identity_and_ownership.md) holds identity to one per entity.
@@ -875,6 +956,17 @@ change, the premise is named too.
 - **Deferred or concurrent assertions represented as flags or lowering-pass side effects instead of
   explicit callables.** It fails invariant 1: an effect is an entity a consumer reads, not a mark
   each consumer interprets.
+- **A field on a type that is no part of its identity.** It fails invariant 18: a key leaving the
+  field out lets the first spelling interned be the one every later reader sees, and a key keeping
+  it makes one type two.
+
+### Source syntax, backend and library shapes in the vocabulary
+
+- **A select carrying a source language's coordinate system for a consumer to resolve** -- a
+  declared range or shape beside the index, a direction, which part-select form was written. It
+  fails north star invariant 1 ([north_star.md](north_star.md)): every consumer would work out the
+  same position again, on every evaluation where the consumer is the runtime; and the form is
+  SystemVerilog syntax reaching past HIR-to-MIR, which Purpose excludes.
 - **A MIR node that preserves SystemVerilog syntactic sugar as an opaque payload** -- a `CaseStmt` /
   `CaseInsideStmt`, an `InsideExpr` / `CasezExpr` / `CasexExpr`, a `ForeachStmt` -- **or a runtime
   helper call wrapping an operator family to recover the source shape** (`Inside(lhs, items)`,
@@ -883,10 +975,6 @@ change, the premise is named too.
   constant folding, dead-arm elimination and jump-table synthesis cannot see through. The switch is
   not this: it is a dispatch on a machine integer's value, which carries no case equality, no
   wildcard and no order.
-- **A list the source writes, stated one level of nesting per item** -- a case's items as an `if`
-  whose `else` holds the rest, a join's operands as a chain of two-operand calls. It fails the
-  requirement that a program the language accepts be one every target accepts: a target compiler
-  bounds how deeply text may nest, and every consumer walking by nesting recurses once per item.
 - **A MIR node kind invented to express a backend-side storage realization or runtime library
   wrapper** -- a `ReadCell` / `WriteCell` / `MutateCell` node for one backend's observable cell, an
   `AcquireLock` / `ReleaseLock` node for some scheduling discipline. It fails invariant 10's open
@@ -900,6 +988,14 @@ change, the premise is named too.
   back into the destination, each its own way. A write is not this shape: it names its destination
   among its operands. Nor is a call that answers a typed pointer an ordinary dereference consumes,
   whose type already says what it is.
+- **A type that names a boundary or a foreign ABI rather than a value's own shape** -- a "DPI
+  carrier", a "C ABI type". It fails invariant 10: the ABI classification of a foreign call's formal
+  is a property of the signature, already stated on the callable's declaration, and a type standing
+  for it forces every backend to re-derive the machine type it means. Missing machine primitives are
+  what make such a type look necessary; the fix is to complete them.
+
+### Facts stated twice or left to a consumer
+
 - **A primitive that stands for more than one operation, leaving a consumer to pick which by reading
   its result type** -- a concatenation node over bits, characters and elements alike. It fails
   invariant 10: every backend would decide what the program means, and the one that decides
@@ -913,11 +1009,6 @@ change, the premise is named too.
   agrees on ([lowering_boundaries.md](lowering_boundaries.md) invariant 9): HIR-to-MIR states it as
   a local holding the value, reads of its parts and a write to one place each, so no consumer cuts
   the value, and two that cut it differently are a wrong answer neither can see.
-- **A type that names a boundary or a foreign ABI rather than a value's own shape** -- a "DPI
-  carrier", a "C ABI type". It fails invariant 10: the ABI classification of a foreign call's formal
-  is a property of the signature, already stated on the callable's declaration, and a type standing
-  for it forces every backend to re-derive the machine type it means. Missing machine primitives are
-  what make such a type look necessary; the fix is to complete them.
 - **A cast carrying a kind beside its two types.** It fails the requirement that a node state a fact
   once: the operand's type and `Expr::type` already name the conversion, since SV's overloaded
   conversion syntax is resolved at HIR-to-MIR into one pair, and a kind derived from the pair can
@@ -953,6 +1044,12 @@ change, the premise is named too.
   site restates one fact and a kind of array needing none has to be told apart. A value a program
   wrote for one array -- the `default:` of an associative array literal (LRM 7.9.11) -- is that
   array's and is an operand.
+- **A catch-all arm, a generic visit arm or a comparison against one alternative consuming a closed
+  set MIR states, or a node alternative only one consumer names.** Each fails invariant 19: the set
+  gains an alternative and the build stays green while some consumer answers it wrongly.
+
+### Receivers and nonlocal references
+
 - **An expression node whose meaning depends on which callable encloses it.** It fails invariant 11
   and [callable.md](callable.md)'s self-contained body: a consumer would walk the surroundings to
   learn what "the current receiver" is.
@@ -973,6 +1070,12 @@ change, the premise is named too.
   member, hoisted into a local, or rematerialized at each use. It fails Does Not Own: placement is
   LIR's, decided with the machine model; MIR states the reference's identity, its route, and the
   protocol the body uses to access it.
+
+### Layout, places, ownership and frames
+
+- **Storage offsets, byte layouts, or alignment data in MIR nodes.** They fail invariant 10 on its
+  open-backend side: each target lays values out for itself, and a layout stated above it is one
+  more answer the two can disagree with. Storage placement belongs to LIR.
 - **Two nodes or two entries for one part that differ only in whether the part is then read or
   written, a mutation-op node family beside the expression family, or a visit that works out from a
   finished tree which expressions name storage.** Each fails invariant 16: category is a fact of the
@@ -988,25 +1091,6 @@ change, the premise is named too.
   a value off the stack on its own account.** The first fails the requirement that a program the
   compiler accepts runs at every size it accepts, since the stack's size is not the design's to
   choose; the second fails invariant 10, two backends answering one question apart.
-- **A generic definition, type parameter or bound in MIR.** It fails the requirement that every
-  rewrite, the verifier and both backends read concrete bodies, and it rests on a premise: nothing a
-  user writes is generic once the front end has specialized it, so a MIR generic would serve only
-  the compiler's own operations, each stated as plainly by a builder per site or per type. Where an
-  operation appears whose definition, checked against its bounds where it is defined, would catch
-  what no check of a concrete body can, or whose concrete forms outnumber what one definition costs,
-  a generic comes back whole: a bound is a trait the type implements, a call through one is a method
-  of it, the body is checked where it is defined, and making it concrete is the first conversion of
-  a unit.
-- **Code per member in anything the compiler states for an enumeration** -- a conditional nested one
-  level per member for `name` or `next`. It fails north star invariant 1: the work of building it
-  follows the member count at every optimization level, where data the library's one routine reads
-  costs nothing to build.
-- **A field on a type that is no part of its identity.** It fails invariant 18: a key leaving the
-  field out lets the first spelling interned be the one every later reader sees, and a key keeping
-  it makes one type two.
-- **A catch-all arm, a generic visit arm or a comparison against one alternative consuming a closed
-  set MIR states, or a node alternative only one consumer names.** Each fails invariant 19: the set
-  gains an alternative and the build stays green while some consumer answers it wrongly.
 
 ## Notes / Examples
 
@@ -1014,6 +1098,8 @@ Reviewing MIR via the dumper should feel like reading the compiled program's str
 a generic programming language. The C++ backend emits MIR to C++ source: it is a backend output, not
 a debug view. The C++ surface syntax happens to map naturally onto MIR's vocabulary because the two
 share many concepts, but C++ is not MIR's semantics and more than one backend may exist.
+
+### Members that hold children
 
 A module instance, a generate scope, and an instance array differ only in one member's type:
 `borrowed-ptr(object of a class its unit defines)`,
@@ -1028,6 +1114,8 @@ published under its own class name: which blocks share a body is decided by lowe
 what a unit publishes does not depend on its bodies, so an edit to a body changes nothing a referrer
 compiles against (north star invariant 4).
 
+### The expression set and the optimizer
+
 The primitive expression set above is shaped by the downstream optimizer. Each backend consumes MIR
 as primitives that its optimizer can fold, propagate, and pattern-match across. A sugar node carried
 into MIR forces every backend to either re-implement the desugaring or emit a runtime helper call;
@@ -1038,6 +1126,8 @@ use reaches by a read, never a construction performed wherever control reaches i
 recovers neither a construction through a dynamically initialized descriptor nor one in a body
 entered a thousand times. Backend-local readability of generated artifacts is a debug concern and is
 recovered through value-type C++ operator overloads in the runtime, not through sugar nodes in MIR.
+
+### Conditionals and short-circuit operators
 
 Constructs in the expression set that look like sugar are not. The rvalue conditional form (`?:`) is
 preserved because MIR's `if` is a statement; there is no primitive rvalue branching in MIR's
@@ -1061,6 +1151,8 @@ nothing can be unknown a selection and a search are the conditional alone, the n
 standing as its third operand, so such a chain is as deep as the source nests it, which the front
 end bounds; an `if`-`else if` chain stays nested for the same reason, except under `unique` or
 `unique0`, which settles every arm's answer before selecting one (LRM 12.4.2) and so is a search.
+
+### Lists the source writes
 
 What the source writes as a list rather than nested -- the items of a case statement, the labels of
 one item, a generate case's items, the bodies a generate loop or an instance array chooses among by
@@ -1103,6 +1195,8 @@ outermost first: a dynamically sized dimension samples its count once on entry t
 jagged array needs no case of its own, an associative dimension walks by key, and the outermost loop
 carries the label a `break` in the body names (LRM 12.7.3, 12.8).
 
+### Writes, literals and selects
+
 A write yields nothing, as an assignment does in Rust's MIR: what an assignment yields where the
 source reads it (LRM 11.3.6) is what it stored, which the lowering holds in a local and reads, so no
 backend's own rule for the value of an assignment -- C++'s is the target itself -- decides it. An
@@ -1114,6 +1208,8 @@ literal. Select expressions are access primitives. Each of these stays in MIR fo
 removing it would require expanding into a statement-form rewrite that does not fit the expression
 context. Composing values that already exist is not this, and no peer spells a concatenation as a
 node.
+
+### Capability wrappers
 
 A capability wrapper illustrates the boundary between MIR's vocabulary and a backend's storage
 realization. A backend may wrap observable storage in a target-side library type; MIR has no "cell
@@ -1134,6 +1230,8 @@ recognizing a shape. What each becomes in a target -- a method call, a runtime-A
 store against an address -- is each backend's own mapping from the wrapper type;
 [backend_contract.md](backend_contract.md) owns the rules that keep those spellings out of
 value-emission sites.
+
+### Writing into part of a value
 
 A part of a value is named by how it is selected, in every layer: an **element** by a coordinate the
 program computes, a **component** by its declaration-order position, a **slice** by a run of
@@ -1186,6 +1284,8 @@ the full-expression and reports then. A reference is a step taken on the object 
 as a component's is named. An entry acting on an object is handed whatever reaches it, as a method
 is handed the pointer to its own object rather than the object.
 
+### Field access and member calls
+
 A field is a member of an object, so a field access is made on the object as a place, and an object
 that a handle, a pointer or a write in progress reaches is first dereferenced to it: `p->f` is a
 field access over `*p`, as rustc's MIR projects a field from a place that is itself a dereference.
@@ -1195,6 +1295,8 @@ function is reached the same way: its receiver is the object, so `p->f()` is a c
 body is handed that object's address, as clang's code generation forms `this` from the object an
 arrow call names. A call naming a member function of a library value -- a string, a handle, a
 reference -- is entered on that value, which is the object the function belongs to.
+
+### Current implementation
 
 Current implementation: the rewrites are named `InstSimplify` and `LoopIdiomRecognize` (optional, on
 the built unit), the conversion into the legalized phase `ExpandWideIntegrals`,
