@@ -9,8 +9,10 @@ signature and from nothing else.
 ## Owns
 
 - The identity of the compilation unit as the primary semantic boundary of the compiler.
-- The enumeration of compilation-unit kinds: module, package, interface, the scope of a
-  compilation-unit input (`$unit`), and a package generic's specialization no instance replicates.
+- The enumeration of compilation-unit kinds: module, interface, program, package, the scope of a
+  compilation-unit input (`$unit`), a specialization of a package's or a `$unit` scope's generic
+  class that no instance replicates, the design's root, and a text of Lyra's own it reads in beside
+  the design (its definitions of the built-in package `std`'s classes, and the coverage library).
 - The rule that a compilation unit compiles independently, given only its own contents and what the
   units it references publish: their signatures, and the parameter values of each lowering it
   reaches.
@@ -39,10 +41,12 @@ signature and from nothing else.
 
 ## Core Invariants
 
-1. A compilation unit is the primary unit of compilation. Kinds include module, package, interface,
-   the scope of a compilation-unit input, and a specialization of a package's generic class that no
-   instance replicates, whose parameters are written wherever it is named and which the package
-   declaring the generic therefore cannot hold. A unit holds exactly the declarations its own source
+1. A compilation unit is the primary unit of compilation. Kinds include module, interface, program,
+   package, the scope of a compilation-unit input, a specialization of a package's or a `$unit`
+   scope's generic class that no instance replicates, whose parameters are written wherever it is
+   named and which the scope declaring the generic therefore cannot hold, and the design's root,
+   which no source declares and which builds each top-level instance
+   ([`runtime_model.md`](runtime_model.md)). A unit holds exactly the declarations its own source
    fixes: a specialization is held by the scope that replicates it -- the innermost instance scope
    among the one enclosing it and those replicating each of its type arguments (LRM 6.22, 8.25) --
    and is a unit of its own where no instance replicates it.
@@ -65,21 +69,22 @@ signature and from nothing else.
    their declarations, and a module or an interface publishes every declaration a hierarchical name
    may reach (LRM 23.6): its data objects and ports, its child instances, the statics of its named
    blocks and subroutines and its named blocks' disable targets, each stated with the named blocks
-   and subroutines it sits in, the classes it declares, whole, for an interface its views and the
-   names each defines, its clocking blocks, its subroutines' signatures, and per generate construct
-   the class each block was published as. Each generate block it elaborates publishes a class of its
-   own the same way. A class a unit publishes is published with its declaration whole -- the type of
-   each property it keeps to itself included and unnamed, every method with its prototype, its
-   constructor's prototype, and the interface classes its declaration names -- and nothing an
-   ancestor declares, so a class of another unit extending it is laid out at compile time and a call
-   to one of its methods reads the callee there. An enumeration, an unpacked structure or an
-   unpacked union it declares is published as what it declares, under the declaration a type naming
-   it names. Beside the signature, each lowering publishes the value of every value parameter it
-   declares, since lowerings one signature covers may hold different values. The unit produces its
-   signature from its own contents, so nothing it publishes can contradict what it is. A unit that
-   instantiates or references another depends only on that signature, identified by name, never on
-   the other unit's body or internal ids. Units compile independently and in any order and are
-   combined by matching names; they share no identifier space and exchange no internal state.
+   and subroutines it sits in, the classes and covergroups it declares, whole, for an interface its
+   views and the names each defines, its clocking blocks, its subroutines' signatures, and per
+   generate construct the class each block was published as. Each generate block it elaborates
+   publishes a class of its own the same way. A class a unit publishes is published with its
+   declaration whole -- the type of each property it keeps to itself included and unnamed, every
+   method with its prototype, its constructor's prototype, and the interface classes its declaration
+   names -- and nothing an ancestor declares, so a class of another unit extending it is laid out at
+   compile time and a call to one of its methods reads the callee there. An enumeration, an unpacked
+   structure or an unpacked union it declares is published as what it declares, under the
+   declaration a type naming it names. Beside the signature, each lowering publishes the value of
+   every value parameter it declares, since lowerings one signature covers may hold different
+   values. The unit produces its signature from its own contents, so nothing it publishes can
+   contradict what it is. A unit that instantiates or references another depends only on that
+   signature, identified by name, never on the other unit's body or internal ids. Units compile
+   independently and in any order and are combined by matching names; they share no identifier space
+   and exchange no internal state.
 9. A signature names each class it publishes, and names which of them a referrer instantiates. A
    unit's name, the name of a class it declares, and where a backend places the emitted code are
    three separate facts; none substitutes for another, and a published class is never identified by
@@ -217,9 +222,10 @@ Each shape below fails a requirement of [`north_star.md`](north_star.md) or an i
   alike is read as given; which of them are one unit is this compiler's own comparison.
 - Treating the elaborated instance graph as the compilation model, or allowing instance count to
   drive the number of compilation artifacts. It fails [`north_star.md`](north_star.md) invariant 2.
-- A package generic's specialization held by the package declaring the generic where its arguments
-  come from another unit. It fails invariant 1: the package's content would follow how other units
-  use it, and two units would depend on each other where the program has one depending on the other.
+- A specialization of a package's or a `$unit` scope's generic held by the scope declaring the
+  generic where its arguments come from another unit. It fails invariant 1: that scope's content
+  would follow how other units use it, and two units would depend on each other where the program
+  has one depending on the other.
 
 ## Notes / Examples
 
@@ -296,6 +302,7 @@ standard defines it by, its input: a digest of the path of the source text its d
 That name is stable across edits to the scope's body, differs between inputs, and is computed alike
 by the unit and by every referrer, with no table between them.
 
-The term "compilation unit" here is the compiler's own: a module, package, interface, `$unit` scope
-or free-standing specialization. It is not the LRM's "compilation unit" (LRM 3.12.1), which names
-the set of files whose `$unit` scope one such unit holds; the two meet only there.
+The term "compilation unit" here is the compiler's own: a module, interface, program, package,
+`$unit` scope, free-standing specialization, the design's root, or a text of Lyra's own. It is not
+the LRM's "compilation unit" (LRM 3.12.1), which names the set of files whose `$unit` scope one such
+unit holds; the two meet only there.

@@ -6,7 +6,11 @@ body's LIR counted it at, and a unit's body by the order its lowerings come out 
 ([`specialization_model.md`](specialization_model.md) invariant 7), so adding one early renames
 every later one of its kind. The first two reach no other unit; a body's name reaches emitted file
 names and the design root's tables. None follows the construct that made it, as the invariant
-requires.
+requires. And three containers AST-to-HIR keys on front-end pointers are iterated, against invariant
+10: the class bodies still pending when every scope is lowered, read to report the ones left over;
+the specializations placed under each generic, each list then put in order of its names; and the
+units grouping has met, then put in order of their hierarchical paths. None lets the allocator's
+order reach what is compiled, the first only reaching a report of a compiler fault.
 
 ## Purpose
 
@@ -115,8 +119,10 @@ builds, so nothing that outlives one lowering may shift when an unrelated entity
     the unit, each step a kind and what tells it from its siblings: an application of a generate
     block by its label, which one it is among blocks of that label, and what distinguishes its
     instances where the naming needs it; a class by its name and, for a specialization, the digest
-    of its arguments; a subroutine, a named block or a clocking block by its name. This is LRM
-    23.6's hierarchical path rooted at the unit rather than the design, so it is the same for every
+    of its arguments; a subroutine, a named block or a clocking block by its name; an enumeration, a
+    structure or a union by the name it answers to in its scope (LRM 6.22.1); and a block or a type
+    the source left unnamed by its position among its scope's declarations. This is LRM 23.6's
+    hierarchical path rooted at the unit rather than the design, so it is the same for every
     instance. The steps are never composed into one name, since an escaped identifier may hold any
     character (LRM 5.6.1) and two paths would compose alike.
 12. An identity distinguishes exactly what the layer below distinguishes. A key standing for

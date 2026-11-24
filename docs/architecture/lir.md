@@ -420,15 +420,16 @@ LIR is not an SSA form. A local is either a transient -- computed once, consumed
 dataflow origin -- or a place, which is named storage: the frame's, or for the callable's return
 place, wherever the target's convention for answering puts it. Which one a local is follows a
 canonical lowering rule, not the source language's notion of a variable: a local is a place exactly
-when the canonical lowering needs an address for it -- its address is taken, it is assigned after
-its initialization, it holds a control-flow join, or it is the callable's return place. Everything
+when the canonical lowering names it as storage -- a declared local, a value a part is reached in, a
+result that control-flow paths join at, or the callable's return place (invariant 2). Everything
 else is a transient. So there is no phi and none is needed: a value produced on more than one path
 is a place each path writes, a conditional expression writes its result into a place from each arm,
-and a loop-carried variable is a place the body updates. A parameter arrives as a transient (the
-incoming argument) and becomes a place only when the body assigns it or takes its address, in which
-case the entry block copies the argument into that place. Recovering a register where the address is
-never truly needed is a target-side derivation, not a property LIR must establish: LIR states the
-storage topology, it does not minimize it.
+and a loop-carried variable is a place the body updates. A parameter is a declared local whose first
+write is the incoming argument: the argument arrives as a transient, and before the body's first
+statement it is put in the parameter's storage -- a cell where MIR states one, a slot of the frame
+otherwise -- whether or not the body ever writes it or takes its address. Recovering a register
+where the address is never truly needed is a target-side derivation, not a property LIR must
+establish: LIR states the storage topology, it does not minimize it.
 
 The current execution backend realizes the statements of when a coroutine's slot is in use as
 `llvm.lifetime.start` and `llvm.lifetime.end` at every optimization level, as clang does for a
@@ -444,7 +445,8 @@ state between calls, the box for a body that takes the closure over. `self` is t
 supplied like any other; LIR has no implicit receiver. A direct call to a statically known callable
 passes its receiver and arguments to a named function. LIR knows only "call target" and "arguments";
 which values a closure captures was decided in MIR. A closure, its body and its definition belong to
-the body building it, and nothing outside that body names them, so all three are linked within it.
+the body building it, and nothing outside that body names them, so all three are linked within the
+artifact holding that body.
 
 A place is the logical path -- `self.counter`, `*p`, `(*p).flag` -- the way Rust's MIR names a field
 projection rather than `base + N`. The same place is valid on every target; only the derivation
@@ -490,31 +492,31 @@ other byte zero. A value that lies in no storage is held in a local before a par
 so no layer extracts a part of a value or rebuilds a value around one; the one element taken by
 value is an element of a sequence of handles. Bits of a packed value are not parts of that kind
 either: the integral's own operations read them out of a value and write them into one. Bits of a
-packed value lying at a place are written where they lie. The store names the place, each part the
-bits are reached through, outermost first -- where the part starts within the one before it and the
-type that fixes how many bits it has -- and the bits. The bits ride on the statement and not on the
-place, because a place is storage a load, a store and an address-of can each name, and some bits of
-a value are none of those alone. A part reaches nothing outside the part it is taken in, and a start
-that names no position writes nothing; both are outcomes of the insertion the store is realized by,
-never control flow or a test stated here. A step's direction is the access's: reading a missing
-element reads the default, and writing one allocates or discards it by the container's own rule,
-which whatever realizes the step applies -- arithmetic within a fixed-size array's layout, or, for a
-dynamic array, a queue or an associative array, the body the unit states for the container's type,
-which the library's steps within a write reach through the type's record. A write in progress is not
-a place but a value: the write itself, which the writer owns and ends and which names no place, and
-each place designated within it -- the whole of what it was opened on, and each part reached from
-there -- which borrows the write. Each step MIR takes within a write is one call on a designation
-answering with the next, and what the step does to the write -- an element step tells it what
-forming the element did -- is the library's, as it is in the C++ rendering of the same MIR. Where
-the write lands is a call on a designation, stated before anything is written there, that answers
-with the part's address; the part is then storage like any other. A run of elements written within a
-write is a call on the container's designation. Bits written within one are a store through the
-dereference of the designation of the value they lie in, naming the same parts and bits a store at a
-place names; the write keeps what those bits held and hears which of them moved. That is how the
-variable learns whether the write changed it (LRM 4.3). Which library entry realizes a step, and
-whether it is an instruction or a call at all, is a realization question answered below LIR; it
-never decides which node the step is expressed as. A mutating method on a receiver -- a container's
-`delete`, a queue's `push` -- changes the storage the receiver names in place.
+packed value lying at a place are written where they lie, by a store to a place ending in a slice
+step for each part the bits are reached through, outermost first, each saying where the part starts
+within the one before it and the type that fixes how many bits it has; the value stored is the bits.
+Bits lie at no address of their own, so a load and a store name such a place and no address-of does.
+A part reaches nothing outside the part it is taken in, and a start that names no position writes
+nothing; both are outcomes of the insertion the store is realized by, never control flow or a test
+stated here. A step's direction is the access's: reading a missing element reads the default, and
+writing one allocates or discards it by the container's own rule, which whatever realizes the step
+applies -- arithmetic within a fixed-size array's layout, or, for a dynamic array, a queue or an
+associative array, the body the unit states for the container's type, which the library's steps
+within a write reach through the type's record. A write in progress is not a place but a value: the
+write itself, which the writer owns and ends and which names no place, and each place designated
+within it -- the whole of what it was opened on, and each part reached from there -- which borrows
+the write. Each step MIR takes within a write is one call on a designation answering with the next,
+and what the step does to the write -- an element step tells it what forming the element did -- is
+the library's, as it is in the C++ rendering of the same MIR. Where the write lands is a call on a
+designation, stated before anything is written there, that answers with the part's address; the part
+is then storage like any other. A run of elements written within a write is a call on the
+container's designation. Bits written within one are a store through the dereference of the
+designation of the value they lie in, naming the same parts and bits a store at a place names; the
+write keeps what those bits held and hears which of them moved. That is how the variable learns
+whether the write changed it (LRM 4.3). Which library entry realizes a step, and whether it is an
+instruction or a call at all, is a realization question answered below LIR; it never decides which
+node the step is expressed as. A mutating method on a receiver -- a container's `delete`, a queue's
+`push` -- changes the storage the receiver names in place.
 
 ### How a value lies below LIR
 

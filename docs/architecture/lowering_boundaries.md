@@ -1,7 +1,7 @@
 # Lowering Boundaries
 
-Lyra does not yet carry out the `shuffle` array method (LRM 7.12.2), which invariant 10 places in
-the library beside `reverse`; the invariant binds regardless.
+Lyra does not yet carry out the `shuffle` array method (LRM 7.12.2), which invariant 10 places
+beside `reverse` as a body of the array's type; the invariant binds regardless.
 
 ## Purpose
 
@@ -115,11 +115,12 @@ belongs to whichever layer already held what the property was computed from.
     neither way, and the array's type then applies that order by a body of its own (LRM 7.12.2).
     What a method answers is the call's type, starting at that type's default -- a reduction's first
     entry replaces it, so an empty receiver answers the default (LRM 7.12.3 states none). `reverse`
-    and `shuffle` ask nothing of an entry and stay the library's permutations. _Requirement: the
-    clause is an expression of the program at a type the program chose, which only the compiler, at
-    the call, can compile; Rust's generic `Iterator::sum` and Verilator's templated `r_sum` are the
-    same code instantiated at the use, and a library compiled before the program instantiates
-    nothing._
+    and `shuffle` ask nothing of an entry, so neither is a loop at its call: each is a permutation
+    the array's type performs by a body of its own, which a queue answers by reordering its elements
+    where they lie. _Requirement: the clause is an expression of the program at a type the program
+    chose, which only the compiler, at the call, can compile; Rust's generic `Iterator::sum` and
+    Verilator's templated `r_sum` are the same code instantiated at the use, and a library compiled
+    before the program instantiates nothing._
 11. **An operand is lowered as the expression it is, and a number a lowering needs before the
     program runs is read from a type.** A replication's multiplier and an assignment pattern's count
     are operands handed to the repeat whatever their value; the language classifies them by whether

@@ -207,9 +207,9 @@ question for the design, never a verdict on it (`../design-process.md`).
 | Clocking blocks / covergroups / randomization                                             | `north_star`, `verification_constructs`, `scheduling`, `assertions`, `object_model`, `runtime_model`                         |
 | DPI-C / VPI / foreign code                                                                | `north_star`, `foreign_interface`, `callable`, `runtime_model`, `runtime_distribution`, `nonlocal_control_flow`              |
 
-The failure mode this guards against: anchoring on current code -- which may be a transitional
-shortcut -- instead of the contract. Current code that contradicts a contract is wrong; read the
-contract, not the code, for design direction.
+The failure mode this guards against: anchoring on current code -- which may fall short of the
+contract, as each doc's opening paragraph says where it does -- instead of the contract. Current
+code that contradicts a contract is wrong; read the contract, not the code, for design direction.
 
 ## Document Shape
 

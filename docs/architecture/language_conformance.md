@@ -19,6 +19,8 @@ analyzed representation means. Where neither the standard nor that representatio
 what an accepted text does, Lyra chooses the simplest behaviour. An error of analysis is corrected
 in the front end, and an error of execution or a missing capability is corrected in Lyra.**
 
+### A text the standard forbids or does not settle
+
 **A text the standard forbids that the front end accepts, and whose meaning no rule of the standard
 for the nearest text it allows supplies, is the front end's to refuse, and is refused in the version
 of it Lyra pins.** A missing diagnostic is an error of analysis like any other, and a check of it in
@@ -35,6 +37,8 @@ passes through -- what a reference may name, for one -- since a check kept in Ly
 list the uses and would miss the next. Otherwise Lyra refuses it where it reads the front end's
 representation, before any lowering, as an error saying in words what the language does not allow.
 Either way the ruling is recorded below.
+
+### Who is responsible for what
 
 The responsibilities are split three ways.
 
@@ -56,6 +60,8 @@ The goal is that a text the standard allows is accepted and does what the standa
 fails it is a defect, either the front end's (fixed in the version Lyra pins, and reported upstream)
 or Lyra's (a bug, or a gap reported as one).
 
+### Why Lyra adds no rules of its own
+
 Lyra adds no rule of its own accepting a text because a design runs on some other simulator. Tools
 that take a text the standard forbids do not agree on which texts or on what they mean, so a rule
 added for one tool copies that tool's choice, and the design then means what that tool decided.
@@ -65,7 +71,7 @@ set of rules beside it, as a table of diagnostics to raise and lower or as check
 drift from the first, and every difference between them would be a disagreement never argued where
 it could be settled.
 
-Consequences:
+### Consequences
 
 1. **The default options are the front end's, with one kind of exception.** Where the standard
    leaves a choice to the tool, the front end is not wrong whichever way it went, so nothing can be
@@ -140,6 +146,8 @@ ruling: a tool that accepts says only that it accepts.
 A design that is wrong is its author's to correct, and whoever builds it without being able to edit
 it asks for the reading it relies on by name (consequence 6). A front end that is wrong is fixed in
 the version Lyra pins and reported upstream. Neither is answered by changing what Lyra accepts.
+
+### When a forbidden text is run as an extension
 
 A forbidden text is not always worth refusing outright. Where all three of these hold, the author is
 not reported to, and the text is run when a caller asks for it, as an extension of the standard

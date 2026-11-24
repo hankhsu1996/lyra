@@ -1,5 +1,9 @@
 # Scheduling
 
+The compiler does not yet refuse a `ref` argument used inside a `join_any` or `join_none` branch
+under the tolerant reading: such a branch is compiled, and a write through the argument after the
+caller has returned reaches storage that has ended. Everything else here binds as written.
+
 A lyra simulation runs as a set of executions coordinated by a stratified event scheduler. Each
 SystemVerilog process -- `initial`, `always*`, a continuous assignment -- runs as a coroutine, or,
 where its body runs to its end each time it is triggered, as a reaction the run calls. The scheduler
@@ -237,6 +241,8 @@ variable's cell answers itself, a net what it shows its value through, and a ref
 was bound into, so a wait built on a port follows a force on it (LRM 10.6.2). A place that is no
 variable, net or reference is storage nothing is told a write to.
 
+### A build that coalesces combinational updates
+
 Every write is told to every wait as it is made (LRM 4.3, 4.7), with one exception a build asks for:
 in a design built to coalesce combinational updates, where an `always_comb` or `always_latch` writes
 what another reads, the reader is triggered by the net change the writer's execution leaves of it
@@ -246,8 +252,9 @@ Where an interval is open and a per-interval observer watches the variable, the 
 part's original, unless it keeps one of a part holding it already, and the write is accumulated: a
 per-change observer is told it as it lands, a per-interval observer only when the interval ends,
 from the original against what the part then holds, so a value written and written back within one
-interval wakes nothing. What is kept costs what the write touched: a write of bits of a packed value
-keeps the words those bits lie in, and a member of an unpacked union keeps the union every member
+interval wakes nothing. What is kept follows what the writes touched: a write of bits of a packed
+value keeps the words those bits lie in, the words kept of one value forming one run from the first
+the interval modified to the last, and a member of an unpacked union keeps the union every member
 reads; an array whose size the run sets is kept whole, at its first modification in the interval. A
 part a path names inexactly -- past the bounded depth, or through a reference into an array whose
 size changes -- is never kept itself; it is accumulated only where a part holding it is kept, and
@@ -261,14 +268,16 @@ once, which is the dialect's stated limit: a reader beginning or stopping to lis
 procedure's execution is under way cuts that execution's interval in two, so a change the whole
 execution cancels can be told, and its reader run once more.
 
+### One membership primitive for every wait and queue
+
 One membership primitive serves every target a wait or a queue enrols on -- a cell, an object, a
 named event, a cancellation, a fork's parent, a process's termination, a region queue: an intrusive
-ring the target anchors with two links and nothing else, whose member unlinks itself without naming
-the target, and whose one payload means what its target says. The ring is what lets a later slot's
-queue join the current one in constant time. What decides whether a change is an event lives on the
-wait, once, never on a membership. A target that needs an operation the ring lacks is a reason to
-revisit the ring; a second primitive beside it puts two kinds of membership in every list the
-scheduler walks.
+ring the target anchors with one member of its own closing the ring, whose member unlinks itself
+without naming the target, and whose fields mean what its target says. The ring is what lets a later
+slot's queue join the current one in constant time. What decides whether a change is an event is one
+object for each expression a wait watches, which every membership enrolled for it holds a share of,
+never a copy of its own. A target that needs an operation the ring lacks is a reason to revisit the
+ring; a second primitive beside it puts two kinds of membership in every list the scheduler walks.
 
 ## The engine is a mechanism, not a semantics holder
 
@@ -317,14 +326,14 @@ on, which is how a covergroup is sampled on its event (LRM 19.3). It is held bes
 chosen where the execution is started and passed on to nothing it starts, and read by the one verb
 that wakes; an asynchronous runtime holds the same choice in the same place, as the dispatcher of a
 coroutine's context, one of which resumes a coroutine in whatever resumed it. The executions an
-occurrence wakes there run in the order they began to wait on it, and one that waits again from
-inside the occurrence waits behind those already waiting, so executions that began to wait in some
-order keep that order across every occurrence they wait out; the placements they then make into one
-region of one slot run in the order made. A clocking block's drives rely on exactly this to land, of
-those maturing together, in the order they were made (LRM 14.16.2;
-[verification_constructs.md](verification_constructs.md)). Running it only once the waits have all
-been asked is what an event library does when it copies its listeners before calling them: no code
-of the design runs while the list it was reached through is walked.
+occurrence wakes there run in the order their waits enrolled on it, which stopping at a wait again
+never changes, and a wait first made from inside the occurrence enrols behind every one already
+there, so executions that began to wait in some order keep that order across every occurrence they
+wait out; the placements they then make into one region of one slot run in the order made. A
+clocking block's drives rely on exactly this to land, of those maturing together, in the order they
+were made (LRM 14.16.2; [verification_constructs.md](verification_constructs.md)). Running it only
+once the waits have all been asked is what an event library does when it copies its listeners before
+calling them: no code of the design runs while the list it was reached through is walked.
 
 ## Deferred work is a closure submit, not a suspension
 
@@ -334,6 +343,16 @@ closure (see `mir.md` for the MIR-level shape) and submits the closure to a plac
 running. A submit takes the same placement a suspension does, which is what lets a nonblocking
 assignment carrying a delay reach the NBA region of a later slot (LRM 4.4.2.4, 10.4.2) with no
 second mechanism.
+
+A deferred effect made by suspending the process fails LRM 10.4.2, which commits a nonblocking write
+in the NBA region of its slot wherever the process is by then: a process doing `q <= d; #5; ...`
+would be held at `#5` until the write committed.
+
+**Forbidden:** routing deferred writes into per-signal queues. It fails LRM 4.6, which performs a
+slot's nonblocking writes in the order they were made; every closure is submitted to one region
+queue, so commit order is the region's, not a function of which signal a write targets.
+
+### How long an effect lives, and where it is made
 
 **An effect lasts exactly as long as its region holds it, and is made where its region's keeper
 says.** Every execution schedules an update of its own (LRM 4.9.4), from the statement until the
@@ -352,6 +371,8 @@ ended included. Each keeps only what a report reads, since an effect is made on 
 path. The scheduler keeps no place in the source: a nonblocking update and a `$strobe` body are
 closures of the program, whose own calls hand theirs, and an effect the library itself defers and
 that can report keeps its place in its own capture and binds it when it runs.
+
+### A deferred body runs on no thread
 
 **A deferred body that evaluates what the source wrote runs on no thread, in what it took where it
 was made.** A `$strobe`'s arguments, a concurrent assertion's tick, a clocking block's sample and
@@ -375,6 +396,8 @@ without stepping it: handing work over is neither a draw nor a thread creation, 
 the giver draws (LRM 18.14), and it depends on the giver alone, never on the order other threads ran
 in (LRM 18.14.2).
 
+### Once the Postponed region is reached
+
 **Once the Postponed region is reached no earlier region of the slot runs again** (LRM 4.4.2.9), so
 the Postponed region runs what is placed in it while it runs, a final deferred assertion's action
 among it (LRM 16.4.1), and a placement into an earlier region of the slot is the design's error,
@@ -386,6 +409,8 @@ region runs at all, so a violation report or a final deferred assertion made in 
 matures, and acts, as it is made, and an observed one is refused as in Postponed. How a deferred
 report matures and is withdrawn is `assertions.md`'s.
 
+### What an effect is and when it is due
+
 **What an effect is and when it is due are two questions, and only the second decides the shape.**
 The standard writes the second one the same way wherever it appears: a nonblocking assignment and a
 nonblocking event trigger both name an optional delay-or-event control and both land in the NBA
@@ -396,6 +421,8 @@ What the effect acts on is fixed where the statement stands, as a nonblocking as
 then, whatever the variable names by the time the effect runs. One statement's whole effect goes in
 one of these, however many places it writes -- a destructuring left-hand side (LRM 11.4.12) included
 -- which is what makes a control it carries read once rather than once per write.
+
+### An effect due on an event is an execution of no lineage
 
 **Where the placement is not yet knowable, what is handed over is an execution rather than a
 closure.** An effect due on an event (LRM 9.4.5, 15.5.1) has a region but no slot: which slot it
@@ -428,25 +455,22 @@ A covergroup sampled on its clocking event is a third (LRM 19.3): `new` starts i
 makes no process of it, and each occurrence of its event runs it in place, once every wait the
 occurrence reached has been asked and before the execution that made the event occur goes on.
 
+### What a function may schedule past its return
+
 **What a function schedules past its return is checked where the statement is written, against the
-thread calling it.** A function may schedule what takes effect after it returns -- a deferred effect
-in any form, a fork-join_none -- only where the thread calling it was created by an initial or
-always procedure, or a fork of one, and it is an error otherwise (LRM 13.4.4); the final procedures'
-thread and code that runs on no thread are neither. Whether a statement runs during a function call
-is fixed by where it is written, and which thread calls the function only by the run. So the
-lowering states the question as an operation of its own ahead of each such statement in a body that
-runs as a function call, and the runtime answers it from what created the running thread. The submit
-itself asks nothing, because the same statement outside a function is never refused -- an
-assertion's action may write `x <= 1` directly -- and one thread runs both, with no record of how
-deep in calls it is.
+thread calling it.** A function may schedule what takes effect after it returns -- a nonblocking
+assignment, a nonblocking event trigger or a clocking drive, under any control, and a
+fork-join_none, the statements LRM 13.4.4 names -- only where the thread calling it was created by
+an initial or always procedure, or a fork of one, and it is an error otherwise (LRM 13.4.4); the
+final procedures' thread and code that runs on no thread are neither. Whether a statement runs
+during a function call is fixed by where it is written, and which thread calls the function only by
+the run. So the lowering states the question as an operation of its own ahead of each such statement
+in a body that runs as a function call, and the runtime answers it from what created the running
+thread. The submit itself asks nothing, because the same statement outside a function is never
+refused -- an assertion's action may write `x <= 1` directly -- and one thread runs both, with no
+record of how deep in calls it is.
 
-A deferred effect made by suspending the process fails LRM 10.4.2, which commits a nonblocking write
-in the NBA region of its slot wherever the process is by then: a process doing `q <= d; #5; ...`
-would be held at `#5` until the write committed.
-
-**Forbidden:** routing deferred writes into per-signal queues. It fails LRM 4.6, which performs a
-slot's nonblocking writes in the order they were made; every closure is submitted to one region
-queue, so commit order is the region's, not a function of which signal a write targets.
+### An effect a later event can take back is a timer
 
 **An effect a later event can take back is a timer, held by whoever owns it.** A continuous
 assignment carrying a delay schedules each new value to propagate, and a different value computed
@@ -472,6 +496,8 @@ Post-NBA, Observed, Reactive, ReInactive, ReNBA, Pre-Postponed, Postponed. Of th
 regions, these are the ones LRM Table 4-1 places a callback of foreign code in (LRM 4.10, 38.36.2;
 [foreign_interface.md](foreign_interface.md)); the rest -- Pre-Observed, Post-Observed, Pre-Re-NBA,
 Post-Re-NBA -- no callback names, so nothing is ever placed in them and they are not kept.
+
+### How a slot runs its regions
 
 Preponed runs once on entry, then Pre-Active once, before the regions that repeat (LRM 4.5); what is
 placed in Pre-Active while it runs runs there too. Postponed runs on exit until nothing placed in it
@@ -509,8 +535,16 @@ runs before that slot's Observed region rather than being pushed to the next tim
 
 The reactive group (Reactive, ReInactive, ReNBA) is reached only when the active group has drained.
 It holds program-block statements, checker code, the action blocks of concurrent assertions, and the
-action a matured observed deferred assertion runs (LRM 16.4.1). Preponed carries the `#1step`
-sampling of a clocking block (LRM 14.13).
+action a matured observed deferred assertion runs (LRM 16.4.1). A `#1step` sample (LRM 14.13,
+16.5.1) is taken in the Postponed region of a slot the sampled place changed in, which LRM 4.4.2.1
+makes the same as taking it in the next slot's Preponed region, so no sample is placed in Preponed.
+
+`#0` delays land in **Inactive**, not Active. A user writing `#0` is asking the engine to let other
+already-pending active work finish first, then come back at this same simulation time. Pushing
+`#0`-suspended processes to the back of Active would let them re-enter ahead of work that arrived
+earlier, defeating the intent.
+
+### Which region set a thread runs in
 
 A thread runs in one region set for its whole life: the one the thread that started it runs in, as a
 coroutine inherits its context from the scope it is launched in and from its parent, and whatever
@@ -534,10 +568,7 @@ each set starts its processes in the same turns (`elaboration_lifecycle.md`, Act
 set's once the active set's have settled; an execution of a scope woken inside each occurrence of
 what it waits for, which is no procedure, starts in the always procedures' turn.
 
-`#0` delays land in **Inactive**, not Active. A user writing `#0` is asking the engine to let other
-already-pending active work finish first, then come back at this same simulation time. Pushing
-`#0`-suspended processes to the back of Active would let them re-enter ahead of work that arrived
-earlier, defeating the intent.
+### The current slot and the later ones
 
 LRM 4.4 gives every event one time, the current one or a later one, and the engine holds the two
 apart. Nearly every event -- a wake, a nonblocking write with no delay -- lands in the current slot,
@@ -578,7 +609,8 @@ read where a process would be entered, so whatever is still parked in the in-pro
 drained without running a statement. A process that ended the run reports `KILLED` afterwards (LRM
 9.7), its execution having departed rather than run out its body, and nothing of the design runs in
 it again, a subroutine foreign code calls into later included: an exported function answers the zero
-of its result, and an exported task never returns to foreign code. A foreign frame beneath such an
+of its result, and an exported task an imported task called never returns to foreign code, while one
+reached from anything else answers as an exported function does. A foreign frame beneath such an
 execution is told nothing (LRM 35.9 binds a foreign call to the disable protocol only where a
 `disable` targets it, and the run does not go on past its own end).
 
@@ -588,6 +620,8 @@ since LRM 20.2 places it beside `$finish` rather than among the severity tasks. 
 stop prints is fixed by its level and printed where the task executes, because level 1 prints the
 call's location and time, facts of that moment; it states what the tool did and carries no severity.
 
+### A run-time error of the design
+
 A run-time error of the design is a report Lyra writes for the design, at a severity it chooses per
 condition, and is not a separate ending. Where the standard defines no value for the evaluation to
 go on with, the severity is fatal, so the error asks for the ending `$fatal` asks for, and the same
@@ -595,6 +629,8 @@ tail runs. It becomes a departure at the first landing that takes it (`nonlocal_
 An error raised while variable initializers run or processes are created is a run-time error, since
 both are simulation at time zero (LRM 4); one raised while the design is built or its references
 resolved precedes the simulation, and no `final` procedure exists to run.
+
+### What runs once the run is over
 
 Deferred effects already submitted for the in-progress slot do still run, so a nonblocking write
 issued before the request commits and a `final` procedure can read it. LRM 20.2 says only that
@@ -618,6 +654,8 @@ it (`assertions.md`); after them, what the design asked to have done once the si
 writing the coverage database a covergroup asks for (LRM 19.9) -- is a call held from wherever it
 was asked for and run, as `atexit` holds a function.
 
+### An ending the language does not define
+
 The one ending that runs none of them is the tool being unable to carry the run on -- an internal
 error of Lyra's, or an exception nothing handles -- which is no ending the language defines: a
 `final` procedure is design code, and the state it would read is already known to be wrong; so is
@@ -628,6 +666,8 @@ wrote delivered to where it wrote it (`runtime_distribution.md`), the exit statu
 the run is over, not because of how it ended. A request for memory the host refuses ends the program
 where it asked, delivering what the design wrote and nothing else, since anything run after it may
 ask again.
+
+### The last program ending
 
 A program ends its own threads, and the last program to end ends the run (LRM 24.3). Once every
 initial procedure of a program has ended, whatever they started that is still running is ended with
@@ -665,7 +705,9 @@ Three questions are kept apart, because each has its own owner and none answers 
 - Whether the program may refer to a variable there at all is the language's, and the front end
   answers it. LRM 6.21 and 13.3.2 forbid a nonblocking or continuous assignment to an automatic, and
   tracing one with a system task such as `$monitor`, which the front end reads as covering `$strobe`
-  too; LRM 9.3.2 forbids a `ref` argument inside a `join_any` or `join_none` branch.
+  too; LRM 9.3.2 forbids a `ref` argument inside a `join_any` or `join_none` branch. A tolerant
+  reading the front end can be asked for (`--compat all`) lets the last through as a warning; the
+  lowering then refuses such a branch, since it can outlive the storage the argument reaches.
 - What the closure sees when it runs -- the value at the statement, or the variable as it is then --
   is the construct's, and the standard states it construct by construct. A nonblocking assignment
   fixes its value and its target at the statement (LRM 10.4.2); `$strobe` evaluates its arguments
@@ -683,16 +725,17 @@ kind and a lifetime, the lifetime being none past the call for `sort_by`, the sc
 thread and `'static` for `spawn`. Where the closure is erased, the type it is handed over at carries
 its kind and its signature and no lifetime:
 
-| How it is handed on                         | Examples                                                                         | What its references must reach                                                                                                                                                        |
-| ------------------------------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| lent for a call                             | the write-back a reference seen as another type carries                          | anything alive across the call                                                                                                                                                        |
-| held while the execution that made it waits | an event control's watch, an `iff` condition, a foreign task's body              | anything alive while that execution waits, because what holds the closure ends when the wait does, however the wait ends                                                              |
-| detached: able to run after its scope ended | a deferred effect, a delayed assignment's timer, an assertion's action, a branch | static storage, a variable whose storage the closure keeps alive through a handle it owns, or an object it holds a share of -- followed through every closure it was captured through |
+| How it is handed on                         | Examples                                                                                                                     | What its references must reach                                                                                                                                                               |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| lent for a call                             | an exported task's body, which the call foreign code makes runs to its end                                                   | anything alive across the call                                                                                                                                                               |
+| held while what the entry answers is held   | an event control's watch, an `iff` condition, a foreign task's body, the write-back a reference seen as another type carries | anything alive while the frame that made it holds that answer -- the wait it stops at, the reference it hands on -- because what holds the closure ends with the answer, however a wait ends |
+| detached: able to run after its scope ended | a deferred effect, a delayed assignment's timer, an assertion's action, a branch                                             | static storage, a variable whose storage the closure keeps alive through a handle it owns, or an object it holds a share of -- followed through every closure it was captured through        |
 
 A fork branch that `join` waits for is the second kind; one under `join_any` or `join_none` is the
-third. The second kind relies on the runtime: what keeps a waiting closure is owned by the wait the
-execution's frame holds (`activation.md` invariant 4), so stopping the execution from outside ends
-it with the wait, and nothing the runtime keeps can call into a frame that is gone.
+third. The second kind relies on the runtime: what keeps such a closure is owned by the answer the
+frame holds -- a waiting closure by the wait the execution's frame holds (`activation.md`
+invariant 4) -- so stopping the execution from outside ends it with the wait, and nothing the
+runtime keeps can call into a frame that is gone.
 
 **Storage is extended only where the language requires a reference to outlive its scope.** Of every
 detached closure, only a fork branch refers to an enclosing automatic: every other one is held by

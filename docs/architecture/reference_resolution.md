@@ -1,9 +1,12 @@
 # Reference Resolution
 
-The compiler does not yet realize one connection of invariant 6 as stated: an output port whose
+The compiler does not yet realize two connections of invariant 6 as stated: an output port whose
 actual is a whole variable of the port's type still keeps a cell on each side and copies the port's
 value into the variable by a continuous assignment, rather than making the variable a reference
-bound to the child's port storage. Everything else here binds every layer as written.
+bound to the child's port storage; and an input port declared by an explicit port expression (LRM
+23.2.2.1) keeps a variable of its own, driven by the connection, even where the expression names a
+whole variable, rather than being a reference member. Everything else here binds every layer as
+written.
 
 ## Purpose
 

@@ -193,7 +193,7 @@ divided out.
   coarse to tell a change worth marking from its own variation fails, with what it measured.
 - **A reference simulator is measured in the same run, on the same machine, scaled to the same
   target independently**, and compared as a ratio of rates, which survives a slow, loaded or
-  different machine; a count is Lyra's alone, since a reference simulator's would count another
+  different machine; a reference simulator is never counted, since its count would be of another
   engine whole. A case may also hold the program a careful C++ programmer would write for its work
   -- keeping every guarantee the language gives what it uses, compiled at `-O2` by the compiler
   Lyra's builds take when none is named, and held to printing what Lyra's program prints at one
@@ -268,8 +268,8 @@ divided out.
 
 ## Notes / Examples
 
-A case is one file. Prose states the claim and cites the clause; the checks and the sentinel sit in
-one `final` procedure:
+A case is a directory entered through one file, and most are that file alone. Prose states the claim
+and cites the clause; the checks and the sentinel sit in one `final` procedure:
 
 ```systemverilog
 // A conditional generate block whose condition holds is elaborated, and the
@@ -288,8 +288,9 @@ endmodule
 
 What a case genuinely needs beyond that -- the instances to elaborate, the simulated program's argv,
 the compilation-unit use model its files are compiled under, a required refusal or report -- is a
-`// @key: value` line at the top of the same file; extra sources are files beside it. Golden output,
-where the output channel is the subject, is a sibling file.
+`// @key: value` line at the top of the same file; extra sources are files beside it. A file the
+program writes whose content is the subject -- a value change dump -- is written by hand into an
+`expected/` directory beside it, and compared as the standard reads that kind of file, not as text.
 
 Adding a SystemVerilog feature means adding or extending a case first, then implementing until it
 passes.
@@ -301,12 +302,12 @@ Current implementation: Lyra's records of its answers are `tests/paths/` (`<path
 
 The bodies of tests that keep a record, each with the question it asks:
 
-| Question                                     | Designs               | Record, per path                                                    |
-| -------------------------------------------- | --------------------- | ------------------------------------------------------------------- |
-| What does a program do?                      | `conformance/cases/`  | `<path>.yaml`, `<path>.defects.yaml`, `<path>.address.defects.yaml` |
-| What does compiling cost as a design grows?  | `tests/growth/`       | `<path>.growth.yaml`                                                |
-| Which units does an edit make again?         | `tests/incremental/`  | `<path>.incremental.yaml`                                           |
-| How far does a design written elsewhere get? | the benchmark suite's | `<path>.external_designs.yaml`                                      |
+| Question                                     | Designs                                                                        | Record, per path                                                    |
+| -------------------------------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------- |
+| What does a program do?                      | `conformance/cases/`                                                           | `<path>.yaml`, `<path>.defects.yaml`, `<path>.address.defects.yaml` |
+| What does compiling cost as a design grows?  | `tests/growth/`                                                                | `<path>.growth.yaml`                                                |
+| Which units does an edit make again?         | `tests/incremental/`                                                           | `<path>.incremental.yaml`                                           |
+| How far does a design written elsewhere get? | the benchmark suite's, and those `tests/external_design_suites.yaml` describes | `<path>.external_designs.yaml`                                      |
 
 The second and third are the same kind of question along two axes: a cost no program can observe and
 no single compile shows, measured by compiling twice and holding one run to the other.

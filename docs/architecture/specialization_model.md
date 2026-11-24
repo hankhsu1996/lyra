@@ -1,5 +1,12 @@
 # Specialization Model
 
+The compiler does not yet realize two of the rules below. A lowering on a cycle of units, each of
+whose published structure names another on the cycle, is a unit of its own written by its instance's
+hierarchical path rather than by what it publishes (invariants 7 and 9). And a parameter that a
+design element declared inside the unit reads is compiled in as the value its elaboration settled
+rather than held by the object (invariant 4), so lowerings differing only in it are two bodies. Both
+lose a share and never an answer, and the rules bind regardless.
+
 ## Purpose
 
 **A specialization is a definition applied to arguments.** `Reg #(8)` is the definition `Reg` with

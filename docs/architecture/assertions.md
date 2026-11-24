@@ -205,8 +205,8 @@ finished trace (F.5.3.1), which is the clause's own reading of `not a ##1 b` whe
 after `a` (LRM 16.12.3). So it succeeded where its answer is at least holds and failed otherwise,
 for every statement, and the statements its answer selects run once the run has stopped and before
 the `final` procedures, which read what they wrote, since no time step is left to hold a Reactive
-region. An attempt whose tick shares a time step with the `$finish` that ends the run is not
-evaluated at that tick, since the run never reaches that step's Observed region (LRM 16.5, 20.2).
+region. An attempt whose tick shares a time step with the `$finish` that ends the run reports
+nothing at that tick, whichever of the two the step runs first (LRM 16.5, 20.2).
 
 Each answer carries whether the evaluation was nonvacuous, computed beside it operator by operator
 by LRM 16.14.8's rule: a sequence is, a negation is where its operand is, a conjunction, a
@@ -250,8 +250,8 @@ is a call of it. A tick reads the Booleans no saved value bears on once for ever
 them to each. A transition table the runtime interprets fails one of two things: its entries name
 the design's Booleans, so it holds closures -- this code with a dispatch in front -- or the runtime
 evaluates the design's expressions, an interpreter inside a compiler. A MIR node for a sequence, a
-property or an attempt fails `mir.md`'s mechanical translation. MIR gains one member type, the type
-of the attempt its closure is handed, and LIR nothing.
+property or an attempt fails `mir.md`'s mechanical translation. MIR gains two library types -- the
+member holding an assertion's attempts, and the attempt its closure is handed -- and LIR nothing.
 
 **The disable condition reads current values, not sampled ones** (LRM 16.12), tested from the start
 of the attempt in the Observed region through its end inclusive. A disabled evaluation is a third

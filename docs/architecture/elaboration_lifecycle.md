@@ -36,8 +36,9 @@ conflation.
 - The rule that a generated constructor allocates the instance shell only -- each storage cell with
   its declared representation and its language default, firing nothing; port endpoint placeholders;
   the child table -- and runs no SystemVerilog semantic logic.
-- The rule that cross-instance connections are recorded as **declarative facts** during Build and
-  realized during Resolve into the final storage each names.
+- The rule that a cross-instance connection is a statement of a resolve entry, compiled with the
+  unit whose source writes it and run during Resolve against the final storage it names; Build
+  records nothing of it.
 - The rule that Resolve ends at a design-wide barrier: every reference bound, every driver attached
   and every connection joined before any initializer runs.
 - The rule that variable initialization runs in Initialize, after that barrier, so an initializer
@@ -64,7 +65,7 @@ conflation.
 ```mermaid
 flowchart LR
   subgraph elab [elaboration -- LRM 3.12]
-    B[Build<br/>shells and cells,<br/>generate, connection facts] --> R[Resolve<br/>run each route, attach drivers,<br/>join nets]
+    B[Build<br/>shells and cells,<br/>generate] --> R[Resolve<br/>run each route, attach drivers,<br/>join nets]
   end
   subgraph sim [simulation time zero -- LRM 4]
     I[Initialize<br/>value initializers] --> A[Activate<br/>create processes,<br/>start them in turn]
@@ -79,14 +80,16 @@ that is not bound, and nothing to its left executes a SystemVerilog body.
 
 Construct the instance shell and the structural object graph. This phase runs the unit's
 **structural** elaboration: it applies the parameter environment, evaluates generate (`if` / `for` /
-`case`) to decide which children exist, creates child shells (recursively), and **records** the
-unit's connection facts -- port connections, hierarchical references, alias bindings, drivers -- as
-declarative records. Each cell takes its declared representation and its default as the object is
-built, so a reference bound to it in Resolve names storage that exists, and a later store is held to
-that representation rather than fixing it by running first. A net fixes what its declaration gives
-it -- its type, its fold and the contribution its net type makes (`net_resolution.md`). Build does
-**not** execute any value-level SystemVerilog body: no variable initializer, no process body, no
-port read, no reference dereference.
+`case`) to decide which children exist, and creates child shells (recursively). It records no
+connection: a port connection, a hierarchical reference, an alias binding and a driver are each a
+statement of the resolve entry of the class whose source writes it, compiled with that class's unit,
+so each exists before any instance does and Build has nothing of them to make. Each cell takes its
+declared representation and its default as the object is built, so a reference bound to it in
+Resolve names storage that exists, and a later store is held to that representation rather than
+fixing it by running first. A net fixes what its declaration gives it -- its type, its fold and the
+contribution its net type makes (`net_resolution.md`). Build does **not** execute any value-level
+SystemVerilog body: no variable initializer, no process body, no port read, no reference
+dereference.
 
 Generate is Build-phase logic: its conditions are constant expressions (LRM 27.5), available from
 the parameter environment, so generate never depends on Resolve. A nested scope's parameter
@@ -101,13 +104,12 @@ another instance, does.
 
 ### Resolve
 
-With the full shell graph in existence and every connection fact recorded, execute each reference's
-route, once. Each route is typed navigation through the classes the referrer compiled against -- its
-own, and those other scopes published -- with one runtime query only where an upward name finds its
-anchor; nothing is looked up by name. The front end has proved that every route reaches a
-constructed object -- a name into an unselected generate arm, or past the end of an instance array,
-is its error -- so a route that finds nothing is a compiler defect, never a value substituted at run
-time.
+With the full shell graph in existence, execute each reference's route, once. Each route is typed
+navigation through the classes the referrer compiled against -- its own, and those other scopes
+published -- with one runtime query only where an upward name finds its anchor; nothing is looked up
+by name. The front end has proved that every route reaches a constructed object -- a name into an
+unselected generate arm, or past the end of an instance array, is its error -- so a route that finds
+nothing is a compiler defect, never a value substituted at run time.
 
 A route ends at the final storage it names. A `ref` port, or any reference, bound from another
 reference binds what that one names, so a forwarding chain of any length ends at a direct final cell
@@ -161,8 +163,9 @@ A continuous driver has produced nothing before this phase: a net holds what an 
 and a variable its declared initial value. At time zero the processes start in turn, each turn once
 the one before it has run to its first waits:
 
-1. every `always` and `always_ff` procedure, and the clocked processes the compiler makes for a
-   sampled value function and a concurrent assertion, so each is waiting;
+1. every `always` and `always_ff` procedure, the clocked processes the compiler makes for a sampled
+   value function and a concurrent assertion, and each clocking block's sampling (LRM 14.13), so
+   each is waiting;
 2. every continuous assignment and port connection, so the first value a driver produces is a change
    a waiting procedure sees (LRM 4.9.1, 4.9.6);
 3. every `initial` procedure, so it reads what a constant drives;
@@ -183,11 +186,12 @@ is placed where Inactive begins, so the engine's loop is unchanged (`scheduling.
    generated constructor produces an inert shell; it executes no variable initializer, no process
    body, and no port or reference read. Serves LRM 3.12 and 4, and compiling per unit: a child's
    constructor cannot see what its parent will bind.
-2. **Build before Resolve, system-wide.** Every shell and every connection fact exists before any
-   cross-instance reference is resolved, because a route may reach any instance of the design.
-3. **Connections are declarative until Resolve.** A port connection or cross-unit reference is a
-   recorded fact after Build and bound only in Resolve, so recording a connection never requires the
-   other endpoint to exist yet.
+2. **Build before Resolve, system-wide.** Every shell exists before any cross-instance reference is
+   resolved, because a route may reach any instance of the design.
+3. **Connections are code that runs only in Resolve.** A port connection or cross-unit reference is
+   a statement of the resolve entry of the class whose source writes it, compiled with that class's
+   unit, so stating a connection never requires the other endpoint to exist, and nothing runs it
+   before Resolve.
 4. **Resolve respects dependency order.** A reference whose route reads another reference is bound
    after that reference. The top-down walk realizes this for every route admitted so far; a route
    the walk does not order is admitted only with a mechanism that does.
@@ -233,8 +237,8 @@ is placed where Inactive begins, so the engine's loop is unchanged (`scheduling.
   Build-phase constructor-time logic.
 - **`specialization_model.md`** owns parameter strategy, orthogonal to the lifecycle.
 - **`mir.md`** states each phase's work as statements of that phase's body; a member declaration
-  carries a name and a type and no initializer, so every backend renders construction-time work from
-  one statement list.
+  carries its type and no initializer, so every backend renders construction-time work from one
+  statement list.
 
 ## Forbidden Shapes
 
@@ -276,8 +280,8 @@ is placed where Inactive begins, so the engine's loop is unchanged (`scheduling.
 
 ## Notes / Examples
 
-**The three port semantics land in different phases.** They share only the connection _fact_
-recorded in Build; their realization differs.
+**The three port semantics land in different phases.** Each is stated in the parent's code and none
+is made in Build; their realization differs.
 
 | Port               | Realization                                                                                                                                                                                                                                                                  | Phase              |
 | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ |
@@ -293,10 +297,11 @@ module Mid(ref int r);
 endmodule
 ```
 
-Build records two reference facts: `Mid.r` (alias of the parent's connected cell) and `Mid.c.r`
-(alias of `Mid.r`). The parent binds `Mid.r` in its part of the walk; `Mid` then binds `Mid.c.r`
-from `Mid.r`, which takes what `Mid.r` names, the final cell. Binding is not a constructor step, so
-`Mid`'s constructor building `Leaf` before `Mid.r` is bound observes nothing unbound.
+Two binds are stated: one in the parent's resolve entry makes `Mid.r` an alias of the parent's
+connected cell, and one in `Mid`'s makes `Mid.c.r` an alias of `Mid.r`. The parent binds `Mid.r` in
+its part of the walk; `Mid` then binds `Mid.c.r` from `Mid.r`, which takes what `Mid.r` names, the
+final cell. Binding is not a constructor step, so `Mid`'s constructor building `Leaf` before `Mid.r`
+is bound observes nothing unbound.
 
 **An initializer that reads a port.**
 
@@ -319,11 +324,11 @@ module Top;
 endmodule
 ```
 
-Both `b.bx` and `a.ax` are references recorded in Top's elaborated design. Build constructs `a` and
-`b` in either order; both produce reference records. Resolve walks each route through the typed
-parent edge into Top and the typed member access into the sibling's class; neither route depends on
-the other's resolution. `always_comb` bodies read bound endpoints; the source order of `a` and `b`
-does not affect mechanism.
+Both `b.bx` and `a.ax` are routes stated in the code compiled for Top's unit. Build constructs `a`
+and `b` in either order and walks neither route. Resolve walks each route through the typed parent
+edge into Top and the typed member access into the sibling's class; neither route depends on the
+other's resolution. `always_comb` bodies read bound endpoints; the source order of `a` and `b` does
+not affect mechanism.
 
 **Baked parameters are orthogonal.** When a parameter is baked into a specialization, "apply the
 parameter environment" in Build is trivial (the value is a compile-time constant in that

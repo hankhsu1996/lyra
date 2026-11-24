@@ -110,7 +110,7 @@ different.
    route contained.
 
 6. **A scope is two classes: the published part and the realization extending it.** The published
-   part holds the published members first, in the order the publication states, and one virtual
+   part holds the published members first, in the order the publication states, and one dispatched
    method per subroutine, which the realization overrides with its body; the realization adds what
    lowering adds -- a slot per route, process state, the homes of closures. A referrer compiles
    against the published part alone, reads a member at its offset there and calls a subroutine
@@ -184,14 +184,15 @@ different.
 
 11. **An artifact several units may write has a canonical identity, and its content is a function of
     that identity alone, never of which units ask for it.** A container type's header and the code
-    file of what is needed wherever the type is named are identified by the type; an operation of
-    the type that only some units call is identified by the type and the operation, and is a file of
-    its own. Every unit asking for one writes the same text, a unit asking for it adds nothing to
-    what another unit's artifacts hold, and the build keeps one copy for the link. A file whose
-    content followed the set of units asking for it would depend on the whole program, so an edit to
-    one unit would change what others share, which invariants 1 and 7 rule out. Which artifact a
-    definition goes in is the backend's packaging; which definitions exist, and what each does, is
-    decided above it.
+    file of what is needed wherever the type is named are identified by the type. Every unit asking
+    for one writes the same text, a unit asking for it adds nothing to what another unit's artifacts
+    hold, and the build keeps one copy for the link. An operation of the type that only some units
+    call is identified by the type and the operation and is no shared artifact: each unit calling it
+    defines it in its own artifact, linked there and named by no other unit ([`lir.md`](lir.md)), so
+    it too follows only the unit that states it. A file whose content followed the set of units
+    asking for it would depend on the whole program, so an edit to one unit would change what others
+    share, which invariants 1 and 7 rule out. Which artifact a definition goes in is the backend's
+    packaging; which definitions exist, and what each does, is decided above it.
 
 12. **A symbol several units define takes a merge rule, never an owner.** A foreign name a scope
     exports (LRM 35.4) belongs to no compilation unit's name space, and LRM 35.4 lets several scopes
@@ -285,18 +286,24 @@ flowchart TB
     LO["low.opening<br/>names, cells, bodies"]
     LT["low.Thing<br/>one published class"]
     LU["low<br/>its scopes' classes, where it has any"]
+    LB["low.body<br/>the entry making its objects"]
     LC["low code<br/>every body"]
   end
   subgraph HIGH["unit high"]
     HO["high.opening"]
     HD["high.Derived<br/>extends low::Thing"]
     HU["high"]
+    HB["high.body"]
     HC["high code"]
   end
+  LB --> LO
+  LC --> LB
   LC --> LO
   LC --> LU
   LC --> LT
   HD --> LT
+  HB --> HO
+  HC --> HB
   HC --> HO
   HC --> HU
   HC --> HD
@@ -362,12 +369,12 @@ cell.
 step `parent -> c`, since the parent's artifact owns the `c` member's pointer type, and both end at
 a member of `c`'s published class, so the parent emits a typed access at that member's offset in the
 published part and a renamed `p` or `x` fails where the parent compiles. A call `c.tick()` is a call
-through the object to the published part's virtual method for `tick`, which the class the object is
-overrides with its body.
+through the object to the published part's dispatched method for `tick`, which the class the object
+is overrides with its body.
 
 **What each backend borrows to realize a cross-unit step.** A referrer needs the published part's
-layout and the position of each virtual method in its table. A backend emitting to a language with
-its own name resolution borrows both from that language's compiler, which is why including a
+layout and the position of each dispatched method in its table. A backend emitting to a language
+with its own name resolution borrows both from that language's compiler, which is why including a
 declaration-only header is sufficient there. A backend emitting machine code computes the same
 offsets and table positions from the same publication. Neither reaches past the published members,
 which is what invariant 8 states.

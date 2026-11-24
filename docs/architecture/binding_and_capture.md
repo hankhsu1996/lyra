@@ -220,7 +220,11 @@ storage and of any body's materialization. It is the key under which a binding i
 forwarded across boundaries.
 
 - A **source origin** names a source-level entity: a procedural variable, a `with`-clause iterator,
-  a receiver parameter, or the share a body holds of its receiver's object (invariant 9).
+  a variable a pattern declares, a receiver parameter, or the share a body holds of its receiver's
+  object (invariant 9). A parameter a callable's form adds beside the receiver -- the instance
+  declaring a class, for a body of it that no object records; the caller's location, for a body that
+  reports a failure there; the construction table a constructor of the hierarchy is handed -- is an
+  origin of the same standing, so a closure inside the body reaches it by capture.
 - A **synthesized origin** names a lowering-created entity that must cross a callable boundary (a
   non-blocking-assignment value snapshot, the shared handle to a lifted local's cell). It is
   identified by the site that introduced it, numbered in the order the unit's lowering walks its
@@ -229,9 +233,10 @@ forwarded across boundaries.
   a count over that unit's deterministic walk is stable enough, and no counter is shared across
   units, which keeps units lowering in parallel.
 
-The receiver is not a separate kind: it is a parameter origin whose role is "receiver." The role is
-metadata for callable lowering and diagnostics; it never changes capture semantics. A single body's
-local slot is never an origin (that is the "one materialization used as identity" forbidden shape).
+The receiver is not a separate kind of binding: its origin is a role-tagged parameter's, as each
+added parameter's above is. The role is metadata for callable lowering and diagnostics; it never
+changes capture semantics. A single body's local slot is never an origin (that is the "one
+materialization used as identity" forbidden shape).
 
 ### Body binding (layer 2)
 
@@ -281,8 +286,8 @@ A closure's captured state splits between the code (the closure type it reads) a
 construction of that struct):
 
 ```text
-callable code . closure       : the receiver's type, named capture fields { carrier_origin, type }
-closure field                 : a field { FieldId, carrier_origin, type }
+callable code . closure       : the receiver's type, capture fields { FieldId, type }
+closure field                 : a field { FieldId, type }, one FieldId per carrier origin
 closure value . construction  : a closure construction at the construction site
 ```
 
@@ -294,15 +299,16 @@ closure value . construction  : a closure construction at the construction site
 - Snapshot / alias / owning is the field's **type** -- a value type is a snapshot, a reference type
   aliases an enclosing cell, a shared handle owns. There is no separate capture-mode field.
 - A field's identity is its `FieldId` (keyed by the carrier origin), assigned when the capture is
-  discovered and independent of physical order. Canonical ordering fixes only the physical field
-  layout ([`compiler_generated_storage.md`](compiler_generated_storage.md)); the invoke body reads
-  by field id and is never rewritten to follow a layout change.
+  discovered and independent of physical order. Canonical ordering is only a deterministic listing
+  of the fields, which a backend declares and constructs them in; it fixes no offset, which belongs
+  to LIR ([`compiler_generated_storage.md`](compiler_generated_storage.md)), and the invoke body
+  reads by field id and is never rewritten to follow a change of either.
 
 **Closure-construction sequencing.** The closure is constructed at the closure construction site,
 before the value exists. A field source that cannot be evaluated safely in place -- one with a side
 effect, or one that must be computed exactly once at a specific point -- is materialized as a
 sequenced temporary in capture order first, and the construction reads that temporary, so the
-canonical field layout never reorders an observable evaluation. A backend whose target does not
+canonical field order never reorders an observable evaluation. A backend whose target does not
 guarantee that order at the construction site emits the temporaries explicitly.
 
 ### Carrier and view

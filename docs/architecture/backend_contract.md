@@ -1,5 +1,10 @@
 # Backend Contract
 
+One rule below is not yet what the compiler does. Attaching a driver to part of a net states, on its
+callee, the type the driver gives its positions at, and still hands the count of those positions as
+an operand, though that type fixes it (Notes, on a type a callee is generic over). The rules below
+bind every layer regardless.
+
 ## Purpose
 
 Define the mechanical-translation contract a backend must satisfy when consuming per-unit MIR.
@@ -543,13 +548,15 @@ every zero byte (LRM 6.16, [`storage.md`](storage.md)); what a zero byte prints 
 
 A source name reaches C++'s identifier space by one total, injective function, since an escaped
 SystemVerilog identifier may hold any printable character (LRM 5.6.1) and C++ allows letters, digits
-and underscores and reserves words of its own. A name that already reads as a C++ identifier, is no
-reserved word and does not begin with the prefix the backend keeps for itself is written as it is;
-every other name is that prefix, an escape marker and its bytes, each spelled so no two names meet.
-What the compiler mints -- a local, a position where the source wrote no name -- is written into a
-range of that prefix the escaped names never reach. Replacing a bad character instead would turn two
-source names into one C++ name, which no reader of the output could catch. A name foreign C code
-also spells, a DPI-C linkage name (LRM 35.4), is written exactly as given.
+and underscores and reserves words and namespaces of its own. A name that already reads as a C++
+identifier, is no reserved word, is no namespace a program may not declare at the global scope (the
+standard library's and the runtime library's) and does not begin with the prefix the backend keeps
+for itself is written as it is; every other name is that prefix, an escape marker and its bytes,
+each spelled so no two names meet. What the compiler mints -- a local, a position where the source
+wrote no name -- is written into a range of that prefix the escaped names never reach. Replacing a
+bad character instead would turn two source names into one C++ name, which no reader of the output
+could catch. A name foreign C code also spells, a DPI-C linkage name (LRM 35.4), is written exactly
+as given.
 
 In the current implementation the C++ backend's render entries write into one destination type and
 answer `void`, so an entry answering text does not compile where it would be written, and

@@ -187,8 +187,9 @@ class StructuralScopeLowerer {
   // published shape, and commits the composed class to the compilation unit.
   auto PopulateBodies() -> diag::Result<void>;
 
-  // Central scope-level expression dispatcher. One switch over `hir::Expr::
-  // data` routing each kind to its per-family handler.
+  // Central scope-level expression dispatcher. It forwards to the dispatch
+  // template both pass classes share, which routes each kind to its
+  // per-family handler.
   [[nodiscard]] auto LowerExpr(const hir::Expr& expr, WalkFrame frame) const
       -> diag::Result<mir::Expr>;
 

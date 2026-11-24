@@ -1506,7 +1506,8 @@ def main() -> None:
     parser.add_argument(
         "--count", action="store_true",
         help="Count instructions per unit of work under callgrind instead of "
-             "timing, Lyra only")
+             "timing, Lyra and each hand-written program; a reference "
+             "simulator is not counted")
     parser.add_argument(
         "--amounts", default=None,
         help="With --count, count each simulation at the amount this earlier "

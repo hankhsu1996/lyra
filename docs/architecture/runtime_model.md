@@ -35,14 +35,15 @@ different contexts and they do different jobs.
 
 Reading a module as a class separates two things that are easy to conflate.
 
-A scope's **members** are uniform: each is a name and a type (see [mir.md](mir.md)). A signal, a
-child instance, an instance array, and a generate scope are all members; they differ only in their
-type. How a member is stored follows from that type alone; who owns a child and how its parent holds
-it is [hierarchy_and_generate.md](hierarchy_and_generate.md) invariant 4. Every walk over the
-hierarchy -- a phase, a dump, a traversal -- descends the tree's attachments, whose kind of scope,
-module instance or generate scope, is read off the object's class. One walk covers a scalar
-instance, an instance array of any dimensionality, and a generate scope, with no per-form branch and
-no separate classification.
+A scope's **members** are uniform: each is a type at a position, and a name the source wrote reaches
+it through the scope's names (see [mir.md](mir.md)). A signal, a child instance, an instance array,
+and a generate scope are all members; they differ only in their type. How a member is stored follows
+from that type alone; who owns a child and how its parent holds it is
+[hierarchy_and_generate.md](hierarchy_and_generate.md) invariant 4. Every walk over the hierarchy --
+a phase, a dump, a traversal -- descends the tree's attachments, whose kind of scope, module
+instance or generate scope, is read off the object's class. One walk covers a scalar instance, an
+instance array of any dimensionality, and a generate scope, with no per-form branch and no separate
+classification.
 
 **Construction** -- the constructor statements that fill those members -- is the part that
 legitimately varies, because SystemVerilog construction semantics vary. A signal takes its default
@@ -311,9 +312,9 @@ constructs whose expressions write nothing but a loop's own index.
 ## Simulation code does have general assignment
 
 Inside an `initial` or `always*` body, `=` and `<=` are first-class assignment forms. Compound
-assignments (`+=`, etc.) flow through slang's `LValueReference` machinery. Every variable the
-process side declares or reaches may be written; a write is lowered the same way on both sides, and
-what differs is only what each side may write.
+assignments (`+=`, etc.) are one assignment naming its operator, whose target is evaluated once.
+Every variable the process side declares or reaches may be written; a write is lowered the same way
+on both sides, and what differs is only what each side may write.
 
 A continuous assignment is simulation-time behavior too, so its right-hand side carries every value
 expression a procedural body may -- a call, `$isunknown`, `inside`, a replication -- whichever scope
