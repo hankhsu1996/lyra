@@ -115,6 +115,9 @@ auto CodeGenFunction::LowerInstrInto(const lir::Instr& instr)
           [&](const lir::SetObjectClassInstr& set) -> Done {
             return done(LowerSetObjectClass(set));
           },
+          [&](const lir::SetDiscriminantInstr& set) -> Done {
+            return done(LowerSetDiscriminant(set));
+          },
           [&](const lir::EndAndReplaceInstr& replaced) -> Done {
             return LowerEndAndReplaceInto(replaced);
           }},
@@ -2345,19 +2348,35 @@ auto CodeGenFunction::LowerTaggedUnion(
   if (!value) {
     return std::unexpected(std::move(value.error()));
   }
+  SetDiscriminant(layout, out, built.member);
+  return CopyValue(layout.members[built.member.value], *value, out);
+}
+
+auto CodeGenFunction::LowerSetDiscriminant(const lir::SetDiscriminantInstr& set)
+    -> diag::Result<llvm::Value*> {
+  auto address = ResolvePlaceAddress(set.place, PlaceAccess::kWrite);
+  if (!address) {
+    return std::unexpected(std::move(address.error()));
+  }
+  SetDiscriminant(
+      module_->Types().LayoutOfTaggedUnion(
+          lir::PlaceType(module_->Unit(), *fn_, set.place)),
+      *address, set.member);
+  return nullptr;
+}
+
+// The tag lies after every member, so the member made in the storage
+// afterwards leaves it as it is.
+void CodeGenFunction::SetDiscriminant(
+    const TaggedUnionFields& layout, llvm::Value* out,
+    base::ComponentIndex member) {
   builder_.CreateMemSet(
       out, builder_.getInt8(0), layout.storage.layout.size,
       llvm::Align(layout.storage.layout.align));
-  auto copied = CopyValue(layout.members[built.member.value], *value, out);
-  if (!copied) {
-    return copied;
-  }
-  llvm::Value* const tag =
-      builder_.getIntN(8 * layout.tag.bytes, built.member.value);
   builder_.CreateStore(
-      tag, builder_.CreateConstInBoundsGEP1_64(
-               builder_.getInt8Ty(), out, layout.tag.offset));
-  return out;
+      builder_.getIntN(8 * layout.tag.bytes, member.value),
+      builder_.CreateConstInBoundsGEP1_64(
+          builder_.getInt8Ty(), out, layout.tag.offset));
 }
 
 auto CodeGenFunction::LowerDiscriminant(

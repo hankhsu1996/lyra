@@ -727,6 +727,19 @@ struct SetObjectClassInstr {
   TypeId cls;
 };
 
+// Makes the storage at `place`, which holds nothing, a tagged union whose tag
+// names member `member`, every other byte of its storage zero, and that
+// member's storage holding nothing yet, for a statement after it to make the
+// member in place through a component step (LRM 7.3.2). rustc's MIR writes a
+// variant's fields where they lie and then `SetDiscriminant`, and
+// `std::variant` makes its member in place and then sets its index; here the
+// tag comes first, since zeroing the storage has to precede the member made in
+// it.
+struct SetDiscriminantInstr {
+  Place place;
+  base::ComponentIndex member;
+};
+
 // What computes a value, as rustc's MIR names the right-hand side of an
 // assignment: every instruction that yields one, a call to a callee answering
 // nothing included, whose value is the void one.
@@ -770,10 +783,12 @@ struct EndAndReplaceInstr {
 // One step of a block: an assignment, or a statement that yields nothing --
 // a write into a value already there, a frame's bytes coming into or going out
 // of use, a variable ending, the storage at a place beginning or ending, an
-// object being given its class, or a value ended and built anew where it lies.
+// object being given its class, a tagged union being given the member it
+// holds, or a value ended and built anew where it lies.
 using InstrData = std::variant<
     AssignInstr, StoreInstr, StorageInstr, EndVariableInstr, BeginStorageInstr,
-    EndStorageInstr, SetObjectClassInstr, EndAndReplaceInstr>;
+    EndStorageInstr, SetObjectClassInstr, SetDiscriminantInstr,
+    EndAndReplaceInstr>;
 
 // `span` is the piece of source the instruction was lowered from, or no place
 // where it was lowered from none, as rustc's MIR statements carry a span; only

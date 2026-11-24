@@ -393,6 +393,9 @@ void TypeOperationCollector::VisitFunction(const lir::Function& fn) {
               [&](const lir::EndStorageInstr& ended) {
                 VisitPlace(lowering, fn, ended.place);
               },
+              [&](const lir::SetDiscriminantInstr& set) {
+                VisitPlace(lowering, fn, set.place);
+              },
               [&](const lir::EndAndReplaceInstr& replaced) {
                 VisitPlace(lowering, fn, replaced.place);
                 VisitRvalue(

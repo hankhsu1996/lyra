@@ -11,6 +11,7 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/base/component_index.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/diag/failure_context.hpp"
@@ -298,6 +299,19 @@ void RequireStatedVariable(const Function& fn, VariablePosition position) {
   }
 }
 
+// A tagged union holds only a member its type has, whether it is built whole
+// or tagged ahead of the member made in it.
+void RequireOverlaidMember(
+    const CompilationUnit& unit, TypeId type, base::ComponentIndex member) {
+  const std::optional<std::span<const TypeId>> members =
+      OverlaidMembers(unit, type);
+  if (!members.has_value() || member.value >= members->size()) {
+    throw InternalError(
+        "lir verify: a tagged union is built or tagged holding a member its "
+        "type does not have");
+  }
+}
+
 void VerifyRvalue(
     const CompilationUnit& unit, const Function& fn, const Rvalue& value,
     TypeId result_type);
@@ -366,6 +380,13 @@ void VerifyInstr(
                   "lir verify: something other than an object is given a "
                   "class");
             }
+          },
+          // A union is tagged in storage holding nothing yet, which the member
+          // made after it then initializes.
+          [&](const SetDiscriminantInstr& set) {
+            RequireInitializes(unit, fn, allocated, set.place, true);
+            RequireOverlaidMember(
+                unit, PlaceType(unit, fn, set.place), set.member);
           },
           // What replaces a value is made where it lies, so it has to be a
           // value made, and of the type the storage holds.
@@ -453,13 +474,7 @@ void VerifyRvalue(
             RequireHandleSequence(unit, fn, get.vector);
           },
           [&](const TaggedUnionInstr& built) {
-            const std::optional<std::span<const TypeId>> members =
-                OverlaidMembers(unit, result_type);
-            if (!members.has_value() || built.member.value >= members->size()) {
-              throw InternalError(
-                  "lir verify: a tagged union is built holding a member its "
-                  "type does not have");
-            }
+            RequireOverlaidMember(unit, result_type, built.member);
           },
           [&](const DiscriminantInstr& read) {
             if (!IsTaggedUnion(unit, PlaceType(unit, fn, read.place))) {
