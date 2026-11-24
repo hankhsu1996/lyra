@@ -1423,6 +1423,25 @@ occurrence the drive matures at, and a drive meant for that occurrence writes `#
 edge. The delay counts from the edge because the grammar writes it after the edge
 (`edge_identifier [ delay_control ]`), as a skew written as a number counts from the clocking event.
 
+#### An input skew below the time precision
+
+```systemverilog
+timeunit 1ns;
+timeprecision 100ps;
+clocking cb @(posedge clk);
+  input #0.01 x;   // as #0, or the end of a time step?
+endclocking
+```
+
+14.4 samples an input "with explicit #0 skew" in the Observed region, and 14.13 samples every other
+"at the Postponed region of the time step skew time units prior to the clocking event". The amount
+written here is not zero, so it is no `#0` skew, as a parameter whose value is zero is; but a delay
+is rounded to the precision (3.14.1), so it is no step, and the time step it names is the event's
+own, whose Postponed region comes after the event. Neither sentence answers it.
+
+Lyra samples it as `#0`, in the Observed region. Rounded, it names the event's own time step, as
+`#0` does, and 14.4 samples a value of that time step in the Observed region "to avoid races".
+
 #### A reference to an array element across an ordering method
 
 ```systemverilog

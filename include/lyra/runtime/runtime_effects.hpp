@@ -216,9 +216,9 @@ class RuntimeEffects {
       std::int64_t precision_power) -> DeferredEffects*;
   // The effects of `region` itself, a position of `support::Region`, in the
   // slot a delay names, whichever region set the writing thread runs in: where
-  // a construct the standard names the region of places its effect, as a
-  // clocking block keeps in NBA an input's value that skew behind its signal
-  // (LRM 14.13).
+  // a construct places its effect in a region it names itself, as a clocking
+  // block keeps in the Active region an input's value that skew behind its
+  // signal, for the sample taken at an event there to read (LRM 14.13).
   [[nodiscard]] auto RegionEffectsAfter(
       std::int64_t region, const value::ConstIntegralView& duration,
       std::int64_t unit_power, std::int64_t precision_power)
@@ -439,12 +439,12 @@ void RequireCallerMayScheduleAfterReturn(
 // the context an execution of no lineage started here would run in, and a
 // generator what is running hands over to it (LRM 18.14). A deferred body that
 // evaluates what the source wrote -- a `$strobe`'s arguments (LRM 21.2.2), a
-// concurrent assertion's tick (LRM 16.5), a clocking block's sample (LRM
-// 14.13) and the settling of its output at the end of a pass (LRM 14.16.2), a
-// covergroup sampled under `strobe` (LRM 19.7), what starts a concurrent
-// assertion's action (LRM 16.14.1) -- runs in it on no thread once its region
-// runs it, and a deferred assertion's action is started from it as an
-// execution of no lineage (LRM 16.4).
+// concurrent assertion's tick (LRM 16.5), a clocking block's sample of an
+// input skewed by a delay (LRM 14.13) and the settling of its output at the end
+// of a pass (LRM 14.16.2), a covergroup sampled under `strobe` (LRM 19.7), what
+// starts a concurrent assertion's action (LRM 16.14.1) -- runs in it on no
+// thread once its region runs it, and a deferred assertion's action is started
+// from it as an execution of no lineage (LRM 16.4).
 [[nodiscard]] auto TakeNoThreadContext(RuntimeEffects& effects)
     -> NoThreadContext;
 

@@ -45,18 +45,28 @@ and what it watches, as a continuous assignment states its own, and the driver b
 lowering's.
 
 **Sampling is an execution of the scope woken inside each occurrence of the clocking event.** It
-counts the occurrence, then places into that time step's Observed region the sampling of every input
-and the trigger of the block's event (LRM 14.10, 14.13). Running inside the occurrence means
-anything the occurrence wakes sees it counted, which is what gives "the event of its own time step"
-one answer. It belongs to no lineage (LRM 9.6.1).
+counts the occurrence, samples every input, and places the trigger of the block's event into that
+time step's Observed region (LRM 14.10). The samples change before the block's event, as the event
+is processed (LRM 14.13), except one skewed by `#0`, which LRM 14.4 places in the Observed region,
+ahead of the trigger. So a process woken by a sample changing before that region, waiting on the
+block from there, is reached by the event of that same time step, and one a `#0` sample wakes runs
+after it. Running inside the occurrence means anything the occurrence wakes sees it counted, which
+is what gives "the event of its own time step" one answer. It belongs to no lineage (LRM 9.6.1).
 
 **Each skew reads from the earliest moment that knows the answer.** A `#1step` input is the signal
-over its leaves' sampled values. A delay -- `#0`, the delay of none, among them -- is a copy of the
-signal kept that far behind it: an execution of the scope following every change of what the signal
-reads lands each value in the NBA region of the slot the delay names, ahead of that slot's Observed
-region, whichever region set the scope's code runs in. No reader at the event can know what the
-signal was before it, and a skew "can be specified as a parameter" (LRM 14.4), so its value is the
-instance's and no compile-time test of it is made.
+over its leaves' sampled values, settled before the time step began, so it is stored as the event is
+processed. A delay -- `#0`, the delay of none, among them -- is a copy of the signal kept that far
+behind it: an execution of the scope following every change of what the signal reads lands each
+value in the Active region of the slot the delay names. The sample is a deferred effect of the
+event's slot, in that same Active region, placed behind every update of the copy for the slot,
+whichever region the event came in -- a blocking write's, a nonblocking one's, a program's, a
+foreign callback's in Pre-Active -- and whichever region set the scope's code runs in; or, for a
+skew of no step, read and rounded as a delay control's amount is, in the Observed region. Which of
+the two is the lowering's to say, from the steps the run counts the skew as, so the run's placements
+stay ones naming a region outright. A delay sample a program's event takes is changed only once the
+active set runs again, which a program reading it without waiting on the block races with (LRM
+14.13). No reader at the event can know what the signal was before it, and a skew "can be specified
+as a parameter" (LRM 14.4), so its value is the instance's and no compile-time test of it is made.
 
 **A drive is landed by the scope declaring its block, on the instance its target is reached on.** It
 never blocks the statement (LRM 14.16): it reads its value, its target's selects, its count of

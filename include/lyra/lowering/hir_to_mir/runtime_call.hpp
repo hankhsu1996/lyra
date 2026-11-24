@@ -126,6 +126,13 @@ struct DelayRead {
     const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId amount,
     TimeResolution resolution, DelayEntries entries) -> DelayRead;
 
+// The steps of `resolution`'s precision the delay amount `amount` is, a
+// machine integer, read and rounded as a delay control's amount is (LRM 9.4.1,
+// 3.14.1).
+[[nodiscard]] auto BuildDelayTicks(
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId amount,
+    TimeResolution resolution) -> mir::ExprId;
+
 // Builds the file-IO broker expression `current_runtime().Files()`: a
 // `Files` method call on the engine handle, typed as the unit's `files`
 // builtin. Returns the outer call detached; the caller interns it. The
@@ -135,11 +142,9 @@ struct DelayRead {
 [[nodiscard]] auto BuildFilesCallExpr(
     const UnitLowerer& unit_lowerer, mir::Builder block) -> mir::Expr;
 
-// Builds `current_runtime().<entry>(arguments...)`, the deferred effects of
-// the region `entry` answers -- this slot's or a delayed slot's NBA region, or
-// the Postponed or the Observed region -- which a closure that region keeps is
-// emplaced into. Returns the call detached; the engine handle is interned into
-// `block` as a child.
+// Builds `current_runtime().<entry>(arguments...)`, the keeper of deferred
+// effects `entry` answers, which a closure kept there is emplaced into. Returns
+// the call detached; the engine handle is interned into `block` as a child.
 [[nodiscard]] auto BuildRegionEffectsCallExpr(
     const UnitLowerer& unit_lowerer, mir::Builder block,
     support::BuiltinFn entry, std::vector<mir::ExprId> arguments = {})
