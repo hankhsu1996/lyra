@@ -371,19 +371,19 @@ that can report keeps its place in its own capture and binds it when it runs.
 ### A deferred body runs on no thread
 
 **A deferred body that evaluates what the source wrote runs on no thread, in what it took where it
-was made.** A `$strobe`'s arguments, a concurrent assertion's tick, a clocking block's sample and
-the settling of its output at the end of a pass, and a covergroup sampled under `strobe` run code of
-the design once their region runs them, with no process running, and that code asks what a process's
-code asks: which generator it draws from, whether its thread may schedule past a function's return,
-which disable targets it is inside, which foreign calls. The standard names no thread for any of
-them, so each runs on no thread, as a static initializer does (LRM 18.14.1): no initial or always
-procedure created it, it belongs to no program, `process::self()` answers null and `disable fork`
-ends nothing. What it runs in -- the procedure, the seeds and the region set an execution of no
-lineage started where it was made would take, and a generator what made it hands over -- is taken
-there and captured by the body, as an asynchronous runtime's callback captures the context it was
-scheduled in and runs inside it, and the body opens by entering it until the effect running it
-returns. A nonblocking update applies values already evaluated and takes none of this, so no effect
-grows.
+was made.** A `$strobe`'s arguments, a concurrent assertion's tick, a clocking block's sample of an
+input skewed by a delay and the settling of its output at the end of a pass, and a covergroup
+sampled under `strobe` run code of the design once their region runs them, with no process running,
+and that code asks what a process's code asks: which generator it draws from, whether its thread may
+schedule past a function's return, which disable targets it is inside, which foreign calls. The
+standard names no thread for any of them, so each runs on no thread, as a static initializer does
+(LRM 18.14.1): no initial or always procedure created it, it belongs to no program,
+`process::self()` answers null and `disable fork` ends nothing. What it runs in -- the procedure,
+the seeds and the region set an execution of no lineage started where it was made would take, and a
+generator what made it hands over -- is taken there and captured by the body, as an asynchronous
+runtime's callback captures the context it was scheduled in and runs inside it, and the body opens
+by entering it until the effect running it returns. A nonblocking update applies values already
+evaluated and takes none of this, so no effect grows.
 
 What is handed over to run where no thread runs it -- this body, and the executions of no lineage
 below, an update waiting on an event and a deferred or concurrent assertion's action -- draws from a
@@ -555,14 +555,18 @@ its own work names a region of its own set -- where a wake or a delay resumes it
 where its nonblocking updates land -- and the two sets are each other's dual region for region. A
 placement whose region the standard names itself names that region, whatever set the thread runs in:
 a deferred assertion's report matures in Observed and acts in Reactive (LRM 16.4.1), a synchronous
-drive lands in the Re-NBA region of the slot its skew names (LRM 14.16), and a skewed input of a
-clocking block is read in Observed from a copy kept in the NBA region (LRM 14.13). One placement
-names no region at all but the end of the pass of the region running now: what a pass did is settled
-there as one, after everything the pass held and before what it placed, as a clocking block puts
-onto an output's variable only the last value the pass's drives gave it (LRM 14.16.2). At time zero
-each set starts its processes in the same turns (`elaboration_lifecycle.md`, Activate), the reactive
-set's once the active set's have settled; an execution of a scope woken inside each occurrence of
-what it waits for, which is no procedure, starts in the always procedures' turn.
+drive lands in the Re-NBA region of the slot its skew names (LRM 14.16), and an input of a clocking
+block skewed by `#0` is sampled in Observed (LRM 14.4). A placement the compiler chooses for a
+construct's own order names its region the same way: the copy a clocking input skewed by a delay
+keeps of its signal, and that input's sample at an event, are both placed in the Active region of
+their slot, so the sample runs behind every update of the copy for that slot whichever set the
+thread runs in ([verification_constructs.md](verification_constructs.md)). One placement names no
+region at all but the end of the pass of the region running now: what a pass did is settled there as
+one, after everything the pass held and before what it placed, as a clocking block puts onto an
+output's variable only the last value the pass's drives gave it (LRM 14.16.2). At time zero each set
+starts its processes in the same turns (`elaboration_lifecycle.md`, Activate), the reactive set's
+once the active set's have settled; an execution of a scope woken inside each occurrence of what it
+waits for, which is no procedure, starts in the always procedures' turn.
 
 ### The current slot and the later ones
 

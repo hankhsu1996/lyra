@@ -702,9 +702,9 @@ auto lyra_rt_nba_effects_after_real(
     std::int64_t precision_power) -> void*;
 
 // The effects of `region` itself of the slot `duration` away, whichever region
-// set the thread making the effect runs in: where a construct the standard
-// names the region of places its effect, as a clocking block keeps in NBA an
-// input's value that skew behind its signal (LRM 14.13).
+// set the thread making the effect runs in: where a construct places its effect
+// in a region it names itself, as a clocking block keeps in the Active region
+// an input's value that skew behind its signal (LRM 14.13).
 auto lyra_rt_region_effects_after(
     void* runtime, std::int64_t region, const void* duration,
     std::int64_t duration_width, bool duration_is_signed,

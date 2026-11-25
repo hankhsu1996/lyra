@@ -625,11 +625,12 @@ enum class BuiltinFn : std::uint16_t {
   // representation.
   kNbaEffectsAfter,
   kNbaEffectsAfterReal,
-  // A region the standard names itself, of the slot a delay names, whichever
-  // region set the writing thread runs in: the region crosses as an operand, a
-  // position of `support::Region`. A clocking block keeps there, in NBA, an
-  // input's value that skew behind its signal for its Observed region to read
-  // (LRM 14.13). One entry per amount representation.
+  // A region the construct placing the effect names itself, of the slot a
+  // delay names, whichever region set the writing thread runs in: the region
+  // crosses as an operand, a position of `support::Region`. A clocking block
+  // keeps there, in Active, an input's value that skew behind its signal, and
+  // takes there the sample an event reads of it (LRM 14.13). One entry per
+  // amount representation.
   kRegionEffectsAfter,
   kRegionEffectsAfterReal,
   // What runs once the pass of the region running now has run everything it

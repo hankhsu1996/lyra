@@ -28,27 +28,34 @@ struct ClockingInputRef {
 // also what a sampled value of the input is (LRM 16.5.1): its signal's sampled
 // value for `#1step`, and the copy kept that far behind the signal for a
 // delay. It is computed where `frame` lowers rather than read from the input's
-// own cell, which the block writes in the Observed region of that event.
+// own cell, which the block writes only after that event has begun.
 [[nodiscard]] auto LowerClockingSample(
     const StructuralScopeLowerer& scope, const WalkFrame& frame,
     ClockingInputRef input) -> diag::Result<mir::Expr>;
 
 // What a clocking block does at each occurrence of its clocking event (LRM
 // 14.7: one copy per instance of its scope, like an always procedure): count
-// the occurrence, which a drive matures by (LRM 14.16), and then, in the
-// Observed region of that time step, sample each input and trigger the block's
-// event, so every process waiting on the block reads what it sampled (LRM
-// 14.10, 14.13). It runs inside each occurrence, so a drive made by anything
-// the occurrence wakes counts the occurrence it made.
+// the occurrence, which a drive matures by (LRM 14.16); sample each input
+// before the block's event, one skewed by `#1step` as the event is processed
+// and one skewed by a delay in a deferred effect of the event's time step, in
+// its Observed region where the skew is no step (LRM 14.4, 14.13); and then
+// trigger the block's event in the Observed region of that time step, so every
+// process waiting on the block reads what it sampled, and one a sample's
+// change wakes before that region still meets the event (LRM 14.10, 14.13).
+// It runs inside each occurrence, so a drive made by anything the occurrence
+// wakes counts the occurrence it made.
 [[nodiscard]] auto LowerClockingSampler(
     const StructuralScopeLowerer& lowerer, const WalkFrame& ctor_frame,
     hir::ClockingBlockId id) -> diag::Result<mir::CallableCode>;
 
 // What keeps the copy an input skewed by a delay reads (LRM 14.13): each value
-// its signal takes lands in the copy that delay later, in the NBA region of
-// that slot, so at a clocking event the copy holds what the signal held at the
-// end of the time step that long before, ahead of the Observed region reading
-// it, whichever region set the scope's code runs in.
+// its signal takes lands in the copy that delay later, in the Active region of
+// that slot, so once that slot's updates have run the copy holds what the
+// signal held at the end of the time step that long before. The sample an
+// event of the slot takes of it is a deferred effect placed behind those
+// updates in the same region, or in the Observed region for a skew of no step,
+// whichever region the event came in and whichever region set the scope's
+// code runs in.
 [[nodiscard]] auto LowerClockingFollower(
     const StructuralScopeLowerer& lowerer, const WalkFrame& ctor_frame,
     hir::ClockingBlockId id, hir::ClockvarId clockvar)

@@ -168,19 +168,12 @@ auto IsScalarNet(
 auto DelayTicksOf(
     const StructuralScopeLowerer& lowerer, const WalkFrame& frame,
     hir::ExprId amount) -> diag::Result<mir::ExprId> {
-  mir::CompilationUnit& unit = lowerer.Owner().Unit();
   mir::Builder block = frame.Builder();
   auto lowered = lowerer.LowerExpr(lowerer.HirScope().exprs.Get(amount), frame);
   if (!lowered) return std::unexpected(std::move(lowered.error()));
-  DelayRead read = ReadDelayAmount(
-      unit, block, block.Add(*std::move(lowered)),
-      lowerer.HirScope().time_resolution,
-      {.integral = support::BuiltinFn::kDelayTicks,
-       .real = support::BuiltinFn::kDelayTicksReal});
-  return block.Add(
-      mir::MakeCallExpr(
-          mir::Direct{.target = read.entry}, std::move(read.operands),
-          unit.builtins.machine_word));
+  return BuildDelayTicks(
+      lowerer.Owner().Unit(), block, block.Add(*std::move(lowered)),
+      lowerer.Resolution());
 }
 
 // The delay a change of the drive to `changed_to` takes, of the delays it is

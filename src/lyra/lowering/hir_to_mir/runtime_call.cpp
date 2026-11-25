@@ -343,4 +343,17 @@ auto ReadDelayAmount(
   throw InternalError("hir_to_mir: unknown real width");
 }
 
+auto BuildDelayTicks(
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId amount,
+    TimeResolution resolution) -> mir::ExprId {
+  DelayRead read = ReadDelayAmount(
+      unit, block, amount, resolution,
+      {.integral = support::BuiltinFn::kDelayTicks,
+       .real = support::BuiltinFn::kDelayTicksReal});
+  return block.Add(
+      mir::MakeCallExpr(
+          mir::Direct{.target = read.entry}, std::move(read.operands),
+          unit.builtins.machine_word));
+}
+
 }  // namespace lyra::lowering::hir_to_mir

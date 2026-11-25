@@ -22,6 +22,7 @@
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/statement/timing.hpp"
 #include "lyra/lowering/hir_to_mir/synthesized_body.hpp"
+#include "lyra/mir/binary_op.hpp"
 #include "lyra/mir/builder.hpp"
 #include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/stmt.hpp"
@@ -64,20 +65,31 @@ void StoreOwnCell(
               unit, block, AccessPath{.owner = cell, .descent = {}}, value))});
 }
 
-// `region` itself of the slot the amount `amount` names in the scope's time
-// unit, handed to `entries` with that scope's unit and precision powers (LRM
-// 9.4.1).
+// The region of its slot a clocking input skewed by a delay keeps the copy of
+// its signal in, and the one the sample an event of that slot reads of the copy
+// is taken in, placed there behind the copy's updates for the slot: whichever
+// region the event came in and whichever region set the scope's code runs in,
+// the sample reads what the slot's updates left (LRM 14.13).
+constexpr support::Region kSkewedCopyRegion = support::Region::kActive;
+
+// `region` as the position of `support::Region` a runtime entry takes.
+auto RegionOperand(
+    const mir::CompilationUnit& unit, mir::Builder block,
+    support::Region region) -> mir::ExprId {
+  return mir::BuildMachineIntLiteral(
+      unit, block, static_cast<std::int64_t>(region));
+}
+
+// The region `region` itself of the slot the amount `amount` names in the
+// scope's time unit, handed to `entries` with that scope's unit and precision
+// powers (LRM 9.4.1).
 auto RegionAfterArguments(
     const StructuralScopeLowerer& lowerer, mir::Builder block,
-    support::Region region, mir::ExprId amount, DelayEntries entries)
-    -> DelayRead {
+    mir::ExprId region, mir::ExprId amount, DelayEntries entries) -> DelayRead {
   const mir::CompilationUnit& unit = lowerer.Owner().Unit();
   DelayRead read =
       ReadDelayAmount(unit, block, amount, lowerer.Resolution(), entries);
-  read.operands.insert(
-      read.operands.begin(),
-      mir::BuildMachineIntLiteral(
-          unit, block, static_cast<std::int64_t>(region)));
+  read.operands.insert(read.operands.begin(), region);
   return read;
 }
 
@@ -121,6 +133,66 @@ void TriggerOwnEvent(
               ReadOwnCell(
                   lowerer, block, frame, event,
                   lowerer.Owner().Unit().builtins.event)))});
+}
+
+// The sample `input` takes at its block's clocking event stored into the
+// input's cell, as a statement of `frame`'s block.
+auto StoreClockingSample(
+    const StructuralScopeLowerer& lowerer, const WalkFrame& frame,
+    ClockingInputRef input) -> diag::Result<void> {
+  const hir::Clockvar& clockvar = lowerer.HirScope()
+                                      .clocking_blocks.Get(input.block)
+                                      .clockvars.Get(input.clockvar);
+  auto value = LowerClockingSample(lowerer, frame, input);
+  if (!value) return std::unexpected(std::move(value.error()));
+  mir::Builder block = frame.Builder();
+  StoreOwnCell(
+      lowerer, block, frame,
+      lowerer.TranslateStructuralDataObject(clockvar.input->sample),
+      block.Add(*std::move(value)));
+  return {};
+}
+
+// The sample `input` takes at its block's clocking event, for an input skewed
+// by the delay `skew`, kept as a deferred effect of the event's slot, as a
+// statement of `frame`'s block. It is taken in the region the copy it reads is
+// kept in, behind the copy's updates, unless the skew is no step of the
+// scope's precision, read and rounded as a delay control's amount is; that one
+// is taken in the Observed region, where LRM 14.4 samples an input of an
+// explicit `#0` skew.
+auto KeepSkewedSample(
+    const StructuralScopeLowerer& lowerer, const WalkFrame& frame,
+    ClockingInputRef input, const hir::DelaySkew& skew) -> diag::Result<void> {
+  mir::CompilationUnit& unit = lowerer.Owner().Unit();
+  mir::Builder block = frame.Builder();
+  ClosureBuilder sample(unit, frame, support::ClosureKind::kFn);
+  RunDeferredBodyOnNoThread(lowerer.Owner(), frame, sample);
+  auto stored = StoreClockingSample(lowerer, sample.Frame(), input);
+  if (!stored) return std::unexpected(std::move(stored.error()));
+  auto amount = lowerer.LowerExpr(
+      lowerer.HirScope().exprs.Get(skew.delay.duration), frame);
+  if (!amount) return std::unexpected(std::move(amount.error()));
+  const mir::ExprId no_step = mir::BuildMachineIntComparison(
+      unit, block, mir::BinaryOp::kEquality,
+      BuildDelayTicks(
+          unit, block, block.Add(*std::move(amount)), lowerer.Resolution()),
+      mir::BuildMachineIntLiteral(unit, block, 0));
+  const mir::ExprId region = mir::BuildMachineIntConditional(
+      unit, block, no_step,
+      RegionOperand(unit, block, support::Region::kObserved),
+      RegionOperand(unit, block, kSkewedCopyRegion));
+  // A delay of none: the event's own slot.
+  auto [entry, arguments] = RegionAfterArguments(
+      lowerer, block, region, mir::BuildIntLiteral(unit, block, 0),
+      {.integral = support::BuiltinFn::kRegionEffectsAfter,
+       .real = support::BuiltinFn::kRegionEffectsAfterReal});
+  mir::Expr keeper = BuildRegionEffectsCallExpr(
+      lowerer.Owner(), block, entry, std::move(arguments));
+  block.AppendStmt(
+      mir::ExprStmt{
+          .expr = block.Add(BuildEmplacedClosure(
+              unit, frame, std::move(keeper), sample.BuildVoid()))});
+  return {};
 }
 
 // LRM 14.16.2: what the drives of one output onto a variable give it in one
@@ -272,24 +344,30 @@ auto LowerClockingSampler(
         each_block.AppendStmt(*std::move(waited));
         TriggerOwnEvent(lowerer, each, fields.occurrence);
 
-        ClosureBuilder observed(unit, each, support::ClosureKind::kFn);
-        RunDeferredBodyOnNoThread(lowerer.Owner(), each, observed);
-        const WalkFrame observed_frame = observed.Frame();
         for (const hir::ClockvarId at : block.clockvars.Ids()) {
           const hir::Clockvar& clockvar = block.clockvars.Get(at);
           if (!clockvar.input.has_value()) continue;
-          mir::Builder into = observed.Body();
-          auto value = LowerClockingSample(
-              lowerer, observed_frame,
-              ClockingInputRef{.block = id, .clockvar = at});
-          if (!value) return std::unexpected(std::move(value.error()));
-          StoreOwnCell(
-              lowerer, into, observed_frame,
-              lowerer.TranslateStructuralDataObject(clockvar.input->sample),
-              into.Add(*std::move(value)));
+          const ClockingInputRef input{.block = id, .clockvar = at};
+          auto stored = std::visit(
+              Overloaded{
+                  // What the time step before left is settled, so it is
+                  // stored as the event is processed.
+                  [&](const hir::OneStepSkew&) -> diag::Result<void> {
+                    return StoreClockingSample(lowerer, each, input);
+                  },
+                  // The copy a delay reads is updated by effects of its own,
+                  // so its sample is one too, placed behind them.
+                  [&](const hir::DelaySkew& skew) -> diag::Result<void> {
+                    return KeepSkewedSample(lowerer, each, input, skew);
+                  }},
+              clockvar.input->skew);
+          if (!stored) return std::unexpected(std::move(stored.error()));
         }
+
+        ClosureBuilder observed(unit, each, support::ClosureKind::kFn);
+        RunDeferredBodyOnNoThread(lowerer.Owner(), each, observed);
         TriggerOwnEvent(
-            lowerer, observed_frame,
+            lowerer, observed.Frame(),
             lowerer.TranslateStructuralDataObject(block.block_event));
         mir::Expr keeper = BuildRegionEffectsCallExpr(
             lowerer.Owner(), each_block, support::BuiltinFn::kObservedEffects);
@@ -327,7 +405,8 @@ auto LowerClockingFollower(
             lowerer.LowerExpr(hir_scope.exprs.Get(skew->delay.duration), each);
         if (!amount) return std::unexpected(std::move(amount.error()));
         auto [entry, arguments] = RegionAfterArguments(
-            lowerer, each_block, support::Region::kNba,
+            lowerer, each_block,
+            RegionOperand(unit, each_block, kSkewedCopyRegion),
             each_block.Add(*std::move(amount)),
             {.integral = support::BuiltinFn::kRegionEffectsAfter,
              .real = support::BuiltinFn::kRegionEffectsAfterReal});
@@ -427,7 +506,8 @@ auto LowerClockingLanding(
             output.output->skew);
         if (!amount) return std::unexpected(std::move(amount.error()));
         auto [entry, arguments] = RegionAfterArguments(
-            lowerer, body, support::Region::kReNba, *amount,
+            lowerer, body, RegionOperand(unit, body, support::Region::kReNba),
+            *amount,
             {.integral = support::BuiltinFn::kResumeInRegionAfter,
              .real = support::BuiltinFn::kResumeInRegionAfterReal});
         arguments.insert(

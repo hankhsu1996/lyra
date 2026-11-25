@@ -341,7 +341,7 @@ auto LowerAsPlaceAt(L& lowerer, const hir::Expr& expr, WalkFrame frame)
 // The sampled value of a clocking block input `expr` reads, where the walk
 // reads sampled values: what the block samples at its event (LRM 16.5.1),
 // rather than the input's own cell, which holds the previous event's sample
-// until the block writes it in the Observed region.
+// until the block's sampling of this event has written it.
 template <ExprLowerer L>
 auto ReadOfClockingInput(
     L& lowerer, const hir::Expr& expr, const WalkFrame& frame)
