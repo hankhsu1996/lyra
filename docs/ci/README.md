@@ -43,7 +43,9 @@ is refused still produces a program -- is the same question `cpp_tests` asks, so
 on the same schedule, as `emitted_project_tests`. A change that could break any of it already owes
 that schedule before it commits. What remains in `cli_tests` is the command line itself, each case a
 few builds of a small design, mostly on the backend that compiles no C++; the target is cut into
-more shards than it has cases, so it costs its slowest case, and remotely.
+shards that run remotely, so it costs its slowest shard rather than the sum of its cases. It has
+more cases than shards, so a shard holds several, and a case building a dozen designs takes minutes,
+so each shard is held to a large test's time.
 
 The two sides of `nightly` are complements, so every test target is covered once and none twice.
 That is the property to preserve: a new target joins whichever side its tag puts it on, and neither

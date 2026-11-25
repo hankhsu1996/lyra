@@ -352,6 +352,11 @@ class LirDumper {
                   "set class {} = {}", FormatOperand(set.object),
                   FormatType(set.cls));
             },
+            [&](const SetDiscriminantInstr& set) -> std::string {
+              return std::format(
+                  "set discriminant {} = {}", FormatPlace(set.place),
+                  set.member.value);
+            },
             [&](const StoreInstr& store) -> std::string {
               return std::format(
                   "store {} = {}", FormatPlace(store.place),

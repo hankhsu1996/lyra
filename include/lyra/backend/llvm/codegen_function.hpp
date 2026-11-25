@@ -13,9 +13,11 @@
 #include <llvm/IR/IRBuilder.h>
 
 #include "lyra/backend/llvm/codegen_module.hpp"
+#include "lyra/backend/llvm/codegen_types.hpp"
 #include "lyra/backend/llvm/codegen_value_type.hpp"
 #include "lyra/backend/llvm/llvm_fn_abi.hpp"
 #include "lyra/backend/llvm/runtime_entry.hpp"
+#include "lyra/base/component_index.hpp"
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/lir/function.hpp"
 #include "lyra/lir/operator.hpp"
@@ -176,6 +178,8 @@ class CodeGenFunction {
   void LowerStorage(const lir::StorageInstr& storage);
   auto LowerSetObjectClass(const lir::SetObjectClassInstr& set)
       -> diag::Result<llvm::Value*>;
+  auto LowerSetDiscriminant(const lir::SetDiscriminantInstr& set)
+      -> diag::Result<llvm::Value*>;
 
   // A value an operation is handed, with the type it is a value of.
   struct OperandRef {
@@ -326,11 +330,16 @@ class CodeGenFunction {
   auto LowerProduct(
       const lir::ProductInstr& product, lir::TypeId result_type,
       llvm::Value* out) -> diag::Result<llvm::Value*>;
-  // A tagged union laid out in place: its storage zeroed, the member it holds
-  // built at its start, and its tag stored after its members.
+  // A tagged union laid out in place: its storage zeroed, its tag stored after
+  // its members, and the member it holds built at its start.
   auto LowerTaggedUnion(
       const lir::TaggedUnionInstr& built, lir::TypeId result_type,
       llvm::Value* out) -> diag::Result<llvm::Value*>;
+  // The storage at `out` zeroed and its tag naming `member`, the member then
+  // made at its start by whatever comes next.
+  void SetDiscriminant(
+      const TaggedUnionFields& layout, llvm::Value* out,
+      base::ComponentIndex member);
   auto LowerVectorGet(const lir::VectorGetInstr& get)
       -> diag::Result<llvm::Value*>;
   auto LowerDiscriminant(

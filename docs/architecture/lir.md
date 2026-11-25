@@ -488,7 +488,11 @@ tagged union's member has no identity of its own and is still reached in place: 
 the union, at the union's own start, with a load and a store through it as through any step. A
 tagged union's tag is read by its own instruction over the union's place, rustc's `Discriminant`,
 and a whole union is built by one instruction naming the member and its value, which leaves every
-other byte zero. A value that lies in no storage is held in a local before a part of it is reached,
+other byte zero. Where the member is instead made where it lies by its own step -- a copy or a
+relocation of the union, as a product's parts are each made where they lie -- a statement names the
+member first, zeroing the storage and writing the tag -- rustc's `SetDiscriminant`, which its clone
+of a coroutine states ahead of the fields it clones -- and the member is then made through a
+component step. A value that lies in no storage is held in a local before a part of it is reached,
 so no layer extracts a part of a value or rebuilds a value around one; the one element taken by
 value is an element of a sequence of handles. Bits of a packed value are not parts of that kind
 either: the integral's own operations read them out of a value and write them into one. Bits of a

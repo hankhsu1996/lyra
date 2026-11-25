@@ -408,10 +408,11 @@ auto UnitLowerer::BuildStepFunction(lir::TypeId type, support::ValueStep step)
     return std::move(body).Finish();
   }
 
-  // A tagged union steps the member its tag names (LRM 7.3.2). A copy builds
-  // the union holding a copy of that member, and a relocation the union
-  // holding that member relocated; a write over one ends what was there and
-  // builds a copy of the other in its place, unless the two are one.
+  // A tagged union steps the member its tag names (LRM 7.3.2), where it lies,
+  // as a product steps each part: a copy or a relocation makes a union naming
+  // that member and makes the member in it by the member's own step, and an
+  // end ends the member. A write over one ends what was there and builds a
+  // copy of the other in its place, unless the two are one.
   if (const std::optional<std::span<const lir::TypeId>> tagged =
           lir::OverlaidMembers(out_, type)) {
     const std::span<const lir::TypeId> members = *tagged;
@@ -462,16 +463,17 @@ auto UnitLowerer::BuildStepFunction(lir::TypeId type, support::ValueStep step)
     body.Terminate(lir::UnreachableTerm{});
     for (std::size_t k = 0; k < members.size(); ++k) {
       body.SetCurrent(blocks[k]);
-      const lir::Place member = StepBody::Component(taken, k);
-      if (step == support::ValueStep::kEnd) {
-        part(members[k], member, std::nullopt);
-      } else {
-        body.Into(
-            *made,
-            lir::TaggedUnionInstr{
-                .member = base::ComponentIndex{static_cast<std::uint32_t>(k)},
-                .value = body.Load(member, members[k])});
+      if (made.has_value()) {
+        body.Statement(
+            lir::SetDiscriminantInstr{
+                .place = *made,
+                .member = base::ComponentIndex{static_cast<std::uint32_t>(k)}});
       }
+      part(
+          members[k], StepBody::Component(taken, k),
+          made.transform([&](lir::Place to) {
+            return StepBody::Component(std::move(to), k);
+          }));
       body.Terminate(lir::BranchTerm{.target = done});
     }
     body.SetCurrent(done);

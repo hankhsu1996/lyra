@@ -205,6 +205,43 @@ TEST(LirVerifyTest, ATaggedUnionIsBuiltOnlyHoldingAMemberItHas) {
       "a member its type does not have");
 }
 
+// A union is tagged where its member is then made, so the storage holds
+// nothing yet and the tag names one of the type's own members; tagging a union
+// already there would overwrite the member it holds without ending it.
+TEST(LirVerifyTest, AUnionIsTaggedOnlyInEmptyStorageWithAMemberItHas) {
+  // A body tagging a union, at `member`, in a slot or where a parameter points.
+  const auto tagging = [](std::uint32_t member, bool in_a_slot,
+                          const std::string& because) {
+    PairBody body;
+    const TypeId union_type = body.RecordOfTwo(RecordKind::kTaggedUnion);
+    Place place = PlaceOf(body.fn.values.Add(
+        Local{.name = "u", .type = union_type, .kind = LocalKind::kPlace}));
+    if (!in_a_slot) {
+      const TypeId to_union = body.unit.types.Intern(
+          Type{PointerType{
+              .pointee = union_type,
+              .ownership = PointerOwnership::kBorrowed,
+              .mutability = Mutability::kMutable}});
+      const ValueId at = body.fn.values.Add(
+          Local{.name = "at", .type = to_union, .kind = LocalKind::kParam});
+      body.fn.params.push_back(at);
+      place = Place{.base = Use{.value = at}, .chain = {DerefProjection{}}};
+    }
+    const Instr tag{
+        .data = SetDiscriminantInstr{
+            .place = std::move(place),
+            .member = base::ComponentIndex{.value = member}}};
+    if (because.empty()) {
+      EXPECT_NO_THROW(body.VerifyRunning(tag));
+    } else {
+      ExpectRefused(body, tag, because);
+    }
+  };
+  tagging(1, true, "");
+  tagging(2, true, "a member its type does not have");
+  tagging(1, false, "already holds one");
+}
+
 // Only a tagged union keeps a tag (LRM 7.3.2), so a read of one in anything
 // else reads bytes that hold some other value.
 TEST(LirVerifyTest, ATagIsReadOnlyOfATaggedUnion) {
