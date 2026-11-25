@@ -14,6 +14,7 @@
 #include <slang/ast/statements/MiscStatements.h>
 #include <slang/ast/symbols/VariableSymbols.h>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/lowering/ast_to_hir/unit_identity.hpp"
 
 namespace lyra::lowering::ast_to_hir {
@@ -64,16 +65,31 @@ struct LifetimeExtendedCollector
     visitDefault(s);
   }
 
+  // A fork's block items initialize in the forking process, so a name in one
+  // is no borrow; they are declared at or after the boundary, so a branch
+  // reading one, which takes its own copy, borrows nothing either.
   void handle(const slang::ast::BlockStatement& b) {
-    const bool detached =
-        b.blockKind == slang::ast::StatementBlockKind::JoinNone ||
-        b.blockKind == slang::ast::StatementBlockKind::JoinAny;
-    if (detached) {
-      detached_boundaries.push_back(declared_count);
+    if (!BranchesMayOutliveBlock(b.blockKind)) {
+      visitDefault(b);
+      return;
     }
-    visitDefault(b);
-    if (detached) {
+    const std::size_t boundary = declared_count;
+    const auto visit_child = [&](const slang::ast::Statement& child) {
+      if (child.kind == slang::ast::StatementKind::VariableDeclaration) {
+        child.visit(*this);
+        return;
+      }
+      detached_boundaries.push_back(boundary);
+      child.visit(*this);
       detached_boundaries.pop_back();
+    };
+    if (b.body.kind == slang::ast::StatementKind::List) {
+      for (const slang::ast::Statement* child :
+           b.body.as<slang::ast::StatementList>().list) {
+        visit_child(*child);
+      }
+    } else {
+      visit_child(b.body);
     }
   }
 
@@ -92,6 +108,18 @@ struct LifetimeExtendedCollector
 };
 
 }  // namespace
+
+auto BranchesMayOutliveBlock(slang::ast::StatementBlockKind kind) -> bool {
+  switch (kind) {
+    case slang::ast::StatementBlockKind::Sequential:
+    case slang::ast::StatementBlockKind::JoinAll:
+      return false;
+    case slang::ast::StatementBlockKind::JoinAny:
+    case slang::ast::StatementBlockKind::JoinNone:
+      return true;
+  }
+  throw InternalError("BranchesMayOutliveBlock: unknown StatementBlockKind");
+}
 
 auto CollectLifetimeExtendedVars(
     std::span<const slang::ast::VariableSymbol* const> declared_ahead,

@@ -368,6 +368,33 @@ handle has no allowed text near enough to lend it an order. `-Wno-error=solve-be
 refuses it where it reads the constraint. Name the elements, or the size of a dynamic array or
 queue.
 
+#### A `ref` argument named in a `join_any` or `join_none` branch
+
+```systemverilog
+task automatic t(ref int r);
+  fork begin #1; r = 5; end join_none
+endtask
+task automatic caller(); int x; t(x); endtask
+```
+
+9.3.2: "Within a fork-join_any or fork-join_none block, it shall be illegal to refer to formal
+arguments passed by reference other than in the initialization value expressions of variables
+declared in a block_item_declaration of the fork, unless the argument is declared ref static."
+Forbidden. 13.5.2 gives the reason, that "a variable passed by reference may be an automatic
+variable", and 6.21 extends the scope enclosing a fork to the life of its branches, which keeps the
+task's own variables and not its caller's.
+
+It is not run as an extension, though the front end lists it among the texts it relaxes for other
+tools. While the call runs, the argument names the actual. A branch its fork does not wait for can
+run after the call has returned, when the actual may be an automatic of a caller that has returned
+too, and no allowed text lends such a branch storage that has ended. Keeping the actual for the
+branch would need the caller to know, where it binds the argument, that the callee lets a branch
+keep it, and no declaration states that, so every argument passed by reference would pay for the
+forbidden text. `-Wno-error=ref-arg-in-fork-join` and `--compat all` make a warning, and Lyra then
+refuses the name where it reads it in such a branch, a fork nested in one included. Copy the
+argument into a variable the fork declares, or declare it `ref static` where only static storage is
+passed to it.
+
 ### Forbidden, run as an extension when asked
 
 Refused by default and run when the caller asks for it by name, with the meaning stated here. The

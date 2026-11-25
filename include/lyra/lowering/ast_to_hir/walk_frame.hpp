@@ -196,9 +196,11 @@ struct WalkFrame {
   // `WithProceduralBody`. Null outside a process or subroutine body.
   hir::ProceduralBody* current_procedural_body = nullptr;
 
-  // Nonzero while a fork-join branch body is being lowered. Counter so a nested
-  // fork is tracked correctly. Zero outside a process body.
-  std::uint32_t fork_branch_depth = 0;
+  // Whether the subtree being lowered is inside a branch of a fork that does
+  // not wait for it, which can go on running after the scope that forked it
+  // has ended (LRM 9.3.2 Table 9-1); a fork nested in such a branch, whatever
+  // it joins as, is inside it too.
+  bool within_detached_branch = false;
 
   // Whether the subtree being lowered is the index or a slice bound of a select
   // taken from a queue, which is the one place `$` has a value (LRM 7.10.1:
@@ -388,9 +390,10 @@ struct WalkFrame {
     return next;
   }
 
-  [[nodiscard]] auto WithForkBranch() const -> WalkFrame {
+  // Enters a branch its fork does not wait for, and everything nested in it.
+  [[nodiscard]] auto WithinDetachedBranch() const -> WalkFrame {
     WalkFrame next = *this;
-    ++next.fork_branch_depth;
+    next.within_detached_branch = true;
     return next;
   }
 
@@ -511,10 +514,6 @@ struct WalkFrame {
       open_scope->children.push_back(scope.id);
     }
     return scope.id;
-  }
-
-  [[nodiscard]] auto InForkBranch() const -> bool {
-    return fork_branch_depth > 0;
   }
 };
 

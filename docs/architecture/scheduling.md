@@ -1,9 +1,5 @@
 # Scheduling
 
-The compiler does not yet refuse a `ref` argument used inside a `join_any` or `join_none` branch
-under the tolerant reading: such a branch is compiled, and a write through the argument after the
-caller has returned reaches storage that has ended. Everything else here binds as written.
-
 A lyra simulation runs as a set of executions coordinated by a stratified event scheduler. Each
 SystemVerilog process -- `initial`, `always*`, a continuous assignment -- runs as a coroutine, or,
 where its body runs to its end each time it is triggered, as a reaction the run calls. The scheduler
@@ -706,8 +702,9 @@ Three questions are kept apart, because each has its own owner and none answers 
   answers it. LRM 6.21 and 13.3.2 forbid a nonblocking or continuous assignment to an automatic, and
   tracing one with a system task such as `$monitor`, which the front end reads as covering `$strobe`
   too; LRM 9.3.2 forbids a `ref` argument inside a `join_any` or `join_none` branch. A tolerant
-  reading the front end can be asked for (`--compat all`) lets the last through as a warning; the
-  lowering then refuses such a branch, since it can outlive the storage the argument reaches.
+  reading the front end can be asked for (`--compat all`) lets the last through as a warning, and
+  Lyra then refuses the name where it reads it, since the branch can outlive the storage the
+  argument reaches ([language_conformance.md](language_conformance.md)).
 - What the closure sees when it runs -- the value at the statement, or the variable as it is then --
   is the construct's, and the standard states it construct by construct. A nonblocking assignment
   fixes its value and its target at the statement (LRM 10.4.2); `$strobe` evaluates its arguments
