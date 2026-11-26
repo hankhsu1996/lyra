@@ -8,6 +8,7 @@
 
 #include "lyra/diag/source_span.hpp"
 #include "lyra/mir/block_id.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
@@ -62,6 +63,10 @@ class BlockRebuild {
   // `data`, built in place of `old`, a statement of the block rebuilt from, so
   // it names the piece of source `old` does.
   auto AddInPlaceOf(mir::StmtId old, mir::StmtData data) -> mir::StmtId;
+  // What builds into the block being built, from the piece of source the node
+  // being answered names, as the lowering builds, so no consumer can tell a
+  // node a rewrite built from one the lowering built.
+  [[nodiscard]] auto Builder() -> mir::Builder;
 
   // `data`, a node of the block rebuilt from, with each of its operands
   // replaced by what `take` answers for it, a node of the block being built.

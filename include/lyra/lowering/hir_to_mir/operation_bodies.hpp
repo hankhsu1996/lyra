@@ -25,19 +25,26 @@
 #include "lyra/lowering/hir_to_mir/predicate.hpp"
 #include "lyra/lowering/hir_to_mir/value_operations.hpp"
 #include "lyra/mir/binary_op.hpp"
+#include "lyra/mir/block_id.hpp"
 #include "lyra/mir/builder.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/code_source.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
+#include "lyra/mir/expr_id.hpp"
+#include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
+#include "lyra/mir/type.hpp"
+#include "lyra/mir/type_builders.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/mir/type_interface.hpp"
 #include "lyra/mir/value_parts.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/integral_operation.hpp"
 #include "lyra/support/value_operation.hpp"
+#include "lyra/support/value_step.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -52,21 +59,6 @@ consteval auto Concatenated(
   std::ranges::copy(second, rows.begin() + M);
   return rows;
 }
-
-// The receiver and the operands of a call of the operation `declared`
-// declares, each handed as its parameter takes it: borrowed where it takes a
-// reference, mutably where the operation writes through it, and as the value
-// where it takes the value. The operands follow the receiver among the
-// parameters, and where the operation reports where it was called the call
-// names that last.
-struct PassedOperands {
-  std::optional<mir::ExprId> receiver;
-  std::vector<mir::ExprId> arguments;
-};
-[[nodiscard]] auto PassedAsDeclared(
-    const mir::CompilationUnit& unit, mir::Builder block,
-    const mir::CallableCode& declared, std::optional<mir::ExprId> receiver,
-    std::vector<mir::ExprId> operands) -> PassedOperands;
 
 // A call of the body `target` names, which answers `answers` of `type`, handing
 // it each value as the operation's declaration takes it: borrowed where it

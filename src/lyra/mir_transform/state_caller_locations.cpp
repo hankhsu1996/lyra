@@ -15,6 +15,7 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir_transform/block_rebuild.hpp"
+#include "lyra/mir_transform/pass.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::mir_transform {

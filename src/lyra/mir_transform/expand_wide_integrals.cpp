@@ -7,20 +7,22 @@
 #include <variant>
 #include <vector>
 
+#include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/code_source.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
+#include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/integral_constant.hpp"
-#include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/mir/type_interface.hpp"
 #include "lyra/mir/wide_integral_operator.hpp"
 #include "lyra/mir_transform/block_rebuild.hpp"
-#include "lyra/support/integral_operation.hpp"
+#include "lyra/mir_transform/pass.hpp"
 
 namespace lyra::mir_transform {
 
@@ -60,76 +62,51 @@ class Expander {
   }
 
  private:
-  // The call of the operation `source` over `operands`, each passed as the
-  // operation's declaration takes it: a value it reads by a reference where it
-  // lies, or bound to the value where it is made, and a machine value as
-  // itself.
+  // The call of the operation `source` over `operands`. An integral operator
+  // takes every operand as an argument, so the call is entered on no object.
   auto Call(
       BlockRebuild& rebuild, const mir::TypeOperationSource& source,
       std::span<const mir::ExprId> operands, mir::TypeId answer) const
       -> mir::Expr {
     const std::optional<mir::CallableCode> declaration =
         mir::OperationDeclarationOf(*unit_, source);
-    std::vector<mir::ExprId> passed;
-    for (std::size_t i = 0; i < operands.size(); ++i) {
-      const mir::TypeId param_type =
-          declaration->locals.Get(declaration->params.at(i)).type;
-      const mir::ExprId value = rebuild.Expr(operands[i]);
-      const auto* reference =
-          unit_->types.Get(param_type).As<mir::ReferenceType>();
-      passed.push_back(
-          reference == nullptr ? value : Bound(rebuild, value, param_type));
+    if (!declaration.has_value()) {
+      throw InternalError(
+          "mir_transform: a wide operator names an operation of a type that "
+          "declares none such -- please report this as a bug");
     }
-    mir::Direct direct{
-        .target = mir::TypeOperationTarget{
-            .type = source.type,
-            .answers = source.answers,
-            .arguments = source.arguments}};
-    if (declaration->receiver.has_value()) {
-      direct.receiver = passed.front();
-      passed.erase(passed.begin());
+    std::vector<mir::ExprId> values;
+    for (const mir::ExprId operand : operands) {
+      values.push_back(rebuild.Expr(operand));
     }
+    mir::PassedOperands passed = mir::PassedAsDeclared(
+        *unit_, rebuild.Builder(), *declaration, std::nullopt,
+        std::move(values));
     return mir::Expr{
         .data =
             mir::CallExpr{
-                .callee = std::move(direct), .arguments = std::move(passed)},
+                .callee =
+                    mir::Direct{
+                        .target =
+                            mir::TypeOperationTarget{
+                                .type = source.type,
+                                .answers = source.answers,
+                                .arguments = source.arguments}},
+                .arguments = std::move(passed.arguments)},
         .type = answer};
-  }
-
-  // A read-only reference to `value`, a node of the block being built: to
-  // the storage a read of it reads, and otherwise to the value itself, held to
-  // the end of the full-expression.
-  static auto Bound(
-      BlockRebuild& rebuild, mir::ExprId value, mir::TypeId reference)
-      -> mir::ExprId {
-    mir::ExprId object = value;
-    if (const auto* read =
-            std::get_if<mir::CopyExpr>(&rebuild.To().exprs.Get(value).data);
-        read != nullptr && !std::holds_alternative<mir::SliceExpr>(
-                               rebuild.To().exprs.Get(read->place).data)) {
-      object = read->place;
-    }
-    return rebuild.Add(
-        mir::Expr{
-            .data = mir::BorrowExpr{.operand = object}, .type = reference});
   }
 
   // The low part of `operand`, read at `type`.
   auto LowPart(BlockRebuild& rebuild, mir::ExprId operand, mir::TypeId type)
       const -> mir::Expr {
     const mir::TypeId position = mir::PositionType(unit_->types);
-    const mir::ExprId first = rebuild.Add(
+    const mir::ExprId value = rebuild.Expr(operand);
+    mir::Builder block = rebuild.Builder();
+    const mir::ExprId first = block.Add(
         mir::MakeIntegralLiteral(
             *unit_, position,
             mir::IntegralConstant{.value_words = {0}, .state_words = {}}));
-    mir::ExprId receiver = rebuild.Expr(operand);
-    if (const auto* read = std::get_if<mir::CopyExpr>(
-            &rebuild.To().exprs.Get(receiver).data)) {
-      receiver = read->place;
-    }
-    const mir::ExprId bits =
-        rebuild.Add(mir::MakeSliceExpr(receiver, first, type));
-    return mir::MakeCopyExpr(bits, type);
+    return mir::MakeCopyExpr(block.Slice(value, first, type), type);
   }
 
   const mir::CompilationUnit* unit_;

@@ -4745,8 +4745,8 @@ auto ContainerOperationCall(
   if (!declared.has_value() || !declared->receiver.has_value()) {
     return std::nullopt;
   }
-  PassedOperands passed =
-      PassedAsDeclared(unit, block, *declared, receiver, operands);
+  mir::PassedOperands passed =
+      mir::PassedAsDeclared(unit, block, *declared, receiver, operands);
   return mir::Expr{
       .data =
           mir::CallExpr{
