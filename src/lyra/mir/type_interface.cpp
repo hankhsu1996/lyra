@@ -2,26 +2,37 @@
 
 #include <algorithm>
 #include <array>
+#include <concepts>
 #include <cstddef>
 #include <cstdint>
 #include <format>
 #include <optional>
 #include <span>
+#include <utility>
 #include <variant>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
 #include "lyra/mir/array_impls.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/code_source.hpp"
 #include "lyra/mir/compilation_unit.hpp"
+#include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_id.hpp"
+#include "lyra/mir/local.hpp"
+#include "lyra/mir/record_decl.hpp"
+#include "lyra/mir/storage_part.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_builders.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/mir/value_parts.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/integral_operation.hpp"
+#include "lyra/support/language_trait.hpp"
 #include "lyra/support/library_decl.hpp"
+#include "lyra/support/library_trait.hpp"
 #include "lyra/support/value_operation.hpp"
 #include "lyra/support/value_step.hpp"
 
@@ -1045,6 +1056,26 @@ auto PartsInterface(TypeId type, const OptionalOperations& had)
   return InterfaceOf(type, std::move(operations));
 }
 
+// `value` handed to a parameter of type `taken`: borrowed where the parameter
+// is a reference, mutably where it writes through it, and as its value where
+// the parameter takes the value itself.
+auto PassedAs(
+    const CompilationUnit& unit, Builder block, ExprId value, TypeId taken)
+    -> ExprId {
+  const auto* reference = unit.types.Get(taken).As<ReferenceType>();
+  if (reference == nullptr) {
+    return block.AsValue(unit.types, value);
+  }
+  switch (reference->mutability) {
+    case Mutability::kMutable:
+      return block.Add(
+          Expr{.data = BorrowExpr{.operand = value}, .type = taken});
+    case Mutability::kReadOnly:
+      return Borrow(unit, block, value);
+  }
+  throw InternalError("mir: unknown mutability");
+}
+
 }  // namespace
 
 auto ImplOf(const CompilationUnit& unit, TypeId type) -> std::optional<Impl> {
@@ -1191,6 +1222,38 @@ auto OperationDeclarationOf(
   }
   return ValueOperationDeclaration(
       unit, source.type, source.answers, source.arguments);
+}
+
+auto PassedAsDeclared(
+    const CompilationUnit& unit, Builder block, const CallableCode& declared,
+    std::optional<ExprId> receiver, std::vector<ExprId> operands)
+    -> PassedOperands {
+  if (receiver.has_value() != declared.receiver.has_value()) {
+    throw InternalError(
+        "mir: a call of a type's operation hands a receiver where its "
+        "declaration takes none, or none where it takes one -- please report "
+        "this as a bug");
+  }
+  std::vector<TypeId> taken;
+  for (const LocalId param : declared.params) {
+    if (param != declared.receiver && param != declared.caller_location) {
+      taken.push_back(declared.locals.Get(param).type);
+    }
+  }
+  if (operands.size() != taken.size()) {
+    throw InternalError(
+        "mir: a call of a type's operation hands it other operands than its "
+        "declaration takes -- please report this as a bug");
+  }
+  for (std::size_t i = 0; i < operands.size(); ++i) {
+    operands[i] = PassedAs(unit, block, operands[i], taken[i]);
+  }
+  return PassedOperands{
+      .receiver = receiver.transform([&](ExprId object) {
+        return PassedAs(
+            unit, block, object, declared.locals.Get(*declared.receiver).type);
+      }),
+      .arguments = std::move(operands)};
 }
 
 auto OperationNamedByEntry(

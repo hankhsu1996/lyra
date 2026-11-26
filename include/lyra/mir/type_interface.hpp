@@ -4,10 +4,12 @@
 #include <optional>
 #include <vector>
 
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/code_source.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/support/builtin_fn.hpp"
@@ -93,8 +95,8 @@ struct ElementAllocation {
     const TypeInterface& interface, support::ValueOperation answers) -> bool;
 
 // The operation `source` names, declared and not defined, as rustc's fn_sig
-// states an item's signature apart from its body: each parameter a reference
-// to what it takes, the first the receiver where it is asked of a value, then
+// states an item's signature apart from its body: each parameter as the
+// operation takes it, the first the receiver where it is asked of a value, then
 // where it was called where it reports there, and its answer. An operation
 // takes and answers the same at every type its interface declares it for. A
 // body built for `source` is this declaration with its body; an operation its
@@ -102,6 +104,21 @@ struct ElementAllocation {
 [[nodiscard]] auto OperationDeclarationOf(
     const CompilationUnit& unit, const TypeOperationSource& source)
     -> std::optional<CallableCode>;
+
+// The receiver and the operands of a call of the operation `declared`
+// declares, each handed as its parameter takes it: borrowed where it takes a
+// reference, mutably where the operation writes through it, and as the value
+// where it takes the value. The operands follow the receiver among the
+// parameters, and where the operation reports where it was called the call
+// names that last.
+struct PassedOperands {
+  std::optional<ExprId> receiver;
+  std::vector<ExprId> arguments;
+};
+[[nodiscard]] auto PassedAsDeclared(
+    const CompilationUnit& unit, Builder block, const CallableCode& declared,
+    std::optional<ExprId> receiver, std::vector<ExprId> operands)
+    -> PassedOperands;
 
 // The operation of `type`'s interface a call naming the library entry `entry`
 // asks: the type's own method or the item of a language trait it implements of

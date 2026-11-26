@@ -10,7 +10,9 @@
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
+#include "lyra/diag/source_span.hpp"
 #include "lyra/mir/block_id.hpp"
+#include "lyra/mir/builder.hpp"
 #include "lyra/mir/callable_code.hpp"
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_id.hpp"
@@ -99,10 +101,7 @@ void BlockRebuild::Precede(mir::StmtId stmt) {
 }
 
 auto BlockRebuild::Add(mir::Expr expr) -> mir::ExprId {
-  if (expr.span == diag::SourceSpan{}) {
-    expr.span = span_;
-  }
-  return to_.exprs.Add(std::move(expr));
+  return Builder().Add(std::move(expr));
 }
 
 auto BlockRebuild::Add(mir::StmtData data) -> mir::StmtId {
@@ -120,7 +119,11 @@ auto BlockRebuild::AddInPlaceOf(mir::StmtId old, mir::StmtData data)
 }
 
 auto BlockRebuild::Add(mir::Block block) -> mir::BlockId {
-  return to_.child_scopes.Add(std::move(block));
+  return Builder().AddScope(std::move(block));
+}
+
+auto BlockRebuild::Builder() -> mir::Builder {
+  return {to_, span_};
 }
 
 auto BlockRebuild::From() const -> const mir::Block& {
