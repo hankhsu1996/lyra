@@ -3,10 +3,15 @@
 // array, and a legal member of an unpacked structure (LRM 7.2, 7.4.2, 7.5,
 // 7.8, 7.10). What an element holds is the handle, not the object, so a
 // container assignment copies handles and both copies reach the one object
-// (LRM 8.12), while an element never written holds null (LRM Table 6-7).
+// (LRM 8.12), while an element never written holds null (LRM Table 6-7). A
+// property written through an element reaches the element's object whatever
+// selects the element: an index the program computes, `$` (LRM 7.10.1), a
+// queue of queues, a queue property, in a task, a fork branch, a `foreach`
+// body and a `for` initialization (LRM 8.4, 9.3.2, 12.7.1, 12.7.3).
 module Top;
   class Cell;
     int v;
+    Cell kin [$];
 
     function new(int v);
       this.v = v;
@@ -42,6 +47,27 @@ module Top;
   int copy_reaches_one_object;
   int write_through_element_is_seen;
 
+  Cell slots [$];
+  Cell rows [$][$];
+  Cell owner;
+  Cell made_third;
+  Cell made_fourth;
+  int at;
+  int by_variable;
+  int by_expression;
+  int by_last;
+  int by_task;
+  int by_fork;
+  int by_foreach;
+  int by_rows;
+  int by_property;
+  int by_property_of_element;
+  int by_loop_start;
+
+  task automatic write_at(int index, int value);
+    slots[index].v = value;
+  endtask
+
   initial begin
     // Every target starts at a value its own check rejects, so a check that
     // never ran cannot pass as one that answered correctly.
@@ -56,6 +82,16 @@ module Top;
     unwritten_member_is_null = 0;
     copy_reaches_one_object = 0;
     write_through_element_is_seen = -1;
+    by_variable = -1;
+    by_expression = -1;
+    by_last = -1;
+    by_task = -1;
+    by_fork = -1;
+    by_foreach = -1;
+    by_rows = -1;
+    by_property = -1;
+    by_property_of_element = -1;
+    by_loop_start = -1;
 
     made_first = new(11);
     made_second = new(22);
@@ -93,6 +129,44 @@ module Top;
     copy_reaches_one_object = (copied[0] == lined[0]);
     copied[0].v = 99;
     write_through_element_is_seen = made_first.v;
+
+    made_third = new(0);
+    made_fourth = new(0);
+    slots.push_back(made_third);
+    slots.push_back(made_fourth);
+    at = 1;
+
+    slots[at].v = 31;
+    by_variable = made_fourth.v;
+    slots[at - 1].v = 32;
+    by_expression = made_third.v;
+    slots[$].v = 33;
+    by_last = made_fourth.v;
+    write_at(0, 34);
+    by_task = made_third.v;
+    fork
+      slots[at].v = 35;
+    join
+    by_fork = made_fourth.v;
+    foreach (slots[k]) slots[k].v = 36 + k;
+    by_foreach = made_third.v * 100 + made_fourth.v;
+
+    rows.push_back(slots);
+    rows[0][at].v = 38;
+    by_rows = made_fourth.v;
+
+    owner = new(0);
+    owner.kin.push_back(made_third);
+    owner.kin[at - 1].v = 39;
+    by_property = made_third.v;
+    slots[at].kin.push_back(made_third);
+    slots[at].kin[at - 1].v = 40;
+    by_property_of_element = made_third.v;
+
+    // The initialization runs once, so the loop counts up from it.
+    for (slots[at].v = 41; slots[at].v < 43; slots[at].v++) begin
+    end
+    by_loop_start = made_fourth.v;
   end
 
   final begin
@@ -127,6 +201,28 @@ module Top;
     if (write_through_element_is_seen !== 99)
       $fatal(1, "write_through_element_is_seen was %0d, expected 99",
              write_through_element_is_seen);
+
+    if (by_variable !== 31)
+      $fatal(1, "by_variable was %0d, expected 31", by_variable);
+    if (by_expression !== 32)
+      $fatal(1, "by_expression was %0d, expected 32", by_expression);
+    if (by_last !== 33)
+      $fatal(1, "by_last was %0d, expected 33", by_last);
+    if (by_task !== 34)
+      $fatal(1, "by_task was %0d, expected 34", by_task);
+    if (by_fork !== 35)
+      $fatal(1, "by_fork was %0d, expected 35", by_fork);
+    if (by_foreach !== 3637)
+      $fatal(1, "by_foreach was %0d, expected 3637", by_foreach);
+    if (by_rows !== 38)
+      $fatal(1, "by_rows was %0d, expected 38", by_rows);
+    if (by_property !== 39)
+      $fatal(1, "by_property was %0d, expected 39", by_property);
+    if (by_property_of_element !== 40)
+      $fatal(1, "by_property_of_element was %0d, expected 40",
+             by_property_of_element);
+    if (by_loop_start !== 43)
+      $fatal(1, "by_loop_start was %0d, expected 43", by_loop_start);
 
     $display("All checks passed");
   end

@@ -121,8 +121,11 @@ ways.
    refuses. An `if` in the `else` of another reaches it as `else if`, which opens no bracket per
    link, and is as deep as the source nested it. A `break` naming a statement reaches C++ as a
    `goto` to a label after that statement, since C++'s own `break` would leave the nearest `switch`
-   rather than the loop it names. Each choice reads only the node's kind and its own children, so
-   they are spellings.
+   rather than the loop it names. A block expression reaches C++, which has none, as a lambda called
+   where it is written and enclosed in parentheses, so it is one primary expression wherever it
+   stands: where a declaration may stand, clang before release 21 reads a `*` or `&` before the
+   lambda's `[` as the start of a declarator, and the host compiler is whichever one the user has.
+   Each choice reads only the node's kind and its own children, so they are spellings.
 
    Different syntactic shape is therefore not the test, and reading it as one condemns the
    mechanical cases. A member reached through a pointer and one reached inline, a declaration that

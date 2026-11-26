@@ -32,7 +32,6 @@
 #include "lyra/mir/class_id.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/storage_part.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/mir/unary_op.hpp"
 #include "lyra/support/float_width.hpp"
@@ -497,13 +496,18 @@ auto FieldInitValue(
       "declares -- please report this as a bug");
 }
 
-// C++ has no block expression, so one is a lambda called where it is written:
-// `[&] { steps; return value; }()`. Capturing by reference is safe because it
-// runs immediately. MIR allows no `return` among the steps, so the only
-// `return` inside is the one that yields the value. A block with no steps is
-// its value written in place: the lambda would return it by value, copying an
-// aggregate on every evaluation, and every arm of a chain of selections stands
-// in such a block, so wrapping each would nest the text a lambda per link.
+// C++ has no block expression, so one is a lambda called where it is written,
+// in parentheses: `([&] { steps; return value; }())`. The parentheses make it
+// one primary expression wherever it stands, as GCC writes its statement
+// expression `({ ... })`: where a declaration may stand, clang before release
+// 21 reads a `*` or `&` followed by the lambda's `[` as the start of a
+// declarator, and the host compiler is whichever one the user has. Capturing by
+// reference is safe because it runs immediately. MIR allows no `return` among
+// the steps, so the only `return` inside is the one that yields the value. A
+// block with no steps is its value written in place: the lambda would return
+// it by value, copying an aggregate on every evaluation, and every arm of a
+// chain of selections stands in such a block, so wrapping each would nest the
+// text a lambda per link.
 void RenderBlockExpr(
     const ScopeView& view, const mir::BlockExpr& block, mir::TypeId type,
     Precedence at_least, TargetText& out) {
@@ -518,13 +522,13 @@ void RenderBlockExpr(
   // yielding nothing ends with its last step, which C++ may give a value of
   // its own that a lambda answering nothing cannot return.
   const bool yields_nothing = type == view.Unit().builtins.void_type;
-  Write(out, "[&]() -> ", CppType(view.Unit(), type), " ");
+  Write(out, "([&]() -> ", CppType(view.Unit(), type), " ");
   WriteBody(out, [&] {
     RenderBlockStatements(body_view, out);
     out.OpenLine();
     Write(body_view, out, yields_nothing ? "" : "return ", block.value, ";\n");
   });
-  out += "()";
+  out += "())";
 }
 
 // A closure value is its type built from its captures in the type's member
