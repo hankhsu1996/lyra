@@ -1,0 +1,874 @@
+{
+ "base": "83c877ab661d3c7d81c1da33f28e2c4390a726a0",
+ "note_version": 1,
+ "results": {
+  "base": [
+   {
+    "backend": "llvm",
+    "case": "HammerBlade:2x1:hello",
+    "family": "designs",
+    "instructions_per_unit": 182322970947.0,
+    "measure": "build",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "HammerBlade:2x1:hello",
+    "family": "designs",
+    "instructions_per_unit": 9193020365.0,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "VeeR-EH1:default:hello",
+    "family": "designs",
+    "instructions_per_unit": 172183514693.0,
+    "measure": "build",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "VeeR-EH1:default:hello",
+    "family": "designs",
+    "instructions_per_unit": 4740941986.0,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "VeeR-EL2:default:hello",
+    "family": "designs",
+    "instructions_per_unit": 240010823509.0,
+    "measure": "build",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "VeeR-EL2:default:hello",
+    "family": "designs",
+    "instructions_per_unit": 16562099703.0,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "XuanTie-E902:default:hello",
+    "family": "designs",
+    "instructions_per_unit": 136366106954.0,
+    "measure": "build",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "XuanTie-E902:default:hello",
+    "family": "designs",
+    "instructions_per_unit": 65566094173.0,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "cpp",
+    "case": "call-chain",
+    "family": "control-flow",
+    "instructions_per_unit": 95.99972290822784,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "call-chain",
+    "family": "control-flow",
+    "instructions_per_unit": 101.00024140908084,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "cpp",
+    "case": "change-sub-dense",
+    "family": "scheduling",
+    "instructions_per_unit": 117886.0,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "change-sub-dense",
+    "family": "scheduling",
+    "instructions_per_unit": 157424.03738317758,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "cpp",
+    "case": "clock-pipeline",
+    "family": "scheduling",
+    "instructions_per_unit": 26934.62901805372,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "clock-pipeline",
+    "family": "scheduling",
+    "instructions_per_unit": 29832.984528219655,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "cpp",
+    "case": "compute-block",
+    "family": "representative",
+    "instructions_per_unit": 349728.5833333333,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "compute-block",
+    "family": "representative",
+    "instructions_per_unit": 459616.81974248926,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "cpp",
+    "case": "delta-converge",
+    "family": "scheduling",
+    "instructions_per_unit": 49478.0,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "delta-converge",
+    "family": "scheduling",
+    "instructions_per_unit": 57031.0,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "cpp",
+    "case": "edge-sub-dense",
+    "family": "scheduling",
+    "instructions_per_unit": 129611.0,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "edge-sub-dense",
+    "family": "scheduling",
+    "instructions_per_unit": 164818.02282608696,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "cpp",
+    "case": "fanout-comb",
+    "family": "scheduling",
+    "instructions_per_unit": 80692.19895629484,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "fanout-comb",
+    "family": "scheduling",
+    "instructions_per_unit": 98710.08984375,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "cpp",
+    "case": "fanout-nested",
+    "family": "scheduling",
+    "instructions_per_unit": 80756.16232961587,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "fanout-nested",
+    "family": "scheduling",
+    "instructions_per_unit": 96982.18701700155,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "cpp",
+    "case": "generate-expand",
+    "family": "compile",
+    "instructions_per_unit": 1439395.625,
+    "measure": "build",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "generate-expand",
+    "family": "compile",
+    "instructions_per_unit": 1438187.984375,
+    "measure": "build",
+    "status": "ok"
+   },
+   {
+    "backend": "cpp",
+    "case": "loop-tight",
+    "family": "control-flow",
+    "instructions_per_unit": 520092.9833887043,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "loop-tight",
+    "family": "control-flow",
+    "instructions_per_unit": 580095.0,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "cpp",
+    "case": "module-count",
+    "family": "compile",
+    "instructions_per_unit": 1381165.171875,
+    "measure": "build",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "module-count",
+    "family": "compile",
+    "instructions_per_unit": 1378912.09375,
+    "measure": "build",
+    "status": "ok"
+   },
+   {
+    "backend": "cpp",
+    "case": "nba-heavy",
+    "family": "scheduling",
+    "instructions_per_unit": 37337.0,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "nba-heavy",
+    "family": "scheduling",
+    "instructions_per_unit": 45640.99608669476,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "cpp",
+    "case": "packed-array-read",
+    "family": "memory",
+    "instructions_per_unit": 106583.98989298454,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "packed-array-read",
+    "family": "memory",
+    "instructions_per_unit": 735837.0,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "cpp",
+    "case": "packed-array-write",
+    "family": "memory",
+    "instructions_per_unit": 303199.0,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "packed-array-write",
+    "family": "memory",
+    "instructions_per_unit": 501343.0,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "cpp",
+    "case": "packed-bitwise",
+    "family": "arithmetic",
+    "instructions_per_unit": 1334.0001718824815,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "packed-bitwise",
+    "family": "arithmetic",
+    "instructions_per_unit": 6817.0,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "cpp",
+    "case": "packed-slice-read",
+    "family": "memory",
+    "instructions_per_unit": 98391.99665924277,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "packed-slice-read",
+    "family": "memory",
+    "instructions_per_unit": 735837.1529411764,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "cpp",
+    "case": "packed-slice-write",
+    "family": "memory",
+    "instructions_per_unit": 290910.0,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "packed-slice-write",
+    "family": "memory",
+    "instructions_per_unit": 501343.0,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "cpp",
+    "case": "partial-wait",
+    "family": "scheduling",
+    "instructions_per_unit": 10437.062831553565,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "partial-wait",
+    "family": "scheduling",
+    "instructions_per_unit": 12175.937536092397,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "cpp",
+    "case": "port-chain",
+    "family": "scheduling",
+    "instructions_per_unit": 141958.19911012237,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "port-chain",
+    "family": "scheduling",
+    "instructions_per_unit": 161287.207852194,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "cpp",
+    "case": "scalar-arith",
+    "family": "arithmetic",
+    "instructions_per_unit": 146.99998962459912,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "scalar-arith",
+    "family": "arithmetic",
+    "instructions_per_unit": 146.0,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "cpp",
+    "case": "sparse-wakeup",
+    "family": "scheduling",
+    "instructions_per_unit": 8303.916498469953,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "sparse-wakeup",
+    "family": "scheduling",
+    "instructions_per_unit": 8943.402359535914,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "cpp",
+    "case": "unpacked-array-read",
+    "family": "memory",
+    "instructions_per_unit": 2293821.214285714,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "unpacked-array-read",
+    "family": "memory",
+    "instructions_per_unit": 2195551.106060606,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "cpp",
+    "case": "unpacked-array-write",
+    "family": "memory",
+    "instructions_per_unit": 6160478.0,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "unpacked-array-write",
+    "family": "memory",
+    "instructions_per_unit": 10944607.0,
+    "measure": "run",
+    "status": "ok"
+   }
+  ],
+  "head": [
+   {
+    "backend": "llvm",
+    "case": "HammerBlade:2x1:hello",
+    "family": "designs",
+    "instructions_per_unit": 182328889898.0,
+    "measure": "build",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "HammerBlade:2x1:hello",
+    "family": "designs",
+    "instructions_per_unit": 9193020365.0,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "VeeR-EH1:default:hello",
+    "family": "designs",
+    "instructions_per_unit": 172192687087.0,
+    "measure": "build",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "VeeR-EH1:default:hello",
+    "family": "designs",
+    "instructions_per_unit": 4740941986.0,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "VeeR-EL2:default:hello",
+    "family": "designs",
+    "instructions_per_unit": 240028534530.0,
+    "measure": "build",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "VeeR-EL2:default:hello",
+    "family": "designs",
+    "instructions_per_unit": 16562099703.0,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "XuanTie-E902:default:hello",
+    "family": "designs",
+    "instructions_per_unit": 136352123159.0,
+    "measure": "build",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "XuanTie-E902:default:hello",
+    "family": "designs",
+    "instructions_per_unit": 65566094173.0,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "cpp",
+    "case": "call-chain",
+    "family": "control-flow",
+    "instructions_per_unit": 95.99972290822784,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "call-chain",
+    "family": "control-flow",
+    "instructions_per_unit": 101.00024140908084,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "cpp",
+    "case": "change-sub-dense",
+    "family": "scheduling",
+    "instructions_per_unit": 117886.0,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "change-sub-dense",
+    "family": "scheduling",
+    "instructions_per_unit": 157424.02284527518,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "cpp",
+    "case": "clock-pipeline",
+    "family": "scheduling",
+    "instructions_per_unit": 26934.62901805372,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "clock-pipeline",
+    "family": "scheduling",
+    "instructions_per_unit": 29832.984528219655,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "cpp",
+    "case": "compute-block",
+    "family": "representative",
+    "instructions_per_unit": 349728.5833333333,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "compute-block",
+    "family": "representative",
+    "instructions_per_unit": 459616.81974248926,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "cpp",
+    "case": "delta-converge",
+    "family": "scheduling",
+    "instructions_per_unit": 49478.0,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "delta-converge",
+    "family": "scheduling",
+    "instructions_per_unit": 57031.0,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "cpp",
+    "case": "edge-sub-dense",
+    "family": "scheduling",
+    "instructions_per_unit": 129611.0,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "edge-sub-dense",
+    "family": "scheduling",
+    "instructions_per_unit": 164818.00760869565,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "cpp",
+    "case": "fanout-comb",
+    "family": "scheduling",
+    "instructions_per_unit": 80692.19895629484,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "fanout-comb",
+    "family": "scheduling",
+    "instructions_per_unit": 98710.1171875,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "cpp",
+    "case": "fanout-nested",
+    "family": "scheduling",
+    "instructions_per_unit": 80756.16232961587,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "fanout-nested",
+    "family": "scheduling",
+    "instructions_per_unit": 96982.18701700155,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "cpp",
+    "case": "generate-expand",
+    "family": "compile",
+    "instructions_per_unit": 1430623.546875,
+    "measure": "build",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "generate-expand",
+    "family": "compile",
+    "instructions_per_unit": 1430884.984375,
+    "measure": "build",
+    "status": "ok"
+   },
+   {
+    "backend": "cpp",
+    "case": "loop-tight",
+    "family": "control-flow",
+    "instructions_per_unit": 520092.9833887043,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "loop-tight",
+    "family": "control-flow",
+    "instructions_per_unit": 580095.0,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "cpp",
+    "case": "module-count",
+    "family": "compile",
+    "instructions_per_unit": 1385852.3125,
+    "measure": "build",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "module-count",
+    "family": "compile",
+    "instructions_per_unit": 1390492.3125,
+    "measure": "build",
+    "status": "ok"
+   },
+   {
+    "backend": "cpp",
+    "case": "nba-heavy",
+    "family": "scheduling",
+    "instructions_per_unit": 37337.0,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "nba-heavy",
+    "family": "scheduling",
+    "instructions_per_unit": 45640.99608669476,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "cpp",
+    "case": "packed-array-read",
+    "family": "memory",
+    "instructions_per_unit": 106583.98989298454,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "packed-array-read",
+    "family": "memory",
+    "instructions_per_unit": 735837.0,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "cpp",
+    "case": "packed-array-write",
+    "family": "memory",
+    "instructions_per_unit": 303198.92578125,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "packed-array-write",
+    "family": "memory",
+    "instructions_per_unit": 501343.0,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "cpp",
+    "case": "packed-bitwise",
+    "family": "arithmetic",
+    "instructions_per_unit": 1334.0,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "packed-bitwise",
+    "family": "arithmetic",
+    "instructions_per_unit": 6817.0,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "cpp",
+    "case": "packed-slice-read",
+    "family": "memory",
+    "instructions_per_unit": 98391.99665924277,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "packed-slice-read",
+    "family": "memory",
+    "instructions_per_unit": 735837.3176470589,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "cpp",
+    "case": "packed-slice-write",
+    "family": "memory",
+    "instructions_per_unit": 290910.0,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "packed-slice-write",
+    "family": "memory",
+    "instructions_per_unit": 501343.0,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "cpp",
+    "case": "partial-wait",
+    "family": "scheduling",
+    "instructions_per_unit": 10437.062831553565,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "partial-wait",
+    "family": "scheduling",
+    "instructions_per_unit": 12175.937536092397,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "cpp",
+    "case": "port-chain",
+    "family": "scheduling",
+    "instructions_per_unit": 141958.20467185762,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "port-chain",
+    "family": "scheduling",
+    "instructions_per_unit": 161287.19168591223,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "cpp",
+    "case": "scalar-arith",
+    "family": "arithmetic",
+    "instructions_per_unit": 146.99998962459912,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "scalar-arith",
+    "family": "arithmetic",
+    "instructions_per_unit": 146.0,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "cpp",
+    "case": "sparse-wakeup",
+    "family": "scheduling",
+    "instructions_per_unit": 8303.916498469953,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "sparse-wakeup",
+    "family": "scheduling",
+    "instructions_per_unit": 8943.402359535914,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "cpp",
+    "case": "unpacked-array-read",
+    "family": "memory",
+    "instructions_per_unit": 2293854.1714285715,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "unpacked-array-read",
+    "family": "memory",
+    "instructions_per_unit": 2195551.3181818184,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "cpp",
+    "case": "unpacked-array-write",
+    "family": "memory",
+    "instructions_per_unit": 6160478.0,
+    "measure": "run",
+    "status": "ok"
+   },
+   {
+    "backend": "llvm",
+    "case": "unpacked-array-write",
+    "family": "memory",
+    "instructions_per_unit": 10944607.0,
+    "measure": "run",
+    "status": "ok"
+   }
+  ]
+ }
+}
