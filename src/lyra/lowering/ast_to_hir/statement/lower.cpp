@@ -314,6 +314,10 @@ auto LowerStatement(
       return LowerPatternCaseStmt(
           proc, frame, stmt.as<slang::ast::PatternCaseStatement>(), span);
 
+    case slang::ast::StatementKind::RandCase:
+      return LowerRandCaseStmt(
+          proc, frame, stmt.as<slang::ast::RandCaseStatement>(), span);
+
     case slang::ast::StatementKind::Conditional:
       return LowerConditionalStmt(
           proc, frame, stmt.as<slang::ast::ConditionalStatement>(), span);
@@ -369,12 +373,6 @@ auto LowerStatement(
               span, diag::DiagCode::kUnsupportedStatementForm,
               "a checker instantiation is not yet supported")
               .WithNote("pass '--assertions skip' to leave it out"));
-
-    case slang::ast::StatementKind::RandCase:
-      // LRM 18.16.
-      return diag::Fail(
-          span, diag::DiagCode::kUnsupportedStatementForm,
-          "'randcase' is not yet supported");
 
     case slang::ast::StatementKind::RandSequence:
       // LRM 18.17.

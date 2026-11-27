@@ -8,6 +8,7 @@
 
 #include <slang/ast/Statement.h>
 #include <slang/ast/statements/ConditionalStatements.h>
+#include <slang/ast/statements/MiscStatements.h>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/overloaded.hpp"
@@ -204,6 +205,28 @@ auto LowerPatternCaseStmt(
               .items = std::move(items),
               .default_stmt = default_id,
               .check = case_check},
+      .span = span};
+}
+
+auto LowerRandCaseStmt(
+    ProcessLowerer& proc, WalkFrame frame,
+    const slang::ast::RandCaseStatement& rs, diag::SourceSpan span)
+    -> diag::Result<hir::Stmt> {
+  std::vector<hir::RandCaseItem> items;
+  items.reserve(rs.items.size());
+  for (const auto& item : rs.items) {
+    auto weight_or = proc.LowerExpr(*item.expr, frame);
+    if (!weight_or) return std::unexpected(std::move(weight_or.error()));
+    const hir::ExprId weight_id = frame.Exprs().Add(*std::move(weight_or));
+    auto stmt_or = proc.LowerStmt(*item.stmt, frame);
+    if (!stmt_or) return std::unexpected(std::move(stmt_or.error()));
+    const hir::StmtId stmt_id =
+        frame.current_procedural_body->stmts.Add(*std::move(stmt_or));
+    items.push_back(hir::RandCaseItem{.weight = weight_id, .stmt = stmt_id});
+  }
+  return hir::Stmt{
+      .label = std::nullopt,
+      .data = hir::RandCaseStmt{.items = std::move(items)},
       .span = span};
 }
 

@@ -83,6 +83,9 @@ auto ProcessLowerer::LowerStmt(const hir::Stmt& stmt, WalkFrame frame)
           [&](const hir::PatternCaseStmt& c) {
             return LowerPatternCaseStmt(*this, frame, stmt.label, c);
           },
+          [&](const hir::RandCaseStmt& r) {
+            return LowerRandCaseStmt(*this, frame, stmt.label, r);
+          },
           [&](const hir::AssertStmt& a) {
             return LowerAssertStmt(*this, frame, stmt.label, a);
           },

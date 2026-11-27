@@ -1,5 +1,6 @@
 #include "lyra/lowering/hir_to_mir/statement/branches.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <expected>
@@ -23,6 +24,7 @@
 #include "lyra/lowering/hir_to_mir/predicate.hpp"
 #include "lyra/lowering/hir_to_mir/process_lowerer.hpp"
 #include "lyra/lowering/hir_to_mir/qualified_statement_check.hpp"
+#include "lyra/lowering/hir_to_mir/runtime_call.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/statement/blocks.hpp"
 #include "lyra/lowering/hir_to_mir/switch_stmt.hpp"
@@ -31,9 +33,14 @@
 #include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
+#include "lyra/mir/expr_builders.hpp"
+#include "lyra/mir/integral_constant.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
+#include "lyra/mir/type.hpp"
+#include "lyra/mir/type_builders.hpp"
 #include "lyra/mir/type_id.hpp"
+#include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::hir_to_mir {
 
@@ -436,6 +443,212 @@ auto LowerPatternCaseStmt(
   return BuildWrappedBranching(
       process, frame, wrapper_frame.Builder(), std::move(label), c.check,
       QualifiedArmKind::kCaseItem, std::move(items), c.default_stmt);
+}
+
+namespace {
+
+// How many bits one `$urandom` call answers (LRM 18.13.1).
+constexpr std::uint64_t kBitsPerDraw = 32;
+
+auto IntegralOf(
+    const mir::CompilationUnit& unit, mir::Builder block, std::uint64_t value,
+    mir::TypeId type) -> mir::ExprId {
+  return mir::BuildIntegralLiteral(
+      unit, block, type,
+      mir::IntegralConstant{.value_words = {value}, .state_words = {}});
+}
+
+// A weight as a summand of `sum_type` (LRM 18.16): read as unsigned at its own
+// width before it is widened, so a negative weight is never sign-extended. A
+// weight holding an x or z bit is zero, as an unknown repeat count (LRM 12.7.2)
+// or delay (LRM 9.4.1) is.
+auto Summand(
+    const mir::CompilationUnit& unit, mir::Builder block, mir::ExprId weight,
+    mir::TypeId sum_type) -> mir::ExprId {
+  const mir::TypeId own = mir::PackedVectorOf(
+      unit.types, unit.types.Get(block.Get(weight).type).Integral().bit_width,
+      mir::IntegralStateKind::kTwoState);
+  const mir::ExprId known = ConvertToType(
+      unit, block, ConvertToType(unit, block, weight, own), sum_type);
+  return block.Add(
+      mir::Expr{
+          .data =
+              mir::ConditionalExpr{
+                  .condition = ReduceToCondition(
+                      unit, block, BuildUnknownTest(unit, block, weight)),
+                  .then_value = IntegralOf(unit, block, 0, sum_type),
+                  .else_value = known},
+          .type = sum_type});
+}
+
+// One draw of `$urandom`, the running thread's generator (LRM 18.13.1), as a
+// value of `type`.
+auto DrawWord(
+    const mir::CompilationUnit& unit, mir::Builder block, mir::TypeId type)
+    -> mir::ExprId {
+  return ConvertToType(
+      unit, block,
+      block.Add(
+          mir::Expr{
+              .data =
+                  mir::CallExpr{
+                      .callee =
+                          mir::Direct{.target = support::BuiltinFn::kUrandom},
+                      .arguments = {block.Add(
+                          BuildCurrentRuntimeCallExpr(unit))}},
+              .type = unit.builtins.int_unsigned}),
+      type);
+}
+
+// A local holding a value drawn uniformly below `total`, a nonzero value of
+// `sum_type`. As many `$urandom` draws as fill the sum's width are joined, the
+// bits no value below the total sets are cleared, and the whole is drawn again
+// while it is not below the total, so every value below it is equally likely
+// at any width (LRM 18.16), in fewer than two tries on average.
+auto DrawBelow(
+    const mir::CompilationUnit& unit, const WalkFrame& frame,
+    mir::LocalId total, mir::TypeId sum_type) -> mir::LocalId {
+  mir::Builder block = frame.Builder();
+  const std::uint64_t width = unit.types.Get(sum_type).Integral().bit_width;
+  const mir::ExprId one = IntegralOf(unit, block, 1, sum_type);
+  const mir::LocalId pick =
+      DeclareLocal(frame, IntegralOf(unit, block, 0, sum_type));
+  const mir::ExprId length = block.Add(
+      mir::MakeBuiltinCall(
+          unit, block.Body(), support::BuiltinFn::kClog2,
+          block.ReadLocal(total, sum_type), {}, unit.builtins.integer));
+  const mir::LocalId mask = DeclareLocal(
+      frame, block.Add(
+                 mir::MakeBinary(
+                     unit, block.Body(), mir::BinaryOp::kSub,
+                     block.Add(
+                         mir::MakeBuiltinCall(
+                             unit, block.Body(), support::BuiltinFn::kShiftLeft,
+                             one, {length}, sum_type)),
+                     one, sum_type)));
+
+  mir::Block draw;
+  mir::Builder draw_block = block.Into(draw);
+  mir::ExprId bits = DrawWord(unit, draw_block, sum_type);
+  for (std::uint64_t drawn = kBitsPerDraw; drawn < width;
+       drawn += kBitsPerDraw) {
+    const mir::ExprId shifted = draw_block.Add(
+        mir::MakeBuiltinCall(
+            unit, draw_block.Body(), support::BuiltinFn::kShiftLeft, bits,
+            {mir::BuildIntLiteral(
+                unit, draw_block, static_cast<std::int64_t>(kBitsPerDraw))},
+            sum_type));
+    bits = draw_block.Add(
+        mir::MakeBinary(
+            unit, draw_block.Body(), mir::BinaryOp::kBitwiseOr, shifted,
+            DrawWord(unit, draw_block, sum_type), sum_type));
+  }
+  AssignLocal(
+      unit, draw_block, pick,
+      draw_block.Add(
+          mir::MakeBinary(
+              unit, draw_block.Body(), mir::BinaryOp::kBitwiseAnd, bits,
+              draw_block.ReadLocal(mask, sum_type), sum_type)));
+
+  const mir::ExprId not_below = block.Add(
+      mir::MakeBinary(
+          unit, block.Body(), mir::BinaryOp::kGreaterEqual,
+          block.ReadLocal(pick, sum_type), block.ReadLocal(total, sum_type),
+          unit.builtins.bit1));
+  block.AppendStmt(
+      mir::DoWhileStmt{
+          .condition = ReduceToCondition(unit, block, not_below),
+          .scope = block.AddScope(std::move(draw))});
+  return pick;
+}
+
+}  // namespace
+
+// LRM 18.16: every weight is evaluated once, and the weights are added as
+// unsigned values at the widest weight's width, which wraps. One draw below the
+// sum selects the first item whose running total exceeds it, so a zero weight
+// is never taken, and where the sum does not wrap an item is taken with the
+// probability of its weight over the sum. Where the sum is zero, however it
+// came to be, no item is taken. The draws are the running thread's own, so they
+// are as stable as `$urandom` is (LRM 18.14.2).
+auto LowerRandCaseStmt(
+    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
+    const hir::RandCaseStmt& r) -> diag::Result<mir::Stmt> {
+  const mir::CompilationUnit& unit = process.Owner().Unit();
+  mir::Block wrapper;
+  const WalkFrame wrapper_frame = frame.WithBlock(&wrapper);
+  mir::Builder block = wrapper_frame.Builder();
+
+  std::vector<mir::ExprId> weights;
+  weights.reserve(r.items.size());
+  std::uint64_t width = 0;
+  for (const hir::RandCaseItem& item : r.items) {
+    auto lowered = process.LowerExpr(
+        process.HirBody().exprs.Get(item.weight), wrapper_frame);
+    if (!lowered) return std::unexpected(std::move(lowered.error()));
+    const mir::ExprId weight =
+        EvaluatedOnce(wrapper_frame, block.Add(*std::move(lowered)));
+    width = std::max(
+        width, unit.types.Get(block.Get(weight).type).Integral().bit_width);
+    weights.push_back(weight);
+  }
+  const mir::TypeId sum_type =
+      mir::PackedVectorOf(unit.types, width, mir::IntegralStateKind::kTwoState);
+
+  std::vector<mir::LocalId> totals;
+  totals.reserve(weights.size());
+  mir::ExprId running = IntegralOf(unit, block, 0, sum_type);
+  for (const mir::ExprId weight : weights) {
+    totals.push_back(DeclareLocal(
+        wrapper_frame,
+        block.Add(
+            mir::MakeBinary(
+                unit, block.Body(), mir::BinaryOp::kAdd, running,
+                Summand(unit, block, weight, sum_type), sum_type))));
+    running = block.ReadLocal(totals.back(), sum_type);
+  }
+
+  mir::Block drawn;
+  const WalkFrame drawn_frame = wrapper_frame.WithBlock(&drawn);
+  const mir::LocalId pick =
+      DrawBelow(unit, drawn_frame, totals.back(), sum_type);
+  std::vector<SearchedArm> arms;
+  arms.reserve(r.items.size());
+  for (std::size_t i = 0; i < r.items.size(); ++i) {
+    arms.push_back(
+        SearchedArm{
+            .conditions =
+                {[&unit, pick, total = totals[i],
+                  sum_type](const WalkFrame& at) -> diag::Result<mir::ExprId> {
+                  mir::Builder test = at.Builder();
+                  return test.Add(
+                      mir::MakeBinary(
+                          unit, test.Body(), mir::BinaryOp::kLessThan,
+                          test.ReadLocal(pick, sum_type),
+                          test.ReadLocal(total, sum_type), unit.builtins.bit1));
+                }},
+            .body = [&process, stmt = r.items[i].stmt](const WalkFrame& at) {
+              return LowerStmtIntoChildScope(process, at, stmt);
+            }});
+  }
+  auto search = BuildArmSearch(unit, drawn_frame, arms, std::nullopt);
+  if (!search) return std::unexpected(std::move(search.error()));
+  drawn_frame.Builder().AppendStmt(*std::move(search));
+
+  const mir::ExprId any = block.Add(
+      mir::MakeBinary(
+          unit, block.Body(), mir::BinaryOp::kInequality,
+          block.ReadLocal(totals.back(), sum_type),
+          IntegralOf(unit, block, 0, sum_type), unit.builtins.bit1));
+  block.AppendStmt(
+      mir::IfStmt{
+          .condition = ReduceToCondition(unit, block, any),
+          .then_scope = block.AddScope(std::move(drawn)),
+          .else_scope = std::nullopt});
+  return mir::Stmt{
+      .label = std::move(label),
+      .data = mir::BlockStmt{
+          .scope = frame.Builder().AddScope(std::move(wrapper))}};
 }
 
 }  // namespace lyra::lowering::hir_to_mir

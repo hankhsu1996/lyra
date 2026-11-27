@@ -2,8 +2,8 @@
 
 // Lowering of branching statements: `if` / `unique if` / `unique0 if` /
 // `priority if` (LRM 12.4); `case` / `casez` / `casex` / `unique case` /
-// `unique0 case` / `priority case` (LRM 12.5); and `case ... inside`
-// (LRM 12.5.4).
+// `unique0 case` / `priority case` (LRM 12.5); `case ... inside` (LRM 12.5.4);
+// pattern-matching `case` (LRM 12.6.1); and `randcase` (LRM 18.16).
 
 #include <optional>
 #include <string>
@@ -27,5 +27,9 @@ auto LowerCaseStmt(
 auto LowerPatternCaseStmt(
     ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
     const hir::PatternCaseStmt& c) -> diag::Result<mir::Stmt>;
+
+auto LowerRandCaseStmt(
+    ProcessLowerer& process, WalkFrame frame, std::optional<std::string> label,
+    const hir::RandCaseStmt& r) -> diag::Result<mir::Stmt>;
 
 }  // namespace lyra::lowering::hir_to_mir

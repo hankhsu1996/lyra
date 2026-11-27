@@ -166,6 +166,23 @@ struct PatternCaseStmt {
   auto operator==(const PatternCaseStmt&) const -> bool = default;
 };
 
+// One item of a randcase (LRM 18.16): its weight, a self-determined integral
+// expression, and the statement run when the item is taken.
+struct RandCaseItem {
+  ExprId weight;
+  StmtId stmt;
+
+  auto operator==(const RandCaseItem&) const -> bool = default;
+};
+
+// LRM 18.16: one of the items, taken with the probability of its weight over
+// the sum of all weights, in the order the source lists them.
+struct RandCaseStmt {
+  std::vector<RandCaseItem> items;
+
+  auto operator==(const RandCaseStmt&) const -> bool = default;
+};
+
 // LRM 16.2 verification directive of an immediate assertion. The two state
 // different things -- an obligation the design must meet, and an assumption
 // about the environment around it -- and a simulation tool checks both the same
@@ -452,7 +469,7 @@ struct ProceduralContinuousEndStmt {
 
 using StmtData = std::variant<
     EmptyStmt, VarDeclStmt, ExprStmt, BlockStmt, ForkStmt, IfStmt, CaseStmt,
-    PatternCaseStmt, AssertStmt, CoverStmt, ConcurrentAssertStmt,
+    PatternCaseStmt, RandCaseStmt, AssertStmt, CoverStmt, ConcurrentAssertStmt,
     ConcurrentCoverStmt, ExpectStmt, ForStmt, ForeachStmt, WhileStmt,
     RepeatStmt, DoWhileStmt, ForeverStmt, BreakStmt, ContinueStmt, ReturnStmt,
     TimedStmt, EventTriggerStmt, WaitStmt, WaitForkStmt, DisableForkStmt,

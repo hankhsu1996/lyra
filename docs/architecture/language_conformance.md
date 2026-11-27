@@ -1442,6 +1442,57 @@ own, whose Postponed region comes after the event. Neither sentence answers it.
 Lyra samples it as `#0`, in the Observed region. Rounded, it names the event's own time step, as
 `#0` does, and 14.4 samples a value of that time step in the Observed region "to avoid races".
 
+#### A randcase weight holding an x or z bit
+
+```systemverilog
+logic [3:0] w = 4'b1x01;
+randcase
+  w : x = 1;   // never taken, or weighted 9?
+  1 : x = 2;
+endcase
+```
+
+18.16 says "The randcase_item expressions are non-negative integral values", and computes the sum
+"using standard addition semantics (maximum precision of all weights), where each summand is
+unsigned". It says nothing of a weight holding an unknown bit, and two other clauses each read as
+the answer. 6.11.2 keeps the known bits "When a 4-state value is automatically converted to a
+2-state value", but 18.16 converts the weights to no 2-state type: each is self-determined, and
+"unsigned" states their signedness, not their states. 11.4.3 makes the sum x "if any operand bit
+value is the unknown value x or the high-impedance value z", and then the random number "in the
+range of 0 to the sum" has no range and no item has a probability, so read that way the clause gives
+the statement no meaning. Nor does the first sentence make such a weight the design's error, as
+7.5.1 makes a negative `new[]` size one: 18.16 adds a weight that is negative as signed as an
+unsigned value, and its own example `a - b` of two bytes can be one, so the sentence says what a
+weight is taken as rather than forbidding a value.
+
+Lyra takes such a weight as zero, so its item is never taken, and where every weight is unknown or
+zero no item is. 18.16 selects item by item -- "If a branch specifies a zero weight, then that
+branch is not taken" -- and wherever the standard reads an amount out of an expression to decide how
+often or how long something runs, it takes an unknown amount as zero: a repeat count that "evaluates
+to a negative, unknown or high-impedance value" is "treated as zero" (12.7.2), and an unknown delay
+"shall be interpreted as zero delay" (9.4.1). Taking the sum as that amount instead would silence
+every item, those whose weights the design states in full among them, for one weight it does not.
+
+#### Randcase weights whose sum wraps to zero
+
+```systemverilog
+bit [7:0] half = 128;
+randcase
+  half : x = 1;   // 128 + 128 is 0 at 8 bits: no item, or the first?
+  half : x = 2;
+endcase
+```
+
+18.16 adds the weights "as unsigned values" at "maximum precision of all weights", which wraps, and
+says "If all randcase_items specify zero weights, then no branch is taken". Here no weight is zero
+but the sum is, and "An item's weight divided by the sum of all weights gives the probability of
+taking that branch" then gives no item a probability. Read inclusively, a random number "in the
+range of 0 to the sum" is 0, which the first item's running total exceeds.
+
+Lyra takes no item. The selection is a function of the sum the clause computes, and the clause's
+answer for a sum of zero is the one it gives where every weight is zero; a draw of 0 would instead
+take the first item every time, a probability of one that no weight states.
+
 #### A reference to an array element across an ordering method
 
 ```systemverilog

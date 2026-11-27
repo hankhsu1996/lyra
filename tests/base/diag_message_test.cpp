@@ -12,7 +12,7 @@ using lyra::base::MessageRule;
 
 // The checks run when Lyra is built, so these say what the build accepts and
 // refuses, one rule at a time.
-static_assert(!BrokenMessageRule("'randcase' is not yet supported"));
+static_assert(!BrokenMessageRule("'randsequence' is not yet supported"));
 static_assert(
     !BrokenMessageRule("DPI-C link input '{}' is not a readable file"));
 static_assert(!BrokenMessageRule(
@@ -39,7 +39,7 @@ static_assert(
 static_assert(
     BrokenMessageRule("compiling failed\n{}") == MessageRule::kIsOneLine);
 static_assert(
-    BrokenMessageRule("`randcase` is not yet supported") ==
+    BrokenMessageRule("`randsequence` is not yet supported") ==
     MessageRule::kQuotesANameInSingleQuotes);
 static_assert(
     BrokenMessageRule("\"x\" is unknown") ==
@@ -48,7 +48,7 @@ static_assert(
     BrokenMessageRule("the value isn't known") ==
     MessageRule::kHoldsNoContraction);
 static_assert(
-    BrokenMessageRule("'randcase' is not yet supported (LRM 18.16)") ==
+    BrokenMessageRule("'randsequence' is not yet supported (LRM 18.17)") ==
     MessageRule::kCitesNoClauseOfTheStandard);
 static_assert(
     BrokenMessageRule("a closure is not yet supported here") ==
@@ -57,10 +57,10 @@ static_assert(
     BrokenMessageRule("the front end gave it no meaning") ==
     MessageRule::kUsesNoWordForTheCompilersInsides);
 static_assert(
-    BrokenMessageRule("'randcase' is unsupported") ==
+    BrokenMessageRule("'randsequence' is unsupported") ==
     MessageRule::kSaysAGapIsNotYetSupported);
 static_assert(
-    BrokenMessageRule("'randcase' is not supported") ==
+    BrokenMessageRule("'randsequence' is not supported") ==
     MessageRule::kSaysAGapIsNotYetSupported);
 
 // A word inside a quoted name is the user's, not the message's.

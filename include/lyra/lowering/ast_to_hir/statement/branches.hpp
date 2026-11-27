@@ -4,6 +4,8 @@
 //   - Conditional / if-else (LRM 12.4)
 //   - Case (LRM 12.5)
 //   - CaseInside (LRM 12.5.4)
+//   - Pattern-matching case (LRM 12.6.1)
+//   - Randcase (LRM 18.16)
 
 #include "lyra/diag/diagnostic.hpp"
 #include "lyra/diag/source_span.hpp"
@@ -15,6 +17,7 @@ namespace slang::ast {
 class CaseStatement;
 class ConditionalStatement;
 class PatternCaseStatement;
+class RandCaseStatement;
 }  // namespace slang::ast
 
 namespace lyra::lowering::ast_to_hir {
@@ -31,6 +34,11 @@ auto LowerCaseStmt(
 auto LowerPatternCaseStmt(
     ProcessLowerer& proc, WalkFrame frame,
     const slang::ast::PatternCaseStatement& cs, diag::SourceSpan span)
+    -> diag::Result<hir::Stmt>;
+
+auto LowerRandCaseStmt(
+    ProcessLowerer& proc, WalkFrame frame,
+    const slang::ast::RandCaseStatement& rs, diag::SourceSpan span)
     -> diag::Result<hir::Stmt>;
 
 }  // namespace lyra::lowering::ast_to_hir
