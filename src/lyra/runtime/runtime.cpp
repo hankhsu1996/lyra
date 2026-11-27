@@ -438,7 +438,7 @@ void Runtime::WriteStatistics() {
 }
 
 void Runtime::ReportCoverage() {
-  for (const std::string& line : coverage_.Report()) {
+  for (const std::string& line : assertion_controls_.CoverReport()) {
     files_.Writeln(support::kStdoutFd, value::String{line});
   }
 }

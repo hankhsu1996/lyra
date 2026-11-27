@@ -2277,11 +2277,6 @@ void lyra_rt_emit_fatal_at_caller(
       ->EmitFatalAtCaller(Read<String>(text), SourceLocationAt(location));
 }
 
-void lyra_rt_record_coverage(void* runtime, const void* site, bool succeeded) {
-  static_cast<RuntimeEffects*>(runtime)->RecordCoverage(
-      SourceLocationAt(site), succeeded);
-}
-
 auto lyra_rt_enter_coroutine(void* frame, void* out) noexcept -> void* {
   return lyra::runtime::StartGeneratedProcess(
       out, lyra::runtime::GeneratedCoroutine(frame));
@@ -2953,8 +2948,10 @@ void lyra_rt_assertion_control_commit(const void* control, void* made) {
 }
 
 void lyra_rt_assertion_control_describe(
-    void* control, std::uint64_t type, std::uint64_t directive) {
-  static_cast<AssertionControl*>(control)->Describe(type, directive);
+    void* control, std::uint64_t type, std::uint64_t directive,
+    const void* written_at) {
+  static_cast<AssertionControl*>(control)->Describe(
+      type, directive, SourceLocationAt(written_at));
 }
 
 void lyra_rt_assertion_control_register_in(
@@ -2980,15 +2977,18 @@ auto lyra_rt_assertion_control_allowed(const void* control) -> std::uint64_t {
 }
 
 void lyra_rt_assertion_control_submit_observed(
-    const void* control, void* body, const void* location) {
+    const void* control, void* body) {
   static_cast<const AssertionControl*>(control)->SubmitObserved(
-      std::move(*static_cast<Coroutine<void>*>(body)),
-      SourceLocationAt(location));
+      std::move(*static_cast<Coroutine<void>*>(body)));
 }
 
 void lyra_rt_assertion_control_submit_final(const void* control, void* body) {
   static_cast<const AssertionControl*>(control)->SubmitFinal(
       std::move(*static_cast<Coroutine<void>*>(body)));
+}
+
+void lyra_rt_assertion_control_record_coverage(void* control, bool succeeded) {
+  static_cast<AssertionControl*>(control)->RecordCoverage(succeeded);
 }
 
 void lyra_rt_assert_control_of_design(

@@ -216,27 +216,22 @@ auto BuildDeferredFailArm(
 }
 
 // LRM 16.3: one evaluation of an immediate cover, and whether it succeeded,
-// recorded against the statement's own place, which is what separates one
-// coverage goal from another.
+// recorded on the statement's control where `frame` lowers, which is the
+// coverage goal as LRM clause 39 gives each assertion one handle per instance.
 void AppendRecordCoverage(
-    ProcessLowerer& process, mir::Builder block, mir::ExprId outcome) {
+    ProcessLowerer& process, const WalkFrame& frame,
+    hir::ControlledAssertionId control, mir::ExprId outcome) {
   const mir::CompilationUnit& unit = process.Owner().Unit();
-  const mir::ExprId runtime_id =
-      block.Add(BuildCurrentRuntimeCallExpr(process.Owner().Unit()));
-  const mir::ExprId site_id =
-      process.Owner().BuildSourceLocationAt(block, block.Span());
+  mir::Builder block = frame.Builder();
   block.AppendStmt(
       mir::ExprStmt{
           .expr = block.Add(
-              mir::Expr{
-                  .data =
-                      mir::CallExpr{
-                          .callee =
-                              mir::Direct{
-                                  .target = support::BuiltinFn::kRecordCoverage,
-                                  .receiver = runtime_id},
-                          .arguments = {site_id, outcome}},
-                  .type = unit.builtins.void_type})});
+              mir::MakeCallExpr(
+                  mir::Direct{
+                      .target =
+                          support::BuiltinFn::kAssertionControlRecordCoverage,
+                      .receiver = process.ControlPlace(frame, control)},
+                  {outcome}, unit.builtins.void_type))});
 }
 
 }  // namespace
@@ -344,7 +339,7 @@ auto LowerCoverStmt(
           [&, runs_statement](ClosureBuilder& body, const WalkFrame& statement)
               -> diag::Result<void> {
             AppendRecordCoverage(
-                process, body.Body(),
+                process, body.Frame(), c.control,
                 BuildMachineBool(unit, body.Body(), true));
             if (!runs_statement || !HasRealArm(process.HirBody(), c.pass_stmt))
               return {};
@@ -364,7 +359,8 @@ auto LowerCoverStmt(
         process, checked_frame, c.timing, c.control,
         [&](ClosureBuilder& body, const WalkFrame&) -> diag::Result<void> {
           AppendRecordCoverage(
-              process, body.Body(), BuildMachineBool(unit, body.Body(), false));
+              process, body.Frame(), c.control,
+              BuildMachineBool(unit, body.Body(), false));
           return {};
         });
     if (!missed_or) return std::unexpected(std::move(missed_or.error()));
@@ -386,7 +382,8 @@ auto LowerCoverStmt(
         process, frame, std::move(label), allowed, std::move(checked));
   }
 
-  AppendRecordCoverage(process, block, block.ReadLocal(succeeded, bool_type));
+  AppendRecordCoverage(
+      process, checked_frame, c.control, block.ReadLocal(succeeded, bool_type));
   auto pass_or = LowerArmIntoScope(process, checked_frame, c.pass_stmt);
   if (!pass_or) return std::unexpected(std::move(pass_or.error()));
   block.AppendStmt(

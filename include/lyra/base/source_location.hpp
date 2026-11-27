@@ -38,12 +38,6 @@ class SourceLocation {
     return impl_->column;
   }
 
-  // Which constant it names, which a unit states once per place, so what is
-  // counted by place is keyed without reading the record.
-  [[nodiscard]] constexpr auto Identity() const -> const Impl* {
-    return impl_;
-  }
-
   constexpr auto operator<=>(const SourceLocation&) const
       -> std::strong_ordering = default;
 

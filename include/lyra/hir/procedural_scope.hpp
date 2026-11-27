@@ -8,6 +8,7 @@
 
 #include "lyra/base/pool_id.hpp"
 #include "lyra/base/registry.hpp"
+#include "lyra/diag/source_span.hpp"
 #include "lyra/hir/procedural_var.hpp"
 #include "lyra/support/assertion_control.hpp"
 
@@ -27,10 +28,13 @@ struct ControlledAssertionId {
 // states (Table 20-7). A task naming a scope selects every one the scope holds,
 // so each is declared by the scope it stands in, as a variable is; its identity
 // is the statement's and not an execution's, so a task's or a loop's many runs
-// of one statement are one of these.
+// of one statement are one of these. Where it is written is part of what it
+// is, as LRM 39.3.2 lists an assertion's source information among its static
+// information.
 struct ControlledAssertionDecl {
-  support::AssertionType type;
+  support::AssertionType type = support::AssertionType::kConcurrent;
   std::optional<support::AssertionDirectiveType> directive;
+  diag::SourceSpan span;
 
   auto operator==(const ControlledAssertionDecl&) const -> bool = default;
 };

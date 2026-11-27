@@ -1298,6 +1298,7 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "assertion_control_submit_observed",
           .declaration = Method{"SubmitObserved"},
+          .takes_the_location = false,
           .callables = {kStartedPastTheCaller}};
     case BuiltinFn::kAssertionControlSubmitFinal:
       return {
@@ -1305,6 +1306,11 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
           .declaration = Method{"SubmitFinal"},
           .takes_the_location = false,
           .callables = {kStartedPastTheCaller}};
+    case BuiltinFn::kAssertionControlRecordCoverage:
+      return {
+          .name = "assertion_control_record_coverage",
+          .declaration = Method{"RecordCoverage"},
+          .takes_the_location = false};
     case BuiltinFn::kFiles:
       return {
           .name = "files",
@@ -1383,12 +1389,6 @@ auto RuntimeEntryOf(BuiltinFn id) -> RuntimeEntry {
       return {
           .name = "emit_fatal_at_caller",
           .declaration = Method{"EmitFatalAtCaller"}};
-    case BuiltinFn::kRecordCoverage:
-      return {
-          .name = "record_coverage",
-          .declaration = Method{"RecordCoverage"},
-          .takes_the_runtime_handle = true,
-          .takes_the_location = false};
     case BuiltinFn::kTimeFormat:
       return {
           .name = "time_format",

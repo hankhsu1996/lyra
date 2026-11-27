@@ -24,7 +24,6 @@
 #include "lyra/runtime/closure.hpp"
 #include "lyra/runtime/command_line.hpp"
 #include "lyra/runtime/coroutine.hpp"
-#include "lyra/runtime/coverage.hpp"
 #include "lyra/runtime/diagnostic.hpp"
 #include "lyra/runtime/effect_storage.hpp"
 #include "lyra/runtime/file_table.hpp"
@@ -446,7 +445,6 @@ class Runtime final : public RuntimeEffects {
   // Built from the command line's plusargs.
   ValueDumps dumps_;
   RandomizeSettings randomize_settings_;
-  CoverageLog coverage_;
   CurrentRuntimeGuard current_runtime_guard_{*this};
   // The waits on objects that expired and have not been told yet. Declared
   // before everything that holds an object, so it outlives every object that

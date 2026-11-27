@@ -181,8 +181,8 @@ below LIR, at LIR-to-LLVM.
 - Where a call that can fail the design was written: the address of the unit's constant for that
   location, which is data like any other constant of the unit, read as a value of the library's
   location type, the one word the value is, as the call's last operand, ahead of what the target
-  adds after every operand. A statement's location may also be an ordinary operand, which keys a
-  coverage goal or names a procedure.
+  adds after every operand. A statement's location may also be an ordinary operand, which describes
+  an assertion's control or names a procedure.
 
 ## Does Not Own
 

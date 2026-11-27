@@ -1122,6 +1122,7 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kAssertionControlAllowed:
     case support::BuiltinFn::kAssertionControlSubmitObserved:
     case support::BuiltinFn::kAssertionControlSubmitFinal:
+    case support::BuiltinFn::kAssertionControlRecordCoverage:
     case support::BuiltinFn::kAssertControlOfDesign:
     case support::BuiltinFn::kAssertControlOfScope:
     case support::BuiltinFn::kAssertControlOfBlock:
@@ -1145,7 +1146,6 @@ auto EntryNamingOf(support::BuiltinFn fn) -> EntryNaming {
     case support::BuiltinFn::kEmitWarningAtCaller:
     case support::BuiltinFn::kEmitErrorAtCaller:
     case support::BuiltinFn::kEmitFatalAtCaller:
-    case support::BuiltinFn::kRecordCoverage:
     case support::BuiltinFn::kTimeFormat:
     case support::BuiltinFn::kSetTimeFormat:
     case support::BuiltinFn::kResetTimeFormat:
