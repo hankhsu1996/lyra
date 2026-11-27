@@ -288,6 +288,9 @@ auto KindOf(const StmtData& data) -> std::string_view {
           [](const PatternCaseStmt&) -> std::string_view {
             return "a pattern case statement";
           },
+          [](const RandCaseStmt&) -> std::string_view {
+            return "a randcase statement";
+          },
           [](const AssertStmt&) -> std::string_view {
             return "an immediate assertion";
           },

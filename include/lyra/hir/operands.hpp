@@ -445,6 +445,11 @@ void ForEachExpr(const StmtData& data, const auto& reach) {
               }
             }
           },
+          [&](const RandCaseStmt& s) {
+            for (const RandCaseItem& item : s.items) {
+              operand(item.weight);
+            }
+          },
           [&](const AssertStmt& s) { operand(s.condition); },
           [&](const CoverStmt& s) { operand(s.condition); },
           [&](const ConcurrentAssertStmt& s) {
@@ -541,6 +546,11 @@ void ForEachChildStmt(const StmtData& data, const auto& enter) {
               enter(item.stmt);
             }
             optional_child(s.default_stmt);
+          },
+          [&](const RandCaseStmt& s) {
+            for (const RandCaseItem& item : s.items) {
+              enter(item.stmt);
+            }
           },
           [&](const AssertStmt& s) {
             optional_child(s.pass_stmt);

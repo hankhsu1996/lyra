@@ -43,6 +43,9 @@ auto ConcurrentAssertionOf(const StmtData& data)
           [](const PatternCaseStmt&) -> std::optional<ConcurrentAssertion> {
             return std::nullopt;
           },
+          [](const RandCaseStmt&) -> std::optional<ConcurrentAssertion> {
+            return std::nullopt;
+          },
           [](const AssertStmt&) -> std::optional<ConcurrentAssertion> {
             return std::nullopt;
           },

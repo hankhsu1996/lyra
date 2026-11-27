@@ -11,7 +11,7 @@ way.
 A line opens with where it is about, when it is about a place, and then one of three words:
 
 ```
-t.sv:4:5: error: 'randcase' is not yet supported
+t.sv:4:5: error: 'randsequence' is not yet supported
 t.sv:3:3: error: the size given to a dynamic array's new[] is negative
 note: in 'Test' at time 0
 ```
@@ -44,8 +44,9 @@ note: in 'Test' at time 0
   command line. Never a word for how Lyra works inside -- lowering, a closure, the front end.
 - **No clause number of the standard.** The rule is said in words; the number belongs in the comment
   beside the code that implements it.
-- **Something Lyra does not carry out yet says so in one form**: `'randcase' is not yet supported`.
-  It names the construct, and never tells the reader that correct code is wrong.
+- **Something Lyra does not carry out yet says so in one form**:
+  `'randsequence' is not yet supported`. It names the construct, and never tells the reader that
+  correct code is wrong.
 
 ## How a report is built
 

@@ -3527,6 +3527,29 @@ class HirDumper {
     Dedent();
   }
 
+  void DumpRandCaseStmtNode(
+      const ProceduralBody& p, StmtId id, const RandCaseStmt& r) {
+    Line(
+        std::format(
+            "Stmt[{}] RandCaseStmt (items={})", id.value, r.items.size()));
+    Indent();
+    for (std::size_t k = 0; k < r.items.size(); ++k) {
+      const RandCaseItem& item = r.items[k];
+      Line(std::format("item[{}] weight=Expr[{}]", k, item.weight.value));
+      Indent();
+      Line(
+          std::format(
+              "Expr[{}] {}", item.weight.value,
+              FormatProcExpr(p, item.weight)));
+      Line("stmt:");
+      Indent();
+      DumpStmt(p, item.stmt);
+      Dedent();
+      Dedent();
+    }
+    Dedent();
+  }
+
   void DumpForStmtNode(const ProceduralBody& p, StmtId id, const ForStmt& f) {
     Line(
         std::format(
@@ -3688,6 +3711,7 @@ class HirDumper {
                       "Stmt[{}] PatternCaseStmt {}", id.value,
                       FormatCaseKeyword(pc.keyword)));
             },
+            [&](const RandCaseStmt& r) { DumpRandCaseStmtNode(p, id, r); },
             [&](const AssertStmt& a) { DumpAssertStmtNode(p, id, a); },
             [&](const CoverStmt& c) { DumpCoverStmtNode(p, id, c); },
             [&](const ConcurrentAssertStmt& a) {
