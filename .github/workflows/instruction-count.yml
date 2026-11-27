@@ -17,11 +17,13 @@ name: Instruction Count
 #
 # It is never on the path a change takes to merge. Every merge to main is
 # counted against its parent, and where a measurement moved the table goes on
-# the pull request the merge came from. A branch can be counted before it
-# merges, or any revision against another, by dispatching this workflow. It
-# goes red where head has no count of a measurement, or where one got worse by
-# two percent or more; since it is not a required check, that marks the change
-# that did it and holds up nothing.
+# the pull request the merge came from. Both sides' counts are kept on the merge
+# as a git note, so how far any range of merges moved is read later as the
+# product of each merge's change. A branch can be counted before it merges, or
+# any revision against another, by dispatching this workflow, which keeps no
+# note. It goes red where head has no count of a measurement, or where one got
+# worse by two percent or more; since it is not a required check, that marks the
+# change that did it and holds up nothing.
 on:
   push:
     branches: [main]
@@ -208,6 +210,10 @@ jobs:
     needs: [plan, corpus, design]
     if: always() && needs.plan.result == 'success'
     runs-on: ubuntu-24.04
+    # Writing is for the note a merge's counts are kept in.
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -254,6 +260,33 @@ jobs:
           if [[ -n "$pr" ]]; then
             gh pr comment "$pr" --repo "$REPO" --body-file report.md
           fi
+
+      # A count taken on another runner compares with nothing, so what is kept
+      # is the merge's two sides together, and `count_history.py read` takes
+      # each merge's change and multiplies them over a range. Each merge has a
+      # note of its own, so two never conflict, and a push refused because
+      # another merge's note landed first is made again on top of it.
+      - name: Keep the counts on the merge
+        if: github.event_name == 'push'
+        env:
+          BASE: ${{ needs.plan.outputs.base }}
+          HEAD: ${{ needs.plan.outputs.head }}
+        run: |
+          python3 tools/bench/count_history.py record counts/base counts/head \
+            --base "$BASE" > note.json
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          ref=refs/notes/instruction-counts
+          for attempt in 1 2 3 4 5; do
+            git fetch origin "+$ref:$ref" || true
+            git notes --ref="$ref" add -f -F note.json "$HEAD"
+            if git push origin "$ref"; then
+              exit 0
+            fi
+            sleep $((attempt * 5))
+          done
+          echo "The note could not be pushed in five attempts."
+          exit 1
 
       - name: Fail where head lost a measurement or made one worse
         if: steps.compare.outputs.lost == 'true' || steps.compare.outputs.worse == 'true'

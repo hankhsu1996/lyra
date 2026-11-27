@@ -8,8 +8,10 @@ what a run writes out.
 
 Every number here is observed from outside the compiler: a wall time around a subprocess, the
 instructions callgrind counted in one, a file size, an exit status. Nothing is read out of the
-compiler's internals, which is what keeps a measurement independent of whether any diagnostic
-happens to be available.
+compiler's own reports, which is what keeps a measurement independent of whether any diagnostic
+happens to be available. The one thing read of its insides is a design's build split by stage, taken
+from the function names the compiler's symbols give callgrind's profile; the build's own count
+stands without it.
 
 A run either times or counts, and `metric` says which. A timing run measures Lyra on each backend
 and the reference simulator, and its number is `rate`. A count run, `--count`, measures Lyra and no
@@ -52,6 +54,7 @@ All fields are always present. A field that does not apply carries its zero valu
 | `growth`                | float         | The power of `work` a timing's cost grew as; zero where unseen.                                          |
 | `detail`                | string        | Which step failed and how it ended; empty when `ok`.                                                     |
 | `output`                | string        | The last lines that step printed; empty when `ok`.                                                       |
+| `stages`                | object        | A design's build count by stage, each stage found and `rest`; empty for every other result.              |
 
 ## Reading `rate`
 
@@ -130,6 +133,7 @@ and a "Not measured" section names each one with its `detail` and `output`.
 - Consumers must check `schema_version` before parsing.
 - Fields may be added; consumers should ignore unknown ones.
 - Removing a field or changing its type requires a version bump.
+- Within v8, `stages` was added; a file without it has no stage of any build.
 - v8 added `resolution_percent`, and a design has a result per measure, which a v7 consumer keying
   results by case and backend would read as one.
 - Within v8, `tool` gained `hand-written`, whose results have an empty `backend`; a consumer that
