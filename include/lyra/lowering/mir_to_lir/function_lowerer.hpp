@@ -559,10 +559,11 @@ class FunctionLowerer {
   auto LowerPropertyReference(
       const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)
       -> diag::Result<lir::Operand>;
-  // A write opened on the object its one argument reaches (LRM 8.4, 9.4.2).
-  auto LowerObjectWriteOpening(
-      const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)
-      -> diag::Result<lir::Operand>;
+  // A write opened on the object its one argument reaches (LRM 8.4, 9.4.2),
+  // made where it goes, since a write never moves.
+  auto LowerObjectWriteOpeningInto(
+      const mir::Block& block, const mir::CallExpr& call,
+      const lir::Destination& destination) -> diag::Result<void>;
   // The address of the object `reaches` reaches, as the library takes an
   // object -- `&*reaches` seen as the part every object starts with -- whether
   // it is a class handle, a pointer, or a write in progress into the object.

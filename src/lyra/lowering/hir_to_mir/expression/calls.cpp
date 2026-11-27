@@ -665,10 +665,11 @@ auto BuildAssociativeTraversal(
   const mir::TypeId index_type = unit.types.Get(array_type).IndexType().value();
   // `first` / `last` ignore the index's current value and `next` / `prev` read
   // it as the search bound, at the array's index type (LRM 7.9.8). The index
-  // is then written with the one visited, so it is read and written through
-  // one path.
+  // is then written with the one visited, and between the two only the
+  // array's own search runs, so it is one access: a `ref` actual, an entry it
+  // names made before it is read (LRM 7.9.4, 7.8.7).
   const ReadThenWritten visited_into =
-      ReadThenWrite(unit, steps.Frame(), std::move(index));
+      ReadModifyWrite(unit, steps.Frame(), std::move(index));
   // What the index held is read once, and is both the bound a search starts
   // past and what the index keeps where none is visited.
   const mir::LocalId held = steps.Bindings().DeclareAnonymous(key_type);

@@ -60,6 +60,12 @@ auto EvaluatedOnce(const WalkFrame& frame, mir::ExprId value) -> mir::ExprId {
   return block.ReadLocal(DeclareLocal(frame, value), type);
 }
 
+auto HeldByALocal(const WalkFrame& frame, mir::ExprId value) -> mir::ExprId {
+  mir::Builder block = frame.Builder();
+  const mir::TypeId type = block.Get(value).type;
+  return block.LocalPlace(DeclareLocal(frame, value), type);
+}
+
 auto SnapshotValueIntoClosure(
     UnitLowerer& unit_lowerer, const WalkFrame& outer_frame,
     ClosureBuilder& closure, mir::ExprId outer_expr) -> mir::ExprId {

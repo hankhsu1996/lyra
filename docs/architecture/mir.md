@@ -1201,13 +1201,21 @@ A write yields nothing, as an assignment does in Rust's MIR: what an assignment 
 source reads it (LRM 11.3.6) is what it stored, which the lowering holds in a local and reads, so no
 backend's own rule for the value of an assignment -- C++'s is the target itself -- decides it. An
 assignment operator and an increment (LRM 11.4.1, 11.4.2) are no write of their own: each is the
-operator applied to what the target held and then that write, the target settled once for both, so a
-write names no operator. A value-build primitive spells a value rather than operating on values that
-already exist -- a structured literal is one, and so is every peer language's array or aggregate
-literal. Select expressions are access primitives. Each of these stays in MIR for the same reason:
-removing it would require expanding into a statement-form rewrite that does not fit the expression
-context. Composing values that already exist is not this, and no peer spells a concatenation as a
-node.
+operator applied to what the target held and then that write, so a write names no operator. The two
+are one access to the target, reached only after the operand has run, as rustc forms a built-in
+assign-op's place after evaluating its operand: the target's indices run first, as written, by
+Lyra's own operand order, then what the operator applies, and only then is the target reached, as a
+write reaches it, so an associative entry it names is made before it is read (LRM 7.8.7). A write
+that reaching it opens, and the place designated within that write, are held by locals of the
+evaluation, whose end ends the access and is where the write reports; nothing of the design runs
+inside it, so nothing can end what it reached. The read is of what the target holds where it lies,
+and the write lands through what is held. An `inout` argument is not this: it is a read at the call
+and an assignment at the return (LRM 13.5), two accesses with the subroutine's own work between
+them. A value-build primitive spells a value rather than operating on values that already exist -- a
+structured literal is one, and so is every peer language's array or aggregate literal. Select
+expressions are access primitives. Each of these stays in MIR for the same reason: removing it would
+require expanding into a statement-form rewrite that does not fit the expression context. Composing
+values that already exist is not this, and no peer spells a concatenation as a node.
 
 ### Capability wrappers
 
@@ -1255,26 +1263,27 @@ is dereferenced; where the descent ends in bits, they are a slice step of the la
 storing them tells the write which bits moved; and where it ends in a window, the window's write is
 taken on the last designation. A union's member is no storage of its own, so the change the write
 reports is to the union, whose bits every member reads. The write and a place designated within it
-are two types: the write is held by the writer, ended with the full-expression, which is when it
-reports, and names no place itself, while a designation borrows the write and ends with nothing to
-do. Whether a part is storage of its own is the language's fact about the type it is part of
-([storage.md](storage.md)), and the place states it as its kind (invariant 16), so no layer below
-works it out. A construct that binds the designated part rather than writing it -- an output pack
-component, a nonblocking update -- binds the same statement of owner and descent; it is
-owner-relative, so it names no interior pointer and aliases nothing the owner does not already own.
-A position a deferred write freezes is one the program computed; a count is its type's and a
-constant position has no moment of evaluation, so the deferred body states each again, as a C++
-lambda captures no variable usable in constant expressions. A reference actual binds the part for as
-long as the callee holds it, and each write through it is a write of the owner at the moment it
-lands (LRM 13.5.2, 4.3), which no write ended with the caller's full-expression can be; so a
-reference is formed over the owner and each step into a part is taken on the reference, answering a
-reference to that part that belongs to the same owner. What such a reference reaches through that
-the program can let go of while the callee runs -- the object a property lies in, an element of a
-queue or an associative array, a dynamic array's elements -- the binding leases, by a call answering
-the reference together with the lease; that answer is a value the call's full-expression makes, so
-it is held to that full-expression's end, or by a local of the frame where a closure built before
-the call captures the reference, and the callee is handed the reference it carries, which owns
-nothing (LRM 13.5.2, 8.29; [lifetime.md](lifetime.md) owns the lease).
+are two types: the write is held by the writer, ended with the full-expression or the evaluation
+whose local holds it, which is when it reports, and names no place itself, while a designation
+borrows the write and lives at least as long as anything written through it, since a backend may
+judge at its end what the write landed on. Whether a part is storage of its own is the language's
+fact about the type it is part of ([storage.md](storage.md)), and the place states it as its kind
+(invariant 16), so no layer below works it out. A construct that binds the designated part rather
+than writing it -- an output pack component, a nonblocking update -- binds the same statement of
+owner and descent; it is owner-relative, so it names no interior pointer and aliases nothing the
+owner does not already own. A position a deferred write freezes is one the program computed; a count
+is its type's and a constant position has no moment of evaluation, so the deferred body states each
+again, as a C++ lambda captures no variable usable in constant expressions. A reference actual binds
+the part for as long as the callee holds it, and each write through it is a write of the owner at
+the moment it lands (LRM 13.5.2, 4.3), which no write ended with the caller's full-expression can
+be; so a reference is formed over the owner and each step into a part is taken on the reference,
+answering a reference to that part that belongs to the same owner. What such a reference reaches
+through that the program can let go of while the callee runs -- the object a property lies in, an
+element of a queue or an associative array, a dynamic array's elements -- the binding leases, by a
+call answering the reference together with the lease; that answer is a value the call's
+full-expression makes, so it is held to that full-expression's end, or by a local of the frame where
+a closure built before the call captures the reference, and the callee is handed the reference it
+carries, which owns nothing (LRM 13.5.2, 8.29; [lifetime.md](lifetime.md) owns the lease).
 
 Where the owner is a property of an object (LRM 8.4), the object is what hears the write (LRM
 9.4.2), and it is reached once, as the source reaches it once. A write is a write-in-progress value

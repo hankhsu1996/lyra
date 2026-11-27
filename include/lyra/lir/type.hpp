@@ -285,9 +285,9 @@ struct ObservableType {
 // A write in progress into the storage a capability wrapper stands for, whose
 // contents are values of `value` (LRM 11.5.1). It is an object the writer holds
 // and owes the end of, and it names no place itself: the whole of those
-// contents is designated within it. Ending it -- with the full-expression, or
-// on any way out of it -- is the end of the write, when the wrapper learns once
-// what the write did (LRM 4.3).
+// contents is designated within it. Ending it -- with the full-expression or
+// the evaluation whose local holds it, or on any way out of it -- is the end
+// of the write, when the wrapper learns once what the write did (LRM 4.3).
 struct OpenWriteType {
   TypeId value;
 
@@ -296,10 +296,11 @@ struct OpenWriteType {
 
 // A place holding a value of `value`, designated within a write in progress --
 // the whole of what the write was opened on, or a part of it: the write and
-// where the place lies. It borrows the write, so ending it does nothing; a
-// further step is taken on it, and landing it is where the write lands. Bits
-// of its value are stored through its dereference, which names nothing else,
-// so the write itself hears which bits move.
+// where the place lies. It borrows the write and lives at least as long as
+// anything written through it; a further step is taken on it, and landing it
+// is where the write lands. Bits of its value are stored through its
+// dereference, which names nothing else, so the write itself hears which bits
+// move.
 struct DesignationType {
   TypeId value;
 

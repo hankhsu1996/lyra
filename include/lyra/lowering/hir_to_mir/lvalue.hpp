@@ -255,10 +255,18 @@ auto PlacesNamed(L& lowerer, const hir::Expr& expr, WalkFrame frame)
     UnitLowerer& unit_lowerer, const WalkFrame& frame, const Lvalue& lvalue,
     mir::ExprId value) -> diag::Result<void>;
 
-// `lvalue` as an operand that is read and then written (LRM 11.4.1, 13.5
+// `lvalue` as an operand that is read now and written later (LRM 13.5
 // `inout`): every place settled here, and the value they hold going in, joined
 // by kind and, for a select of a join, selected from that.
 [[nodiscard]] auto ReadThenWrite(
+    const mir::CompilationUnit& unit, const WalkFrame& frame, Lvalue lvalue)
+    -> diag::Result<LvalueReadThenWritten>;
+
+// `lvalue` as the target of an assignment operator or an increment (LRM
+// 11.4.1, 11.4.2, 11.4.12): every place reached once as a write reaches it and
+// held for the rest of the evaluation `frame` lowers, and the value they hold
+// going in, joined as above.
+[[nodiscard]] auto ReadModifyWrite(
     const mir::CompilationUnit& unit, const WalkFrame& frame, Lvalue lvalue)
     -> diag::Result<LvalueReadThenWritten>;
 

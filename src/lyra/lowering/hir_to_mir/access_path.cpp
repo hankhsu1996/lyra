@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <functional>
 #include <optional>
 #include <span>
 #include <string>
@@ -331,13 +332,20 @@ auto DesignatedWithinAWrite(const DescentStep& step) -> bool {
       step.to);
 }
 
-// How many of `path`'s steps a write opened on its owner takes within itself:
-// where the owner is a capability wrapper, the write designates each part it
-// can land on, so it knows what forming each one did and keeps no more than
-// the part it lands on, for as long as each step reaches such a part. Any step
-// left is taken on what the write lands on, or on the last designation by an
-// operation of the value's own. A write onto anything else takes none within
-// itself.
+// How many of `path`'s first steps satisfy `holds`.
+template <typename Holds>
+auto LeadingSteps(const AccessPath& path, const Holds& holds) -> std::size_t {
+  return static_cast<std::size_t>(
+      std::ranges::find_if_not(path.descent, holds) - path.descent.begin());
+}
+
+// How many of `path`'s steps a write takes within itself: where the owner is
+// a capability wrapper, or a part a write already open designates, the write
+// designates each part it can land on, so it knows what forming each one did
+// and keeps no more than the part it lands on, for as long as each step
+// reaches such a part. Any step left is taken on what the write lands on, or
+// on the last designation by an operation of the value's own. A write onto
+// anything else takes none within itself.
 auto StepsTakenWithinTheWrite(
     const mir::CompilationUnit& unit, const mir::Block& block,
     const AccessPath& path) -> std::size_t {
@@ -346,12 +354,10 @@ auto StepsTakenWithinTheWrite(
     return 0;
   }
   const mir::Type& owner_ty = unit.types.Get(block.exprs.Get(*owner).type);
-  if (!owner_ty.IsCapabilityWrapper()) {
+  if (!owner_ty.IsCapabilityWrapper() && !owner_ty.Is<mir::DesignationType>()) {
     return 0;
   }
-  return static_cast<std::size_t>(
-      std::ranges::find_if_not(path.descent, DesignatedWithinAWrite) -
-      path.descent.begin());
+  return LeadingSteps(path, DesignatedWithinAWrite);
 }
 
 // The call `call` takes on `receiver`, answering `type`.
@@ -837,6 +843,9 @@ auto OwnerValueType(
           [&](mir::ExprId place) {
             const mir::TypeId owner_type = block.exprs.Get(place).type;
             const mir::Type& owner_ty = unit.types.Get(owner_type);
+            if (const auto* designated = owner_ty.As<mir::DesignationType>()) {
+              return designated->value;
+            }
             return owner_ty.IsCapabilityWrapper() ? owner_ty.WrappedValueType()
                                                   : owner_type;
           },
@@ -861,45 +870,57 @@ namespace {
 enum class WriteEnd : std::uint8_t { kLanded, kDesignated };
 
 // What a write along `path` reaches, `end` saying how a write in progress
-// that took every step within itself ends.
+// that took every step within itself ends. `hold` answers what the steps are
+// taken through for a write the path opens -- on a capability wrapper, or on
+// an object for its property: the write itself, where it ends with the
+// expression opening it, as a store's does, or what holds it for longer.
+template <typename Hold>
 auto ReachedForWrite(
     const mir::CompilationUnit& unit, mir::Builder block,
-    const AccessPath& path, WriteEnd end) -> mir::ExprId {
+    const AccessPath& path, WriteEnd end, const Hold& hold) -> mir::ExprId {
   auto step = path.descent.begin();
   const auto from_place = [&](mir::ExprId owner) -> mir::ExprId {
     const mir::Type& owner_ty = unit.types.Get(block.Get(owner).type);
-    if (!owner_ty.IsCapabilityWrapper()) {
-      return owner;
-    }
-    RefuseNetCell(owner_ty);
-    // The write is opened on the wrapper, the whole of what the wrapper holds
-    // is designated within it, and the steps the write takes within itself
-    // designate their parts there before it lands.
-    mir::TypeId value = owner_ty.WrappedValueType();
     const auto designated = [&](mir::TypeId part) {
       return unit.types.Intern(mir::Type{mir::DesignationType{.value = part}});
     };
-    const mir::ExprId write = block.Add(
-        mir::Expr{
-            .data =
-                mir::CallExpr{
-                    .callee =
-                        mir::Direct{
-                            .target = support::BuiltinFn::kOpenForWrite,
-                            .receiver = owner},
-                    .arguments = {}},
-            .type = unit.types.Intern(
-                mir::Type{mir::OpenWriteType{.value = value}})});
-    mir::ExprId designation = block.Add(
-        mir::Expr{
-            .data =
-                mir::CallExpr{
-                    .callee =
-                        mir::Direct{
-                            .target = support::BuiltinFn::kDesignateWhole,
-                            .receiver = write},
-                    .arguments = {}},
-            .type = designated(value)});
+    mir::TypeId value;
+    mir::ExprId designation;
+    if (const auto* within = owner_ty.As<mir::DesignationType>()) {
+      // A part a write already open designates: the path goes on within that
+      // write.
+      value = within->value;
+      designation = owner;
+    } else if (owner_ty.IsCapabilityWrapper()) {
+      RefuseNetCell(owner_ty);
+      // The write is opened on the wrapper, the whole of what the wrapper
+      // holds is designated within it, and the steps the write takes within
+      // itself designate their parts there before it lands.
+      value = owner_ty.WrappedValueType();
+      const mir::ExprId write = hold(block.Add(
+          mir::Expr{
+              .data =
+                  mir::CallExpr{
+                      .callee =
+                          mir::Direct{
+                              .target = support::BuiltinFn::kOpenForWrite,
+                              .receiver = owner},
+                      .arguments = {}},
+              .type = unit.types.Intern(
+                  mir::Type{mir::OpenWriteType{.value = value}})}));
+      designation = block.Add(
+          mir::Expr{
+              .data =
+                  mir::CallExpr{
+                      .callee =
+                          mir::Direct{
+                              .target = support::BuiltinFn::kDesignateWhole,
+                              .receiver = write},
+                      .arguments = {}},
+              .type = designated(value)});
+    } else {
+      return owner;
+    }
     const auto within = path.descent.begin() +
                         static_cast<std::ptrdiff_t>(
                             StepsTakenWithinTheWrite(unit, block.Body(), path));
@@ -927,7 +948,7 @@ auto ReachedForWrite(
           from_place,
           [&](const ObjectProperty& owner) {
             return block.Add(PropertyStorage(
-                unit, block, OpenObjectWrite(unit, block, owner.object),
+                unit, block, hold(OpenObjectWrite(unit, block, owner.object)),
                 owner.property, owner.type));
           }},
       path.owner);
@@ -946,11 +967,13 @@ auto WriteOperandOf(
     const mir::CompilationUnit& unit, mir::Builder block,
     const AccessPath& path, std::size_t steps) -> mir::ExprId {
   return ReachedForWrite(
-      unit, block, PrefixOf(path, steps), WriteEnd::kDesignated);
+      unit, block, PrefixOf(path, steps), WriteEnd::kDesignated,
+      std::identity{});
 }
 
 // The part `path` names, reached for a read where it lies: what the owner
-// holds, then each step as a read takes it.
+// holds, then each step as a read takes it. An owner designated within a write
+// holds its part where the write lands.
 auto PlaceForRead(
     const mir::CompilationUnit& unit, mir::Builder block,
     const AccessPath& path) -> mir::ExprId {
@@ -958,6 +981,9 @@ auto PlaceForRead(
       Overloaded{
           [&](mir::ExprId place) {
             const mir::Type& owner_ty = unit.types.Get(block.Get(place).type);
+            if (const auto* within = owner_ty.As<mir::DesignationType>()) {
+              return block.Add(mir::MakeDerefExpr(place, within->value));
+            }
             if (!owner_ty.IsCapabilityWrapper()) {
               return place;
             }
@@ -1081,7 +1107,7 @@ auto PathPlace(
     const mir::CompilationUnit& unit, mir::Builder block,
     const AccessPath& path) -> mir::ExprId {
   AppendTagChecks(unit, block, path, CheckedAccess::kWrite);
-  return ReachedForWrite(unit, block, path, WriteEnd::kLanded);
+  return ReachedForWrite(unit, block, path, WriteEnd::kLanded, std::identity{});
 }
 
 namespace {
@@ -1285,7 +1311,11 @@ auto PartSelectNaturalType(
   return unit.types.Intern(mir::Type{natural});
 }
 
-auto PathValueAsDeclared(
+namespace {
+
+// The value `path` names at the type the part is declared with, read where it
+// lies, the checks the read owes made before it by the caller.
+auto ValueAsDeclared(
     const mir::CompilationUnit& unit, mir::Builder block,
     const AccessPath& path) -> mir::ExprId {
   // A path that descends nowhere reads the whole of what its owner holds,
@@ -1293,7 +1323,6 @@ auto PathValueAsDeclared(
   if (path.descent.empty()) {
     return PathValue(unit, block, path);
   }
-  AppendTagChecks(unit, block, path, CheckedAccess::kRead);
   AccessPath into = path;
   DescentStep last = std::move(into.descent.back());
   into.descent.pop_back();
@@ -1303,6 +1332,15 @@ auto PathValueAsDeclared(
   const mir::ExprId receiver = PlaceForRead(unit, block, into);
   const mir::ExprId read = block.Add(StepRead(unit, block, last, receiver));
   return ConvertToType(unit, block, read, declared);
+}
+
+}  // namespace
+
+auto PathValueAsDeclared(
+    const mir::CompilationUnit& unit, mir::Builder block,
+    const AccessPath& path) -> mir::ExprId {
+  AppendTagChecks(unit, block, path, CheckedAccess::kRead);
+  return ValueAsDeclared(unit, block, path);
 }
 
 auto SettledPlace(
@@ -1505,6 +1543,46 @@ auto ReadThenWrite(
   const mir::ExprId incoming =
       PathValueAsDeclared(unit, frame.Builder(), settled);
   return ReadThenWritten{.place = std::move(settled), .incoming = incoming};
+}
+
+auto ReadModifyWrite(
+    const mir::CompilationUnit& unit, const WalkFrame& frame, AccessPath place)
+    -> ReadThenWritten {
+  mir::Builder block = frame.Builder();
+  AccessPath settled = Settled(unit, frame, std::move(place));
+  // The access begins with its read, so the checks a read owes stand first
+  // (LRM 11.9).
+  AppendTagChecks(unit, block, settled, CheckedAccess::kRead);
+  // The access is begun by reaching the part as a write does, which makes an
+  // entry it names (LRM 7.8.7), through every step a write designates within
+  // itself. A write that opens is held by a local of the evaluation, whose end
+  // is where it reports.
+  const std::size_t designated = LeadingSteps(settled, DesignatedWithinAWrite);
+  const auto held_by_a_local = [&](mir::ExprId opened) {
+    return HeldByALocal(frame, opened);
+  };
+  const mir::ExprId reached = ReachedForWrite(
+      unit, block, PrefixOf(settled, designated), WriteEnd::kDesignated,
+      held_by_a_local);
+  // What was reached is held as well: a designation by a local, since a
+  // backend may judge at its end whether the write landed, so it outlives the
+  // store through it; a place by whatever reaching it computed.
+  const mir::ExprId held =
+      unit.types.Get(block.Get(reached).type).Is<mir::DesignationType>()
+          ? HeldByALocal(frame, reached)
+          : SettledPlace(unit, frame, reached);
+  // Nothing of the design runs within the access, so what the part holds is
+  // read where it lies, the entry now there, and nothing is landed on for it.
+  const mir::ExprId incoming = ValueAsDeclared(unit, block, settled);
+  return ReadThenWritten{
+      .place =
+          AccessPath{
+              .owner = held,
+              .descent = std::vector<DescentStep>(
+                  settled.descent.begin() +
+                      static_cast<std::ptrdiff_t>(designated),
+                  settled.descent.end())},
+      .incoming = incoming};
 }
 
 auto PositionsWithinNet(
@@ -1710,7 +1788,7 @@ auto PutCharacterExpr(
   }
   return mir::MakeBuiltinCall(
       unit, block.Body(), support::BuiltinFn::kPutc,
-      ReachedForWrite(unit, block, string, WriteEnd::kLanded),
+      ReachedForWrite(unit, block, string, WriteEnd::kLanded, std::identity{}),
       {character.position, put}, unit.builtins.void_type);
 }
 
@@ -1902,7 +1980,8 @@ auto StoreIntoUnionStorage(
     const AccessPath& path, std::size_t at, mir::ExprId value) -> mir::Expr {
   const mir::ExprId storage = UnionStorage(
       unit, block,
-      ReachedForWrite(unit, block, PrefixOf(path, at), WriteEnd::kLanded));
+      ReachedForWrite(
+          unit, block, PrefixOf(path, at), WriteEnd::kLanded, std::identity{}));
   const mir::TypeId storage_type = block.Get(storage).type;
   const StorageReached reached = StorageReachedBelow(
       unit, block, path, at, mir::PositionCountOf(unit, storage_type));
@@ -1998,7 +2077,8 @@ auto BuildStoreExpr(
     return StoreBitsExpr(unit, block, path, *at, rhs_id);
   }
   return mir::MakeAssignExpr(
-      unit.builtins, ReachedForWrite(unit, block, path, WriteEnd::kLanded),
+      unit.builtins,
+      ReachedForWrite(unit, block, path, WriteEnd::kLanded, std::identity{}),
       rhs_id);
 }
 

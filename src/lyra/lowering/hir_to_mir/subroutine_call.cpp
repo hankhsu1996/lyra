@@ -798,10 +798,7 @@ auto SeenAsAny(
       unit, block,
       PathBoundReference(
           unit, block, place,
-          [&](mir::ExprId leased) {
-            const mir::LocalId local = DeclareLocal(frame, leased);
-            return block.LocalPlace(local, block.Get(leased).type);
-          }),
+          [&](mir::ExprId leased) { return HeldByALocal(frame, leased); }),
       *ParamTypeOf(unit, seen, hir::ParamDirection::kRef));
   const AccessPath variable{
       .owner = SnapshotPlaceIntoClosure(unit_lowerer, frame, carry, bound),

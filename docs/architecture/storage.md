@@ -97,11 +97,13 @@ actual; an unpacked array element is both. Every rule below follows from taking 
    forming did.** Binding to an absent associative entry allocates it before any read or write
    through the reference (LRM 7.8.7), which is a change of the variable at the bind. A `ref` actual
    is formed at the call's entry; an `output` or `inout` actual at its write-back, which is an
-   assignment. A read of an absent entry allocates nothing (LRM 7.8.6). _Consequence: a lowering may
-   not treat formation as free of effect or reorder it with an observation of the container. A
-   designation applied later -- a nonblocking assignment's -- is formed with no effect, because LRM
-   10.4.2 bars a nonblocking assignment to an element of a dynamically sized array, the only family
-   whose formation allocates; one designation serves both timings while that clause stands._
+   assignment; the target of an assignment operator or an increment once, before it is read, since
+   both the read and the write are that one access. A read of an absent entry allocates nothing (LRM
+   7.8.6). _Consequence: a lowering may not treat formation as free of effect or reorder it with an
+   observation of the container. A designation applied later -- a nonblocking assignment's -- is
+   formed with no effect, because LRM 10.4.2 bars a nonblocking assignment to an element of a
+   dynamically sized array, the only family whose formation allocates; one designation serves both
+   timings while that clause stands._
 
 6. **A container holds membership and order, and whether its elements have identities of their own
    follows from whether the language removes one element from its middle.** A queue and an
@@ -381,7 +383,7 @@ projection chain -- and address-of is the operation of invariant 4 that yields t
 identity. A reference is a library object on both backends, holding what holds the storage, the
 address, and whether it names the whole. A write in progress is a library object the writer opens on
 what it writes into -- a variable's cell, a reference, a net's driver -- ends with its
-full-expression, and asks for the address each step designates. A queue element's storage comes from
-the run's recycler for storage of its size and alignment, an associative array's entries are each
-allocated on their own, and a dynamic array's generation is one block; each keeps the count of the
-leases on it.
+full-expression or the evaluation whose local holds it, and asks for the address each step
+designates. A queue element's storage comes from the run's recycler for storage of its size and
+alignment, an associative array's entries are each allocated on their own, and a dynamic array's
+generation is one block; each keeps the count of the leases on it.

@@ -353,21 +353,13 @@ void WriteOne(TargetText& out, const CppType& spelling) {
           [&](const mir::DriverType& d) {
             Write(out, "lyra::runtime::Driver<", type(d.value), ">");
           },
-          // A write, and a place designated within it, live and end within
-          // the expression that opens the write, so nothing ever holds one
-          // under a name.
-          [](const mir::OpenWriteType&) {
-            throw InternalError(
-                "backend::cpp: a write in progress ends with the expression "
-                "that opens it, so nothing names its type -- please report "
-                "this as a bug");
-          },
-          [](const mir::DesignationType&) {
-            throw InternalError(
-                "backend::cpp: a place designated within a write ends with "
-                "the expression that opens the write, so nothing names its "
-                "type -- please report this as a bug");
-          },
+          // A write, and a place designated within it, are spelled only where
+          // their type is deduced from what answers them -- a local's
+          // initializer, a block expression's value. The library's types for
+          // them follow what the write was opened on, which these types do
+          // not say, so each is spelled as that deduction.
+          [&](const mir::OpenWriteType&) { out += "auto"; },
+          [&](const mir::DesignationType&) { out += "auto"; },
           // Named where it is opened, by constructing it on the object.
           [&](const mir::ObjectWriteType& w) {
             Write(out, "lyra::runtime::ObjectWrite<", type(w.object), ">");
