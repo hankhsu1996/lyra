@@ -469,8 +469,7 @@ auto LowerAccessPathAt(L& lowerer, const hir::Expr& expr, WalkFrame frame)
           // target was lowered to something the source did not name. A join of
           // lvalues (LRM A.8.5) stands for several places and is not one: a
           // write takes it as an lvalue, and what asks for one place here -- a
-          // `ref` actual, a receiver -- is something the front end refuses a
-          // join for.
+          // `ref` actual -- is something the front end refuses a join for.
           [&](const hir::ConcatExpr&) { return names_no_storage(); },
           [&](const hir::StreamingConcatExpr&) { return names_no_storage(); },
           [&](const hir::UnaryExpr&) { return names_no_storage(); },

@@ -361,10 +361,9 @@ auto LowerMemFileSystemSubroutineCallStmt(
     // A dump reads the memory as it is when the task runs, which a run of
     // elements the source selected is read into as an array of its own.
     AppendReadChecks(unit, body, memory->path);
-    const mir::LocalId dumped =
-        DeclareLocal(step_frame, PathValue(unit, body, memory->path));
     own_code(
-        support::BuiltinFn::kStoreWords, body.LocalPlace(dumped, mem_type));
+        support::BuiltinFn::kStoreWords,
+        MaterializedTemporary(step_frame, PathValue(unit, body, memory->path)));
   } else {
     // A load's memory is read and then written (LRM 13.5, 21.4): a word the
     // file does not address keeps what it held, and the memory takes the

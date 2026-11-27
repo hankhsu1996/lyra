@@ -2903,10 +2903,7 @@ auto DescribeDataObjects(
               frame);
           if (!value) return std::unexpected(std::move(value.error()));
           // What a net shows is a value of its own, held for the reference.
-          const mir::LocalId held =
-              DeclareLocal(frame, block.Add(*std::move(value)));
-          shown = block.LocalPlace(
-              held, lowerer.Owner().TranslateType(object.type));
+          shown = MaterializedTemporary(frame, block.Add(*std::move(value)));
         } else {
           auto whole = root_path(object, frame);
           if (!whole) return std::unexpected(std::move(whole.error()));

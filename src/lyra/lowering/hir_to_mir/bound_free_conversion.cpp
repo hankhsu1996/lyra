@@ -73,7 +73,7 @@ auto ConversionBody(
     const mir::TypeId kept_type = mir::QueueOf(
         unit.types, *unit.types.Get(from).ContainerElementType(),
         to_type.Get<mir::LibraryType>().Bound());
-    const mir::LocalId kept = DeclareLocal(
+    source = MaterializedTemporary(
         frame,
         block.Add(
             mir::Expr{
@@ -89,7 +89,6 @@ auto ConversionBody(
                                         .arguments = {from}}},
                         .arguments = {mir::Borrow(unit, block, source)}},
                 .type = kept_type}));
-    source = block.LocalPlace(kept, kept_type);
   }
 
   const WalkedArray walked = WalkedArrayAt(

@@ -598,13 +598,12 @@ auto WaitUntilOneFires(
 auto DeclareReport(const mir::CompilationUnit& unit, const WalkFrame& frame)
     -> mir::LocalId {
   mir::Builder block = frame.Builder();
-  const mir::LocalId report = DeclareLocal(
+  const mir::ExprId held = MaterializedTemporary(
       frame,
       block.Add(
           mir::MakeCallExpr(
               mir::Direct{.target = support::BuiltinFn::kReadReportEmpty}, {},
               unit.builtins.read_report)));
-  const mir::ExprId held = block.LocalPlace(report, unit.builtins.read_report);
   return DeclareLocal(
       frame,
       block.Add(mir::MakeAddressOfExpr(held, unit.builtins.read_report_ptr)));

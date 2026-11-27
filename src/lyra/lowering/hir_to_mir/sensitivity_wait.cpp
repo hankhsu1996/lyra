@@ -684,7 +684,7 @@ auto HoldImplicitList(
   mir::Builder block = frame.Builder();
   // A report no evaluation makes, so a function called to report into it runs
   // nothing of its body.
-  const mir::LocalId report = DeclareLocal(
+  const mir::ExprId report = MaterializedTemporary(
       frame,
       block.Add(
           mir::MakeCallExpr(
@@ -692,10 +692,8 @@ auto HoldImplicitList(
                   .target = support::BuiltinFn::kReadReportForImplicitList},
               {}, unit.builtins.read_report)));
   const mir::LocalId pointer = DeclareLocal(
-      frame, block.Add(
-                 mir::MakeAddressOfExpr(
-                     block.LocalPlace(report, unit.builtins.read_report),
-                     unit.builtins.read_report_ptr)));
+      frame,
+      block.Add(mir::MakeAddressOfExpr(report, unit.builtins.read_report_ptr)));
   auto reported = ReportReads(lowerer, frame, reads, pointer);
   if (!reported) return std::unexpected(std::move(reported.error()));
   ActOnReport(

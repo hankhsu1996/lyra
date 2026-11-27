@@ -40,6 +40,13 @@ auto DeclareLocal(const WalkFrame& frame, mir::ExprId init) -> mir::LocalId {
   return local;
 }
 
+auto MaterializedTemporary(const WalkFrame& frame, mir::ExprId value)
+    -> mir::ExprId {
+  mir::Builder block = frame.Builder();
+  const mir::TypeId type = block.Get(value).type;
+  return block.LocalPlace(DeclareLocal(frame, value), type);
+}
+
 void AssignLocal(
     const mir::CompilationUnit& unit, mir::Builder block, mir::LocalId local,
     mir::ExprId value) {
@@ -58,12 +65,6 @@ auto EvaluatedOnce(const WalkFrame& frame, mir::ExprId value) -> mir::ExprId {
   }
   const mir::TypeId type = block.Get(value).type;
   return block.ReadLocal(DeclareLocal(frame, value), type);
-}
-
-auto HeldByALocal(const WalkFrame& frame, mir::ExprId value) -> mir::ExprId {
-  mir::Builder block = frame.Builder();
-  const mir::TypeId type = block.Get(value).type;
-  return block.LocalPlace(DeclareLocal(frame, value), type);
 }
 
 auto SnapshotValueIntoClosure(

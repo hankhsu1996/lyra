@@ -245,7 +245,7 @@ struct SelectedBase {
   // Whether the value lies in storage that outlives the block of steps it is
   // evaluated in, rather than in a local of that block or in an object only
   // that block holds a handle to.
-  bool outlives_the_steps;
+  bool outlives_the_steps = false;
 };
 
 // `base`, evaluated here, once, because what reads it names it more than once
@@ -255,6 +255,24 @@ template <ExprLowerer Lowerer>
 auto EvaluateSelectedBase(
     Lowerer& lowerer, const WalkFrame& at, const hir::Expr& base)
     -> diag::Result<SelectedBase>;
+
+// The object a method changes (LRM 6.16, 7.5.3, 7.9, 7.10.2, 7.12.2): the place
+// the change lands in, and the place it is written back to once the method has
+// run, where there is one. A method is called on whatever an expression yields
+// (LRM 7.12, Syntax 7-5): where the object names storage the change lands
+// there, and where it is a value -- what a call returns, a cast, a part of
+// either -- in a temporary holding it, which nothing reads afterwards. An
+// object in a member of an untagged union, which is a view of the union's
+// storage, is changed in a copy read out of it and then written back, since the
+// method reads what it changes (LRM 7.3).
+struct ChangedObject {
+  AccessPath changed;
+  std::optional<AccessPath> written_back;
+};
+template <ExprLowerer Lowerer>
+auto LowerChangedObject(
+    Lowerer& lowerer, const WalkFrame& frame, const hir::Expr& object)
+    -> diag::Result<ChangedObject>;
 
 // The storage of `member` of the object `object` points at, as a place a wait
 // is told of where one is under way: `object` is whichever instance a virtual

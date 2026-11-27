@@ -497,15 +497,44 @@ auto EvaluateSelectedBase(
   }
   auto value = lowerer.LowerExpr(base, at);
   if (!value) return std::unexpected(std::move(value.error()));
-  const mir::TypeId type = value->type;
   return SelectedBase{
       .path =
           SettledPath{
               .named_in = &block.Body(),
-              .owner = block.LocalPlace(
-                  DeclareLocal(at, block.Add(*std::move(value))), type),
+              .owner = MaterializedTemporary(at, block.Add(*std::move(value))),
               .descent = {}},
       .outlives_the_steps = false};
+}
+
+template <ExprLowerer Lowerer>
+auto LowerChangedObject(
+    Lowerer& lowerer, const WalkFrame& frame, const hir::Expr& object)
+    -> diag::Result<ChangedObject> {
+  if (StorageFoundBy(lowerer, object) == StorageFound::kNone) {
+    auto value = lowerer.LowerExpr(object, frame);
+    if (!value) return std::unexpected(std::move(value.error()));
+    return ChangedObject{
+        .changed =
+            AccessPath{
+                .owner = MaterializedTemporary(
+                    frame, frame.Builder().Add(*std::move(value))),
+                .descent = {}},
+        .written_back = std::nullopt};
+  }
+  auto named = lowerer.LowerLhsExpr(object, frame);
+  if (!named) return std::unexpected(std::move(named.error()));
+  if (!ReachesUnionMember(*named)) {
+    return ChangedObject{
+        .changed = *std::move(named), .written_back = std::nullopt};
+  }
+  ReadThenWritten read =
+      ReadThenWrite(lowerer.Owner().Unit(), frame, *std::move(named));
+  return ChangedObject{
+      .changed =
+          AccessPath{
+              .owner = MaterializedTemporary(frame, read.incoming),
+              .descent = {}},
+      .written_back = std::move(read.place)};
 }
 
 namespace {
@@ -965,8 +994,8 @@ auto LowerHirMemberAccessExpr(
     auto base = lowerer.LowerExpr(base_expr, steps.Frame());
     if (!base) return std::unexpected(std::move(base.error()));
     const mir::TypeId union_type = base->type;
-    const mir::ExprId held_union = body.LocalPlace(
-        DeclareLocal(steps.Frame(), body.Add(*std::move(base))), union_type);
+    const mir::ExprId held_union =
+        MaterializedTemporary(steps.Frame(), body.Add(*std::move(base)));
     const DescentStep member = MemberStep(
         unit_lowerer, body, aggregate, sel.field_index,
         PartSelectNaturalType(unit, union_type, result_type));
@@ -1335,6 +1364,12 @@ template auto EvaluateSelectedBase(
 template auto EvaluateSelectedBase(
     const StructuralScopeLowerer&, const WalkFrame&, const hir::Expr&)
     -> diag::Result<SelectedBase>;
+template auto LowerChangedObject(
+    ProcessLowerer&, const WalkFrame&, const hir::Expr&)
+    -> diag::Result<ChangedObject>;
+template auto LowerChangedObject(
+    const StructuralScopeLowerer&, const WalkFrame&, const hir::Expr&)
+    -> diag::Result<ChangedObject>;
 template auto IsTagCheckedRead(
     ProcessLowerer&, const WalkFrame&, const hir::Expr&) -> bool;
 template auto IsTagCheckedRead(

@@ -24,6 +24,7 @@
 #include "lyra/lowering/hir_to_mir/entry_walk.hpp"
 #include "lyra/lowering/hir_to_mir/expression/calls.hpp"
 #include "lyra/lowering/hir_to_mir/expression/operators.hpp"
+#include "lyra/lowering/hir_to_mir/expression/selects.hpp"
 #include "lyra/lowering/hir_to_mir/queue_building.hpp"
 #include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/statement/loops.hpp"
@@ -503,10 +504,9 @@ auto LowerMap(
 // dynamic array of positions answers by its own body for the keys' type, then
 // the array's elements put in that order by its type's own body. The keys are
 // the ones the loop gathered in order where the call writes a clause, and the
-// elements themselves where it writes none. The array is changed where the
-// source named it; one lying where another member of an untagged union may
-// have written is sorted in a copy read as its type holds a value, which is
-// then written back (LRM 7.3.2).
+// elements themselves where it writes none. The array is the object the method
+// changes (LRM 7.12), sorted where that change lands, and written back from
+// there where the change lands in a copy read out of a view (LRM 7.3.2).
 template <ExprLowerer Lowerer>
 auto LowerSort(
     Lowerer& lowerer, const WalkFrame& frame, const hir::CallExpr& c,
@@ -517,28 +517,13 @@ auto LowerSort(
   BlockBuilder steps(frame);
   mir::Builder body = steps.Body();
   const hir::Expr& operand = lowerer.HirExprs().Get(ArrayOperand(c));
-  auto target = lowerer.LowerLhsExpr(operand, steps.Frame());
+  auto target = LowerChangedObject(lowerer, steps.Frame(), operand);
   if (!target) return std::unexpected(std::move(target.error()));
-  const std::optional<hir::UnpackedRange> declared =
-      DeclaredRangeOf(unit_lowerer, operand.type);
-  std::optional<AccessPath> written_back;
-  WalkedArray array = [&] {
-    if (!ReachesUnionMember(*target)) {
-      return WalkedArrayAt(
-          unit_lowerer.Unit(), steps.Frame(), *std::move(target), declared);
-    }
-    ReadThenWritten changed =
-        ReadThenWrite(unit_lowerer.Unit(), steps.Frame(), *std::move(target));
-    const mir::TypeId type = body.Get(changed.incoming).type;
-    written_back = std::move(changed.place);
-    return WalkedArrayAt(
-        unit_lowerer.Unit(), steps.Frame(),
-        AccessPath{
-            .owner = body.LocalPlace(
-                DeclareLocal(steps.Frame(), changed.incoming), type),
-            .descent = {}},
-        declared);
-  }();
+  const std::optional<AccessPath> written_back =
+      std::move(target->written_back);
+  const WalkedArray array = WalkedArrayAt(
+      unit_lowerer.Unit(), steps.Frame(), std::move(target->changed),
+      DeclaredRangeOf(unit_lowerer, operand.type));
 
   const mir::TypeId key_type = KeyType(lowerer, ref, array);
   auto compared = [&]() -> diag::Result<AccessPath> {

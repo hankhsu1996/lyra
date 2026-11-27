@@ -567,9 +567,8 @@ auto PartBodyBuilder::Read() -> mir::CallableCode {
                 // one, and the reference formed over that.
                 const mir::ExprId lies_at =
                     IsUnionMemberStep(step)
-                        ? block.LocalPlace(
-                              DeclareLocal(at, PathValue(unit, block, path)),
-                              part_value)
+                        ? MaterializedTemporary(
+                              at, PathValue(unit, block, path))
                         : PathAsPlace(unit, block, path);
                 const mir::ExprId borrowed = block.Add(
                     mir::Expr{

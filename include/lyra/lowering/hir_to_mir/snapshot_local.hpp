@@ -28,6 +28,16 @@ auto SnapshotExprToLocal(
 [[nodiscard]] auto DeclareLocal(const WalkFrame& frame, mir::ExprId init)
     -> mir::LocalId;
 
+// `value` held where a place is needed: a local of the block `frame` is
+// lowering, started as `value`, named as the place it lies in and ending where
+// that block does, as C++ materializes a temporary for a value an object is
+// wanted of ([class.temporary]). A value read out of storage is held as a copy,
+// so a change made through the place reaches nothing it was read from; one that
+// is no value to copy -- a lease, a write in progress, a place designated
+// within one -- is held itself.
+[[nodiscard]] auto MaterializedTemporary(
+    const WalkFrame& frame, mir::ExprId value) -> mir::ExprId;
+
 // `local = value`, appended to `block` as a statement; `value` is already of
 // the local's type.
 void AssignLocal(
@@ -41,13 +51,6 @@ void AssignLocal(
 // handed back. The value is what the local starts out as, so one of a type no
 // declaration holds -- a pointer, a machine integer -- is held the same way.
 [[nodiscard]] auto EvaluatedOnce(const WalkFrame& frame, mir::ExprId value)
-    -> mir::ExprId;
-
-// `value` held by a local of the block `frame` is lowering, named as the
-// place the local is rather than read out of it: what a call answers that is
-// no value to copy -- a lease, a write in progress, a place designated within
-// one -- and ends where that block does.
-[[nodiscard]] auto HeldByALocal(const WalkFrame& frame, mir::ExprId value)
     -> mir::ExprId;
 
 // Declares a local of the block `frame` is lowering, started as `value`, under

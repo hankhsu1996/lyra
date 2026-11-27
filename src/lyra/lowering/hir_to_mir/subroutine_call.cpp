@@ -780,10 +780,8 @@ auto SeenAsAny(
         *ParamTypeOf(unit, at, hir::ParamDirection::kRef));
   };
   const AccessPath incoming{
-      .owner = block.LocalPlace(
-          DeclareLocal(
-              frame, block.Add(BuildDefaultValueExpr(unit, block, kept))),
-          kept),
+      .owner = MaterializedTemporary(
+          frame, block.Add(BuildDefaultValueExpr(unit, block, kept))),
       .descent = {}};
 
   ClosureBuilder carry(unit, frame, support::ClosureKind::kFn);
@@ -798,7 +796,9 @@ auto SeenAsAny(
       unit, block,
       PathBoundReference(
           unit, block, place,
-          [&](mir::ExprId leased) { return HeldByALocal(frame, leased); }),
+          [&](mir::ExprId leased) {
+            return MaterializedTemporary(frame, leased);
+          }),
       *ParamTypeOf(unit, seen, hir::ParamDirection::kRef));
   const AccessPath variable{
       .owner = SnapshotPlaceIntoClosure(unit_lowerer, frame, carry, bound),
@@ -809,10 +809,8 @@ auto SeenAsAny(
               unit, body, variable,
               ConvertToType(
                   unit, body, PathValue(unit, body, received), seen)))});
-  const mir::ExprId made = block.Add(carry.BuildVoid());
-  const mir::TypeId closure_type = block.Get(made).type;
   const mir::ExprId lent = BuildBorrowedClosure(
-      unit, block, block.LocalPlace(DeclareLocal(frame, made), closure_type));
+      unit, block, MaterializedTemporary(frame, block.Add(carry.BuildVoid())));
 
   return block.Add(
       mir::MakeCallExpr(
@@ -829,13 +827,10 @@ auto SeenAsAny(
 auto PlaceAnswered(
     const WalkFrame& frame, mir::ExprId reference, mir::TypeId type,
     const hir::Expr& omitted) -> Lvalue {
-  mir::Builder block = frame.Builder();
-  const mir::TypeId held = block.Get(reference).type;
   return Lvalue{
       .form =
           AccessPath{
-              .owner = block.LocalPlace(DeclareLocal(frame, reference), held),
-              .descent = {}},
+              .owner = MaterializedTemporary(frame, reference), .descent = {}},
       .type = type,
       .source_type = omitted.type,
       .span = omitted.span};

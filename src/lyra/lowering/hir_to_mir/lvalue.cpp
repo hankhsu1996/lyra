@@ -110,11 +110,9 @@ auto DistributeUnpacked(
   mir::Builder block = frame.Builder();
   // Each member is taken where it lies in what is distributed; a value that
   // lies nowhere is held in a local first, as a place is needed to step into.
-  mir::ExprId held = value;
-  if (!mir::IsReadablePlace(unit.types, block.Get(value))) {
-    const mir::LocalId local = DeclareLocal(frame, value);
-    held = block.LocalPlace(local, block.Get(value).type);
-  }
+  const mir::ExprId held = mir::IsReadablePlace(unit.types, block.Get(value))
+                               ? value
+                               : MaterializedTemporary(frame, value);
   for (std::size_t i = 0; i < join.members.size(); ++i) {
     const std::optional<DescentStep> step =
         PatternMemberStep(unit, block, lvalue.type, i);
@@ -445,8 +443,7 @@ auto AppendStores(
   // is located, so a member written first changes nothing a later one is taken
   // from, even where the value was read out of a member's own storage (LRM
   // 10.9, 11.4.12).
-  const mir::LocalId local = DeclareLocal(frame, value);
-  const mir::ExprId held = block.LocalPlace(local, block.Get(value).type);
+  const mir::ExprId held = MaterializedTemporary(frame, value);
   Lvalue located = lvalue;
   ForEachPlace(located, [&](AccessPath& place) {
     place = Settled(unit_lowerer.Unit(), frame, std::move(place));
