@@ -18,9 +18,9 @@ collapsed table of its own and never marked: a stage says where a move of the
 build came from, and work moved from one stage to another is no move of the
 build. A stage's change is shown only where both builds were split into the
 same stages, since a stage one of them lacks puts its work in that one's rest.
-Both sides are split by the table of the comparison that runs, which on a merge
-is head's, so a stage missing from head's split is lost, as a measurement is;
-base was built before that table, and a stage it lacks is only a gap.
+Both sides are split by that one table, so a stage missing from head's split
+is lost, as a measurement is; a stage base lacks is only a gap, since base may
+predate it.
 
 The exit status is 0 whatever moved: what a run does about a number is for
 whoever reads the outputs to decide. It is 1 only when a file cannot be read

@@ -122,8 +122,11 @@ TIMEOUT_SECONDS = 900
 
 # What a step of a real design may take under callgrind, which runs a program
 # about fifty times slower than it runs natively: a design that builds in tens
-# of seconds is counted in tens of minutes.
-DESIGN_TIMEOUT_SECONDS = 2400
+# of seconds is counted in tens of minutes. A design is listed where its whole
+# count fits about half an hour on a usual runner, and one design's count has
+# taken twice as long on another, so a step of a listed design that ends at all
+# ends within an hour, and the limit is that hour.
+DESIGN_TIMEOUT_SECONDS = 3600
 
 # What preparing a run's store may take: the C++ backend compiles the runtime
 # library a program links, optimized, into the first store it builds in, and on

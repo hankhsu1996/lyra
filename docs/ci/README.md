@@ -254,9 +254,9 @@ function that begins it executes, as the compiler's own trace names the stages. 
 moved is read off the same two counts, as rustc-perf reads it off the compiler's self-profile, and a
 stage is never marked: work moved from one stage to another is no move of the build. Two builds'
 stages are compared only where both were split into the same stages, since a stage one of them lacks
-puts its work in that one's rest. Both are split by the table of the comparison that runs, which on
-a merge is head's, so a stage the table names and head's profile does not have is a measurement
-lost: a stage's function was renamed and the table was not.
+puts its work in that one's rest. Both are split by one table, `run_benchmarks.py`'s, so a stage the
+table names and head's profile does not have is a measurement lost: on a merge, a stage's function
+was renamed and the table was not.
 
 A measurement is marked where it moved by two percent or more, or where the parent counted it and
 the change could not. Two counts of one compiler agree to a few hundredths of a percent of the
@@ -272,8 +272,16 @@ merge to `main` is counted against its parent, so each count belongs to exactly 
 and where any measurement was marked the table goes on that pull request as a comment: the real
 designs whole, and of the corpus the cases marked, with every case below them, collapsed. A branch
 expected to move one is counted before it merges by dispatching the workflow on it, and the same
-dispatch compares any revision with another, its parent by default. The jobs take four runners at
-most, so a pull request's own checks never wait on them.
+dispatch compares any revision with another, its parent by default. Only the two compilers are built
+at the revisions compared. What measures them -- `tools/bench/run_benchmarks.py` and its stage
+table, the corpus, the list of designs and the suite they are declared from -- is the commit the
+workflow runs from, as rustc-perf's collector and the LLVM tracker's benchmark set are kept apart
+from the compiler they measure. So two old revisions are counted and split as a merge is today, and
+a branch that changes how things are measured is dispatched from itself. What a head older than that
+commit cannot do -- a case added after it, a stage whose function it predates -- is listed as not
+counted on head and goes red, as it would on a merge, though here it says only that the compiler is
+older than what measures it; and a revision older than an option the runner passes cannot be counted
+at all. The jobs take four runners at most, so a pull request's own checks never wait on them.
 
 The job goes red where the change has no count of a measurement -- one the parent counted, or one
 that cannot be counted at all, such as a case whose resolution fails it -- and where one got worse
