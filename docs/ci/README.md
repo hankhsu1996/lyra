@@ -238,9 +238,25 @@ A count is the same however loaded the machine is, which is why it can say what 
 change of a few percent stands out on a runner whose wall clock moves by half from one night to the
 next. It is not the same on every machine, though -- the C library picks its copy routines by
 processor, and the runner image moves its compiler and standard library on its own schedule -- so
-the two counts of each measurement are taken in one job, on one machine, and none is stored for
-another day to compare against. What compares across days is the nightly benchmark's ratio to
-Verilator.
+the two counts of each measurement are taken in one job, on one machine, and no count is compared
+with one taken in another job. What is kept is each merge's two sides together, as a git note on the
+merge under `refs/notes/instruction-counts`, and what compares across days is a merge's head over
+its base: over a range of merges, the product of those is how far the range moved, whatever runner
+each merge was counted on. `tools/bench/count_history.py read A..B` fetches the notes and prints
+each merge's change, the product, and every merge in the range it has no counts of, which the
+product leaves out. The LLVM compile-time tracker keeps its measurements in a git repository of
+their own for the same reading; it runs on one machine and can keep counts alone, which a pool of
+runners cannot. A dispatched comparison keeps no note, since what it compares is not a merge.
+
+A design's build is also split by stage -- the front end, declaring units, lowering to HIR, MIR and
+LIR, emitting LLVM IR, generating the object, and the rest -- each counted as everything the
+function that begins it executes, as the compiler's own trace names the stages. So where a build
+moved is read off the same two counts, as rustc-perf reads it off the compiler's self-profile, and a
+stage is never marked: work moved from one stage to another is no move of the build. Two builds'
+stages are compared only where both were split into the same stages, since a stage one of them lacks
+puts its work in that one's rest. Both are split by the table of the comparison that runs, which on
+a merge is head's, so a stage the table names and head's profile does not have is a measurement
+lost: a stage's function was renamed and the table was not.
 
 A measurement is marked where it moved by two percent or more, or where the parent counted it and
 the change could not. Two counts of one compiler agree to a few hundredths of a percent of the

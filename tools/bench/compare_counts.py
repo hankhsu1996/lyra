@@ -13,6 +13,15 @@ too much to resolve that has no count, so a mark is never a count's
 disagreement with itself. A corpus case that moved by less is listed only in
 the collapsed table.
 
+Each design's build is also split by the stages of `BUILD_STAGES`, in a
+collapsed table of its own and never marked: a stage says where a move of the
+build came from, and work moved from one stage to another is no move of the
+build. A stage's change is shown only where both builds were split into the
+same stages, since a stage one of them lacks puts its work in that one's rest.
+Both sides are split by the table of the comparison that runs, which on a merge
+is head's, so a stage missing from head's split is lost, as a measurement is;
+base was built before that table, and a stage it lacks is only a gap.
+
 The exit status is 0 whatever moved: what a run does about a number is for
 whoever reads the outputs to decide. It is 1 only when a file cannot be read
 as a count run.
@@ -29,11 +38,14 @@ import sys
 from pathlib import Path
 
 from run_benchmarks import (
+    BUILD_SPLIT_ROWS,
+    BUILD_STAGES,
     CELL_FAILED,
     CELL_NOT_RUN,
     DESIGN_FAMILY,
     LYRA,
     MARK_PERCENT,
+    MEASURE_BUILD,
     STATUS_OK,
     read_count_file,
 )
@@ -84,6 +96,57 @@ def cell(result: dict | None) -> str:
     if result["status"] != STATUS_OK:
         return CELL_FAILED
     return f"{result['instructions_per_unit']:,.0f}"
+
+
+def percent(factor: float) -> str:
+    """Head over base, as the change a table shows."""
+    return f"{(factor - 1.0) * 100.0:+.1f}%"
+
+
+def stage_factors(base: dict, head: dict) -> dict[str, float]:
+    """Each stage's head over base, where both builds were split into the same
+    stages; a stage one of them lacks puts its work in that one's rest, so no
+    row of two different splits compares."""
+    b, h = base.get("stages", {}), head.get("stages", {})
+    if not b or b.keys() != h.keys():
+        return {}
+    return {stage: h[stage] / count for stage, count in b.items() if count > 0}
+
+
+def stage_cell(result: dict | None, stage: str) -> str:
+    """A stage's count of a design's build, as a cell."""
+    if not counted(result):
+        return cell(result)
+    count = result.get("stages", {}).get(stage)
+    return CELL_NOT_RUN if count is None else f"{count:,}"
+
+
+def stage_rows(
+    base: dict[tuple[str, str, str], dict],
+    head: dict[tuple[str, str, str], dict],
+) -> tuple[list[tuple], list[tuple[str, str]]]:
+    """Each design build's stages, base against head, and why each stage of a
+    build head counted is missing from its split."""
+    entries = dict(BUILD_STAGES)
+    rows: list[tuple] = []
+    lost: list[tuple[str, str]] = []
+    for key in sorted(base | head):
+        b, h = base.get(key), head.get(key)
+        if key[1] != MEASURE_BUILD or (h or b)["family"] != DESIGN_FAMILY:
+            continue
+        factors = stage_factors(b, h) if counted(b) and counted(h) else {}
+        split = h.get("stages", {}) if counted(h) else None
+        for stage in BUILD_SPLIT_ROWS:
+            if split is not None and stage not in split:
+                lost.append((
+                    f"{'/'.join(key)}: {stage}",
+                    f"{entries[stage]} is not in the profile" if split else
+                    "the build could not be split, and the count job's log "
+                    "says why"))
+            text = percent(factors[stage]) if stage in factors else "-"
+            rows.append((0.0, key[0], key[2], stage, stage_cell(b, stage),
+                         stage_cell(h, stage), text))
+    return rows, lost
 
 
 def print_table(header: str, rows: list[tuple]) -> None:
@@ -151,6 +214,8 @@ def main() -> None:
                 secondary_marked.append(row)
     for rows in (primary, secondary, secondary_marked):
         rows.sort(key=lambda row: (-row[0], row[1], row[2]))
+    stages, stages_lost = stage_rows(base, head)
+    lost = lost or bool(stages_lost)
 
     print("## Instruction count")
     print()
@@ -166,6 +231,13 @@ def main() -> None:
               "program executes running the design's quick check.")
         print()
         print_table(header.format("Design", "Measure"), primary)
+    if stages:
+        print()
+        print("<details><summary>Where each build went</summary>")
+        print()
+        print_table(header.format("Design", "Stage"), stages)
+        print()
+        print("</details>")
     if secondary:
         print()
         print("### Cost families")
@@ -185,12 +257,14 @@ def main() -> None:
         (key, r) for key, r in sorted(head.items())
         if r["status"] != STATUS_OK
     ]
-    if failed:
+    if failed or stages_lost:
         print()
         print("### Not counted on head")
         print()
         for (case, measure, backend), r in failed:
             print(f"- **{case}/{measure}/{backend}**: {r['detail']}")
+        for stage, why in stages_lost:
+            print(f"- **{stage}**: {why}")
     print()
 
     if args.github_output:

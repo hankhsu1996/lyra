@@ -54,7 +54,7 @@ import tempfile
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -195,6 +195,27 @@ DESIGN_FAMILY = "designs"
 # What `declare_external_design` writes beside a design's declaration.
 DESIGN_DESCRIPTION = "case.json"
 
+# The stages a design's build on the execution backend is split into, each
+# named as the compiler's own trace names it and counted as everything the
+# function that begins it executes. Each of these is called from another file
+# than the one defining it, and the compiler is built without link-time
+# optimization, so none is inlined away. What the front end leaves to be
+# elaborated on demand is counted in the stage that asks for it, and what falls
+# in none of them -- the driver, the store of kept results, linking -- is
+# `BUILD_REST`, so the stages and the rest add up to the build's count.
+BUILD_STAGES = (
+    ("front end", "lyra::compiler::RunFrontEnd"),
+    ("declare units", "lyra::compiler::DeclareUnits"),
+    ("lower to HIR", "lyra::lowering::ast_to_hir::UnitLowerer::LowerBodies"),
+    ("lower to MIR", "lyra::compiler::LowerUnitToSemantic"),
+    ("lower to LIR", "lyra::compiler::LowerUnitToExecutable"),
+    ("emit LLVM IR", "lyra::backend::llvm_backend::EmitModule"),
+    ("generate object", "lyra::backend::llvm_backend::CompileModule"),
+)
+BUILD_REST = "rest"
+# Every row a design's build is split into, in the order a table shows them.
+BUILD_SPLIT_ROWS = (*(name for name, _ in BUILD_STAGES), BUILD_REST)
+
 _DIRECTIVES = {"measure", "work", "work-max"}
 
 
@@ -235,6 +256,9 @@ class Result:
     growth: float = 0.0
     detail: str = ""
     output: str = ""
+    # A design's build count split by `BUILD_STAGES`, each stage found in the
+    # profile and `BUILD_REST`; empty for every other result.
+    stages: dict[str, int] = field(default_factory=dict)
     # What a simulation case's program printed at `PROOF_AMOUNT`. It is read
     # within the run, to hold a hand-written program to Lyra's, and is not
     # part of the result file.
@@ -750,6 +774,56 @@ def count_instructions(
     return int(match.group(1)), run
 
 
+def is_entry(function: str, entry: str) -> bool:
+    """Whether a profile's function is `entry` itself, and not a lambda or a
+    local class inside it, whose names begin the same way."""
+    if not function.startswith(entry + "("):
+        return False
+    depth = 0
+    for index in range(len(entry), len(function)):
+        depth += {"(": 1, ")": -1}.get(function[index], 0)
+        if depth == 0:
+            return "::" not in function[index + 1:]
+    return False
+
+
+def count_stages(profile: Path, total: int) -> dict[str, int]:
+    """Split a build's count by `BUILD_STAGES`, from the profile callgrind
+    wrote of it.
+
+    A stage whose function is not in the profile is left out, so a reader can
+    tell a stage the compiler no longer begins there from one that did no
+    work; what it did is then in `BUILD_REST`.
+    """
+    annotate = run_process(
+        ["callgrind_annotate", "--inclusive=yes", "--threshold=100",
+         "--auto=no", "--show-percs=no", str(profile)])
+    if annotate.timed_out or annotate.returncode != 0:
+        raise ValueError(f"callgrind_annotate {how_it_ended(annotate)}")
+    inclusive: dict[str, int] = {}
+    for line in annotate.stdout.splitlines():
+        found = re.match(r"\s*([\d,]+)\s+[^:\s]*:(.+?)(?: \[[^\]]*\])?$", line)
+        if found is None:
+            continue
+        cost = int(found.group(1).replace(",", ""))
+        for name, entry in BUILD_STAGES:
+            if is_entry(found.group(2), entry):
+                if name in inclusive:
+                    raise ValueError(
+                        f"the profile has more than one function {entry}")
+                inclusive[name] = cost
+    rest = total - sum(inclusive.values())
+    if rest < 0:
+        raise ValueError(
+            "the stages counted more than the build did, so one of them "
+            "runs inside another")
+    return {
+        **{name: inclusive[name] for name, _ in BUILD_STAGES
+           if name in inclusive},
+        BUILD_REST: rest,
+    }
+
+
 def record_count(
     result: Result, readings: list[tuple[int, int]], repeated: int,
 ) -> None:
@@ -929,6 +1003,14 @@ def count_design_into(
         ran.detail = "not run, since the design did not build"
         return
     built.instructions_per_unit = float(count)
+    # Read before the run is counted, which may write its profile to the same
+    # place. A count that cannot be split is still the build's count; its
+    # stages are left out, which a comparison reports as stages lost.
+    try:
+        built.stages = count_stages(root / "callgrind.out", count)
+    except (OSError, ValueError) as e:
+        print(f"  {design.name}/{backend}: its build count could not be "
+              f"split by stage ({e})", file=sys.stderr, flush=True)
 
     run = run_process(
         [*build, "-O2", "--lto", "--cache-dir", run_store, "-o",
@@ -1442,6 +1524,7 @@ def result_to_dict(r: Result) -> dict:
         "growth": r.growth,
         "detail": r.detail,
         "output": r.output,
+        "stages": dict(r.stages),
     }
 
 
