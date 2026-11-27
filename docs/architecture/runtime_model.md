@@ -1,9 +1,9 @@
 # Runtime Model
 
 The compiler does not yet answer a timescale function or `$printtimescale` that names `$root`, or an
-instance reached upward or from the top: such a call is refused, though the timescale paragraph
-below gives each its answer -- except a simple name that reaches an ancestor instance, which is
-folded as though the unit's own source fixed it. Everything else here binds every layer as written.
+instance by a path that starts with a top-level instance's name or searches upward: such a call is
+refused, though the timescale paragraph below gives each its answer. Everything else here binds
+every layer as written.
 
 A compilation unit is a class. Compile-time produces the class definition: its parameters, its
 constructor body, its callable bodies. Runtime has two contexts. The **constructor** runs once per
@@ -101,16 +101,20 @@ of the built-in package `std` are Lyra's own definitions (LRM 26.7) and state no
 
 A scope's time unit and precision are a fact of the definition its class is of, one per definition
 (LRM 3.14.2.2), and a timescale function or `$printtimescale` answers for the design element it
-names (LRM 20.4.1, 20.4.2). Where the unit's own source fixes which element that is -- the element
-the call is written in, `$unit`, or an instance the unit's own hierarchy reaches downward -- the
-answer is a constant of the unit, the same in every instance its code serves. Which case a name is
-falls out of where its route goes, never how it is spelled: `Top.child` written inside `Top` reaches
-the unit's own hierarchy, while a simple name that resolves to an ancestor instance (LRM 23.8) is
-reached upward. An instance named upward or from the top is whichever the design puts there, so its
-answer is read at run time from the definition of the scope the name's route reaches
-([reference_resolution.md](reference_resolution.md) invariant 10), and `$root` answers the global
-precision the run fixed (LRM 20.4.1). A constant folded in for either would answer for one placement
-of an instance whose code serves every placement ([north_star.md](north_star.md) invariant 2).
+names (LRM 20.4.1, 20.4.2). Where the name's path starts where no placement of the calling instance
+moves it -- no name, `$unit`, something that instance declares, the instance itself named by its
+module's name (LRM 23.8), or `$root`, whose next step names a top-level instance by its module's
+name (LRM 23.3.1) -- every step is fixed by text the unit reads, so the answer is a constant of the
+unit, the same in every instance its code serves. Which case a name is falls out of where its path
+starts, never how it is spelled: `Top.child` written inside `Top`, `$root.Top.child` and `child`
+start at the same instance and get one answer. A path that starts with a top-level instance's name
+written anywhere else, or that searches upward by the name of an instance or a module above (LRM
+23.3.1, 23.8), can reach a scope of that name nearer the instance in one placement than in another,
+so each is read at run time from the definition of the scope the path reaches
+([reference_resolution.md](reference_resolution.md) invariant 10), and `$root` alone answers the
+global precision the run fixed (LRM 20.4.1). A constant folded in for one of them would answer for
+one placement of an instance whose code serves every placement ([north_star.md](north_star.md)
+invariant 2).
 
 What surrounds that construction is runner policy and is never MIR: creating the run, handing it the
 built tree to bind (resolve, initialize, activate), running the scheduler, the exit status, and how

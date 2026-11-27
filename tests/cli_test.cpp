@@ -4248,8 +4248,9 @@ TEST(LyraRun, PrintTimescaleNamesTheDesignElementAsDeclared) {
 
 // `$printtimescale` given a design element prints that element's time unit and
 // precision under the name the call wrote for it, and `$unit` by that name (LRM
-// 20.4.2) -- the shape of the clause's own example. `Middle` states none and
-// takes the compilation unit's (LRM 3.14.2.3).
+// 20.4.2) -- the shape of the clause's own example, with the element named
+// downward, from the calling module's own name and from `$root`. `Middle`
+// states none and takes the compilation unit's (LRM 3.14.2.3).
 TEST(LyraRun, PrintTimescaleOfANamedDesignElement) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
@@ -4272,6 +4273,8 @@ TEST(LyraRun, PrintTimescaleOfANamedDesignElement) {
                      << "    $printtimescale();\n"
                      << "    $printtimescale(middle.leaf);\n"
                      << "    $printtimescale(middle);\n"
+                     << "    $printtimescale(Test.middle);\n"
+                     << "    $printtimescale($root.Test.middle);\n"
                      << "  end\n"
                      << "endmodule\n";
 
@@ -4291,7 +4294,101 @@ TEST(LyraRun, PrintTimescaleOfANamedDesignElement) {
       "Time scale of ($unit) is 100ps / 10fs\n"
       "Time scale of (Test) is 1ms / 1us\n"
       "Time scale of (middle.leaf) is 1ns / 1ps\n"
-      "Time scale of (middle) is 100ps / 10fs\n");
+      "Time scale of (middle) is 100ps / 10fs\n"
+      "Time scale of (Test.middle) is 100ps / 10fs\n"
+      "Time scale of ($root.Test.middle) is 100ps / 10fs\n");
+}
+
+// A timescale function or `$printtimescale` answers a name whose path starts
+// where no placement of the calling instance can move it: in that instance,
+// at the instance itself, or at `$root`. A path that starts with a top-level
+// instance's name, or that searches upward by an instance's name or a
+// module's, can reach a scope only the placement decides (LRM 23.3.1, 23.8),
+// and `$root` alone answers for the whole design; each is refused until the
+// run reads it.
+TEST(LyraCheck, RefusesATimescaleNameThePlacementDecides) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  struct Refused {
+    std::string_view file;
+    std::string_view call;
+    std::string_view at;
+    std::string_view called;
+  };
+  const std::array refusals = {
+      Refused{
+          .file = "root.sv",
+          .call = "initial $display(\"%0d\", $timeunit($root));",
+          .at = "root.sv:7:29: ",
+          .called = "$timeunit"},
+      Refused{
+          .file = "top_name.sv",
+          .call = "initial $display(\"%0d\", $timeprecision(Top));",
+          .at = "top_name.sv:7:29: ",
+          .called = "$timeprecision"},
+      Refused{
+          .file = "from_top_name.sv",
+          .call = "initial $printtimescale(Top.m);",
+          .at = "from_top_name.sv:7:13: ",
+          .called = "$printtimescale"},
+      Refused{
+          .file = "upward_instance.sv",
+          .call = "initial $display(\"%0d\", $timeunit(m.sib));",
+          .at = "upward_instance.sv:7:29: ",
+          .called = "$timeunit"},
+      Refused{
+          .file = "upward_module.sv",
+          .call = "initial $display(\"%0d\", $timeunit(Mid.sib));",
+          .at = "upward_module.sv:7:29: ",
+          .called = "$timeunit"},
+  };
+  for (const Refused& refused : refusals) {
+    WriteFile(
+        *tmp_or / refused.file, std::format(
+                                    "`timescale 1ms / 1us\n"
+                                    "module Leaf;\n"
+                                    "endmodule\n"
+                                    "module Child;\n"
+                                    "  Leaf down ();\n"
+                                    "  if (1) begin : nested\n"
+                                    "    {}\n"
+                                    "  end\n"
+                                    "endmodule\n"
+                                    "module Mid;\n"
+                                    "  Child c ();\n"
+                                    "  Leaf sib ();\n"
+                                    "endmodule\n"
+                                    "module Top;\n"
+                                    "  Mid m ();\n"
+                                    "endmodule\n",
+                                    refused.call));
+  }
+
+  for (const Refused& refused : refusals) {
+    const auto lowered = RunLyraFrom(
+        lyra, *tmp_or, std::format("dump hir --top Top {}", refused.file));
+    EXPECT_THAT(lowered, ExitedWithCode(1)) << lowered.stderr_text;
+    EXPECT_NE(
+        lowered.stderr_text.find(
+            std::format(
+                "{}error: '{}' naming '$root', or an instance by a path that "
+                "starts with a top-level instance's name or searches upward, "
+                "is not yet supported",
+                refused.at, refused.called)),
+        std::string::npos)
+        << refused.file << ": " << lowered.stderr_text;
+    EXPECT_NE(
+        lowered.stderr_text.find(
+            "note: name the instance by a path from '$root' or from the "
+            "instance the call is in"),
+        std::string::npos)
+        << refused.file << ": " << lowered.stderr_text;
+    EXPECT_EQ(lowered.stderr_text.find("internal error"), std::string::npos)
+        << refused.file << ": " << lowered.stderr_text;
+  }
 }
 
 // A nonblocking update is the design's code run where the update is applied
