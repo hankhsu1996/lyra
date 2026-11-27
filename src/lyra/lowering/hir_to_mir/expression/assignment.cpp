@@ -168,8 +168,11 @@ auto AppliedTo(
 
 // Where an assignment writes and what it stores there: the right-hand side
 // into the target, or, for a compound one, the operator applied to what the
-// target held (LRM 11.4.1), with the target settled once for the read and the
-// write.
+// target held (LRM 11.4.1), with the target reached once for the read and the
+// write. The target's index expressions run first, as written, then what the
+// operator applies, and only then is the target reached, as rustc forms a
+// built-in assign-op's place only after its operand: nothing of the design
+// runs while the access is open, so nothing can end what it reached.
 struct AssignedStore {
   AccessPath target;
   mir::ExprId stored;
@@ -182,17 +185,19 @@ auto StoreOf(
   if (!assign.compound.has_value()) {
     return AssignedStore{.target = std::move(target), .stored = rhs};
   }
-  ReadThenWritten settled =
-      ReadThenWrite(unit_lowerer.Unit(), frame, std::move(target));
+  AccessPath settled = Settled(unit_lowerer.Unit(), frame, std::move(target));
+  const mir::ExprId operand = EvaluatedOnce(frame, rhs);
+  ReadThenWritten reached =
+      ReadModifyWrite(unit_lowerer.Unit(), frame, std::move(settled));
   const mir::ExprId applied = AppliedTo(
       unit_lowerer.Unit(), frame.Builder(), *assign.compound,
-      unit_lowerer.TranslateType(assign.compound->applied_at), settled.incoming,
-      rhs);
-  return AssignedStore{.target = std::move(settled.place), .stored = applied};
+      unit_lowerer.TranslateType(assign.compound->applied_at), reached.incoming,
+      operand);
+  return AssignedStore{.target = std::move(reached.place), .stored = applied};
 }
 
 // An increment or a decrement of a join, as steps of `frame`'s block: the
-// members settled and read together, the step applied at `type`, and each
+// members reached and read together, the step applied at `type`, and each
 // member given its share of the result (LRM 11.4.2, 11.4.12). Answers what the
 // members held before and after.
 struct SteppedJoin {
@@ -209,17 +214,17 @@ auto StepJoin(
   mir::Builder block = frame.Builder();
   auto lvalue = LowerLvalue(lowerer, target, frame);
   if (!lvalue) return std::unexpected(std::move(lvalue.error()));
-  auto settled =
-      ReadThenWrite(lowerer.Owner().Unit(), frame, *std::move(lvalue));
-  if (!settled) return std::unexpected(std::move(settled.error()));
-  const mir::TypeId stepped_at = type.value_or(settled->lvalue.type);
+  auto reached =
+      ReadModifyWrite(lowerer.Owner().Unit(), frame, *std::move(lvalue));
+  if (!reached) return std::unexpected(std::move(reached.error()));
+  const mir::TypeId stepped_at = type.value_or(reached->lvalue.type);
   const mir::ExprId before = EvaluatedOnce(
-      frame, ConvertToType(unit, block, settled->incoming, stepped_at));
+      frame, ConvertToType(unit, block, reached->incoming, stepped_at));
   const mir::ExprId after = EvaluatedOnce(
       frame, block.Add(BuildMirBinaryExpr(
                  unit, block, StepOperator(inc.op), before,
                  One(unit, block, stepped_at), stepped_at)));
-  auto stored = AppendStores(lowerer.Owner(), frame, settled->lvalue, after);
+  auto stored = AppendStores(lowerer.Owner(), frame, reached->lvalue, after);
   if (!stored) return std::unexpected(std::move(stored.error()));
   return SteppedJoin{.before = before, .after = after};
 }
@@ -243,15 +248,21 @@ auto AssignToJoin(
   Lvalue lvalue = *std::move(lvalue_or);
 
   // An assignment operator applies to what the members hold together, with
-  // every member settled once for the read and the write (LRM 11.4.1).
+  // every member reached once for the read and the write (LRM 11.4.1): the
+  // members' index expressions first, then what it applies, then the members.
   if (assign.compound.has_value()) {
-    auto settled = ReadThenWrite(unit_lowerer.Unit(), frame, std::move(lvalue));
-    if (!settled) return std::unexpected(std::move(settled.error()));
-    lvalue = std::move(settled->lvalue);
+    ForEachPlace(lvalue, [&](AccessPath& place) {
+      place = Settled(unit, frame, std::move(place));
+    });
+    stored = EvaluatedOnce(frame, stored);
+    auto reached =
+        ReadModifyWrite(unit_lowerer.Unit(), frame, std::move(lvalue));
+    if (!reached) return std::unexpected(std::move(reached.error()));
+    lvalue = std::move(reached->lvalue);
     stored = AppliedTo(
         unit, block, *assign.compound,
         unit_lowerer.TranslateType(assign.compound->applied_at),
-        settled->incoming, stored);
+        reached->incoming, stored);
   }
 
   // What is stored is evaluated once, before any member is written, which is
@@ -389,14 +400,14 @@ auto LowerHirIncDecWrite(
   }
   auto target_or = lowerer.LowerLhsExpr(target, frame);
   if (!target_or) return std::unexpected(std::move(target_or.error()));
-  // The target is settled once for the read and the write (LRM 11.4.2).
-  const ReadThenWritten settled =
-      ReadThenWrite(lowerer.Owner().Unit(), frame, *std::move(target_or));
-  const mir::TypeId type = block.Get(settled.incoming).type;
+  // The target is reached once for the read and the write (LRM 11.4.2).
+  const ReadThenWritten reached =
+      ReadModifyWrite(lowerer.Owner().Unit(), frame, *std::move(target_or));
+  const mir::TypeId type = block.Get(reached.incoming).type;
   return BuildStoreExpr(
-      unit, block, settled.place,
+      unit, block, reached.place,
       block.Add(BuildMirBinaryExpr(
-          unit, block, StepOperator(inc.op), settled.incoming,
+          unit, block, StepOperator(inc.op), reached.incoming,
           One(unit, block, type), type)));
 }
 
@@ -420,11 +431,11 @@ auto LowerHirIncDecExpr(
 
   // The value before the step and the value after it are both held, since a
   // postfix form yields the first and the write stores the second (LRM
-  // 11.4.2), and the target is settled once for the read and the write.
-  const ReadThenWritten settled = ReadThenWrite(
+  // 11.4.2), and the target is reached once for the read and the write.
+  const ReadThenWritten reached = ReadModifyWrite(
       lowerer.Owner().Unit(), steps.Frame(), *std::move(target_or));
   const mir::LocalId before = steps.DeclareLocal(
-      result_type, ConvertToType(unit, body, settled.incoming, result_type));
+      result_type, ConvertToType(unit, body, reached.incoming, result_type));
   const auto read = [&](mir::LocalId local) {
     return body.ReadLocal(local, result_type);
   };
@@ -437,7 +448,7 @@ auto LowerHirIncDecExpr(
   body.AppendStmt(
       mir::ExprStmt{
           .expr = body.Add(
-              BuildStoreExpr(unit, body, settled.place, read(after)))});
+              BuildStoreExpr(unit, body, reached.place, read(after)))});
   return steps.Build(read(yields_before ? before : after));
 }
 

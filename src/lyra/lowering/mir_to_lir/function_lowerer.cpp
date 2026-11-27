@@ -2754,9 +2754,9 @@ auto FunctionLowerer::LowerPropertyReference(
       *std::move(args), unit_->TranslateType(type));
 }
 
-auto FunctionLowerer::LowerObjectWriteOpening(
-    const mir::Block& block, const mir::CallExpr& call, mir::TypeId type)
-    -> diag::Result<lir::Operand> {
+auto FunctionLowerer::LowerObjectWriteOpeningInto(
+    const mir::Block& block, const mir::CallExpr& call,
+    const lir::Destination& destination) -> diag::Result<void> {
   if (call.arguments.size() != 1) {
     throw InternalError(
         "mir_to_lir: a write into an object is opened on the one object it "
@@ -2764,11 +2764,11 @@ auto FunctionLowerer::LowerObjectWriteOpening(
   }
   auto object = ObjectAddress(block, call.arguments.front());
   if (!object) {
-    return object;
+    return std::unexpected(std::move(object.error()));
   }
-  return EmitCallTo(
+  return CallInto(
       lir::BuiltinTarget{.fn = support::BuiltinFn::kOpenObjectWrite},
-      {*std::move(object)}, unit_->TranslateType(type));
+      {*std::move(object)}, destination);
 }
 
 auto FunctionLowerer::LowerCallInto(
@@ -2806,7 +2806,7 @@ auto FunctionLowerer::LowerCallInto(
     return settled(LowerReferenceBind(block, call, type));
   }
   if (OpensObjectWrite(unit_->Mir().types, call, type)) {
-    return settled(LowerObjectWriteOpening(block, call, type));
+    return LowerObjectWriteOpeningInto(block, call, destination);
   }
 
   // Reached where nothing awaits the execution -- a process handed to the
@@ -3112,7 +3112,7 @@ auto FunctionLowerer::SliceReceiverPlace(
            .Is<mir::DesignationType>()) {
     return PlaceHolding(block, receiver);
   }
-  auto designation = LowerExpr(block, receiver);
+  auto designation = WrapperOperand(block, receiver);
   if (!designation) {
     return std::unexpected(std::move(designation.error()));
   }
@@ -3130,7 +3130,7 @@ auto FunctionLowerer::LowerRunWrittenOnDesignation(
                                 .types.Get(block.exprs.Get(receiver).type)
                                 .Get<mir::DesignationType>()
                                 .value;
-  auto designation = LowerExpr(block, receiver);
+  auto designation = WrapperOperand(block, receiver);
   if (!designation) {
     return std::unexpected(std::move(designation.error()));
   }

@@ -58,11 +58,13 @@ void RequireHandleSequence(
 // A place reached through a write in progress -- bits of the value it
 // designates -- is the target of a store and of nothing else: the store is a
 // call on the designation, which hears which bits move, and nothing lies there
-// to read or to take the address of.
+// to read or to take the address of. A local holding a designation is stored,
+// loaded and addressed as that designation, which reaches nothing through it.
 void RequireDesignatedBitsOnlyStored(
     const CompilationUnit& unit, const Function& fn, const Place& place,
     bool stored) {
-  if (!unit.types.Get(OperandType(fn, place.base)).Is<DesignationType>()) {
+  if (!unit.types.Get(OperandType(fn, place.base)).Is<DesignationType>() ||
+      place.chain.empty()) {
     return;
   }
   const bool bits_through_it =

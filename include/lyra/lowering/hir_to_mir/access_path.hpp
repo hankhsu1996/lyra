@@ -447,11 +447,24 @@ struct ReadThenWritten {
   mir::ExprId incoming;
 };
 
-// `place` as an operand that is read and then written (LRM 13.5 `inout`): the
-// path is settled here, and the value going in is read through it at the type
-// the part is declared with, so the source's one operand is evaluated once
-// however far apart the read and the write stand.
+// `place` as an operand that is read now and written later, two accesses with
+// the construct's own work between them (LRM 13.5 `inout`): the path is
+// settled here, and the value going in is read through it at the type the
+// part is declared with, so the source's one operand is evaluated once however
+// far apart the read and the write stand.
 [[nodiscard]] auto ReadThenWrite(
+    const mir::CompilationUnit& unit, const WalkFrame& frame, AccessPath place)
+    -> ReadThenWritten;
+
+// `place` as the target of an assignment operator or an increment, one access
+// that reads the part and writes it back (LRM 11.4.1, 11.4.2), begun only
+// once whatever the operator applies has run: the part is reached as a
+// write reaches it, so an entry it names is made before it is read (LRM
+// 7.8.7), and what reached it is held for the rest of the evaluation `frame`
+// lowers, whose end ends the access and is where a write it opened reports.
+// The value going in is read where the part lies, and the write lands through
+// what is held.
+[[nodiscard]] auto ReadModifyWrite(
     const mir::CompilationUnit& unit, const WalkFrame& frame, AccessPath place)
     -> ReadThenWritten;
 

@@ -8,7 +8,6 @@
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr_id.hpp"
 #include "lyra/mir/local.hpp"
-#include "lyra/mir/stmt.hpp"
 #include "lyra/mir/type_id.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -42,6 +41,13 @@ void AssignLocal(
 // handed back. The value is what the local starts out as, so one of a type no
 // declaration holds -- a pointer, a machine integer -- is held the same way.
 [[nodiscard]] auto EvaluatedOnce(const WalkFrame& frame, mir::ExprId value)
+    -> mir::ExprId;
+
+// `value` held by a local of the block `frame` is lowering, named as the
+// place the local is rather than read out of it: what a call answers that is
+// no value to copy -- a lease, a write in progress, a place designated within
+// one -- and ends where that block does.
+[[nodiscard]] auto HeldByALocal(const WalkFrame& frame, mir::ExprId value)
     -> mir::ExprId;
 
 // Declares a local of the block `frame` is lowering, started as `value`, under

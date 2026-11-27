@@ -496,7 +496,8 @@ struct DriverType {
 // A write in progress into what a capability wrapper stands for (LRM 11.5.1),
 // whose contents hold a value of type `value`. It is an object the writer
 // holds, not an address, and it ends with the full-expression that opened it,
-// which is when the wrapper learns once whether the write changed it (LRM 4.3).
+// or with the evaluation whose local holds it, which is when the wrapper
+// learns once whether the write changed it (LRM 4.3).
 // It names no place itself: the whole of those contents is designated within
 // it, and the steps into parts start there.
 struct OpenWriteType {
@@ -508,11 +509,12 @@ struct OpenWriteType {
 // A place designated within a write in progress, holding a value of type
 // `value`: the whole of what the write was opened on, or a part of it that is
 // storage of its own, reached by a step taken within the write. It borrows the
-// write rather than holding it, so it ends with nothing to do. A step to an
-// element reports what forming it did to the variable -- an element made by
-// being written, or an index naming none (LRM 7.8.7, 7.10.1, 7.4.5) -- and
-// dereferencing it is where the write lands, so that part's value before the
-// write is what its value after is compared with.
+// write rather than holding it, and lives at least as long as anything written
+// through it, since a backend may judge at its end what the write landed on. A
+// step to an element reports what forming it did to the variable -- an element
+// made by being written, or an index naming none (LRM 7.8.7, 7.10.1, 7.4.5) --
+// and dereferencing it is where the write lands, so that part's value before
+// the write is what its value after is compared with.
 struct DesignationType {
   TypeId value;
 
@@ -522,9 +524,10 @@ struct DesignationType {
 // A write in progress into the properties of an object (LRM 8.4), opened on
 // the object alone, which answers the object as `object`, the class its
 // properties are reached through. It is an object the writer holds and it ends
-// with the full-expression that opened it, which is when it tells the object it
-// was written (LRM 9.4.2); the expression waiting on the object decides whether
-// that was an event, so nothing from before the write is kept.
+// with the full-expression that opened it, or with the evaluation whose local
+// holds it, which is when it tells the object it was written (LRM 9.4.2); the
+// expression waiting on the object decides whether that was an event, so
+// nothing from before the write is kept.
 struct ObjectWriteType {
   TypeId object;
 

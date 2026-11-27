@@ -11,7 +11,10 @@
 // function, of a task, of a method and of an interface class's method, a call
 // whose argument moves the handle the call is made on, an indexed write whose
 // index and value both call, blocking, nonblocking and delayed, and compound,
-// whose value reads its own target and so runs the index first (LRM 11.4.1), a
+// whose target's index runs first (LRM 11.4.1), then its operand, and only
+// then the read and the write of the target, one access within which nothing
+// else runs -- so an operand that writes the target is read back, and one that
+// deletes the associative entry it names has it made again (LRM 7.8.7) -- a
 // read of an element of an array a function holds beside a write of it, a
 // write of a local, or a call writing it through a reference, before a read
 // of it, a reference bound past a queue's end beside a read of its length, a
@@ -110,6 +113,20 @@ module Top;
   int queued [$];
   int length_seen;
 
+  int entries [int];
+
+  // Writes the element a compound assignment is about to read.
+  function automatic int overwrite_slot();
+    slots[0] = 10;
+    return 1;
+  endfunction
+
+  // Deletes the entry a compound assignment is about to read.
+  function automatic int delete_entry();
+    entries.delete(1);
+    return 7;
+  endfunction
+
   // Binding a reference to the position past a queue's end appends to it.
   task automatic bind_then_count(ref int element, input int length);
     length_seen = length;
@@ -128,6 +145,9 @@ module Top;
   string nonblocking;
   string compound;
   int compound_slot;
+  int compound_over_its_operand;
+  int compound_entries;
+  int compound_entry;
   string delayed;
   string choice;
   string looped;
@@ -191,6 +211,15 @@ module Top;
     slots[note("r", 1)] += note("s", 3);
     compound = trace;
     compound_slot = slots[1];
+
+    slots[0] = 2;
+    slots[0] += overwrite_slot();
+    compound_over_its_operand = slots[0];
+
+    entries[1] = 5;
+    entries[1] += delete_entry();
+    compound_entries = entries.num();
+    compound_entry = entries[1];
 
     trace = "";
     slots[note("t", 3)] = #1 note("u", 5);
@@ -260,6 +289,12 @@ module Top;
              compound);
     if (compound_slot != 7)
       $fatal(1, "the compound write stored %0d, expected 7", compound_slot);
+    if (compound_over_its_operand != 11)
+      $fatal(1, "a compound write whose operand wrote its target stored %0d, expected 11",
+             compound_over_its_operand);
+    if (compound_entries != 1 || compound_entry != 7)
+      $fatal(1, "a compound write whose operand deleted its entry left %0d of %0d, expected 7 of 1",
+             compound_entry, compound_entries);
     if (delayed != "ut")
       $fatal(1, "a delayed indexed write ran as '%s', expected 'ut'",
              delayed);

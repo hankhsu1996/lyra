@@ -454,16 +454,23 @@ auto AppendStores(
   return Distribute(unit_lowerer, frame, located, held, store);
 }
 
-auto ReadThenWrite(
-    const mir::CompilationUnit& unit, const WalkFrame& frame, Lvalue lvalue)
-    -> diag::Result<LvalueReadThenWritten> {
+namespace {
+
+// Every place of `lvalue` taken by `read_place`, which takes it for the write
+// and reads what it holds going in, and the value they hold together: one
+// place's, or, for a join, its members' joined by kind and, for a select of a
+// join, selected from that.
+template <typename ReadPlace>
+auto ReadEachPlace(
+    const mir::CompilationUnit& unit, const WalkFrame& frame, Lvalue lvalue,
+    const ReadPlace& read_place) -> diag::Result<LvalueReadThenWritten> {
   mir::Builder block = frame.Builder();
   const auto read_members = [&](std::vector<Lvalue>& members)
       -> diag::Result<std::vector<mir::ExprId>> {
     std::vector<mir::ExprId> incoming;
     incoming.reserve(members.size());
     for (Lvalue& member : members) {
-      auto settled = ReadThenWrite(unit, frame, std::move(member));
+      auto settled = ReadEachPlace(unit, frame, std::move(member), read_place);
       if (!settled) return std::unexpected(std::move(settled.error()));
       member = std::move(settled->lvalue);
       incoming.push_back(settled->incoming);
@@ -500,8 +507,7 @@ auto ReadThenWrite(
   auto incoming = std::visit(
       Overloaded{
           [&](AccessPath& place) -> diag::Result<mir::ExprId> {
-            ReadThenWritten settled =
-                ReadThenWrite(unit, frame, std::move(place));
+            ReadThenWritten settled = read_place(std::move(place));
             place = std::move(settled.place);
             return settled.incoming;
           },
@@ -527,6 +533,24 @@ auto ReadThenWrite(
   if (!incoming) return std::unexpected(std::move(incoming.error()));
   return LvalueReadThenWritten{
       .lvalue = std::move(lvalue), .incoming = *incoming};
+}
+
+}  // namespace
+
+auto ReadThenWrite(
+    const mir::CompilationUnit& unit, const WalkFrame& frame, Lvalue lvalue)
+    -> diag::Result<LvalueReadThenWritten> {
+  return ReadEachPlace(unit, frame, std::move(lvalue), [&](AccessPath place) {
+    return ReadThenWrite(unit, frame, std::move(place));
+  });
+}
+
+auto ReadModifyWrite(
+    const mir::CompilationUnit& unit, const WalkFrame& frame, Lvalue lvalue)
+    -> diag::Result<LvalueReadThenWritten> {
+  return ReadEachPlace(unit, frame, std::move(lvalue), [&](AccessPath place) {
+    return ReadModifyWrite(unit, frame, std::move(place));
+  });
 }
 
 }  // namespace lyra::lowering::hir_to_mir

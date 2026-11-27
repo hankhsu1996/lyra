@@ -514,14 +514,19 @@ void VerifyPlacesAreRead(
               return;
             // A dereference opens a pointer it reads, as clang reads the
             // operand of builtin `*p`. One that owns what it reaches is entered
-            // as an object, as C++ `*unique_ptr` enters `operator*` on it.
-            case OperandUse::kPointer:
-              if (unit.types.Get(block.exprs.Get(operand).type).OwnsPointee()) {
+            // as an object, as C++ `*unique_ptr` enters `operator*` on it, and
+            // so is a place designated within a write, whose dereference is
+            // where the write lands and which its own end then reports.
+            case OperandUse::kPointer: {
+              const Type& pointer =
+                  unit.types.Get(block.exprs.Get(operand).type);
+              if (pointer.OwnsPointee() || pointer.Is<DesignationType>()) {
                 as_storage(operand, taker);
               } else {
                 as_value(operand, taker);
               }
               return;
+            }
           }
         });
     if (const auto* scope = std::get_if<BlockExpr>(&data)) {
