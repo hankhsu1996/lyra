@@ -16,4 +16,5 @@
 16_assertions/a_past_value_in_a_package_task: "a sampled value function reading a static variable as of an earlier tick, in a subroutine of a package or of the compilation-unit scope, is not yet supported"
 18_random_value_generation/a_mode_names_a_member_of_an_element: "the mode of a member of an element of an array of structures is not yet supported"
 21_output/assignment_pattern_format_of_a_wildcard_indexed_array: "an operand holding an associative array with a wildcard index type"
+23_hierarchy/a_scope_argument_finds_a_nearer_scope_before_a_top: "expected module name"
 23_hierarchy/defparam_reaches_a_block_parameter: "is a localparam and so cannot be the target of a defparam"
