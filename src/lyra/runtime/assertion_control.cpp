@@ -2,13 +2,17 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <format>
+#include <map>
 #include <new>
+#include <string>
 #include <utility>
 #include <vector>
 
 #include "lyra/base/internal_error.hpp"
 #include "lyra/runtime/cancellation.hpp"
 #include "lyra/runtime/deferred_effects.hpp"
+#include "lyra/runtime/diagnostic.hpp"
 #include "lyra/runtime/evaluation_attempts.hpp"
 #include "lyra/runtime/hierarchy_levels.hpp"
 #include "lyra/runtime/runtime_effects.hpp"
@@ -48,9 +52,12 @@ auto Reaches(support::AssertionControlType control, support::AssertionType type)
 AssertionControl::AssertionControl() = default;
 AssertionControl::~AssertionControl() = default;
 
-void AssertionControl::Describe(std::uint64_t type, std::uint64_t directive) {
+void AssertionControl::Describe(
+    std::uint64_t type, std::uint64_t directive,
+    base::SourceLocation written_at) {
   type_ = static_cast<support::AssertionType>(type);
   directive_ = directive;
+  written_at_ = written_at;
 }
 
 void AssertionControl::RegisterIn(RuntimeEffects& effects, Scope* in) {
@@ -136,13 +143,37 @@ void AssertionControl::Apply(support::AssertionControlType control) {
   throw InternalError("AssertionControl::Apply: unknown control type");
 }
 
-void AssertionControl::SubmitObserved(
-    Coroutine<void> body, base::SourceLocation at) const {
-  current_runtime().SubmitDeferredObserved(std::move(body), *this, at);
+void AssertionControl::SubmitObserved(Coroutine<void> body) const {
+  current_runtime().SubmitDeferredObserved(std::move(body), *this);
 }
 
 void AssertionControl::SubmitFinal(Coroutine<void> body) const {
   current_runtime().SubmitDeferredFinal(std::move(body), *this);
+}
+
+void AssertionControl::RecordCoverage(bool succeeded) {
+  ++evaluated_;
+  if (succeeded) {
+    ++succeeded_;
+  }
+}
+
+auto AssertionControl::IsImmediateCover() const -> bool {
+  const bool cover = directive_ == static_cast<std::uint64_t>(
+                                       support::AssertionDirectiveType::kCover);
+  switch (type_) {
+    case support::AssertionType::kSimpleImmediate:
+    case support::AssertionType::kObservedDeferredImmediate:
+    case support::AssertionType::kFinalDeferredImmediate:
+      return cover;
+    case support::AssertionType::kConcurrent:
+    case support::AssertionType::kExpect:
+    case support::AssertionType::kUnique:
+    case support::AssertionType::kUnique0:
+    case support::AssertionType::kPriority:
+      return false;
+  }
+  throw InternalError("AssertionControl: unknown assertion type");
 }
 
 auto AssertionControl::KeptIn() const -> DeferredEffects* {
@@ -198,6 +229,7 @@ void AssertionControl::Commit(void* made) const {
 }
 
 void AssertionControls::AddIn(AssertionControl& control, const Scope& in) {
+  registered_.push_back({.control = &control, .holder = &in});
   // A scope named is the first level (LRM 20.11, 21.7.1.2), and each instance
   // between it and `in`, `in` included, is one more.
   std::int64_t levels = 0;
@@ -208,7 +240,7 @@ void AssertionControls::AddIn(AssertionControl& control, const Scope& in) {
 }
 
 void AssertionControls::Add(AssertionControl& control) {
-  held_by_none_.push_back(&control);
+  registered_.push_back({.control = &control, .holder = nullptr});
 }
 
 void AssertionControls::AddWithin(
@@ -219,7 +251,11 @@ void AssertionControls::AddWithin(
 void AssertionControls::ApplyToDesign(
     Scope& root, support::AssertionControlType control, std::uint64_t types,
     std::uint64_t directives, std::int64_t levels) {
-  ApplyEach(held_by_none_, control, types, directives);
+  for (const Registered& each : registered_) {
+    if (each.holder == nullptr && each.control->SelectedBy(types, directives)) {
+      each.control->Apply(control);
+    }
+  }
   // A top's own scope is the outermost the design declares: the root above the
   // tops is no instance of it (LRM 23.3.1).
   root.ForEachChild([&](const Scope& top) {
@@ -247,6 +283,41 @@ void AssertionControls::ApplyToBlock(
   if (const auto found = by_block_.find(&block); found != by_block_.end()) {
     ApplyEach(found->second, control, types, directives);
   }
+}
+
+auto AssertionControls::CoverReport() const -> std::vector<std::string> {
+  struct Goal {
+    const Registered* registered;
+    std::string place;
+  };
+  std::vector<Goal> goals;
+  std::map<std::pair<const Scope*, std::string>, std::size_t> sharing;
+  for (const Registered& each : registered_) {
+    if (!each.control->IsImmediateCover()) continue;
+    std::string place = SourceLocationText(each.control->WrittenAt());
+    ++sharing[{each.holder, place}];
+    goals.push_back({.registered = &each, .place = std::move(place)});
+  }
+
+  std::vector<std::string> lines;
+  lines.reserve(goals.size());
+  std::map<std::pair<const Scope*, std::string>, std::size_t> numbered;
+  for (const Goal& goal : goals) {
+    const Registered& each = *goal.registered;
+    const std::pair key{each.holder, goal.place};
+    const std::size_t shared = sharing.at(key);
+    const std::size_t number = ++numbered[key];
+    lines.push_back(
+        std::format(
+            "{}: cover{}{} evaluated {}, succeeded {}", goal.place,
+            shared > 1 ? std::format(" {} of {}", number, shared) : "",
+            each.holder != nullptr
+                ? std::format(
+                      " in '{}'", each.holder->HierarchicalPath().View())
+                : "",
+            each.control->Evaluated(), each.control->Succeeded()));
+  }
+  return lines;
 }
 
 void AssertionControls::ApplyEach(

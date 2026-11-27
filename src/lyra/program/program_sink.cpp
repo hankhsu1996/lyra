@@ -83,7 +83,6 @@ void BindEngineEntries(const auto& add) {
   add("lyra_rt_emit_warning_at_caller", &lyra_rt_emit_warning_at_caller);
   add("lyra_rt_emit_error_at_caller", &lyra_rt_emit_error_at_caller);
   add("lyra_rt_emit_fatal_at_caller", &lyra_rt_emit_fatal_at_caller);
-  add("lyra_rt_record_coverage", &lyra_rt_record_coverage);
   add("lyra_rt_enter_coroutine", &lyra_rt_enter_coroutine);
   add("lyra_rt_await_coroutine", &lyra_rt_await_coroutine);
   add("lyra_rt_release_coroutine", &lyra_rt_release_coroutine);
@@ -185,6 +184,8 @@ void BindEngineEntries(const auto& add) {
       &lyra_rt_assertion_control_submit_observed);
   add("lyra_rt_assertion_control_submit_final",
       &lyra_rt_assertion_control_submit_final);
+  add("lyra_rt_assertion_control_record_coverage",
+      &lyra_rt_assertion_control_record_coverage);
   add("lyra_rt_assert_control_of_design", &lyra_rt_assert_control_of_design);
   add("lyra_rt_assert_control_of_scope", &lyra_rt_assert_control_of_scope);
   add("lyra_rt_assert_control_of_block", &lyra_rt_assert_control_of_block);

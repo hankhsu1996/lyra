@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <new>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -42,6 +43,10 @@ class Scope;
 // -- a function a parameter is computed with runs while the design is built,
 // an initializer of one instance calls into another -- and registering only
 // makes the control one a task can find.
+//
+// It is the one object LRM clause 39 gives an assertion in each instance, so
+// it also holds what the statement observed: for an immediate cover, how many
+// times it was evaluated and how many of those succeeded (LRM 16.3, 40.5.2).
 class AssertionControl {
  public:
   AssertionControl();
@@ -53,9 +58,11 @@ class AssertionControl {
 
   // States what it is the control of: a statement of `type` stating
   // `directive` (a `support::AssertionDirectiveType`, 0 for a statement that
-  // is no assertion), which is what the tasks select it by and what decides
-  // which kind of pending work it keeps.
-  void Describe(std::uint64_t type, std::uint64_t directive);
+  // is no assertion), written at `written_at`. The type and directive are what
+  // the tasks select it by and what decide which kind of pending work it keeps.
+  void Describe(
+      std::uint64_t type, std::uint64_t directive,
+      base::SourceLocation written_at);
   // Makes it one the tasks select, held by the instance `in`.
   void RegisterIn(RuntimeEffects& effects, Scope* in);
   // The same for one no instance holds -- one a class method or a package
@@ -80,10 +87,26 @@ class AssertionControl {
   void Apply(support::AssertionControlType control);
 
   // A deferred assertion's action, queued as RuntimeEffects queues one and
-  // withdrawn by a Kill before it matures (LRM 16.4.1). `at` is where an
-  // observed one was written, which a refusal names.
-  void SubmitObserved(Coroutine<void> body, base::SourceLocation at) const;
+  // withdrawn by a Kill before it matures (LRM 16.4.1).
+  void SubmitObserved(Coroutine<void> body) const;
   void SubmitFinal(Coroutine<void> body) const;
+
+  // One evaluation of an immediate cover, and whether it succeeded.
+  void RecordCoverage(bool succeeded);
+
+  [[nodiscard]] auto WrittenAt() const -> base::SourceLocation {
+    return written_at_;
+  }
+
+  // Whether it is an immediate cover's, a coverage goal the run reports at its
+  // end (LRM 16.3).
+  [[nodiscard]] auto IsImmediateCover() const -> bool;
+  [[nodiscard]] auto Evaluated() const -> std::uint64_t {
+    return evaluated_;
+  }
+  [[nodiscard]] auto Succeeded() const -> std::uint64_t {
+    return succeeded_;
+  }
 
   // Where what the statement queues now is kept: made in the effects of the
   // region it matures in and matured there unless a source that can flush it
@@ -110,6 +133,9 @@ class AssertionControl {
   EvaluationAttempts* attempts_ = nullptr;
   support::AssertionType type_ = support::AssertionType::kConcurrent;
   std::uint64_t directive_ = 0;
+  base::SourceLocation written_at_;
+  std::uint64_t evaluated_ = 0;
+  std::uint64_t succeeded_ = 0;
   std::uint64_t allowed_ =
       support::kAssertionChecks | support::kAssertionPassesVacuously |
       support::kAssertionPassesNonvacuously | support::kAssertionFails;
@@ -128,8 +154,8 @@ struct CapturedControl {
   }
 };
 
-// Every control the design registered, by where a task naming a scope or a
-// block finds it.
+// Every control the design registered, in the order of registration and by
+// where a task naming a scope or a block finds it.
 //
 // A control an instance holds is recorded at that instance and at every scope
 // above it, with how many levels below each it stands, so a task naming a
@@ -156,7 +182,20 @@ class AssertionControls {
       const CancellationTarget& block, support::AssertionControlType control,
       std::uint64_t types, std::uint64_t directives);
 
+  // The results of every immediate cover registered, in the order they were
+  // registered, a statement never reached among them: one line per statement
+  // in each instance holding it, and one where a class or the program holds it
+  // (LRM 16.3, 39.3.1). A line names its goal by where it is written and the
+  // instance holding it; the goals one holder has at one place -- a macro
+  // writing several, a class's specializations -- are numbered in that order.
+  [[nodiscard]] auto CoverReport() const -> std::vector<std::string>;
+
  private:
+  // A control as it was registered, and the instance holding it, or none.
+  struct Registered {
+    AssertionControl* control;
+    const Scope* holder;
+  };
   // A control under a scope, and the levels between: 0 where the scope holds
   // it, one more for each instance between them, the holding one included.
   struct Below {
@@ -169,8 +208,8 @@ class AssertionControls {
       support::AssertionControlType control, std::uint64_t types,
       std::uint64_t directives);
 
+  std::vector<Registered> registered_;
   std::unordered_map<const Scope*, std::vector<Below>> under_;
-  std::vector<AssertionControl*> held_by_none_;
   std::unordered_map<const CancellationTarget*, std::vector<AssertionControl*>>
       by_block_;
 };

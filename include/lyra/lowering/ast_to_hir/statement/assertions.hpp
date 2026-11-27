@@ -70,12 +70,12 @@ struct StaticConcurrentAssertion {
     const slang::ast::Statement& body, support::AssertionPolicy policy)
     -> std::vector<const slang::ast::StatementBlockSymbol*>;
 
-// Declares the statement being lowered as one the assertion control tasks
-// select (LRM 20.11), in the scope it stands in.
+// Declares the statement being lowered, written at `span`, as one the
+// assertion control tasks select (LRM 20.11), in the scope it stands in.
 [[nodiscard]] auto DeclareControlledAssertion(
     const WalkFrame& frame, support::AssertionType type,
-    std::optional<support::AssertionDirectiveType> directive)
-    -> hir::ControlledAssertionId;
+    std::optional<support::AssertionDirectiveType> directive,
+    diag::SourceSpan span) -> hir::ControlledAssertionId;
 
 auto LowerImmediateAssertionStmt(
     ProcessLowerer& proc, WalkFrame frame,

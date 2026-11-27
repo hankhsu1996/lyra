@@ -676,19 +676,21 @@ enum class BuiltinFn : std::uint16_t {
   kDeferredEffectsCommit,
   kAssertionControlAllocate,
   kAssertionControlCommit,
-  // LRM 20.11 what the assertion control tasks set for one statement.
-  // `Describe` states which statement it controls, where its storage is
-  // constructed; `RegisterIn` and `Register` make it one the tasks select, held
-  // by an
-  // instance or by none, `RegisterWithin` one a task naming a block it stands
-  // in selects; `Allowed` is what an execution beginning now may do, as
-  // `support::kAssertion*` bits. `SubmitObserved` and `SubmitFinal` queue a
-  // deferred immediate assertion's action (LRM 16.4), taking the coroutine the
-  // action runs as: the observed (`#0`) form matures in Observed and runs its
-  // action in Reactive, the final form matures and runs in Postponed, and both
-  // ride the executing process's deferred report queue, which the runtime
-  // reads ambiently. The observed form takes where it is written, and is
-  // refused once the slot is in its Postponed region.
+  // What a statement's assertion control holds: what the assertion control
+  // tasks set for it (LRM 20.11) and what an immediate cover records on it.
+  // `Describe` states which statement it controls and where that is written,
+  // where its storage is constructed; `RegisterIn` and `Register` make it one
+  // the tasks select, held by an instance or by none, `RegisterWithin` one a
+  // task naming a block it stands in selects; `Allowed` is what an execution
+  // beginning now may do, as `support::kAssertion*` bits. `SubmitObserved` and
+  // `SubmitFinal` queue a deferred immediate assertion's action (LRM 16.4),
+  // taking the coroutine the action runs as: the observed (`#0`) form matures
+  // in Observed and runs its action in Reactive, the final form matures and
+  // runs in Postponed, and both ride the executing process's deferred report
+  // queue, which the runtime reads ambiently. The observed form is refused once
+  // the slot is in its Postponed region. `RecordCoverage` records one
+  // evaluation of an immediate cover and whether it succeeded (LRM 16.3), one
+  // entry because a success is also an evaluation.
   kAssertionControlDescribe,
   kAssertionControlRegisterIn,
   kAssertionControlRegister,
@@ -696,6 +698,7 @@ enum class BuiltinFn : std::uint16_t {
   kAssertionControlAllowed,
   kAssertionControlSubmitObserved,
   kAssertionControlSubmitFinal,
+  kAssertionControlRecordCoverage,
   // LRM 20.11 an assertion control task, applied to the whole design, to an
   // instance or a generate block, to a named block or a subroutine, or to
   // every block a loop generate construct built.
@@ -768,12 +771,6 @@ enum class BuiltinFn : std::uint16_t {
   kEmitWarningAtCaller,
   kEmitErrorAtCaller,
   kEmitFatalAtCaller,
-  // LRM 16.3 immediate cover result. One entry records an evaluation together
-  // with whether it succeeded, rather than one entry per outcome, because the
-  // two counts the standard asks a tool to report are not independent: a
-  // success is also an evaluation. The site operand is the statement's source
-  // location, which is what tells one coverage goal from another.
-  kRecordCoverage,
   // LRM 20.4.3 `$timeformat` display state on `RuntimeEffects`. `TimeFormat`
   // reads the current state, threaded into `Format` as the `%t` operand. The
   // setter takes the four `%t` display arguments (units power, precision,

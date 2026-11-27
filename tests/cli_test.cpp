@@ -3451,9 +3451,17 @@ TEST(LyraRun, AReportNamesTheFileItsPlaceExpandsTo) {
   }
 }
 
-// A cover statement is one goal however many specializations of its module
-// reach it (LRM 16.3), though each states the place as a constant of its own.
-TEST(LyraRun, ACoverStatementIsOneGoalAcrossSpecializations) {
+// An immediate cover statement is one goal in each instance of the scope
+// declaring it, as LRM clause 39 gives each assertion one handle per instance,
+// a class a module declares among them, and one for the class or the program
+// where a package's class method or subroutine declares it, each
+// specialization of a parameterized class its own (LRM 16.3). Every goal is
+// reported in the order the goals were registered, one never reached as
+// evaluated no times, and a deferred cover's evaluation a flush withdraws is
+// not counted (LRM 16.4). A goal is named by its place and the instance
+// holding it, and goals of one holder at one place -- a macro writing several,
+// or a class's specializations -- are numbered.
+TEST(LyraRun, ACoverGoalIsItsStatementInEachInstance) {
   const auto lyra = ResolveLyra();
   ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
   auto tmp_or = MakeScratchDir();
@@ -3461,22 +3469,165 @@ TEST(LyraRun, ACoverStatementIsOneGoalAcrossSpecializations) {
 
   WriteFile(
       *tmp_or / "cover.sv",
+      "`define TWO(x) cover (x); cover (!(x));\n"
+      "`define BOTH `TWO(a) `TWO(b)\n"
+      "`define DUP(s) s s\n"
+      "package P;\n"
+      "  bit p = 1;\n"
+      "  function automatic void f();\n"
+      "    cover (p);\n"
+      "    cover #0 (p);\n"
+      "  endfunction\n"
+      "  function automatic void never();\n"
+      "    cover (p);\n"
+      "  endfunction\n"
+      "  class K;\n"
+      "    function void m();\n"
+      "      cover (p);\n"
+      "      cover final (p);\n"
+      "    endfunction\n"
+      "  endclass\n"
+      "  class Unused;\n"
+      "    function void m();\n"
+      "      cover (p);\n"
+      "    endfunction\n"
+      "  endclass\n"
+      "  class S #(int N = 1);\n"
+      "    function void m();\n"
+      "      cover (p);\n"
+      "    endfunction\n"
+      "  endclass\n"
+      "endpackage\n"
       "module M #(parameter int W = 1);\n"
-      "  logic [W-1:0] x = '0;\n"
-      "  initial cover ($bits(x) == 1);\n"
+      "  bit a = 1;\n"
+      "  bit b = 0;\n"
+      "  class Local;\n"
+      "    function void m();\n"
+      "      cover (a);\n"
+      "    endfunction\n"
+      "  endclass\n"
+      "  task automatic t();\n"
+      "    cover (b);\n"
+      "    cover #0 (a);\n"
+      "  endtask\n"
+      "  initial begin\n"
+      "    Local l;\n"
+      "    l = new;\n"
+      "    `TWO(a)\n"
+      "    l.m();\n"
+      "    t();\n"
+      "  end\n"
       "endmodule\n"
       "module Test;\n"
-      "  M #(.W(1)) a();\n"
-      "  M #(.W(9)) b();\n"
+      "  bit a = 1;\n"
+      "  bit b = 0;\n"
+      "  bit x = 0;\n"
+      "  bit y = 0;\n"
+      "  M #(.W(1)) m1();\n"
+      "  M #(.W(1)) m2();\n"
+      "  M #(.W(9)) m3();\n"
+      "  for (genvar i = 0; i < 2; i++) begin : g\n"
+      "    initial cover (a);\n"
+      "  end\n"
+      "  always @(x or y) cover #0 (x == y);\n"
+      "  initial begin\n"
+      "    P::K k;\n"
+      "    P::S #(1) s1;\n"
+      "    P::S #(2) s2;\n"
+      "    k = new;\n"
+      "    s1 = new;\n"
+      "    s2 = new;\n"
+      "    cover (a); cover (b);\n"
+      "    `BOTH\n"
+      "    `DUP(cover (a);)\n"
+      "    cover #0 (a);\n"
+      "    cover final (b);\n"
+      "    P::f();\n"
+      "    k.m();\n"
+      "    s1.m();\n"
+      "    s2.m();\n"
+      "    if (b) cover (b);\n"
+      "    #1 x = 1;\n"
+      "    #0 y = 1;\n"
+      "  end\n"
       "endmodule\n");
+
+  std::string expected;
+  for (const std::string_view goal :
+       {"7:5: cover evaluated 1, succeeded 1",
+        "8:5: cover evaluated 1, succeeded 1",
+        "11:5: cover evaluated 0, succeeded 0",
+        "15:7: cover evaluated 1, succeeded 1",
+        "16:7: cover evaluated 1, succeeded 1",
+        "21:7: cover evaluated 0, succeeded 0",
+        "26:7: cover 1 of 2 evaluated 1, succeeded 1",
+        "26:7: cover 2 of 2 evaluated 1, succeeded 1",
+        "61:20: cover in 'Test' evaluated 1, succeeded 1",
+        "69:5: cover in 'Test' evaluated 1, succeeded 1",
+        "69:16: cover in 'Test' evaluated 1, succeeded 0",
+        "70:5: cover 1 of 4 in 'Test' evaluated 1, succeeded 1",
+        "70:5: cover 2 of 4 in 'Test' evaluated 1, succeeded 0",
+        "70:5: cover 3 of 4 in 'Test' evaluated 1, succeeded 0",
+        "70:5: cover 4 of 4 in 'Test' evaluated 1, succeeded 1",
+        "71:10: cover 1 of 2 in 'Test' evaluated 1, succeeded 1",
+        "71:10: cover 2 of 2 in 'Test' evaluated 1, succeeded 1",
+        "72:5: cover in 'Test' evaluated 1, succeeded 1",
+        "73:5: cover in 'Test' evaluated 1, succeeded 0",
+        "78:12: cover in 'Test' evaluated 0, succeeded 0",
+        "59:13: cover in 'Test.g[0]' evaluated 1, succeeded 1",
+        "59:13: cover in 'Test.g[1]' evaluated 1, succeeded 1"}) {
+    expected += std::format("cover.sv:{}\n", goal);
+  }
+  for (const std::string_view instance : {"m1", "m2", "m3"}) {
+    for (const std::string_view goal :
+         {"39:5: cover in 'Test.{}' evaluated 1, succeeded 0",
+          "40:5: cover in 'Test.{}' evaluated 1, succeeded 1",
+          "45:5: cover 1 of 2 in 'Test.{}' evaluated 1, succeeded 1",
+          "45:5: cover 2 of 2 in 'Test.{}' evaluated 1, succeeded 0",
+          "35:7: cover in 'Test.{}' evaluated 1, succeeded 1"}) {
+      expected += std::format(
+          "cover.sv:{}\n", std::vformat(goal, std::make_format_args(instance)));
+    }
+  }
+
   for (const std::string_view backend : {"llvm", "cpp"}) {
     const auto run = RunLyraFrom(
         lyra, *tmp_or,
         std::format("run --backend {} --top Test cover.sv", backend));
     EXPECT_THAT(run, ExitedWithCode(0)) << backend << ": " << run.stderr_text;
-    EXPECT_EQ(
-        run.stdout_text, "cover.sv:3:11: cover evaluated 2, succeeded 1\n")
-        << backend;
+    EXPECT_EQ(run.stdout_text, expected) << backend;
+  }
+}
+
+// An observed deferred assertion reached in the Postponed region, here from a
+// final deferred assertion's action, has no Observed region left to mature in
+// (LRM 16.4.1), and the failure names the statement where it is written.
+TEST(LyraRun, AnObservedDeferredAssertionReachedTooLateNamesItself) {
+  const auto lyra = ResolveLyra();
+  ASSERT_TRUE(std::filesystem::exists(lyra)) << lyra.string();
+  auto tmp_or = MakeScratchDir();
+  ASSERT_TRUE(tmp_or.has_value()) << tmp_or.error();
+
+  WriteFile(
+      *tmp_or / "late.sv",
+      "module Test;\n"
+      "  bit a = 1;\n"
+      "  function automatic void act();\n"
+      "    assert #0 (!a);\n"
+      "  endfunction\n"
+      "  initial assert final (a) act();\n"
+      "endmodule\n");
+  for (const std::string_view backend : {"llvm", "cpp"}) {
+    const auto run = RunLyraFrom(
+        lyra, *tmp_or,
+        std::format("run --backend {} --top Test late.sv", backend));
+    EXPECT_THAT(run, ExitedWithCode(1)) << backend << ": " << run.stderr_text;
+    EXPECT_NE(
+        run.stderr_text.find(
+            "late.sv:4:5: error: an observed deferred assertion cannot be "
+            "reached once"),
+        std::string::npos)
+        << backend << ": " << run.stderr_text;
   }
 }
 

@@ -946,7 +946,7 @@ auto LowerExpectStmt(
               .pass_stmt = AddActionArm(body, *std::move(pass_or)),
               .fail_stmt = AddActionArm(body, *std::move(fail_or)),
               .control = DeclareControlledAssertion(
-                  frame, support::AssertionType::kExpect, std::nullopt)},
+                  frame, support::AssertionType::kExpect, std::nullopt, span)},
       .span = span};
 }
 
@@ -954,11 +954,12 @@ auto LowerExpectStmt(
 
 auto DeclareControlledAssertion(
     const WalkFrame& frame, support::AssertionType type,
-    std::optional<support::AssertionDirectiveType> directive)
-    -> hir::ControlledAssertionId {
+    std::optional<support::AssertionDirectiveType> directive,
+    diag::SourceSpan span) -> hir::ControlledAssertionId {
   const hir::ControlledAssertionId id =
       frame.current_procedural_body->controlled_assertions.Add(
-          hir::ControlledAssertionDecl{.type = type, .directive = directive});
+          hir::ControlledAssertionDecl{
+              .type = type, .directive = directive, .span = span});
   frame.OpenScope().controlled_assertions.push_back(id);
   return id;
 }
@@ -1125,7 +1126,7 @@ auto LowerImmediateAssertionStmt(
 
   const auto control = [&](support::AssertionDirectiveType directive) {
     return DeclareControlledAssertion(
-        frame, ImmediateTypeOf(timing), directive);
+        frame, ImmediateTypeOf(timing), directive, span);
   };
   switch (as.assertionKind) {
     case slang::ast::AssertionKind::Assert:
@@ -1194,7 +1195,7 @@ auto LowerConcurrentAssertion(
 
   const auto control = [&](support::AssertionDirectiveType directive) {
     return DeclareControlledAssertion(
-        frame, support::AssertionType::kConcurrent, directive);
+        frame, support::AssertionType::kConcurrent, directive, span);
   };
   const auto assert_form = [&](hir::AssertionDirective directive,
                                support::AssertionDirectiveType selected_by)

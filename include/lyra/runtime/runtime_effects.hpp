@@ -66,11 +66,6 @@ class RuntimeEffects {
   // LRM 18.6: how the run's `randomize()` calls draw.
   auto Randomize() -> RandomizeSettings&;
 
-  // LRM 16.3: record one evaluation of an immediate cover statement, and
-  // whether that evaluation succeeded. `site` is the statement's own source
-  // location, which is what separates one coverage goal from another.
-  void RecordCoverage(base::SourceLocation site, bool succeeded);
-
   // LRM 4.4: place `activation` in `region` of the time slot at `when`, to be
   // resumed when that region runs. Naming the placement is the whole of what a
   // suspending construct tells the engine; nothing here says what it waits for.
@@ -277,10 +272,9 @@ class RuntimeEffects {
   // is in its Postponed region has no Observed or Reactive region left to
   // mature and act in, and running its action in Postponed would run code that
   // may write what the region forbids writing (LRM 4.4.2.9), so it is the
-  // design's error, at `at`.
+  // design's error, at the statement `control` is the control of.
   void SubmitDeferredObserved(
-      Coroutine<void> body, const AssertionControl& control,
-      base::SourceLocation at);
+      Coroutine<void> body, const AssertionControl& control);
   void SubmitDeferredFinal(
       Coroutine<void> body, const AssertionControl& control);
 

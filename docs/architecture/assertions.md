@@ -380,6 +380,18 @@ whole run fails LRM 20.11's naming of an instance, a block or an assertion; a co
 inherited by its statements fails Lock, which would have to say which of an inherited state and an
 override it protects.
 
+**Being that handle, a control also holds what its statement is and what it observed.** It is
+described with where the statement is written, which LRM 39.3.2 lists among an assertion's static
+information, and an immediate cover records each evaluation, and whether it succeeded, on its
+control (LRM 16.3, 40.5.2). So a coverage goal is an immediate cover statement in each instance
+holding it, or in a class or the program -- each specialization of a parameterized class its own --
+and two statements are two goals wherever they are written, a macro writing several at one place
+among them. At the end of the run every immediate cover's control is reported in the order the
+controls were registered, one never reached as evaluated no times; a line names its goal by where it
+is written and the instance holding it, and numbers the goals one holder has at one place. A goal
+told apart by where it is written fails both ways: a macro writes several statements at one place,
+and the same statement in two instances is two goals (LRM 39.3.1).
+
 **A control is registered where its scope's storage is brought up, at every scope above it.** It is
 recorded at the instance holding it and at each scope above, with how many instance levels below
 each it stands, and within each named block and task it stands in; one no instance holds -- a
@@ -411,11 +423,12 @@ that searched the region's lists for its reports fails the deferred report's pla
 those lists know nothing of assertions. On does not bring either back.
 
 **Every layer above the runtime holds what it holds for any other static cell and call.** HIR
-declares each controlled statement in its scope with the type and directive a task selects it by,
-and writes each name of a task's list as what it names -- an object, the objects of an array, the
-blocks of a loop, the extent of a block or subroutine. HIR-to-MIR gives the control a cell,
-registers it at bring-up, reads it where an execution begins, and lowers a task to one runtime call
-per scope it names. The tables' meanings, Lock, which controls a task reaches and the generation are
-the runtime's. A design that calls no task pays one cell and one registration per controlled
-statement, and one read where each execution begins. A control type Table 20-5 does not give selects
-nothing, and the call is ignored with a warning.
+declares each controlled statement in its scope with the type and directive a task selects it by and
+where it is written, and writes each name of a task's list as what it names -- an object, the
+objects of an array, the blocks of a loop, the extent of a block or subroutine. HIR-to-MIR gives the
+control a cell, describes and registers it at bring-up, reads it where an execution begins, records
+an immediate cover's evaluation on it, and lowers a task to one runtime call per scope it names. The
+tables' meanings, Lock, which controls a task reaches, the generation and the cover report are the
+runtime's. A design that calls no task pays one cell and one registration per controlled statement,
+and one read where each execution begins. A control type Table 20-5 does not give selects nothing,
+and the call is ignored with a warning.

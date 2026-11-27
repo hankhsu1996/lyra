@@ -13,7 +13,6 @@
 #include "lyra/mir/builder.hpp"
 #include "lyra/mir/compilation_unit.hpp"
 #include "lyra/mir/expr.hpp"
-#include "lyra/mir/type.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
 namespace lyra::lowering::hir_to_mir {
@@ -48,10 +47,11 @@ void CallOnControl(
 
 // States what a statement's control is for -- the type and directive the
 // assertion control tasks select it by (LRM 20.11), which also say what it
-// keeps -- where its storage is constructed, so that it answers as what it is
-// to whatever reaches it first, an initializer of another instance among them.
+// keeps, and where the statement is written (LRM 39.3.2) -- where its storage
+// is constructed, so that it answers as what it is to whatever reaches it
+// first, an initializer of another instance among them.
 void DescribeAssertionControl(
-    const ProcessLowerer& process, const hir::ProceduralBody& body,
+    ProcessLowerer& process, const hir::ProceduralBody& body,
     const WalkFrame& construct_frame, const StaticCellBinding& binding,
     const AssertionControlCell& control) {
   const mir::CompilationUnit& unit = process.Owner().Unit();
@@ -66,7 +66,8 @@ void DescribeAssertionControl(
            unit, block,
            decl.directive.has_value()
                ? static_cast<std::uint64_t>(*decl.directive)
-               : 0)});
+               : 0),
+       process.Owner().BuildSourceLocationAt(block, decl.span)});
 }
 
 // Makes a statement's control one the assertion control tasks select (LRM

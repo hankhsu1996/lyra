@@ -156,10 +156,6 @@ auto RuntimeEffects::CommandLine() -> runtime::CommandLine& {
   return AsRuntime(*this).command_line_;
 }
 
-void RuntimeEffects::RecordCoverage(base::SourceLocation site, bool succeeded) {
-  AsRuntime(*this).coverage_.Record(site, succeeded);
-}
-
 void RuntimeEffects::Schedule(
     SimTime when, support::Region region, Activation* activation) {
   activation->Queue(AsRuntime(*this).SlotAt(when)[region].activations);
@@ -291,11 +287,10 @@ void RuntimeEffects::KeepPendingInstance(
 }
 
 void RuntimeEffects::SubmitDeferredObserved(
-    Coroutine<void> body, const AssertionControl& control,
-    base::SourceLocation at) {
+    Coroutine<void> body, const AssertionControl& control) {
   const Runtime::Phase phase = AsRuntime(*this).CurrentPhase();
   if (phase == Runtime::Phase::kInPostponed || phase == Runtime::Phase::kOver) {
-    const base::SourceLocationScope bound(at);
+    const base::SourceLocationScope bound(control.WrittenAt());
     throw SimulationError(
         "an observed deferred assertion cannot be reached once its time "
         "step's Observed region, where its report matures, and Reactive "

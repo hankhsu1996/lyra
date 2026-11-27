@@ -211,11 +211,6 @@ void lyra_rt_emit_error_at_caller(
 void lyra_rt_emit_fatal_at_caller(
     void* dispatcher, const void* text, const void* location);
 
-// LRM 16.3 immediate cover result: one evaluation of the cover statement at
-// `site`, and whether it succeeded. Reached on the runtime rather than through
-// a broker, because a coverage goal has one verb.
-void lyra_rt_record_coverage(void* runtime, const void* site, bool succeeded);
-
 // Makes an execution the engine can schedule out of a generated body's own
 // frame, which is built with its arguments in place and stopped before its
 // first statement. The runtime owns the coroutine the engine schedules and
@@ -647,29 +642,32 @@ void lyra_rt_assertion_control_commit(const void* control, void* made);
 // closure's box over.
 void lyra_rt_submit_at_run_end(void* runtime, void* closure);
 
-// What the assertion control tasks set for one statement (LRM 20.11).
-// `describe` states it is the control of a statement of Table 20-6 `type`
-// stating Table 20-7 `directive`, 0 where it states none, where its storage is
-// constructed. `register_in` and `register` make it one the tasks select under
-// the run's `effects`, held by the instance `scope` or by none;
-// `register_within` makes it one a task naming `block` selects under the same
-// `effects`. `allowed` is what an execution beginning now may do, as
-// `support::kAssertion*` bits. `submit_observed` and `submit_final` queue a
-// deferred assertion's action, which is started as an execution of its own
-// once the report matures (LRM 16.4), each taking ownership of the coroutine
-// `body` points at, built where the statement is; `location` is where an
-// observed one is written, which its refusal in the Postponed region names.
+// What a statement's assertion control holds: what the assertion control tasks
+// set for it (LRM 20.11) and what an immediate cover records on it.
+// `describe` states, where its storage is constructed, that it is the control
+// of a statement of Table 20-6 `type` stating Table 20-7 `directive`, 0 where
+// it states none, written at `written_at`. `register_in` and `register`
+// make it one the tasks select under the run's `effects`, held by the instance
+// `scope` or by none; `register_within` makes it one a task naming `block`
+// selects under the same `effects`. `allowed` is what an execution beginning
+// now may do, as `support::kAssertion*` bits. `submit_observed` and
+// `submit_final` queue a deferred assertion's action, which is started as an
+// execution of its own once the report matures (LRM 16.4), each taking
+// ownership of the coroutine `body` points at, built where the statement is.
+// `record_coverage` records one evaluation of an immediate cover and whether it
+// succeeded (LRM 16.3).
 void lyra_rt_assertion_control_describe(
-    void* control, std::uint64_t type, std::uint64_t directive);
+    void* control, std::uint64_t type, std::uint64_t directive,
+    const void* written_at);
 void lyra_rt_assertion_control_register_in(
     void* control, void* effects, void* scope);
 void lyra_rt_assertion_control_register(void* control, void* effects);
 void lyra_rt_assertion_control_register_within(
     void* control, void* effects, const void* block);
 auto lyra_rt_assertion_control_allowed(const void* control) -> std::uint64_t;
-void lyra_rt_assertion_control_submit_observed(
-    const void* control, void* body, const void* location);
+void lyra_rt_assertion_control_submit_observed(const void* control, void* body);
 void lyra_rt_assertion_control_submit_final(const void* control, void* body);
+void lyra_rt_assertion_control_record_coverage(void* control, bool succeeded);
 
 // An assertion control task (LRM 20.11): its `control_type`,
 // `assertion_type`, `directive_type` and `levels` as evaluated, applied to the
