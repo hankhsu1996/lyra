@@ -343,19 +343,24 @@ every byte of its frame, so the bytes a frame keeps are owed only on a way out t
 body. The chain's blocks are reached only by unwinding and run once on the way out, until a region
 of the body takes what is unwinding or the chain goes on out of the body. Taking it is one step: the
 runtime is asked what arrived, a departure of the design is handed to the region as a value and the
-handler goes on in ordinary code, and anything else goes on unwinding as the same raise, so nothing
-in a body is ever still being handled. A cleanup's own code is lowered with none of the body's
-scopes open, so nothing in it can lead back into a scope around it. A body entered as a coroutine
-stands in a region of its own, as a C++ coroutine's body stands in a `try` whose handler hands what
-escaped to its promise, and every way it is left by unwinding is a block that says so. A cleanup's
-code therefore appears once on the unwinding path however many calls inside it can leave, while the
-ordinary ways out -- falling off the end, a return, a loop exit -- still copy it, as below. A value
-whose end passes to storage or to the caller stops being owed at that point, and a node never
-changes once a way out recorded it, so the ways out recorded while it was owed keep ending it and
-those recorded afterwards do not. An object being constructed is such a value. Its creator's
-reference to it is owed on every way out of the construction, so a departure that leaves the
-construction partway ends that reference and nothing else, and the object goes on existing while
-anything else refers to it.
+handler goes on in ordinary code, and anything else goes on unwinding as the same raise, to what the
+body owes outside the region, so nothing in a body is ever still being handled. Every way unwinding
+goes on out of the body -- the end of a chain, or what a taking point with nothing owed outside it
+does not take -- does so at the body's one block that resumes unwinding, as rustc's unwind drop tree
+ends at one resume block and clang's cleanups and unmatched catches at a function's one `eh.resume`,
+because a target may pay for the whole frame at each way out of a function -- an address sanitizer
+clears its shadow there -- and that cost is then paid once a body. A cleanup's own code is lowered
+with none of the body's scopes open, so nothing in it can lead back into a scope around it. A body
+entered as a coroutine stands in a region of its own, as a C++ coroutine's body stands in a `try`
+whose handler hands what escaped to its promise, and every way it is left by unwinding is a block
+that says so. A cleanup's code therefore appears once on the unwinding path however many calls
+inside it can leave, while the ordinary ways out -- falling off the end, a return, a loop exit --
+still copy it, as below. A value whose end passes to storage or to the caller stops being owed at
+that point, and a node never changes once a way out recorded it, so the ways out recorded while it
+was owed keep ending it and those recorded afterwards do not. An object being constructed is such a
+value. Its creator's reference to it is owed on every way out of the construction, so a departure
+that leaves the construction partway ends that reference and nothing else, and the object goes on
+existing while anything else refers to it.
 
 How the execution backend carries an unwind is its own: a landing pad for each block a call names,
 which catches where the way out through that block ends where the body takes what is unwinding, so

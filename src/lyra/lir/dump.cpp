@@ -475,11 +475,9 @@ class LirDumper {
             },
             [&](const ReceiveDepartureTerm& taken) -> std::string {
               return std::format(
-                  "{} = receive_departure -> bb{} otherwise {}",
+                  "{} = receive_departure -> bb{} otherwise bb{}",
                   FormatDestination(fn, taken.departure), taken.then.value,
-                  taken.otherwise.has_value()
-                      ? std::format("bb{}", taken.otherwise->value)
-                      : std::string{"unwinds out"});
+                  taken.otherwise.value);
             }},
         term.data);
   }

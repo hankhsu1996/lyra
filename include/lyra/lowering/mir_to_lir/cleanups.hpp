@@ -78,9 +78,11 @@ struct CleanupNodeId {
 // running it and one recorded after does not.
 //
 // A way out is ordinary, or is unwinding; an unwinding one ends where a region
-// of the body takes what is unwinding, or by going on out of the body. The root
-// of the last is the one node with no block: a way out reaching it with nothing
-// to run leaves the body from where it starts.
+// of the body takes what is unwinding, or resumes unwinding out of the body.
+// The root of the last is the one node with no block of its own: the body has
+// one block that resumes unwinding, made only once a way out reaches it, as
+// clang makes a function's one `eh.resume` and rustc ends its unwind drop tree
+// at one resume block.
 class CleanupTree {
  public:
   CleanupTree();
@@ -92,8 +94,8 @@ class CleanupTree {
   auto Root(lir::BlockId destination) -> CleanupNodeId;
   // The root unwinding ends at where a region takes it at `taking_point`.
   auto TakingRoot(lir::BlockId taking_point) -> CleanupNodeId;
-  // The root unwinding ends at by going on out of the body.
-  [[nodiscard]] static auto LeavingRoot() -> CleanupNodeId;
+  // The root unwinding ends at by resuming out of the body.
+  [[nodiscard]] static auto UnwindResumeRoot() -> CleanupNodeId;
   // The node running `cleanup` and then `next`, where one was made.
   [[nodiscard]] auto Find(CleanupId cleanup, CleanupNodeId next) const
       -> std::optional<CleanupNodeId>;
@@ -101,16 +103,17 @@ class CleanupTree {
   auto Insert(CleanupId cleanup, CleanupNodeId next, lir::BlockId entry)
       -> CleanupNodeId;
 
-  // The block a way out reaching `node` enters, absent for the leaving root.
+  // The block a way out reaching `node` enters, absent for the unwind resume
+  // root.
   [[nodiscard]] auto EntryOf(CleanupNodeId node) const
       -> std::optional<lir::BlockId>;
   // Whether the way out through `node` is unwinding.
   [[nodiscard]] auto Unwinding(CleanupNodeId node) const -> bool;
-  // Whether the way out through `node` goes on out of the body.
-  [[nodiscard]] auto LeavesTheBody(CleanupNodeId node) const -> bool;
+  // Whether the way out through `node` resumes unwinding out of the body.
+  [[nodiscard]] auto ResumesUnwinding(CleanupNodeId node) const -> bool;
 
  private:
-  enum class WayOut : std::uint8_t { kOrdinary, kTaken, kLeaving };
+  enum class WayOut : std::uint8_t { kOrdinary, kTaken, kResumed };
   struct Node {
     std::optional<lir::BlockId> entry;
     WayOut way_out = WayOut::kOrdinary;

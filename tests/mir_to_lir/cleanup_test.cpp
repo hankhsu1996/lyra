@@ -22,8 +22,10 @@
 #include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/local.hpp"
 #include "lyra/mir/stmt.hpp"
+#include "lyra/mir/type_builders.hpp"
 #include "lyra/mir/type_id.hpp"
 #include "lyra/support/builtin_fn.hpp"
+#include "lyra/support/library_decl.hpp"
 #include "tests/mir_to_lir/lowered.hpp"
 
 namespace lyra::lowering::mir_to_lir {
@@ -41,20 +43,24 @@ void AppendCall(
   block.AppendStmt(mir::ExprStmt{.expr = call});
 }
 
-// A namespace unit whose one named body holds an extent: a body `fill_body`
-// writes, paired with a cleanup `fill_cleanup` writes.
+// A namespace unit whose one named body holds `extents` extents one after
+// another, each a body `fill_body` writes, paired with a cleanup `fill_cleanup`
+// writes.
 template <typename FillBody, typename FillCleanup>
-auto UnitWithExtent(const FillBody& fill_body, const FillCleanup& fill_cleanup)
+auto UnitWithExtents(
+    int extents, const FillBody& fill_body, const FillCleanup& fill_cleanup)
     -> mir::CompilationUnit {
   mir::CompilationUnit unit = NamespaceUnit();
   mir::CallableCode code = mir::CallableCode::Defined(diag::SourceSpan{});
   code.result_type = unit.builtins.void_type;
-  mir::Block body;
-  fill_body(unit, mir::Builder(body, diag::SourceSpan{}));
-  mir::Block cleanup;
-  fill_cleanup(unit, mir::Builder(cleanup, diag::SourceSpan{}));
-  mir::Builder code_body(code.Body(), diag::SourceSpan{});
-  code_body.AppendFinally(std::move(body), std::move(cleanup));
+  for (int i = 0; i < extents; ++i) {
+    mir::Block body;
+    fill_body(unit, mir::Builder(body, diag::SourceSpan{}));
+    mir::Block cleanup;
+    fill_cleanup(unit, mir::Builder(cleanup, diag::SourceSpan{}));
+    mir::Builder code_body(code.Body(), diag::SourceSpan{});
+    code_body.AppendFinally(std::move(body), std::move(cleanup));
+  }
   AddNamedBody(unit, "g", std::move(code));
   return unit;
 }
@@ -82,6 +88,17 @@ auto InvokesIn(const lir::Function& function) -> int {
     }
   }
   return invokes;
+}
+
+// How many blocks of `function` go on unwinding out of it.
+auto UnwindResumesIn(const lir::Function& function) -> int {
+  int resumes = 0;
+  for (const lir::BasicBlock& block : function.blocks) {
+    if (std::holds_alternative<lir::UnwindResumeTerm>(block.terminator.data)) {
+      ++resumes;
+    }
+  }
+  return resumes;
 }
 
 // A namespace unit whose body `h` can depart and answers an `int`, and whose
@@ -115,6 +132,36 @@ auto UnitHoldingAnIntAcrossACall() -> mir::CompilationUnit {
   body.AppendStmt(mir::LocalDeclStmt{.target = held, .init = call_h()});
   body.AppendStmt(mir::ExprStmt{.expr = call_h()});
   AddNamedBody(unit, "f", std::move(code));
+  return unit;
+}
+
+// A namespace unit whose one named body holds `regions` regions one after
+// another, each taking what unwinds out of a call that can depart and handing
+// on whatever it takes.
+auto UnitWithRegions(int regions) -> mir::CompilationUnit {
+  mir::CompilationUnit unit = NamespaceUnit();
+  const mir::TypeId effect =
+      mir::LibraryTypeOf(unit.types, support::LibraryDecl::kControlEffect);
+  mir::CallableCode code = mir::CallableCode::Defined(diag::SourceSpan{});
+  code.result_type = unit.builtins.void_type;
+  for (int i = 0; i < regions; ++i) {
+    const mir::LocalId caught = code.locals.Add(mir::LocalDecl{.type = effect});
+    mir::Block body;
+    AppendCall(
+        unit, mir::Builder(body, diag::SourceSpan{}),
+        support::BuiltinFn::kDisable);
+    mir::Block handler;
+    mir::Builder handler_body(handler, diag::SourceSpan{});
+    handler_body.AppendStmt(
+        mir::RaiseStmt{.effect = handler_body.ReadLocal(caught, effect)});
+    mir::Builder code_body(code.Body(), diag::SourceSpan{});
+    code_body.AppendStmt(
+        mir::TryStmt{
+            .body = code_body.AddScope(std::move(body)),
+            .caught = caught,
+            .handler = code_body.AddScope(std::move(handler))});
+  }
+  AddNamedBody(unit, "g", std::move(code));
   return unit;
 }
 
@@ -153,12 +200,13 @@ TEST(MirToLirCleanupTest, ACallOwingNothingNamesNoBlockToUnwindTo) {
   for (const mir::CompilationUnit& unit :
        {UnitCallingTwice(support::BuiltinFn::kDisable),
         UnitHoldingAnIntAcrossACall(),
-        UnitWithExtent(AppendTwoDepartingCalls, kAppendNothing)}) {
+        UnitWithExtents(1, AppendTwoDepartingCalls, kAppendNothing)}) {
     const diag::Result<lir::CompilationUnit> lowered = Lowered(unit);
     ASSERT_TRUE(lowered.has_value());
     EXPECT_NO_THROW(lir::Verify(*lowered));
     for (const lir::Function& function : lowered->functions) {
       EXPECT_EQ(InvokesIn(function), 0) << function.name;
+      EXPECT_EQ(UnwindResumesIn(function), 0) << function.name;
     }
   }
 }
@@ -168,7 +216,7 @@ TEST(MirToLirCleanupTest, ACallOwingNothingNamesNoBlockToUnwindTo) {
 // one scope share one.
 TEST(MirToLirCleanupTest, CallsThatOweTheSameShareACleanupBlock) {
   const diag::Result<lir::CompilationUnit> lowered =
-      Lowered(UnitWithExtent(AppendTwoDepartingCalls, AppendSum));
+      Lowered(UnitWithExtents(1, AppendTwoDepartingCalls, AppendSum));
   ASSERT_TRUE(lowered.has_value());
   EXPECT_NO_THROW(lir::Verify(*lowered));
   int calling = 0;
@@ -189,6 +237,32 @@ TEST(MirToLirCleanupTest, CallsThatOweTheSameShareACleanupBlock) {
     EXPECT_EQ(unwinds.size(), 1U) << function.name;
   }
   EXPECT_EQ(calling, 1);
+}
+
+// Every way unwinding goes on out of a body ends at one block -- the end of
+// each chain of what is owed, and what each region with nothing owed outside it
+// does not take -- as rustc's unwind drop tree ends at one resume block and
+// clang's cleanups and unmatched catches at one `eh.resume`: what a target adds
+// at each way out of a function is then paid once a function.
+TEST(MirToLirCleanupTest, EveryWayOutByUnwindingResumesAtOneBlock) {
+  for (const int count : {1, 3}) {
+    for (const mir::CompilationUnit& unit :
+         {UnitWithExtents(count, AppendTwoDepartingCalls, AppendSum),
+          UnitWithRegions(count)}) {
+      const diag::Result<lir::CompilationUnit> lowered = Lowered(unit);
+      ASSERT_TRUE(lowered.has_value());
+      EXPECT_NO_THROW(lir::Verify(*lowered));
+      int unwinding = 0;
+      for (const lir::Function& function : lowered->functions) {
+        if (InvokesIn(function) == 0) {
+          continue;
+        }
+        ++unwinding;
+        EXPECT_EQ(UnwindResumesIn(function), 1) << function.name;
+      }
+      EXPECT_EQ(unwinding, 1);
+    }
+  }
 }
 
 // The lowering of `unit` refuses it, saying a cleanup is what holds the way out
@@ -213,14 +287,14 @@ TEST(MirToLirCleanupTest, ACleanupThatCouldLeaveIsRefused) {
     AppendCall(unit, block, support::BuiltinFn::kDisable);
   };
   ExpectRefused(
-      UnitWithExtent(kAppendNothing, departs),
+      UnitWithExtents(1, kAppendNothing, departs),
       "can depart, reached by falling off its body's end");
   ExpectRefused(
-      UnitWithExtent(departs, departs),
+      UnitWithExtents(1, departs, departs),
       "can depart, reached by a departure from its body");
   ExpectRefused(
-      UnitWithExtent(
-          departs,
+      UnitWithExtents(
+          1, departs,
           [](const mir::CompilationUnit&, mir::Builder block) {
             block.AppendStmt(mir::ReturnStmt{});
           }),

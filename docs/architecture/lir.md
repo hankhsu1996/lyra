@@ -166,12 +166,12 @@ below LIR, at LIR-to-LLVM.
   way out. A block reached only by unwinding is marked as one. Unwinding ends where a region of the
   body, or the top of an execution, takes it -- a terminator asking the runtime what arrived and
   going on with a departure of the design, while anything else goes on unwinding as the same raise
-  -- or by going on out of the body. What is unwinding is no value of the body, and how a target
-  carries it -- landing pads, where it is kept while cleanups run, beginning and ending a catch,
-  resuming -- is below LIR ([`nonlocal_control_flow.md`](nonlocal_control_flow.md)). The unit's
-  verification holds two rules apart: a block reached only by unwinding calls nothing that can be
-  unwound out of and is reached only by unwinding, and a function declared not to unwind lets no
-  unwinding out of it.
+  -- or by going on out of the body, at the body's one block that says so. What is unwinding is no
+  value of the body, and how a target carries it -- landing pads, where it is kept while cleanups
+  run, beginning and ending a catch, resuming -- is below LIR
+  ([`nonlocal_control_flow.md`](nonlocal_control_flow.md)). The unit's verification holds two rules
+  apart: a block reached only by unwinding calls nothing that can be unwound out of and is reached
+  only by unwinding, and a function declared not to unwind lets no unwinding out of it.
 - The boundary protocol to the scheduling runtime (entry, suspend, resume, abandonment, completion),
   and which bodies speak it: a body whose call protocol is the coroutine one says so in its result
   type, carried unchanged from MIR, and nothing else restates it.
