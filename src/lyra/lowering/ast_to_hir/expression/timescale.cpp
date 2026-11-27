@@ -6,7 +6,6 @@
 #include <optional>
 #include <string>
 #include <utility>
-#include <variant>
 
 #include <slang/ast/HierarchicalReference.h>
 #include <slang/ast/Scope.h>
@@ -23,9 +22,11 @@
 #include <slang/syntax/AllSyntax.h>
 #include <slang/syntax/SyntaxPrinter.h>
 
+#include "lyra/base/diag_message.hpp"
 #include "lyra/base/internal_error.hpp"
 #include "lyra/base/time.hpp"
 #include "lyra/diag/diag_code.hpp"
+#include "lyra/diag/diagnostic.hpp"
 #include "lyra/hir/subroutine_ref.hpp"
 #include "lyra/hir/type.hpp"
 #include "lyra/lowering/ast_to_hir/constant_value.hpp"
@@ -69,17 +70,45 @@ struct NamedTimeScale {
   slang::TimeScale scale;
 };
 
+// Whether the path a name took to `named` starts where no placement of the
+// instance `call` is written in can move it, so every instance that code
+// serves reaches an element of the same definition: at something that instance
+// declares, wherever in it the call stands; at the instance itself, named by
+// its module's name (LRM 23.8), whose own text then fixes every step; or at
+// `$root`, whose next step names a top-level instance, which takes its
+// module's name (LRM 23.3.1).
+auto StartsWhereNoPlacementMovesIt(
+    const slang::ast::CallExpression::SystemCallInfo& info,
+    const slang::ast::ArbitrarySymbolExpression& named) -> bool {
+  const slang::ast::InstanceBodySymbol* calling =
+      info.scope->getContainingInstance();
+  if (calling == nullptr) return false;
+  const slang::ast::Symbol& first = named.hierRef.path.empty()
+                                        ? *named.symbol
+                                        : *named.hierRef.path.front().symbol;
+  if (first.as_if<slang::ast::RootSymbol>() != nullptr) return true;
+  if (const auto* itself = first.as_if<slang::ast::InstanceSymbol>();
+      itself != nullptr && &itself->body == calling) {
+    return true;
+  }
+  const slang::ast::Scope* declared_in = first.getParentScope();
+  return declared_in != nullptr &&
+         declared_in->getContainingInstance() == calling;
+}
+
 // The element a timescale function or task names and the time unit and
 // precision its declaration states (LRM 20.4.1, 20.4.2): the design element the
-// call is written in where it names none, `$unit`, or an instance this one's
-// own hierarchy reaches downward. Each is fixed by the source of the unit the
-// call is compiled in, so every elaboration of that unit answers alike. A scope
-// that states none has the default.
+// call is written in where it names none, `$unit`, or an instance named by a
+// path starting where no placement of the calling instance moves it. Every
+// elaboration of the unit the call is compiled in reaches the same definition
+// for each, so all of them answer alike. A scope that states none has the
+// default.
 //
-// `$root` answers the finest precision of the whole design (LRM 3.14.3), and an
-// instance reached upward or from the top is whichever the design puts there;
-// neither is fixed by this unit, so each is read where the run knows it, which
-// is not yet supported.
+// `$root` alone answers the finest precision of the whole design (LRM 3.14.3).
+// A path starting with a top-level instance's name, or searching upward by the
+// name of an instance or a module above (LRM 23.3.1, 23.8), can reach a scope
+// of that name nearer the calling instance in one placement than in another,
+// so each is read where the run knows it, which is not yet supported.
 auto TimeScaleNamedBy(
     const UnitLowerer& unit_lowerer, const slang::ast::CallExpression& call,
     diag::SourceSpan span) -> diag::Result<NamedTimeScale> {
@@ -98,22 +127,24 @@ auto TimeScaleNamedBy(
         .name = "$unit", .scale = unit->timeScale.value_or(slang::TimeScale{})};
   }
   const auto* instance = named.symbol->as_if<slang::ast::InstanceSymbol>();
-  const bool from_the_top =
-      !named.hierRef.path.empty() &&
-      named.hierRef.path.front().symbol->as_if<slang::ast::RootSymbol>() !=
-          nullptr;
-  if (instance != nullptr && !named.hierRef.isUpward() && !from_the_top) {
+  if (instance != nullptr && StartsWhereNoPlacementMovesIt(info, named)) {
     return NamedTimeScale{
         .name = WrittenName(call),
         .scale = instance->body.getTimeScale().value_or(slang::TimeScale{})};
   }
   if (instance != nullptr ||
       named.symbol->as_if<slang::ast::RootSymbol>() != nullptr) {
-    return diag::Fail(
-        span, diag::DiagCode::kUnsupportedSubroutineArgument,
-        "'{}' naming '$root', or an instance reached upward or from the top, "
-        "is not yet supported",
-        call.getSubroutineName());
+    return std::unexpected(
+        diag::Make(
+            span, diag::DiagCode::kUnsupportedSubroutineArgument,
+            base::DiagMessage(
+                "'{}' naming '$root', or an instance by a path that starts "
+                "with a top-level instance's name or searches upward, is not "
+                "yet supported",
+                call.getSubroutineName()))
+            .WithNote(
+                "name the instance by a path from '$root' or from the "
+                "instance the call is in"));
   }
   throw InternalError(
       "LowerTimescaleCall: the front end binds a timescale argument to an "
