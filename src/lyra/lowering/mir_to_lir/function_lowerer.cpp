@@ -480,16 +480,23 @@ auto FunctionLowerer::UnwindDestinationHere(std::optional<lir::ValueId> unmade)
       return std::unexpected(std::move(owed.error()));
     }
   }
-  return DestinationOf(*owed);
+  return UnwindDestinationOf(*owed);
 }
 
-auto FunctionLowerer::DestinationOf(CleanupNodeId node)
+auto FunctionLowerer::UnwindDestinationOf(CleanupNodeId node)
     -> std::optional<lir::BlockId> {
-  if (node == CleanupTree::LeavingRoot() &&
-      unit_->Types().Get(fn_.result_type).Is<lir::CoroutineType>()) {
-    return LeavingBlock();
+  if (node == CleanupTree::UnwindResumeRoot() &&
+      !unit_->Types().Get(fn_.result_type).Is<lir::CoroutineType>()) {
+    return std::nullopt;
   }
-  return cleanups_.EntryOf(node);
+  return EntryOf(node);
+}
+
+auto FunctionLowerer::EntryOf(CleanupNodeId node) -> lir::BlockId {
+  if (const std::optional<lir::BlockId> own = cleanups_.EntryOf(node)) {
+    return *own;
+  }
+  return UnwindResumeBlock();
 }
 
 void FunctionLowerer::RefuseLeavingCleanupCode(
@@ -529,7 +536,7 @@ auto FunctionLowerer::UnwindNodeAt(std::size_t depth)
     --first;
   }
   if (!node.has_value()) {
-    node = CleanupTree::LeavingRoot();
+    node = CleanupTree::UnwindResumeRoot();
   }
   for (std::size_t at = first; at < depth; ++at) {
     if (const auto* owed = std::get_if<Owed>(&scopes_[at].entry)) {
@@ -548,7 +555,7 @@ auto FunctionLowerer::NodeFor(CleanupId cleanup, CleanupNodeId next)
     -> diag::Result<CleanupNodeId> {
   // Copied: lowering a cleanup's code adds cleanups of its own to the tree.
   const Cleanup owed = cleanups_.Get(cleanup);
-  if (cleanups_.LeavesTheBody(next) &&
+  if (cleanups_.ResumesUnwinding(next) &&
       std::holds_alternative<StorageDead>(owed)) {
     return next;
   }
@@ -556,7 +563,7 @@ auto FunctionLowerer::NodeFor(CleanupId cleanup, CleanupNodeId next)
           cleanups_.Find(cleanup, next)) {
     return *found;
   }
-  const lir::BlockId resumed = current_;
+  const lir::BlockId saved = current_;
   const lir::BlockId entry =
       cleanups_.Unwinding(next) ? NewCleanupBlock() : NewBlock();
   SetCurrent(entry);
@@ -569,17 +576,11 @@ auto FunctionLowerer::NodeFor(CleanupId cleanup, CleanupNodeId next)
   if (current_ == entry && blocks_.size() == entry.value + 1 &&
       blocks_[entry.value].instrs.empty()) {
     blocks_.pop_back();
-    SetCurrent(resumed);
+    SetCurrent(saved);
     return next;
   }
-  // The leaving root has no block: the last of what is owed on the way out of
-  // the body is where unwinding goes on out of it.
-  if (const std::optional<lir::BlockId> continued = cleanups_.EntryOf(next)) {
-    Terminate(lir::BranchTerm{.target = *continued});
-  } else {
-    Terminate(lir::UnwindResumeTerm{});
-  }
-  SetCurrent(resumed);
+  Terminate(lir::BranchTerm{.target = EntryOf(next)});
+  SetCurrent(saved);
   return cleanups_.Insert(cleanup, next, entry);
 }
 
@@ -615,7 +616,7 @@ auto FunctionLowerer::ExitEntryAt(lir::BlockId target, std::size_t depth)
     scopes_[at].exit_nodes.push_back(ExitNode{.target = target, .node = *node});
   }
   // An ordinary way out ends at the block it goes to.
-  return *cleanups_.EntryOf(*node);
+  return EntryOf(*node);
 }
 
 auto FunctionLowerer::AbandonBlock() -> lir::BlockId {
@@ -624,10 +625,10 @@ auto FunctionLowerer::AbandonBlock() -> lir::BlockId {
   }
   const lir::BlockId block = NewOrdinaryBlock();
   abandon_block_ = block;
-  const lir::BlockId resumed = current_;
+  const lir::BlockId saved = current_;
   SetCurrent(block);
   Terminate(lir::AbandonTerm{});
-  SetCurrent(resumed);
+  SetCurrent(saved);
   return block;
 }
 
@@ -637,23 +638,23 @@ auto FunctionLowerer::ReturnBlock() -> lir::BlockId {
   }
   const lir::BlockId block = NewOrdinaryBlock();
   return_block_ = block;
-  const lir::BlockId resumed = current_;
+  const lir::BlockId saved = current_;
   SetCurrent(block);
   Terminate(lir::ReturnTerm{});
-  SetCurrent(resumed);
+  SetCurrent(saved);
   return block;
 }
 
-auto FunctionLowerer::LeavingBlock() -> lir::BlockId {
-  if (leaving_block_.has_value()) {
-    return *leaving_block_;
+auto FunctionLowerer::UnwindResumeBlock() -> lir::BlockId {
+  if (unwind_resume_block_.has_value()) {
+    return *unwind_resume_block_;
   }
   const lir::BlockId block = NewCleanupBlock();
-  leaving_block_ = block;
-  const lir::BlockId resumed = current_;
+  unwind_resume_block_ = block;
+  const lir::BlockId saved = current_;
   SetCurrent(block);
   Terminate(lir::UnwindResumeTerm{});
-  SetCurrent(resumed);
+  SetCurrent(saved);
   return block;
 }
 
@@ -671,7 +672,7 @@ auto FunctionLowerer::OpenHandler(const Region& region) -> diag::Result<void> {
           .departure =
               lir::Place{.base = lir::Use{.value = region.caught}, .chain = {}},
           .then = then,
-          .otherwise = DestinationOf(*outside)});
+          .otherwise = EntryOf(*outside)});
   SetCurrent(then);
   return {};
 }
@@ -1388,7 +1389,7 @@ auto FunctionLowerer::LowerSwitchInto(
   const lir::BlockId merge_id = NewBlock();
   const auto run = [&](mir::BlockId body) -> diag::Result<lir::BlockId> {
     const lir::BlockId entry = NewBlock();
-    const lir::BlockId resume = current_;
+    const lir::BlockId saved = current_;
     SetCurrent(entry);
     if (auto lowered = LowerBlockInto(block.child_scopes.Get(body)); !lowered) {
       return std::unexpected(std::move(lowered.error()));
@@ -1396,7 +1397,7 @@ auto FunctionLowerer::LowerSwitchInto(
     if (!Terminated()) {
       Terminate(lir::BranchTerm{.target = merge_id});
     }
-    SetCurrent(resume);
+    SetCurrent(saved);
     return entry;
   };
 
@@ -2235,7 +2236,7 @@ auto FunctionLowerer::LowerPlace(const mir::Block& block, mir::ExprId id)
             if (!place) {
               return std::unexpected(std::move(place.error()));
             }
-            place->chain.push_back(
+            place->chain.emplace_back(
                 lir::SliceProjection{
                     .start = *std::move(start),
                     .part = unit_->TranslateType(expr.type)});
@@ -2250,7 +2251,7 @@ auto FunctionLowerer::LowerPlace(const mir::Block& block, mir::ExprId id)
             if (!place) {
               return std::unexpected(std::move(place.error()));
             }
-            place->chain.push_back(
+            place->chain.emplace_back(
                 lir::IndexProjection{.index = *std::move(index)});
             return place;
           },

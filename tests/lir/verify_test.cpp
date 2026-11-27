@@ -2,7 +2,6 @@
 
 #include <cstdint>
 #include <gtest/gtest.h>
-#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -576,7 +575,7 @@ TEST(LirVerifyTest, UnwindingIsTakenOnlyOnAWayOutByUnwinding) {
   // taking point, marked as `taken_in_cleanup` says; block 3 goes on
   // unwinding out of the body.
   const auto verifying = [&](bool taken_in_cleanup, BlockId unwind,
-                             BlockId then, std::optional<BlockId> otherwise,
+                             BlockId then, BlockId otherwise,
                              std::string_view because) {
     UnwindingBody unwinding(may_unwind);
     std::vector<BasicBlock> blocks;
@@ -601,14 +600,11 @@ TEST(LirVerifyTest, UnwindingIsTakenOnlyOnAWayOutByUnwinding) {
     }
   };
   verifying(true, BlockId{2}, BlockId{1}, BlockId{3}, "");
-  verifying(true, BlockId{2}, BlockId{1}, std::nullopt, "");
-  verifying(
-      true, BlockId{2}, BlockId{3}, std::nullopt, "what is taken goes on");
+  verifying(true, BlockId{2}, BlockId{3}, BlockId{3}, "what is taken goes on");
   verifying(
       true, BlockId{2}, BlockId{1}, BlockId{1}, "what is not taken goes on");
   verifying(
-      false, BlockId{3}, BlockId{1}, std::nullopt,
-      "taken somewhere other than");
+      false, BlockId{3}, BlockId{1}, BlockId{3}, "taken somewhere other than");
 }
 
 // A type's default is reached through what the type is told to the library by,

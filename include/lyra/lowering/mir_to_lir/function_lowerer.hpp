@@ -264,6 +264,10 @@ class FunctionLowerer {
   auto AbandonBlock() -> lir::BlockId;
   // Returns from the body, once what it owed has run.
   auto ReturnBlock() -> lir::BlockId;
+  // Goes on unwinding out of the body, once what it owed has run: the one block
+  // every way out doing so ends at, a chain of what is owed or what a taking
+  // point does not take.
+  auto UnwindResumeBlock() -> lir::BlockId;
   // Lowers a cleanup's own code, on whichever way out reached it, with none of
   // the body's scopes open: its one scope is a boundary no way out passes, so
   // nothing the code does can lead back into a scope around it, the cleanup's
@@ -311,20 +315,21 @@ class FunctionLowerer {
   // owe, ending at the innermost region's taking point, or past every scope
   // on out of the body.
   auto UnwindNodeAt(std::size_t depth) -> diag::Result<CleanupNodeId>;
-  // Where a way out through `node` goes in this body. Leaving a function that
-  // owes nothing is no block. A coroutine's body is an execution, every way out
-  // of which its body states by a terminator of its own, so leaving one is
-  // always the block that says so.
-  auto DestinationOf(CleanupNodeId node) -> std::optional<lir::BlockId>;
+  // Where a call that can be unwound out of, whose way out goes through
+  // `node`, names unwinding to in this body: none in a function where nothing
+  // is left to run, as rustc's `UnwindAction::Continue`. A coroutine's body is
+  // an execution, every way out of which its body states by a terminator of
+  // its own, so unwinding out of one always goes to the block that says so.
+  auto UnwindDestinationOf(CleanupNodeId node) -> std::optional<lir::BlockId>;
+  // The block a way out reaching `node` enters: the node's own, or for the
+  // unwind resume root the body's one block that resumes unwinding.
+  auto EntryOf(CleanupNodeId node) -> lir::BlockId;
   // A way out reaching the boundary that stands over a cleanup's own code would
   // leave that code before its end, which nothing a cleanup holds may do; the
   // unit's verification refuses such a cleanup, so reaching one here is a
   // compiler bug. `how` says how the code would be left.
   static void RefuseLeavingCleanupCode(
       const ScopeEntry& entry, std::string_view how);
-  // The block that goes on unwinding out of a coroutine's body with nothing
-  // left to run there.
-  auto LeavingBlock() -> lir::BlockId;
   // Ends unwinding at a region's taking point, the block its scope named: the
   // runtime is asked what arrived, into the region's `caught`, and anything not
   // the design's goes on to what the scopes outside the region owe. The
@@ -693,7 +698,7 @@ class FunctionLowerer {
   CleanupTree cleanups_;
   // Which scope owes the end of a value or of what a slot holds.
   std::unordered_map<lir::ValueId, std::size_t> owed_end_;
-  std::optional<lir::BlockId> leaving_block_;
+  std::optional<lir::BlockId> unwind_resume_block_;
   std::optional<lir::BlockId> abandon_block_;
   std::optional<lir::BlockId> return_block_;
   // Which of the body's variables each local is, where its declared type gives

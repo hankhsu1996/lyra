@@ -9,7 +9,7 @@
 namespace lyra::lowering::mir_to_lir {
 
 CleanupTree::CleanupTree() {
-  nodes_.push_back(Node{.entry = std::nullopt, .way_out = WayOut::kLeaving});
+  nodes_.push_back(Node{.entry = std::nullopt, .way_out = WayOut::kResumed});
 }
 
 auto CleanupTree::Add(Cleanup cleanup) -> CleanupId {
@@ -30,7 +30,7 @@ auto CleanupTree::TakingRoot(lir::BlockId taking_point) -> CleanupNodeId {
   return RootAt(taking_point, WayOut::kTaken);
 }
 
-auto CleanupTree::LeavingRoot() -> CleanupNodeId {
+auto CleanupTree::UnwindResumeRoot() -> CleanupNodeId {
   return CleanupNodeId{0};
 }
 
@@ -72,18 +72,18 @@ auto CleanupTree::Unwinding(CleanupNodeId node) const -> bool {
     case WayOut::kOrdinary:
       return false;
     case WayOut::kTaken:
-    case WayOut::kLeaving:
+    case WayOut::kResumed:
       return true;
   }
   std::unreachable();
 }
 
-auto CleanupTree::LeavesTheBody(CleanupNodeId node) const -> bool {
+auto CleanupTree::ResumesUnwinding(CleanupNodeId node) const -> bool {
   switch (nodes_[node.value].way_out) {
     case WayOut::kOrdinary:
     case WayOut::kTaken:
       return false;
-    case WayOut::kLeaving:
+    case WayOut::kResumed:
       return true;
   }
   std::unreachable();

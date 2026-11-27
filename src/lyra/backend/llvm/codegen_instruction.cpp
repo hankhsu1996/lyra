@@ -1520,15 +1520,10 @@ auto CodeGenFunction::LowerReceiveDepartureInto(
       llvm::BasicBlock::Create(module_->Context(), "received", value_);
   // What leaves the asking is not the design's, or the raise the asking makes:
   // the catch ends on its way, and it goes on as the same raise.
-  llvm::BasicBlock* const declined = MakeLandingPad(
-      taken.otherwise.has_value() && ends_in_taking_[taken.otherwise->value],
-      [&] {
+  llvm::BasicBlock* const declined =
+      MakeLandingPad(ends_in_taking_[taken.otherwise.value], [&] {
         EndCatch();
-        if (taken.otherwise.has_value()) {
-          builder_.CreateBr(blocks_[taken.otherwise->value]);
-        } else {
-          ResumeUnwinding();
-        }
+        builder_.CreateBr(blocks_[taken.otherwise.value]);
       });
   auto answered = LowerInvoke(
       lir::ReceiveDepartureCall(), *destination, received, declined);

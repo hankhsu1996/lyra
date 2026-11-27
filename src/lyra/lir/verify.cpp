@@ -609,14 +609,8 @@ void VerifyUnwinding(
                     "what is taken goes on in a block reached only by "
                     "unwinding");
               }
-              if (taken.otherwise.has_value() &&
-                  !is_cleanup(*taken.otherwise)) {
+              if (!is_cleanup(taken.otherwise)) {
                 refuse("what is not taken goes on in an ordinary block");
-              }
-              if (!taken.otherwise.has_value() && cannot_unwind) {
-                refuse(
-                    "a function declared not to unwind hands what it does not "
-                    "take out of the body");
               }
             },
             [&](const UnwindResumeTerm&) {

@@ -112,12 +112,8 @@ auto SuccessorsOf(const TerminatorData& terminator) -> std::vector<BlockId> {
           [](const InvokeTerm& call) -> std::vector<BlockId> {
             return {call.returned, call.unwind};
           },
-          [](const ReceiveDepartureTerm& taken) {
-            std::vector<BlockId> successors{taken.then};
-            if (taken.otherwise.has_value()) {
-              successors.push_back(*taken.otherwise);
-            }
-            return successors;
+          [](const ReceiveDepartureTerm& taken) -> std::vector<BlockId> {
+            return {taken.then, taken.otherwise};
           }},
       terminator);
 }

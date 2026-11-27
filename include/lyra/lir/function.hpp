@@ -895,15 +895,15 @@ struct InvokeTerm {
 // the body is an execution's top: the runtime is asked what arrived, and a
 // departure of the design is put in `departure` and control goes on at `then`
 // (LRM 9.6.2). Anything else -- not the design's, or the raise the asking
-// itself makes -- goes on unwinding as the same raise, to `otherwise`, a
-// cleanup block of what the body owes outside the region, or out of the body
-// where it owes nothing there. A taking point hands the departure over once,
-// as a value, so nothing in the body is ever still being handled; declining it
-// is a raise of that value like any other.
+// itself makes -- goes on unwinding as the same raise, to `otherwise`: the
+// first block of what the body owes outside the region, or the body's block
+// that goes on unwinding out of it. A taking point hands the departure over
+// once, as a value, so nothing in the body is ever still being handled;
+// declining it is a raise of that value like any other.
 struct ReceiveDepartureTerm {
   Destination departure;
   BlockId then;
-  std::optional<BlockId> otherwise;
+  BlockId otherwise;
 };
 
 // The call a taking point asks the runtime what arrived by, which every target
