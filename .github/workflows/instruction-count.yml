@@ -21,9 +21,13 @@ name: Instruction Count
 # as a git note, so how far any range of merges moved is read later as the
 # product of each merge's change. A branch can be counted before it merges, or
 # any revision against another, by dispatching this workflow, which keeps no
-# note. It goes red where head has no count of a measurement, or where one got
-# worse by two percent or more; since it is not a required check, that marks the
-# change that did it and holds up nothing.
+# note. Only the two compilers are built at the revisions compared;
+# `run_benchmarks.py`, the cases and the designs are those of the commit this
+# workflow runs from, so old revisions are measured as a merge today is, and a
+# branch that changes how things are measured is dispatched from itself. It
+# goes red where head has no count of a measurement, or where one got worse by
+# two percent or more; since it is not a required check, that marks the change
+# that did it and holds up nothing.
 on:
   push:
     branches: [main]
@@ -66,15 +70,11 @@ jobs:
           echo "base=$base" >> "$GITHUB_OUTPUT"
           echo "head=$head" >> "$GITHUB_OUTPUT"
 
-      # The list is read at head, which is the change being judged. A revision
-      # from before there was one is counted on the corpus alone.
       - name: List the designs
         id: designs
-        env:
-          HEAD: ${{ steps.revisions.outputs.head }}
         run: |
-          designs=$( (git show "$HEAD:tests/benchmark/designs.txt" 2>/dev/null || true) \
-            | (grep -v -e '^#' -e '^$' || true) | jq -R . | jq -sc .)
+          designs=$(grep -v -e '^#' -e '^$' tests/benchmark/designs.txt \
+            | jq -R . | jq -sc .)
           echo "designs=$designs" >> "$GITHUB_OUTPUT"
 
   corpus:
@@ -131,7 +131,9 @@ jobs:
     needs: plan
     if: needs.plan.outputs.designs != '[]'
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    # Setting up and a whole count on a runner twice as slow as usual take
+    # about seventy minutes, so this stops only a job that would never end.
+    timeout-minutes: 120
     strategy:
       # Every design reports, and with the corpus job beside them these take
       # four runners at most, so a pull request's checks never wait on them.
@@ -152,8 +154,9 @@ jobs:
           head: ${{ needs.plan.outputs.head }}
           buildbuddy-api-key: ${{ secrets.BUILDBUDDY_API_KEY }}
 
-      # Written from head's suite pin and record, which a design counted has
-      # to be one of: a design the record says stops has no work to count.
+      # Written from the suite pin and record of the commit this runs from,
+      # which a design counted has to be one of: a design the record says stops
+      # has no work to count.
       - name: Declare the design
         env:
           DESIGN: ${{ matrix.design }}
@@ -217,8 +220,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
-        with:
-          ref: ${{ needs.plan.outputs.head }}
 
       # Each job's counts arrive under a directory named for its artifact, and
       # each result file takes that name as it joins its side's directory, so

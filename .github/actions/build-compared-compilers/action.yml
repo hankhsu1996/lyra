@@ -3,8 +3,10 @@ description: >
   Build Lyra optimized at two revisions and keep each with its runfiles, for a
   job that counts both on its own runner. A count does not move with the
   machine's load but does move from one machine to another, so the two a job
-  compares are built and counted on the one runner it has. The tree is left at
-  head, whose runner and corpus count both: the same cases, done the same way.
+  compares are built and counted on the one runner it has. Only the compilers
+  come from the two revisions. The tree is left at the commit the job checked
+  out, whose counting script, cases and designs count both, so any two
+  revisions are measured by one instrument.
 
 inputs:
   base:
@@ -38,7 +40,7 @@ runs:
         sudo apt-get install -y valgrind
 
     # The compilers are run here, so their outputs have to come back; the
-    # flags go in the untracked rc layer so that both checkouts below read
+    # flags go in the untracked rc layer so that every checkout below reads
     # them.
     - name: Configure remote execution
       shell: bash
@@ -61,6 +63,7 @@ runs:
         BASE: ${{ inputs.base }}
         HEAD: ${{ inputs.head }}
       run: |
+        measuring=$(git rev-parse HEAD)
         for side in base head; do
           if [[ "$side" == base ]]; then rev=$BASE; else rev=$HEAD; fi
           git checkout --quiet --detach "$rev"
@@ -71,3 +74,4 @@ runs:
           cp -rL bazel-bin/lyra.runfiles "$kept/lyra.runfiles"
           rm -f "$kept/lyra.runfiles/MANIFEST"
         done
+        git checkout --quiet --detach "$measuring"
