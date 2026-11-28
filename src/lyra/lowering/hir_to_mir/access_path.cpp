@@ -1559,7 +1559,7 @@ auto ReadModifyWrite(
   // is where it reports.
   const std::size_t designated = LeadingSteps(settled, DesignatedWithinAWrite);
   const auto held_by_a_local = [&](mir::ExprId opened) {
-    return HeldByALocal(frame, opened);
+    return MaterializedTemporary(frame, opened);
   };
   const mir::ExprId reached = ReachedForWrite(
       unit, block, PrefixOf(settled, designated), WriteEnd::kDesignated,
@@ -1569,7 +1569,7 @@ auto ReadModifyWrite(
   // store through it; a place by whatever reaching it computed.
   const mir::ExprId held =
       unit.types.Get(block.Get(reached).type).Is<mir::DesignationType>()
-          ? HeldByALocal(frame, reached)
+          ? MaterializedTemporary(frame, reached)
           : SettledPlace(unit, frame, reached);
   // Nothing of the design runs within the access, so what the part holds is
   // read where it lies, the entry now there, and nothing is landed on for it.

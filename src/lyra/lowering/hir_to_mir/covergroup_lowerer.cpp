@@ -468,11 +468,8 @@ class Writer {
       mir::ExprId array,
       const std::function<diag::Result<void>(const Writer&, mir::ExprId)>&
           visit) const -> diag::Result<void> {
-    const mir::ExprId value = Block().AsValue(Unit().types, array);
-    const mir::TypeId type = Block().Get(value).type;
-    const mir::LocalId held = DeclareLocal(frame_, value);
     const WalkedArray walked = WalkedArrayOf(
-        unit_lowerer_->Unit(), frame_, Block().LocalPlace(held, type),
+        unit_lowerer_->Unit(), frame_, Block().AsValue(Unit().types, array),
         std::nullopt);
     auto loop = BuildEntryLoopStmt(
         unit_lowerer_->Unit(), frame_, walked, WalkOrder::kFromFirst,

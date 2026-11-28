@@ -19,7 +19,6 @@
 #include "lyra/mir/expr.hpp"
 #include "lyra/mir/expr_builders.hpp"
 #include "lyra/mir/stmt.hpp"
-#include "lyra/mir/storage_part.hpp"
 #include "lyra/mir/type.hpp"
 #include "lyra/support/builtin_fn.hpp"
 
@@ -186,12 +185,9 @@ auto WalkedArrayOf(
     const mir::CompilationUnit& unit, const WalkFrame& frame,
     mir::ExprId object, std::optional<hir::UnpackedRange> declared)
     -> WalkedArray {
-  mir::Builder block = frame.Builder();
-  const mir::TypeId type = block.Get(object).type;
-  const mir::ExprId owner =
-      mir::IsPlace(block.Get(object).data)
-          ? object
-          : block.LocalPlace(DeclareLocal(frame, object), type);
+  const mir::ExprId owner = mir::IsPlace(frame.Builder().Get(object).data)
+                                ? object
+                                : MaterializedTemporary(frame, object);
   return WalkedArrayAt(
       unit, frame, AccessPath{.owner = owner, .descent = {}}, declared);
 }

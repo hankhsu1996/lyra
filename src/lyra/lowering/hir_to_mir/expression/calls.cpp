@@ -51,7 +51,6 @@
 #include "lyra/lowering/hir_to_mir/select_position.hpp"
 #include "lyra/lowering/hir_to_mir/self_ref.hpp"
 #include "lyra/lowering/hir_to_mir/sensitivity_wait.hpp"
-#include "lyra/lowering/hir_to_mir/snapshot_local.hpp"
 #include "lyra/lowering/hir_to_mir/subroutine_call.hpp"
 #include "lyra/lowering/hir_to_mir/value_operations.hpp"
 #include "lyra/lowering/hir_to_mir/walk_frame.hpp"
@@ -495,29 +494,19 @@ auto LowerBuiltinMethodCall(
   };
 
   mir::Builder block = frame.Builder();
-  // A method that changes the object it acts on takes the place that object
-  // stands in, so the change lands where the source named it; one that does not
-  // is entered on the object where it lies, and reads it there if it takes it
-  // by value. An object in a member of an untagged union, which is a view of
-  // the union's storage, is changed in a copy read out of it, which is then
-  // written back, since the method reads what it changes (LRM 7.3).
+  // A method that changes the object it acts on is entered on the place the
+  // change lands in, and what it leaves there is written back where that place
+  // is a copy read out of a view; one that does not is entered on the object
+  // where it lies, and reads it there if it takes it by value.
   std::optional<mir::ExprId> receiver;
   std::optional<AccessPath> written_back;
   if (b.receiver.has_value()) {
     const hir::Expr& object = hir_exprs.Get(*b.receiver);
     if (entry.mutates_receiver) {
-      auto recv_or = lowerer.LowerLhsExpr(object, frame);
-      if (!recv_or) return std::unexpected(std::move(recv_or.error()));
-      if (ReachesUnionMember(*recv_or)) {
-        ReadThenWritten changed =
-            ReadThenWrite(lowerer.Owner().Unit(), frame, *std::move(recv_or));
-        const mir::TypeId type = block.Get(changed.incoming).type;
-        receiver =
-            block.LocalPlace(DeclareLocal(frame, changed.incoming), type);
-        written_back = std::move(changed.place);
-      } else {
-        receiver = PathPlace(unit, block, *recv_or);
-      }
+      auto changed = LowerChangedObject(lowerer, frame, object);
+      if (!changed) return std::unexpected(std::move(changed.error()));
+      receiver = PathPlace(unit, block, changed->changed);
+      written_back = std::move(changed->written_back);
     } else if (IsTagCheckedRead(lowerer, frame, object)) {
       // An object reached through a member a tag guards is entered where it
       // lies among the steps that check the tag (LRM 11.9), after every
